@@ -5,6 +5,7 @@ from app.db.init_db import init_db
 from app.api.config import router as config_router
 from app.api.videos import router as videos_router
 from app.api.clips import router as clips_router
+from app.api.asr import router as asr_router
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(config_router)
 app.include_router(videos_router)
 app.include_router(clips_router)
+app.include_router(asr_router)
 
 
 @app.get("/health")

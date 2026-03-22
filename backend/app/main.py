@@ -5,10 +5,12 @@ from app.db.init_db import init_db
 from app.api.config import router as config_router
 from app.api.videos import router as videos_router
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     yield
+
 
 app = FastAPI(title="LX SmartClip API", version="0.1.0", lifespan=lifespan)
 
@@ -22,6 +24,7 @@ app.add_middleware(
 
 app.include_router(config_router)
 app.include_router(videos_router)
+
 
 @app.get("/health")
 async def health():

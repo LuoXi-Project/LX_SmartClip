@@ -1,3 +1,25 @@
 *.pyc
 venv/
 test.mp4
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/out/
+
+# Backend
+backend/data/
+backend/storage/
+backend/__pycache__/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

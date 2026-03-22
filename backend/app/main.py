@@ -6,6 +6,7 @@ from app.api.config import router as config_router
 from app.api.videos import router as videos_router
 from app.api.clips import router as clips_router
 from app.api.asr import router as asr_router
+from app.api.vlm import router as vlm_router
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ app.include_router(config_router)
 app.include_router(videos_router)
 app.include_router(clips_router)
 app.include_router(asr_router)
+app.include_router(vlm_router)
 
 
 @app.get("/health")

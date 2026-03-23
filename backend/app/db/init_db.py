@@ -1,4 +1,4 @@
-﻿import aiosqlite
+import aiosqlite
 import os
 
 DB_PATH = os.path.abspath(
@@ -67,6 +67,9 @@ DEFAULT_CONFIG = [
         "asr model size",
         '["tiny","base","small","medium","large"]',
     ),
+    ("llm_model", "gpt-4o-mini", "string", "llm model (精排)", None),
+    ("match_top_k", "12", "number", "match top_k (初筛)", None),
+    ("match_top_n", "5", "number", "match top_n (推荐)", None),
 ]
 
 

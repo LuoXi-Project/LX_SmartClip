@@ -19,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="h-4 w-px bg-slate-700" />
             <Link href="/library" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材库</Link>
             <Link href="/process" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">处理管线</Link>
+            <Link href="/match" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">文案匹配</Link>
           </div>
         </nav>
         <div className="pt-12">{children}</div>

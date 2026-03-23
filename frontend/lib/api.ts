@@ -61,6 +61,10 @@ export const videosApi = {
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),
 }
 
+export const matchApi = {
+  run: (payload: MatchRequest) => apiClient.post<unknown, MatchResponse>('/api/match', payload),
+}
+
 export interface Video {
   id: string
   name: string
@@ -77,4 +81,31 @@ export interface ProcessMessage {
   status: 'running' | 'done' | 'error' | 'skip'
   message: string
   detail: Record<string, unknown>
+}
+
+export interface MatchRequest {
+  query: string
+  top_k?: number
+  top_n?: number
+  video_ids?: string[] | null
+}
+
+export interface MatchClip {
+  clip_id: string
+  video_id: string
+  clip_path: string
+  start_time: number
+  end_time: number
+  duration: number
+  asr_text: string | null
+  vlm_description: string | null
+  score: number
+  reason: string
+}
+
+export interface MatchResponse {
+  query: string
+  top_n: number
+  recommended: MatchClip[]
+  candidates: MatchClip[]
 }

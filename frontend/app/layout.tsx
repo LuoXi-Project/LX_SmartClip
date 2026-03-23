@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -6,14 +7,22 @@ export const metadata: Metadata = {
   description: '本地轻量化AI智能素材匹配剪辑工具',
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <nav className="fixed top-0 inset-x-0 z-50 border-b border-slate-800 bg-[#0d0f14]/90 backdrop-blur-md">
+          <div className="max-w-6xl mx-auto px-6 h-12 flex items-center gap-6">
+            <Link href="/" className="text-sm font-bold tracking-tight text-slate-100 hover:text-white transition-colors">
+              LX SmartClip
+            </Link>
+            <div className="h-4 w-px bg-slate-700" />
+            <Link href="/library" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材库</Link>
+            <Link href="/process" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">处理管线</Link>
+          </div>
+        </nav>
+        <div className="pt-12">{children}</div>
+      </body>
     </html>
   )
 }

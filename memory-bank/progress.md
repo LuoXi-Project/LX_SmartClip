@@ -1,7 +1,7 @@
 # LX_SmartClip 开发进度记录
 
 ## 当前阶段
-Phase 0-6 已完成，Phase 7（处理管线整合）准备开始。
+Phase 0-7 已完成，Phase 8（三级匹配引擎）准备开始。
 
 ---
 
@@ -214,7 +214,20 @@ npm run dev
 
 ---
 
-## 下一步：Phase 7 — 全处理管线整合
+## 下一步：Phase 8 — 三级匹配引擎
+
+**优先级：** 🔴 高
+
+**任务：**
+1. `app/core/rag.py` - RAG 初筛（LlamaIndex + SQLiteVSS）
+2. `app/core/llm/` - LLM 精排接口
+3. `POST /api/match` - 匹配接口
+4. 前端匹配页面
+
+---
+
+**最后更新：** 2026-03-23
+**状态：** ✅ Phase 0-7 完成，Phase 8 准备开始
 
 **优先级：** 🔴 高
 

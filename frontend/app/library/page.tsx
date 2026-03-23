@@ -205,9 +205,9 @@ export default function LibraryPage() {
 
                   {/* Actions */}
                   <div className="flex gap-2">
-                    <button className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors">
+                    <a href={`/process?video=${video.id}`} className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors text-center">
                       处理
-                    </button>
+                    </a>
                     <button
                       onClick={() => handleDelete(video.id)}
                       className="px-3 py-2 bg-red-600/20 text-red-400 text-sm rounded hover:bg-red-600/30 transition-colors"

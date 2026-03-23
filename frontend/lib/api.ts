@@ -31,3 +31,50 @@ apiClient.interceptors.response.use(
 )
 
 export default apiClient
+
+const WS_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
+  .replace(/^http/, 'ws')
+
+export function createProcessWebSocket(
+  videoId: string,
+  skipSteps: string[] = []
+): WebSocket {
+  const ws = new WebSocket(`${WS_BASE_URL}/api/videos/${videoId}/process-ws`)
+  ws.addEventListener('open', () => {
+    if (skipSteps.length > 0) {
+      ws.send(JSON.stringify({ skip_steps: skipSteps }))
+    }
+  })
+  return ws
+}
+
+export const videosApi = {
+  list: () => apiClient.get<unknown, Video[]>('/api/videos'),
+  upload: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.post<unknown, Video>('/api/videos/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
+  process: (id: string) => apiClient.post(`/api/videos/${id}/process`),
+}
+
+export interface Video {
+  id: string
+  name: string
+  file_path: string
+  duration: number | null
+  total_clips: number
+  split_mode: string
+  status: 'pending' | 'processing' | 'done' | 'error'
+  upload_at: string
+}
+
+export interface ProcessMessage {
+  step: 'split' | 'extract_frames' | 'asr' | 'vlm' | 'embed' | 'done' | 'error'
+  status: 'running' | 'done' | 'error' | 'skip'
+  message: string
+  detail: Record<string, unknown>
+}

@@ -13,9 +13,11 @@ export default function Home() {
     const checkBackendHealth = async () => {
       try {
         setLoading(true)
-        const response = await apiClient.get('/health')
-        if (response.status === 'ok') {
+        const data = await apiClient.get<unknown, { status: string }>('/health')
+        if (data && data.status === 'ok') {
           setBackendStatus('connected')
+        } else {
+          setBackendStatus('disconnected')
         }
       } catch (error) {
         console.error('Backend health check failed:', error)
@@ -26,7 +28,13 @@ export default function Home() {
     }
 
     checkBackendHealth()
-    const interval = setInterval(checkBackendHealth, 5000)
+    const interval = setInterval(async () => {
+      if (useAppStore.getState().backendStatus === 'connected') {
+        clearInterval(interval)
+        return
+      }
+      await checkBackendHealth()
+    }, 5000)
     return () => clearInterval(interval)
   }, [setBackendStatus])
 

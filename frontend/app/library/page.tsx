@@ -3,13 +3,17 @@
 import { useEffect, useState } from 'react'
 import { useAppStore, type Video } from '@/lib/store'
 import apiClient from '@/lib/api'
-import { Upload, Trash2, Play, Calendar, Film } from 'lucide-react'
+import { Upload, Trash2, Play, Calendar, Film, X } from 'lucide-react'
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function LibraryPage() {
   const { videos, setVideos, addVideo, removeVideo } = useAppStore()
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [dragActive, setDragActive] = useState(false)
+  const [previewVideo, setPreviewVideo] = useState<Video | null>(null)
+  const [previewError, setPreviewError] = useState(false)
 
   // 加载视频列表
   useEffect(() => {
@@ -27,6 +31,16 @@ export default function LibraryPage() {
 
     fetchVideos()
   }, [setVideos])
+
+  const openPreview = (video: Video) => {
+    setPreviewError(false)
+    setPreviewVideo(video)
+  }
+
+  const closePreview = () => {
+    setPreviewVideo(null)
+    setPreviewError(false)
+  }
 
   // 处理文件上传
   const handleUpload = async (files: FileList) => {
@@ -69,6 +83,7 @@ export default function LibraryPage() {
     try {
       await apiClient.delete(`/api/videos/${id}`)
       removeVideo(id)
+      if (previewVideo?.id === id) closePreview()
     } catch (error) {
       console.error('Delete failed:', error)
       alert('删除失败')
@@ -152,10 +167,16 @@ export default function LibraryPage() {
                 key={video.id}
                 className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-lg overflow-hidden hover:border-blue-500/50 transition-colors group"
               >
-                {/* Thumbnail */}
-                <div className="relative bg-slate-900 aspect-video flex items-center justify-center overflow-hidden">
+                {/* Thumbnail — click to preview */}
+                <div
+                  className="relative bg-slate-900 aspect-video flex items-center justify-center overflow-hidden cursor-pointer"
+                  onClick={() => openPreview(video)}
+                >
                   <Play className="w-12 h-12 text-slate-600 group-hover:text-blue-400 transition-colors" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <span className="absolute bottom-2 right-2 text-xs text-white/80 bg-black/60 px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                    点击预览
+                  </span>
                 </div>
 
                 {/* Info */}
@@ -205,7 +226,10 @@ export default function LibraryPage() {
 
                   {/* Actions */}
                   <div className="flex gap-2">
-                    <a href={`/process?video=${video.id}`} className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors text-center">
+                    <a
+                      href={`/process?video=${video.id}`}
+                      className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors text-center"
+                    >
                       处理
                     </a>
                     <button
@@ -221,6 +245,50 @@ export default function LibraryPage() {
           </div>
         )}
       </div>
+
+      {/* Video Preview Modal */}
+      {previewVideo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={closePreview}
+        >
+          <div
+            className="relative w-full max-w-4xl mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-slate-100 font-semibold truncate max-w-[85%]">
+                {previewVideo.name}
+              </h3>
+              <button
+                onClick={closePreview}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Video Player */}
+            <div className="rounded-xl overflow-hidden bg-black shadow-2xl ring-1 ring-slate-700 min-h-[120px] flex items-center justify-center">
+              {previewError ? (
+                <p className="text-slate-400 text-sm text-center px-8 py-10">
+                  该视频格式浏览器不支持直接预览（如 MKV / AVI），请用本地播放器打开。
+                </p>
+              ) : (
+                <video
+                  key={previewVideo.id}
+                  src={`${API_BASE_URL}/api/videos/${previewVideo.id}/stream`}
+                  controls
+                  autoPlay
+                  className="w-full max-h-[70vh] object-contain"
+                  onError={() => setPreviewError(true)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

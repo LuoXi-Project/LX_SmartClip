@@ -4,6 +4,7 @@ import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 
 from app.db.database import get_db_conn
 
@@ -81,6 +82,38 @@ async def list_videos():
         ]
     finally:
         await db.close()
+
+
+@router.get("/{video_id}/stream")
+async def stream_video(video_id: str):
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT file_path FROM videos WHERE id = ?", (video_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+        file_path = row["file_path"]
+    finally:
+        await db.close()
+
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="视频文件不存在")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    _mime_map = {
+        ".mp4": "video/mp4",
+        ".m4v": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+        ".mpeg": "video/mpeg",
+        ".mpg": "video/mpeg",
+    }
+    media_type = _mime_map.get(ext, "video/mp4")
+    return FileResponse(file_path, media_type=media_type, filename=os.path.basename(file_path))
 
 
 @router.delete("/{video_id}")

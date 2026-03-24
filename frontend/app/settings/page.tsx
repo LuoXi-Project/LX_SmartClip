@@ -22,7 +22,7 @@ const GROUPS = [
   },
   {
     title: '视频处理',
-    keys: ['split_mode', 'fixed_duration', 'scene_threshold', 'asr_model'],
+    keys: ['split_mode', 'fixed_duration', 'scene_threshold', 'frame_fps', 'asr_model'],
   },
   {
     title: '向量检索',

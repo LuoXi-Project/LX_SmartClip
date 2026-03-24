@@ -239,36 +239,66 @@ class VideoSplitter:
         logger.info(f"镜头识别切分完成: {len(clips)} 个片段")
         return clips
 
-    def extract_frames(self, clip_path: str, n_frames: int = 3) -> List[str]:
+    def has_video_stream(self, clip_path: str) -> bool:
         """
-        从视频片段中等间隔抽取 N 帧
-        
+        检查视频文件是否包含视频流
+
+        Args:
+            clip_path: 视频文件路径
+
+        Returns:
+            是否包含视频流
+        """
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            clip_path,
+        ]
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            return result.stdout.strip() == "video"
+        except subprocess.CalledProcessError:
+            return False
+
+    def extract_frames(self, clip_path: str, fps: float = 1.0) -> List[str]:
+        """
+        按帧率从视频片段中抽帧（每秒抽 fps 帧）
+
         Args:
             clip_path: 视频片段路径
-            n_frames: 要抽取的帧数
-            
+            fps: 抽帧帧率（帧/秒），例如 1.0 表示每秒 1 帧，0.5 表示每 2 秒 1 帧
+
         Returns:
             帧文件路径列表
         """
         if not os.path.exists(clip_path):
             raise FileNotFoundError(f"视频片段不存在: {clip_path}")
 
-        if n_frames <= 0:
-            raise ValueError(f"帧数必须大于 0: {n_frames}")
+        if fps <= 0:
+            raise ValueError(f"fps 必须大于 0: {fps}")
 
-        # 获取视频时长
+        # 检查是否有视频流，音频专用片段直接跳过
+        if not self.has_video_stream(clip_path):
+            logger.warning(f"片段无视频流，跳过抽帧: {clip_path}")
+            return []
+
+        # 获取视频时长，据此计算总帧数
         duration = self.get_video_duration(clip_path)
-        
+        n_frames = max(1, int(duration * fps))
+
         # 创建帧存储目录
         clip_name = os.path.splitext(os.path.basename(clip_path))[0]
         frames_output_dir = os.path.join(self.frames_dir, clip_name)
         os.makedirs(frames_output_dir, exist_ok=True)
 
-        logger.info(f"抽取帧: {clip_path}, 帧数={n_frames}")
+        logger.info(f"抽取帧: {clip_path}, fps={fps}, 时长={duration:.2f}s, 共 {n_frames} 帧")
 
         frame_paths = []
-        
-        # 计算抽取间隔
+
+        # 等间隔采样：将时长均分为 n_frames+1 段，取各段内侧时间点
         interval = duration / (n_frames + 1)
 
         for i in range(n_frames):
@@ -276,11 +306,13 @@ class VideoSplitter:
             frame_filename = f"frame_{i:03d}.jpg"
             frame_path = os.path.join(frames_output_dir, frame_filename)
 
-            # 使用 FFmpeg 抽取帧
+            # 使用 FFmpeg 抽取帧：-ss 放在 -i 前快速定位，
+            # 显式 -map 0:v:0 确保只映射视频流，避免「no stream」错误
             cmd = [
                 "ffmpeg",
-                "-i", clip_path,
                 "-ss", str(timestamp),
+                "-i", clip_path,
+                "-map", "0:v:0",
                 "-vframes", "1",
                 "-q:v", "2",  # 高质量
                 "-n",

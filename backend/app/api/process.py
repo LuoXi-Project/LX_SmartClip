@@ -131,6 +131,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         vlm_model       = await _read_config(db, "vlm_model", "gpt-4o")
         vlm_api_key     = await _read_config(db, "vlm_api_key", "")
         vector_dim      = int(await _read_config(db, "vector_dimension", "1536"))
+        frame_fps       = float(await _read_config(db, "frame_fps", "1"))
     finally:
         await db.close()
 
@@ -168,11 +169,11 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
     # STEP 2: 图帧提取
     if "extract_frames" not in skip_steps:
-        await reporter.send("extract_frames", "running", f"开始为 {len(clips_rows)} 个片段抽帧")
+        await reporter.send("extract_frames", "running", f"开始为 {len(clips_rows)} 个片段抽帧（{frame_fps} 帧/秒）")
         frame_errors = 0
         for clip in clips_rows:
             try:
-                await loop.run_in_executor(None, splitter.extract_frames, clip["clip_path"], 3)
+                await loop.run_in_executor(None, splitter.extract_frames, clip["clip_path"], frame_fps)
             except Exception as e:
                 logger.warning("片段 %s 抽帧失败: %s", clip["id"], e)
                 frame_errors += 1
@@ -246,7 +247,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                             )
                         else:
                             frame_paths = await loop.run_in_executor(
-                                None, splitter.extract_frames, clip_path, 3
+                                None, splitter.extract_frames, clip_path, frame_fps
                             )
                         if not frame_paths:
                             continue

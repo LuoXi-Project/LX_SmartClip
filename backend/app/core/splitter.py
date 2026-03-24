@@ -167,33 +167,35 @@ class VideoSplitter:
         logger.info(f"固定时长切分完成: {len(clips)} 个片段")
         return clips
 
-    def split_by_scene(self, video_path: str, threshold: float = 0.4) -> List[ClipInfo]:
+    def split_by_scene(self, video_path: str, threshold: float = 27.0) -> List[ClipInfo]:
         """
         使用 PySceneDetect 进行镜头识别切分
         
         Args:
             video_path: 视频文件路径
-            threshold: 场景检测阈值（0-1）
+            threshold: 场景检测阈值，ContentDetector 默认 27.0，值越小越敏感
             
         Returns:
             片段信息列表
         """
         try:
-            from scenedetect import detect, AdaptiveDetector, FrameTimecode
+            from scenedetect import open_video, SceneManager
+            from scenedetect.detectors import ContentDetector
         except ImportError:
             raise ImportError("请安装 scenedetect: pip install scenedetect[opencv]")
 
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
-        if not (0 <= threshold <= 1):
-            raise ValueError(f"阈值必须在 0-1 之间: {threshold}")
-
         logger.info(f"镜头识别切分: 视频={video_path}, 阈值={threshold}")
 
         # 检测场景
-        scenes = detect(video_path, AdaptiveDetector(threshold=threshold))
-        
+        video = open_video(video_path)
+        scene_manager = SceneManager()
+        scene_manager.add_detector(ContentDetector(threshold=float(threshold)))
+        scene_manager.detect_scenes(video, show_progress=True)
+        scenes = scene_manager.get_scene_list() or []
+
         if not scenes:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)

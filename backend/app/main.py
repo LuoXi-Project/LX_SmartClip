@@ -10,6 +10,7 @@ from app.api.vlm import router as vlm_router
 from app.api.embed import router as embed_router
 from app.api.process import router as process_router
 from app.api.match import router as match_router
+from app.api.tts import router as tts_router
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ app.include_router(vlm_router)
 app.include_router(embed_router)
 app.include_router(process_router)
 app.include_router(match_router)
+app.include_router(tts_router)
 
 
 @app.get("/health")

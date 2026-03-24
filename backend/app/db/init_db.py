@@ -70,6 +70,9 @@ DEFAULT_CONFIG = [
     ("llm_model", "gpt-4o-mini", "string", "llm model (精排)", None),
     ("match_top_k", "12", "number", "match top_k (初筛)", None),
     ("match_top_n", "5", "number", "match top_n (推荐)", None),
+    ("tts_voice", "zh-CN-XiaoxiaoNeural", "string", "TTS 语音角色", None),
+    ("tts_rate", "+0%", "string", "TTS 语速 (如 +0%/-20%)", None),
+    ("tts_volume", "+0%", "string", "TTS 音量 (如 +0%/+10%)", None),
 ]
 
 

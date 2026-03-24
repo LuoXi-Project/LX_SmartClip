@@ -19,29 +19,37 @@
 - [x] 前端处理管线页面（实时进度）
 - [x] 全局导航栏
 
-## ⏳ Phase 8 进行中（已完成核心功能）
+## ✅ Phase 8 完成
 
 - [x] RAG 初筛（Embedding + SQLiteVSS）
 - [x] LLM 精排
 - [x] 匹配接口 POST /api/match
 - [x] 前端文案匹配页面
 
-## ⏳ Phase 9-12 待开始
+## ✅ Phase 9 完成
 
-- [ ] TTS 配音（edge-tts）
+- [x] TTS 抽象层 backend/app/core/tts/base.py
+- [x] edge-tts 实现 backend/app/core/tts/edge_tts_impl.py
+- [x] TTS API（POST /api/tts/synthesize, GET /api/tts/voices, GET /api/tts/audio/{filename}）
+- [x] 前端 TTS 配音页面 frontend/app/tts/page.tsx
+- [x] 顶部导航新增 TTS 配音入口
+- [x] 默认配置 tts_voice / tts_rate / tts_volume
+
+## ⏳ Phase 10-12 待开始
+
 - [ ] 工程文件导出（ZIP）
 - [ ] 系统设置页面
 - [ ] 端到端集成测试
 
 ## 📊 项目进度
 
-**完成：** 9/12 Phase (75%)
+**完成：** 10/12 Phase (83%)
 
-**后端文件数：** 23 个
+**后端文件数：** 27 个
 
-**前端文件数：** 9 个
+**前端文件数：** 11 个
 
-**已实现接口：** 16 个
+**已实现接口：** 19 个
 
 ---
 

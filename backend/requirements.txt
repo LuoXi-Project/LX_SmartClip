@@ -8,3 +8,4 @@ scenedetect[opencv]>=0.6.1
 openai-whisper>=20231117
 openai>=1.0.0
 sqlite-vss>=0.1.2
+edge-tts>=6.1.9

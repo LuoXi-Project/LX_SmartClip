@@ -65,6 +65,12 @@ export const matchApi = {
   run: (payload: MatchRequest) => apiClient.post<unknown, MatchResponse>('/api/match', payload),
 }
 
+export const ttsApi = {
+  synthesize: (payload: TTSRequest) => apiClient.post<unknown, TTSResponse>('/api/tts/synthesize', payload),
+  listVoices: (locale?: string) => apiClient.get<unknown, VoiceInfo[]>(`/api/tts/voices${locale ? `?locale=${locale}` : ''}`),
+  audioUrl: (filename: string) => `${API_BASE_URL}/api/tts/audio/${filename}`,
+}
+
 export interface Video {
   id: string
   name: string
@@ -101,6 +107,29 @@ export interface MatchClip {
   vlm_description: string | null
   score: number
   reason: string
+}
+
+export interface TTSRequest {
+  text: string
+  voice?: string
+  rate?: string
+  volume?: string
+}
+
+export interface TTSResponse {
+  filename: string
+  url: string
+  voice: string
+  rate: string
+  volume: string
+  text_length: number
+}
+
+export interface VoiceInfo {
+  name: string
+  locale: string
+  gender: string
+  friendly_name: string
 }
 
 export interface MatchResponse {

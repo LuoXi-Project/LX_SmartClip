@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Film, Loader2, Search, Sparkles } from 'lucide-react'
-import apiClient, { type MatchClip, type MatchResponse, type Video } from '@/lib/api'
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Download, Film, Loader2, Search, Sparkles } from 'lucide-react'
+import apiClient, { exportApi, type MatchClip, type MatchResponse, type Video } from '@/lib/api'
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -76,6 +76,7 @@ export default function MatchPage() {
   const [result, setResult] = useState<MatchResponse | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [showAllCandidates, setShowAllCandidates] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     apiClient
@@ -125,6 +126,26 @@ export default function MatchPage() {
   }
 
   const displayList = showAllCandidates ? result?.candidates || [] : result?.recommended || []
+
+  const handleExport = async () => {
+    if (!result || exporting) return
+    setExporting(true)
+    try {
+      const clipIds = result.recommended.map((c) => c.clip_id)
+      const projectName = query.trim().slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
+      const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName })
+      const url = URL.createObjectURL(blob as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${projectName}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('导出失败，请重试。')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
@@ -233,14 +254,26 @@ export default function MatchPage() {
                 <span className="ml-2 normal-case font-normal text-slate-600">共 {displayList.length} 个</span>
               </h2>
 
-              {result.candidates.length > result.recommended.length && (
-                <button
-                  onClick={() => setShowAllCandidates((v) => !v)}
-                  className="text-xs text-slate-500 hover:text-slate-300"
-                >
-                  {showAllCandidates ? '只看推荐' : '查看全部候选'}
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {result.candidates.length > result.recommended.length && (
+                  <button
+                    onClick={() => setShowAllCandidates((v) => !v)}
+                    className="text-xs text-slate-500 hover:text-slate-300"
+                  >
+                    {showAllCandidates ? '只看推荐' : '查看全部候选'}
+                  </button>
+                )}
+                {result.recommended.length > 0 && (
+                  <button
+                    onClick={handleExport}
+                    disabled={exporting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-300 disabled:opacity-50 transition-colors"
+                  >
+                    {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                    {exporting ? '导出中...' : '导出工程包'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {displayList.length === 0 ? (

@@ -21,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/process" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">处理管线</Link>
             <Link href="/match" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">文案匹配</Link>
             <Link href="/tts" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">TTS 配音</Link>
+            <Link href="/settings" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">设置</Link>
           </div>
         </nav>
         <div className="pt-12">{children}</div>

@@ -65,6 +65,18 @@ export const matchApi = {
   run: (payload: MatchRequest) => apiClient.post<unknown, MatchResponse>('/api/match', payload),
 }
 
+export const exportApi = {
+  downloadProject: (payload: ExportRequest) =>
+    apiClient.post('/api/export/project', payload, { responseType: 'blob' }),
+}
+
+export interface ExportRequest {
+  clip_ids: string[]
+  project_name?: string
+  include_audio?: boolean
+  tts_filenames?: string[]
+}
+
 export const ttsApi = {
   synthesize: (payload: TTSRequest) => apiClient.post<unknown, TTSResponse>('/api/tts/synthesize', payload),
   listVoices: (locale?: string) => apiClient.get<unknown, VoiceInfo[]>(`/api/tts/voices${locale ? `?locale=${locale}` : ''}`),

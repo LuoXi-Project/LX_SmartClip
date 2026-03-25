@@ -41,7 +41,7 @@ class VideoSplitter:
         os.makedirs(self.audio_dir, exist_ok=True)
         os.makedirs(self.frames_dir, exist_ok=True)
 
-    def extract_audio(self, video_path: str) -> str:
+    def extract_audio(self, video_path: str, overwrite: bool = False) -> str:
         """
         使用 FFmpeg 提取视频音频为 WAV 格式
         
@@ -58,8 +58,8 @@ class VideoSplitter:
         video_name = os.path.splitext(os.path.basename(video_path))[0]
         audio_path = os.path.join(self.audio_dir, f"{video_name}.wav")
 
-        # 如果音频已存在，直接返回
-        if os.path.exists(audio_path):
+        # 如果音频已存在且不要求覆盖，直接返回
+        if os.path.exists(audio_path) and not overwrite:
             logger.info(f"音频文件已存在: {audio_path}")
             return audio_path
 
@@ -68,7 +68,7 @@ class VideoSplitter:
             "ffmpeg",
             "-i", video_path,
             "-q:a", "9",
-            "-n",  # 不覆盖已存在的文件
+            "-y" if overwrite else "-n",  # 覆盖或保留已存在文件
             audio_path,
         ]
 
@@ -152,7 +152,7 @@ class VideoSplitter:
                 "-ss", str(start_time),
                 "-to", str(end_time),
                 "-c", "copy",  # 不重新编码，直接复制
-                "-n",  # 不覆盖已存在的文件
+                "-y",  # 覆盖已存在的文件
                 clip_path,
             ]
 
@@ -247,7 +247,7 @@ class VideoSplitter:
                 "-ss", str(start_time),
                 "-to", str(end_time),
                 "-c", "copy",
-                "-n",
+                "-y",
                 clip_path,
             ]
 
@@ -338,7 +338,7 @@ class VideoSplitter:
                 "-map", "0:v:0",
                 "-vframes", "1",
                 "-q:v", "2",  # 高质量
-                "-n",
+                "-y",
                 frame_path,
             ]
 

@@ -196,7 +196,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 clip_path = clip["clip_path"]
                 try:
                     audio_path = await loop.run_in_executor(
-                        None, splitter.extract_audio, clip_path
+                        None, splitter.extract_audio, clip_path, True
                     )
                     text = await loop.run_in_executor(
                         None, asr_instance.transcribe, audio_path

@@ -43,7 +43,7 @@ Phase 0-8 已完成，Phase 9（TTS 配音）准备开始。
   - `GET /api/vlm/info`
 
 ### Phase 6：向量化与入库（✅ 完成）
-- `app/core/vector_db/base.py` + `app/core/vector_db/sqlite_vss.py`
+- `app/core/vector_db/base.py` + `app/core/vector_db/faiss_db.py`
 - `app/core/embedder.py`
 - `app/api/embed.py`：
   - `POST /api/videos/{id}/process-embed`
@@ -55,7 +55,7 @@ Phase 0-8 已完成，Phase 9（TTS 配音）准备开始。
 - 前端处理页面：`/process`
 
 ### Phase 8：三级匹配引擎（✅ 完成）
-- `app/core/rag.py`：RAG 初筛（Embedding + SQLiteVSS）
+- `app/core/rag.py`：RAG 初筛（Embedding + FAISS）
 - `app/core/llm/base.py` + `app/core/llm/openai_llm.py`：LLM 精排
 - `app/core/matcher.py`：初筛 + 精排 + 推荐
 - `app/api/match.py`：

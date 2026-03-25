@@ -26,7 +26,7 @@ const GROUPS = [
   },
   {
     title: '向量检索',
-    keys: ['vector_dimension', 'top_k', 'match_top_k', 'match_top_n'],
+    keys: ['vector_dimension', 'top_k', 'match_top_k', 'match_top_n', 'embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key'],
   },
   {
     title: 'TTS 配音',

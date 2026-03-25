@@ -14,14 +14,14 @@
 - [x] 自动抽帧
 - [x] ASR 语音识别（Whisper）
 - [x] VLM 视觉描述（OpenAI Vision）
-- [x] 向量化与入库（SQLite-VSS）
+- [x] 向量化与入库（FAISS）
 - [x] 全处理管线整合（HTTP + WebSocket）
 - [x] 前端处理管线页面（实时进度）
 - [x] 全局导航栏
 
 ## ✅ Phase 8 完成
 
-- [x] RAG 初筛（Embedding + SQLiteVSS）
+- [x] RAG 初筛（Embedding + FAISS）
 - [x] LLM 精排
 - [x] 匹配接口 POST /api/match
 - [x] 前端文案匹配页面

@@ -28,7 +28,7 @@ backend/
 ```
 
 ### requirements.txt
-核心依赖版本声明。当前已安装：`fastapi`、`uvicorn[standard]`、`pydantic>=2.0`、`python-multipart`、`aiosqlite`。后续 Phase 会追加 `ffmpeg-python`、`scenedetect`、`openai`、`edge-tts`、`llama-index`、`sqlite-vss` 等。
+核心依赖版本声明。当前已安装：`fastapi`、`uvicorn[standard]`、`pydantic>=2.0`、`python-multipart`、`aiosqlite`。后续 Phase 会追加 `ffmpeg-python`、`scenedetect`、`openai`、`edge-tts`、`llama-index`、`faiss-cpu` 等。
 
 ---
 
@@ -158,7 +158,7 @@ core/
 | `tts/edge_tts_impl.py` | 9 | edge-tts 实现 |
 | `llm/base.py` | 8 | LLM 抽象接口 `ILLM` |
 | `llm/openai_llm.py` | 8 | OpenAI 兼容 LLM 实现（用于精排） |
-| `vector_db.py` | 6 | 向量库抽象 `IVectorDB` + SQLite-VSS 实现 |
+| `vector_db.py` | 6 | 向量库抽象 `IVectorDB` + FAISS 实现 |
 | `embedder.py` | 6 | Embedding 生成（调用 OpenAI Embedding API） |
 | `rag.py` | 8 | RAG 初筛（LlamaIndex + IVectorDB） |
 | `matcher.py` | 8 | 三级匹配引擎（RAG初筛 → LLM精排 → 返回候选） |

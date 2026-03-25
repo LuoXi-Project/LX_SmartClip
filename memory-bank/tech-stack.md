@@ -97,11 +97,11 @@ class ILLM:
 | 技术 | 用途 |
 |------|------|
 | LlamaIndex | RAG 框架，负责向量检索与上下文组装 |
-| sqlite-vss | SQLite 向量扩展，支持任意维度向量存储与 ANN 检索 |
+| faiss-cpu | 向量索引与相似度检索（本地文件持久化） |
 
 **向量维度动态配置：**
 - 配置文件中指定 `vector_dimension`（默认 1536，支持 768 / 1024 / 1536）
-- SQLite-VSS 建表时动态读取维度，切换 Embedding 模型无需重建表结构
+- FAISS 索引在初始化时读取维度，支持 768 / 1024 / 1536
 
 **抽象接口：**
 ```python
@@ -116,8 +116,8 @@ class IVectorDB:
 
 | 技术 | 用途 |
 |------|------|
-| SQLite | 元数据 + 向量一体化存储，单文件，零依赖 |
-| sqlite-vss | SQLite 向量检索扩展 |
+| SQLite | 元数据存储（videos / clips / config） |
+| faiss-cpu | 向量索引与相似度检索（本地文件持久化） |
 
 **数据库表结构：**
 
@@ -146,11 +146,6 @@ CREATE TABLE clips (
     tags TEXT
 );
 
--- 向量表（动态维度）
-CREATE VIRTUAL TABLE clip_embeddings USING vss0(
-    embedding(1536)   -- 维度从 config 动态读取
-);
-
 -- 全局配置表
 CREATE TABLE config (
     key TEXT PRIMARY KEY,
@@ -159,6 +154,14 @@ CREATE TABLE config (
     label TEXT,
     options TEXT
 );
+```
+
+**FAISS 向量索引文件：**
+
+```text
+backend/data/clip_embeddings.faiss
+backend/data/clip_embeddings.json
+# 维度由 config.vector_dimension 控制
 ```
 
 ### 2.9 配置管理
@@ -207,7 +210,7 @@ CREATE TABLE config (
 
 | 阶段 | 技术 | 说明 |
 |------|------|------|
-| 第一级：RAG 初筛 | LlamaIndex + sqlite-vss | 向量检索 TOP12 候选片段 |
+| 第一级：RAG 初筛 | LlamaIndex + faiss-cpu | 向量检索 TOP12 候选片段 |
 | 第二级：LLM 精排 | ILLM 抽象层 | 大模型重排序，输出 TOP3~5 最优 |
 | 第三级：人工自选 | 前端交互 | 展示所有候选，用户手动替换/增删/调序 |
 
@@ -232,7 +235,7 @@ app/
 │   ├── llm/
 │   │   ├── base.py        # ILLM 接口
 │   │   └── openai_llm.py  # OpenAI 兼容实现
-│   ├── vector_db.py       # IVectorDB 抽象 + SQLite-VSS 实现
+│   ├── vector_db.py       # IVectorDB 抽象 + FAISS 实现
 │   ├── rag.py             # LlamaIndex RAG 封装
 │   └── matcher.py         # 三级匹配引擎
 ├── api/
@@ -276,7 +279,7 @@ openai
 whisper
 edge-tts
 llama-index
-sqlite-vss
+faiss-cpu
 aiosqlite
 ```
 
@@ -309,7 +312,7 @@ aiosqlite
 | VLM | GPT-4o (OpenAI) | Qwen-VL / MiniCPM-V / 本地 VLM |
 | TTS | edge-tts | OpenAI TTS / 火山 TTS |
 | LLM | GPT-4o (OpenAI) | 通义千问 / 任意 OpenAI 兼容 LLM |
-| 向量库 | SQLite-VSS | FAISS / Chroma / Milvus |
+| 向量库 | FAISS | FAISS / Chroma / Milvus |
 | Embedding | OpenAI text-embedding | 本地 Sentence-Transformers |
 
 > 所有替换只需修改 `config.json` 或在设置页操作，无需改动业务代码。

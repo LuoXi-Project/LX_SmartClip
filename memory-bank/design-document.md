@@ -26,7 +26,7 @@
 - VLM：**OpenAI 标准协议抽象层** → 可换 GPT-4V / Qwen-VL / MiniCPM-V 等
 - TTS：**抽象层** → edge-tts / 后续换 OpenAI TTS / 火山 TTS
 - RAG：**LlamaIndex**（全抽象，可换向量库）
-- 向量存储：**SQLite + sqlite-vss**（轻量、可移植、支持任意维度）
+- 向量存储：**SQLite + faiss-cpu**（轻量、可移植、支持任意维度）
 - 数据库：**SQLite（元数据+向量一体）**
 - 配置：**动态配置文件 + 前端配置页修改**
 
@@ -106,14 +106,15 @@ ILLM
 ## 设计
 - 向量维度**不写死代码**
 - 配置文件：`vector_dimension: 1536 / 1024 / 768`
-- SQLite-VSS 支持**任意维度**
-- 切换模型/向量维度 → 只需改配置，不用重建表
+- FAISS 支持**任意维度**
+- 切换模型/向量维度后需重建 FAISS 索引文件
 
-## 表结构（最终版）
-```sql
-CREATE VIRTUAL TABLE clip_embeddings USING vss0(
-  embedding(vector_dimension)  -- 动态从配置读取
-);
+## 向量索引（最终版）
+```text
+backend/data/clip_embeddings.faiss
+backend/data/clip_embeddings.json
+# 向量维度由 config.vector_dimension 控制
+
 ```
 
 ---
@@ -176,9 +177,11 @@ id, video_id, clip_path, start_time, end_time, duration,
 asr_text, vlm_description, tags
 ```
 
-## 3. clip_embeddings（向量）
+## 3. 向量索引（FAISS）
 ```
-rowid, embedding(动态维度)
+backend/data/clip_embeddings.faiss
+backend/data/clip_embeddings.json
+# 向量维度由 config.vector_dimension 控制
 ```
 
 ## 4. config（全局配置）
@@ -229,6 +232,6 @@ app/
 - 全模块化、抽象化
 - 模型/服务可插拔拓展
 - 向量维度动态配置
-- SQLite 单文件存储+向量一体
+- SQLite 单文件存储（元数据）+ FAISS 索引文件（向量检索）
 - 拷贝即移植，无环境依赖
 - 一阶段闭环，二阶段可直接加自动合成、字幕、剪辑

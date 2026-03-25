@@ -300,7 +300,7 @@ FileNotFoundError: 图像文件不存在: /path/to/image.jpg
 
 **Phase 6：向量化与入库**
 - 创建向量数据库抽象层
-- 集成 SQLite-VSS
+- 集成 FAISS
 - Embedding 生成接口
 
 **预计工作量：** 2-3 天

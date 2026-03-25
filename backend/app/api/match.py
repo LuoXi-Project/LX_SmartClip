@@ -56,33 +56,43 @@ async def match_clips(req: MatchRequest):
         raise HTTPException(status_code=500, detail=f"数据库连接失败: {e}")
 
     try:
-        embed_base_url = _read_cfg(conn, "vlm_base_url", "https://api.openai.com/v1")
-        api_key        = _read_cfg(conn, "vlm_api_key", "")
-        vector_dim     = int(_read_cfg(conn, "vector_dimension", "1536"))
+        embed_base_url = _read_cfg(conn, "embedding_base_url", "https://api.openai.com/v1")
+        embed_api_key  = _read_cfg(conn, "embedding_api_key", "")
+        embed_model    = _read_cfg(conn, "embedding_model", "text-embedding-3-small")
+
+        llm_base_url   = _read_cfg(conn, "vlm_base_url", "https://api.openai.com/v1")
+        llm_api_key    = _read_cfg(conn, "vlm_api_key", "")
         llm_model      = _read_cfg(conn, "llm_model", "gpt-4o-mini")
+
+        vector_dim     = int(_read_cfg(conn, "vector_dimension", "1536"))
         top_k_cfg      = int(_read_cfg(conn, "match_top_k", "12"))
         top_n_cfg      = int(_read_cfg(conn, "match_top_n", "5"))
 
         top_k = req.top_k if req.top_k is not None else top_k_cfg
         top_n = req.top_n if req.top_n is not None else top_n_cfg
 
-        if not api_key:
+        if not embed_api_key:
             raise HTTPException(
                 status_code=400,
-                detail="API Key 未配置，请在设置页面填写 vlm_api_key"
+                detail="Embedding API Key 未配置，请在设置页面填写 embedding_api_key"
+            )
+        if not llm_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="LLM API Key 未配置，请在设置页面填写 vlm_api_key"
             )
 
         # 初始化 Embedder
         from app.core.embedder import Embedder
-        embedder = Embedder(base_url=embed_base_url, api_key=api_key)
+        embedder = Embedder(base_url=embed_base_url, api_key=embed_api_key, model=embed_model)
 
         # 初始化向量数据库
-        from app.core.vector_db.sqlite_vss import SQLiteVSSDB
-        vector_db = SQLiteVSSDB(db_path=DB_PATH, vector_dimension=vector_dim)
+        from app.core.vector_db.faiss_db import FaissVectorDB
+        vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
 
         # 初始化 LLM（精排）
         from app.core.llm.openai_llm import OpenAILLM
-        llm = OpenAILLM(base_url=embed_base_url, model=llm_model, api_key=api_key)
+        llm = OpenAILLM(base_url=llm_base_url, model=llm_model, api_key=llm_api_key)
 
         # 执行匹配
         from app.core.matcher import Matcher

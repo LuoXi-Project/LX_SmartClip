@@ -171,11 +171,11 @@
 
 ## Phase 6：向量化与入库
 
-### 6.1 SQLite-VSS 向量表初始化
+### 6.1 FAISS 向量表初始化
 
 **任务：**
-- 安装 `sqlite-vss`
-- 创建 `app/core/vector_db.py`
+- 安装 `faiss-cpu`
+- 创建 `app/core/vector_db/faiss_db.py`
 
 **⏳ 待完成**
 

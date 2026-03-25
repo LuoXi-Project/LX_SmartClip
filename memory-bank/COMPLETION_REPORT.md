@@ -309,7 +309,7 @@ npm run dev
 - **预计工作量：** 3-4 天
 
 ### Phase 6-8：匹配引擎（优先级 🟡 中）
-- SQLite-VSS 向量存储
+- FAISS 向量存储
 - LlamaIndex RAG
 - OpenAI LLM 精排
 - 三级匹配接口

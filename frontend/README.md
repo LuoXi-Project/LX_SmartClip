@@ -53,7 +53,7 @@ npm run dev
 
 ### 后端
 - FastAPI
-- SQLite + sqlite-vss（向量存储）
+- SQLite + FAISS（向量存储）
 - FFmpeg + PySceneDetect（视频处理）
 - Whisper（ASR）
 - OpenAI API（VLM + LLM）

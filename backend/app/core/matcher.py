@@ -8,7 +8,7 @@ class Matcher:
     """
     三级匹配引擎
 
-    Level 1 — 向量初筛：用 Embedder 将文案向量化，SQLiteVSS 检索 top_k 候选
+    Level 1 — 向量初筛：用 Embedder 将文案向量化，FAISS 检索 top_k 候选
     Level 2 — LLM 精排：将候选片段的 asr_text + vlm_description 送给 LLM 评分排序
     Level 3 — 返回结果：输出 top_n 推荐 + 完整候选列表
     """

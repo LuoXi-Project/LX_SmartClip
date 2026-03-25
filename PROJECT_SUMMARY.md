@@ -50,7 +50,7 @@
 ⏳ 视频切分（FFmpeg + PySceneDetect）
 ⏳ ASR 语音识别（Whisper）
 ⏳ VLM 视觉描述（OpenAI）
-⏳ 向量化存储（SQLite-VSS）
+⏳ 向量化存储（FAISS）
 ⏳ 三级匹配引擎（RAG + LLM）
 ⏳ TTS 配音（edge-tts）
 ⏳ 工程导出（ZIP）
@@ -95,7 +95,7 @@ npm run dev
 - ASR：Whisper → OpenAI API → 讯飞
 - VLM：OpenAI → 通义 → 本地模型
 - TTS：edge-tts → OpenAI → 火山
-- 向量库：SQLite-VSS → FAISS → Chroma
+- 向量库：FAISS → Chroma
 
 ### 3. 动态配置系统
 - 所有参数存储在数据库
@@ -104,8 +104,8 @@ npm run dev
 - 支持导入导出
 
 ### 4. 轻量化方案
-- SQLite 单文件存储
-- 向量维度动态配置
+- SQLite 单文件存储（元数据）+ FAISS 向量索引（检索）
+- 向量维度动态配置（FAISS）
 - 无外部依赖（除 FFmpeg）
 - 可移植性强
 
@@ -168,7 +168,7 @@ QUICKSTART.md                       # 快速启动指南
 - 批量处理接口
 
 ### Phase 6-8：匹配引擎（优先级 🟡 中）
-- SQLite-VSS 向量存储
+- FAISS 向量存储
 - LlamaIndex RAG
 - OpenAI LLM 精排
 - 三级匹配接口

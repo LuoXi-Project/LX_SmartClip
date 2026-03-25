@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from app.db.database import get_db_conn, DB_PATH
 from app.core.splitter import VideoSplitter
 from app.core.embedder import Embedder
-from app.core.vector_db.sqlite_vss import SQLiteVSSDB
+from app.core.vector_db.faiss_db import FaissVectorDB
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,9 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         vlm_api_key     = await _read_config(db, "vlm_api_key", "")
         vector_dim      = int(await _read_config(db, "vector_dimension", "1536"))
         frame_fps       = float(await _read_config(db, "frame_fps", "1"))
+        embedding_base_url = await _read_config(db, "embedding_base_url", "https://api.openai.com/v1")
+        embedding_api_key  = await _read_config(db, "embedding_api_key", "")
+        embedding_model    = await _read_config(db, "embedding_model", "text-embedding-3-small")
     finally:
         await db.close()
 
@@ -275,13 +278,13 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
     # STEP 5: Embedding 入库
     if "embed" not in skip_steps:
-        if not vlm_api_key:
-            await reporter.send("embed", "skip", "API Key 未配置，跳过向量入库")
+        if not embedding_api_key:
+            await reporter.send("embed", "skip", "Embedding API Key 未配置，跳过向量入库")
         else:
             await reporter.send("embed", "running", "开始生成 Embedding 并入库...")
             try:
-                embedder  = Embedder(base_url=vlm_base_url, api_key=vlm_api_key)
-                vector_db = SQLiteVSSDB(db_path=DB_PATH, vector_dimension=vector_dim)
+                embedder  = Embedder(base_url=embedding_base_url, api_key=embedding_api_key, model=embedding_model)
+                vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
                 clips_rows = await _get_clips(video_id)
                 processed_emb = 0
                 for i, clip in enumerate(clips_rows):
@@ -302,7 +305,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                         logger.warning("片段 %s Embedding 失败: %s", clip_id, e)
                 await reporter.send(
                     "embed", "done",
-                    f"向量入库完成，成功 {processed_emb}/{len(clips_rows)} 个",
+                    f"向量入库完成，成功 {processed_emb}/{len(clips_rows)} 个（model={embedding_model})",
                     {"processed": processed_emb, "total": len(clips_rows)},
                 )
             except Exception as e:

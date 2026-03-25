@@ -59,6 +59,16 @@ DEFAULT_CONFIG = [
     ),
     ("vlm_model", "gpt-4o", "string", "vlm model", None),
     ("vlm_api_key", "", "string", "vlm api key", None),
+    ("embedding_provider", "openai", "select", "embedding provider", '["openai"]'),
+    (
+        "embedding_base_url",
+        "https://api.openai.com/v1",
+        "string",
+        "embedding base url",
+        None,
+    ),
+    ("embedding_model", "text-embedding-3-small", "string", "embedding model", None),
+    ("embedding_api_key", "", "string", "embedding api key", None),
     ("tts_provider", "edge-tts", "select", "tts provider", '["edge-tts"]'),
     (
         "asr_model",

@@ -437,15 +437,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 )}
-                {config.vlm_provider && (
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400">{config.vlm_provider.label}</label>
-                    <div className="flex gap-2">
-                      <div className="flex-1"><ConfigField cfgKey="vlm_provider" item={config.vlm_provider} value={v('vlm_provider')} onChange={(val) => set('vlm_provider', val)} /></div>
-                      <SaveBtn cfgKey="vlm_provider" dirty={isDirty('vlm_provider')} saving={!!saving['vlm_provider']} saved={!!saved['vlm_provider']} onSave={() => handleSave('vlm_provider')} />
-                    </div>
-                  </div>
-                )}
+
               </div>
             </section>
 
@@ -521,15 +513,7 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
-                {config.embedding_provider && (
-                  <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                    <label className="text-xs text-slate-400">{config.embedding_provider.label}</label>
-                    <div className="flex gap-2">
-                      <div className="flex-1"><ConfigField cfgKey="embedding_provider" item={config.embedding_provider} value={v('embedding_provider')} onChange={(val) => set('embedding_provider', val)} /></div>
-                      <SaveBtn cfgKey="embedding_provider" dirty={isDirty('embedding_provider')} saving={!!saving['embedding_provider']} saved={!!saved['embedding_provider']} onSave={() => handleSave('embedding_provider')} />
-                    </div>
-                  </div>
-                )}
+
               </div>
             </section>
 

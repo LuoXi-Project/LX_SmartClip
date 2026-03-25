@@ -1,5 +1,7 @@
 import uuid
+import os
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from app.db.database import get_db_conn
 from app.core.splitter import VideoSplitter
 import logging
@@ -40,7 +42,7 @@ async def extract_audio(video_id: str):
 async def split_video(video_id: str):
     """
     切分视频
-    
+
     支持两种模式：
     - scene: 镜头识别切分
     - fixed: 固定时长切分
@@ -129,7 +131,7 @@ async def split_video(video_id: str):
 async def extract_frames(video_id: str, n_frames: int = 3):
     """
     为视频的所有片段抽取帧
-    
+
     Args:
         video_id: 视频 ID
         n_frames: 每个片段抽取的帧数
@@ -211,3 +213,37 @@ async def get_clips(video_id: str):
         raise HTTPException(status_code=500, detail=f"获取片段失败: {str(e)}")
     finally:
         await db.close()
+
+
+@router.get("/clips/{clip_id}/stream")
+async def stream_clip(clip_id: str):
+    """流式预览单个视频片段"""
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT clip_path FROM clips WHERE id = ?",
+            (clip_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"片段 '{clip_id}' 不存在")
+        clip_path = row["clip_path"]
+    finally:
+        await db.close()
+
+    if not clip_path or not os.path.exists(clip_path):
+        raise HTTPException(status_code=404, detail="片段文件不存在")
+
+    ext = os.path.splitext(clip_path)[1].lower()
+    _mime_map = {
+        ".mp4": "video/mp4",
+        ".m4v": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+        ".mpeg": "video/mpeg",
+        ".mpg": "video/mpeg",
+    }
+    media_type = _mime_map.get(ext, "video/mp4")
+    return FileResponse(clip_path, media_type=media_type, filename=os.path.basename(clip_path))

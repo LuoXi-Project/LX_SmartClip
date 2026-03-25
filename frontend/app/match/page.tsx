@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Download, Film, Loader2, Search, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Download, Film, Loader2, Play, Search, Sparkles, X } from 'lucide-react'
 import apiClient, { exportApi, type MatchClip, type MatchResponse, type Video } from '@/lib/api'
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -16,17 +18,33 @@ function ResultCard({
   index,
   expanded,
   onToggle,
+  selected,
+  onSelect,
+  onPreview,
 }: {
   clip: MatchClip
   index: number
   expanded: boolean
   onToggle: () => void
+  selected: boolean
+  onSelect: (checked: boolean) => void
+  onPreview: () => void
 }) {
   const name = clip.clip_path.split(/[\\/]/).pop() ?? clip.clip_path
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
       <div className="px-4 py-3 flex items-start gap-3">
+        <div className="mt-0.5 shrink-0">
+          <input
+            type="checkbox"
+            checked={selected}
+            aria-label={`选择片段 ${index + 1}`}
+            onChange={(e) => onSelect(e.target.checked)}
+            className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
+          />
+        </div>
+
         <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs font-bold flex items-center justify-center shrink-0">
           {index + 1}
         </div>
@@ -39,9 +57,17 @@ function ResultCard({
           {clip.reason && <p className="text-xs text-slate-400 mt-2 italic">{clip.reason}</p>}
         </div>
 
-        <button onClick={onToggle} className="text-slate-500 hover:text-slate-300 transition-colors">
-          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onPreview}
+            className="text-xs px-2 py-1 rounded-md border border-slate-700 text-slate-300 hover:border-slate-500 transition-colors flex items-center gap-1"
+          >
+            <Play className="w-3 h-3" />预览
+          </button>
+          <button onClick={onToggle} className="text-slate-500 hover:text-slate-300 transition-colors">
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
 
       {expanded && (
@@ -77,6 +103,9 @@ export default function MatchPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [showAllCandidates, setShowAllCandidates] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
+  const [previewClip, setPreviewClip] = useState<MatchClip | null>(null)
+  const [previewError, setPreviewError] = useState(false)
 
   useEffect(() => {
     apiClient
@@ -108,6 +137,9 @@ export default function MatchPage() {
     setResult(null)
     setExpandedIds(new Set())
     setShowAllCandidates(false)
+    setSelectedClipIds(new Set())
+    setPreviewClip(null)
+    setPreviewError(false)
 
     try {
       const data = await apiClient.post<unknown, MatchResponse>('/api/match', {
@@ -117,6 +149,7 @@ export default function MatchPage() {
         video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : null,
       })
       setResult(data)
+      setSelectedClipIds(new Set())
     } catch (e: unknown) {
       const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setError(detail || '匹配失败，请检查服务配置。')
@@ -126,12 +159,43 @@ export default function MatchPage() {
   }
 
   const displayList = showAllCandidates ? result?.candidates || [] : result?.recommended || []
+  const exportCount = selectedClipIds.size
+
+  const toggleClipSelection = (clipId: string, checked: boolean) => {
+    setSelectedClipIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(clipId)
+      else next.delete(clipId)
+      return next
+    })
+  }
+
+  const toggleSelectAllInView = (checked: boolean) => {
+    setSelectedClipIds((prev) => {
+      const next = new Set(prev)
+      for (const clip of displayList) {
+        if (checked) next.add(clip.clip_id)
+        else next.delete(clip.clip_id)
+      }
+      return next
+    })
+  }
+
+  const openPreview = (clip: MatchClip) => {
+    setPreviewError(false)
+    setPreviewClip(clip)
+  }
+
+  const closePreview = () => {
+    setPreviewClip(null)
+    setPreviewError(false)
+  }
 
   const handleExport = async () => {
-    if (!result || exporting) return
+    if (!result || exporting || selectedClipIds.size === 0) return
     setExporting(true)
     try {
-      const clipIds = result.recommended.map((c) => c.clip_id)
+      const clipIds = Array.from(selectedClipIds)
       const projectName = query.trim().slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
       const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName })
       const url = URL.createObjectURL(blob as Blob)
@@ -255,6 +319,18 @@ export default function MatchPage() {
               </h2>
 
               <div className="flex items-center gap-3">
+                {displayList.length > 0 && (
+                  <label className="text-xs text-slate-400 flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={displayList.every((c) => selectedClipIds.has(c.clip_id))}
+                      aria-label="当前列表全选"
+                      onChange={(e) => toggleSelectAllInView(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
+                    />
+                    当前列表全选
+                  </label>
+                )}
                 {result.candidates.length > result.recommended.length && (
                   <button
                     onClick={() => setShowAllCandidates((v) => !v)}
@@ -266,11 +342,11 @@ export default function MatchPage() {
                 {result.recommended.length > 0 && (
                   <button
                     onClick={handleExport}
-                    disabled={exporting}
+                    disabled={exporting || exportCount === 0}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-300 disabled:opacity-50 transition-colors"
                   >
                     {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                    {exporting ? '导出中...' : '导出工程包'}
+                    {exporting ? '导出中...' : `导出工程包（已选 ${exportCount}）`}
                   </button>
                 )}
               </div>
@@ -289,6 +365,9 @@ export default function MatchPage() {
                     index={i}
                     expanded={expandedIds.has(clip.clip_id)}
                     onToggle={() => toggleExpanded(clip.clip_id)}
+                    selected={selectedClipIds.has(clip.clip_id)}
+                    onSelect={(checked) => toggleClipSelection(clip.clip_id, checked)}
+                    onPreview={() => openPreview(clip)}
                   />
                 ))}
               </div>
@@ -296,6 +375,52 @@ export default function MatchPage() {
           </section>
         )}
       </div>
+
+      {previewClip && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={closePreview}
+        >
+          <div
+            className="relative w-full max-w-4xl mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-slate-100 font-semibold truncate max-w-[85%]">
+                {previewClip.clip_path.split(/[\\/]/).pop() ?? previewClip.clip_path}
+                <span className="ml-2 text-xs text-slate-400 font-normal">
+                  {formatTime(previewClip.start_time)} - {formatTime(previewClip.end_time)}
+                </span>
+              </h3>
+              <button
+                onClick={closePreview}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="rounded-xl overflow-hidden bg-black shadow-2xl ring-1 ring-slate-700 min-h-[120px] flex items-center justify-center">
+              {previewError ? (
+                <p className="text-slate-400 text-sm text-center px-8 py-10">
+                  该片段格式浏览器不支持直接预览。
+                </p>
+              ) : (
+                <video
+                  key={previewClip.clip_id}
+                  src={`${API_BASE_URL}/api/videos/clips/${previewClip.clip_id}/stream`}
+                  controls
+                  autoPlay
+                  className="w-full max-h-[70vh] object-contain"
+                  onError={() => setPreviewError(true)}
+                >
+                  <track kind="captions" srcLang="zh" label="中文字幕" />
+                </video>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

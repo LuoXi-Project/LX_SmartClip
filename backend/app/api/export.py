@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import zipfile
+from urllib.parse import quote
 from typing import List, Optional
 
 import aiosqlite
@@ -105,8 +106,13 @@ async def export_project(req: ExportRequest):
 
     buf.seek(0)
     zip_name = f"{req.project_name}.zip"
+    encoded_zip_name = quote(zip_name)
+    content_disposition = (
+        f"attachment; filename=\"smartclip_project.zip\"; "
+        f"filename*=UTF-8''{encoded_zip_name}"
+    )
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+        headers={"Content-Disposition": content_disposition},
     )

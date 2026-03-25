@@ -63,7 +63,13 @@ async def split_video(video_id: str):
             "SELECT value FROM config WHERE key = ?", ("scene_threshold",)
         )
         threshold_row = await cursor.fetchone()
-        scene_threshold = float(threshold_row["value"]) if threshold_row else 0.4
+        scene_threshold = float(threshold_row["value"]) if threshold_row else 30.0
+
+        cursor = await db.execute(
+            "SELECT value FROM config WHERE key = ?", ("scene_min_scene_len",)
+        )
+        min_scene_len_row = await cursor.fetchone()
+        scene_min_scene_len = int(min_scene_len_row["value"]) if min_scene_len_row else 30
 
         cursor = await db.execute(
             "SELECT value FROM config WHERE key = ?", ("fixed_duration",)
@@ -73,7 +79,7 @@ async def split_video(video_id: str):
 
         # 执行切分
         if split_mode == "scene":
-            clips = splitter.split_by_scene(video_path, scene_threshold)
+            clips = splitter.split_by_scene(video_path, scene_threshold, scene_min_scene_len)
         elif split_mode == "fixed":
             clips = splitter.split_by_fixed(video_path, fixed_duration)
         else:

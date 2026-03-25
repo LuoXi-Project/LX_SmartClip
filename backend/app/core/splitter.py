@@ -167,13 +167,19 @@ class VideoSplitter:
         logger.info(f"固定时长切分完成: {len(clips)} 个片段")
         return clips
 
-    def split_by_scene(self, video_path: str, threshold: float = 27.0) -> List[ClipInfo]:
+    def split_by_scene(
+        self,
+        video_path: str,
+        threshold: float = 30.0,
+        min_scene_len: int = 30,
+    ) -> List[ClipInfo]:
         """
         使用 PySceneDetect 进行镜头识别切分
         
         Args:
             video_path: 视频文件路径
-            threshold: 场景检测阈值，ContentDetector 默认 27.0，值越小越敏感
+            threshold: 场景检测阈值（推荐 27~35，值越小越敏感）
+            min_scene_len: 最小场景长度（帧数），用于抑制过碎切分
             
         Returns:
             片段信息列表
@@ -187,12 +193,29 @@ class VideoSplitter:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
-        logger.info(f"镜头识别切分: 视频={video_path}, 阈值={threshold}")
+        # 兼容旧配置：若传入 0~1 的阈值（如 0.4），按新版参数回退到推荐值
+        threshold_value = float(threshold)
+        if 0.0 < threshold_value <= 1.0:
+            logger.warning(
+                f"检测到旧阈值范围 threshold={threshold_value}，自动使用推荐值 30.0 避免过碎切分"
+            )
+            threshold_value = 30.0
+
+        min_scene_len_value = max(1, int(min_scene_len))
+
+        logger.info(
+            f"镜头识别切分: 视频={video_path}, 阈值={threshold_value}, min_scene_len={min_scene_len_value}"
+        )
 
         # 检测场景
         video = open_video(video_path)
         scene_manager = SceneManager()
-        scene_manager.add_detector(ContentDetector(threshold=float(threshold)))
+        scene_manager.add_detector(
+            ContentDetector(
+                threshold=threshold_value,
+                min_scene_len=min_scene_len_value,
+            )
+        )
         scene_manager.detect_scenes(video, show_progress=True)
         scenes = scene_manager.get_scene_list() or []
 

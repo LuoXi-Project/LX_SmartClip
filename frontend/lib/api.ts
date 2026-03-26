@@ -68,6 +68,8 @@ export const matchApi = {
 export const exportApi = {
   downloadProject: (payload: ExportRequest) =>
     apiClient.post('/api/export/project', payload, { responseType: 'blob' }),
+  downloadMerged: (payload: MergeRequest) =>
+    apiClient.post('/api/export/merged', payload, { responseType: 'blob' }),
 }
 
 export interface ExportRequest {
@@ -75,6 +77,17 @@ export interface ExportRequest {
   project_name?: string
   include_audio?: boolean
   tts_filenames?: string[]
+}
+
+export interface MergedSegment {
+  clip_id: string
+  tts_filename?: string
+  copy_text?: string
+}
+
+export interface MergeRequest {
+  segments: MergedSegment[]
+  project_name?: string
 }
 
 export const ttsApi = {

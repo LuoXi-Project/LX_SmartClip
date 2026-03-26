@@ -2,6 +2,8 @@ import io
 import json
 import logging
 import os
+import subprocess
+import tempfile
 import zipfile
 from urllib.parse import quote
 from typing import List, Optional
@@ -36,7 +38,6 @@ async def export_project(req: ExportRequest):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        # 查询所有请求的片段
         placeholders = ",".join(["?"] * len(req.clip_ids))
         cursor = await db.execute(
             f"""
@@ -55,7 +56,6 @@ async def export_project(req: ExportRequest):
     if not clips:
         raise HTTPException(status_code=404, detail="未找到任何指定片段")
 
-    # 在内存中构建 ZIP
     buf = io.BytesIO()
     project_meta = {
         "project_name": req.project_name,
@@ -84,13 +84,11 @@ async def export_project(req: ExportRequest):
                 "audio_file": None,
             }
 
-            # 写入视频片段
             if clip_path and os.path.isfile(clip_path):
                 zf.write(clip_path, f"clips/{clip_filename}")
             else:
                 logger.warning("片段文件不存在，跳过: %s", clip_path)
 
-            # 写入对应 TTS 音频
             if req.include_audio and req.tts_filenames and i < len(req.tts_filenames):
                 tts_name = req.tts_filenames[i]
                 if tts_name:
@@ -101,18 +99,123 @@ async def export_project(req: ExportRequest):
 
             project_meta["clips"].append(clip_entry)
 
-        # 写入工程元数据 JSON
         zf.writestr("project.json", json.dumps(project_meta, ensure_ascii=False, indent=2))
 
     buf.seek(0)
     zip_name = f"{req.project_name}.zip"
     encoded_zip_name = quote(zip_name)
     content_disposition = (
-        f"attachment; filename=\"smartclip_project.zip\"; "
+        f'attachment; filename="smartclip_project.zip"; '
         f"filename*=UTF-8''{encoded_zip_name}"
     )
     return StreamingResponse(
         buf,
         media_type="application/zip",
         headers={"Content-Disposition": content_disposition},
+    )
+
+
+# ─────────────────── 合并导出：完整带配音视频 ─────────────────── #
+
+class MergedSegment(BaseModel):
+    clip_id: str = Field(..., description="视频片段 ID")
+    tts_filename: Optional[str] = Field(None, description="对应的 TTS 音频文件名")
+    copy_text: Optional[str] = Field(None, description="该段文案（仅元数据）")
+
+
+class MergeRequest(BaseModel):
+    segments: List[MergedSegment] = Field(..., min_length=1)
+    project_name: Optional[str] = Field("smartclip_merged", description="输出文件名前缀")
+
+
+@router.post("/merged")
+async def export_merged_video(req: MergeRequest):
+    """
+    将多段「视频片段 + TTS 音频」合并为一个完整 MP4。
+    每段先用 ffmpeg 把 TTS 音频替换原视频音轨，再 concat 拼接所有段。
+    依赖：ffmpeg 需在系统 PATH 中。
+    """
+    TTS_AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(DB_PATH), "tts_audio"))
+
+    clip_ids = [s.clip_id for s in req.segments]
+    placeholders = ",".join(["?"] * len(clip_ids))
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"SELECT id, clip_path FROM clips WHERE id IN ({placeholders})",
+            clip_ids,
+        )
+        rows = await cursor.fetchall()
+
+    clip_map = {row["id"]: row["clip_path"] for row in rows}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        segment_files: List[str] = []
+
+        for i, seg in enumerate(req.segments):
+            clip_path = clip_map.get(seg.clip_id)
+            if not clip_path or not os.path.isfile(clip_path):
+                raise HTTPException(status_code=404, detail=f"片段文件不存在: {seg.clip_id}")
+
+            out_seg = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
+
+            if seg.tts_filename:
+                tts_path = os.path.join(TTS_AUDIO_DIR, os.path.basename(seg.tts_filename))
+                if os.path.isfile(tts_path):
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", clip_path,
+                        "-i", tts_path,
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-shortest",
+                        out_seg,
+                    ]
+                else:
+                    cmd = ["ffmpeg", "-y", "-i", clip_path, "-c", "copy", out_seg]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", clip_path, "-c", "copy", out_seg]
+
+            proc = subprocess.run(cmd, capture_output=True, timeout=120)
+            if proc.returncode != 0:
+                err = proc.stderr.decode(errors="replace")[-500:]
+                raise HTTPException(status_code=500, detail=f"ffmpeg 合成第 {i + 1} 段失败: {err}")
+            segment_files.append(out_seg)
+
+        if len(segment_files) == 1:
+            final_path = segment_files[0]
+        else:
+            concat_list = os.path.join(tmpdir, "concat.txt")
+            with open(concat_list, "w", encoding="utf-8") as f:
+                for sf in segment_files:
+                    f.write(f"file '{sf}'\n")
+            final_path = os.path.join(tmpdir, "final.mp4")
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", concat_list,
+                "-c", "copy",
+                final_path,
+            ]
+            proc = subprocess.run(cmd, capture_output=True, timeout=300)
+            if proc.returncode != 0:
+                err = proc.stderr.decode(errors="replace")[-500:]
+                raise HTTPException(status_code=500, detail=f"ffmpeg 拼接失败: {err}")
+
+        with open(final_path, "rb") as f:
+            video_bytes = f.read()
+
+    out_name = f"{req.project_name}.mp4"
+    encoded_name = quote(out_name)
+    return StreamingResponse(
+        io.BytesIO(video_bytes),
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="smartclip_merged.mp4"; '
+                f"filename*=UTF-8''{encoded_name}"
+            )
+        },
     )

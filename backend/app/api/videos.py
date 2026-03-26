@@ -59,15 +59,63 @@ async def upload_video(file: UploadFile = File(...)):
 
 
 @router.get("")
-async def list_videos():
+async def list_videos(
+    q: str = "",
+    status: str = "",
+    sort: str = "upload_at_desc",
+    page: int = 1,
+    page_size: int = 12,
+):
+    """List videos with search, status filter, sort and pagination.
+
+    Params:
+    - q: name substring search (case-insensitive)
+    - status: pending | processing | done | error | "" (all)
+    - sort: upload_at_desc | upload_at_asc | name_asc | name_desc
+    - page: 1-based
+    - page_size: 1-100
+    """
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+
+    conditions = []
+    params: list = []
+
+    if q.strip():
+        conditions.append("LOWER(name) LIKE ?")
+        params.append(f"%{q.strip().lower()}%")
+
+    if status.strip() in ("pending", "processing", "done", "error"):
+        conditions.append("status = ?")
+        params.append(status.strip())
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    sort_map = {
+        "upload_at_desc": "upload_at DESC",
+        "upload_at_asc": "upload_at ASC",
+        "name_asc": "name ASC",
+        "name_desc": "name DESC",
+    }
+    order_clause = sort_map.get(sort, "upload_at DESC")
+
     db = await get_db_conn()
     try:
+        # Total matching count
+        count_cursor = await db.execute(
+            f"SELECT COUNT(*) FROM videos {where_clause}", params
+        )
+        total = (await count_cursor.fetchone())[0]
+
+        # Paginated rows
+        offset = (page - 1) * page_size
         cursor = await db.execute(
-            "SELECT id, name, file_path, duration, total_clips, split_mode, status, upload_at "
-            "FROM videos ORDER BY upload_at DESC"
+            f"SELECT id, name, file_path, duration, total_clips, split_mode, status, upload_at "
+            f"FROM videos {where_clause} ORDER BY {order_clause} LIMIT ? OFFSET ?",
+            params + [page_size, offset],
         )
         rows = await cursor.fetchall()
-        return [
+        items = [
             {
                 "id": row["id"],
                 "name": row["name"],
@@ -80,6 +128,13 @@ async def list_videos():
             }
             for row in rows
         ]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-total // page_size)),
+        }
     finally:
         await db.close()
 

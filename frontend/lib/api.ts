@@ -48,8 +48,25 @@ export function createProcessWebSocket(
   return ws
 }
 
+export interface VideoListParams {
+  q?: string
+  status?: string
+  sort?: string
+  page?: number
+  page_size?: number
+}
+
+export interface VideoListResponse {
+  items: Video[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
 export const videosApi = {
-  list: () => apiClient.get<unknown, Video[]>('/api/videos'),
+  list: (params?: VideoListParams) =>
+    apiClient.get<unknown, VideoListResponse>('/api/videos', { params }),
   upload: (file: File) => {
     const formData = new FormData()
     formData.append('file', file)

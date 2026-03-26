@@ -17,7 +17,34 @@ export const EMBEDDING_PROVIDERS: ProviderPreset[] = [
   { id: 'custom',      name: '自定义',      logo: '⚙️', baseUrl: '' },
 ]
 
+export const TTS_PROVIDERS: ProviderPreset[] = [
+  { id: 'edge-tts',    name: 'Edge TTS',      logo: '🔷', baseUrl: '',                                       defaultModel: '' },
+  { id: 'openai',      name: 'OpenAI TTS',    logo: '🟢', baseUrl: 'https://api.openai.com/v1',             defaultModel: 'tts-1' },
+  { id: 'bailian',     name: '百炼 (阿里云)', logo: '🟡', baseUrl: 'https://dashscope.aliyuncs.com/api/v1', defaultModel: 'cosyvoice-v1' },
+  { id: 'volcengine',  name: '火山引擎',      logo: '🌋', baseUrl: 'https://openspeech.bytedance.com',      defaultModel: '' },
+  { id: 'gpt-sovits',  name: 'GPT-SoVITS',   logo: '🎙️', baseUrl: 'http://127.0.0.1:9880',                defaultModel: '' },
+  { id: 'index-tts',   name: 'IndexTTS',      logo: '🎵', baseUrl: 'http://127.0.0.1:7860',                defaultModel: '' },
+  { id: 'custom-http', name: '自定义 HTTP',   logo: '⚙️', baseUrl: '',                                       defaultModel: '' },
+]
+
 export const VLM_KEYS  = ['vlm_base_url', 'vlm_api_key', 'vlm_model', 'vlm_provider', 'llm_model']
 export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'vector_dimension', 'top_k', 'match_top_k', 'match_top_n']
 export const VIDEO_KEYS = ['split_mode', 'fixed_duration', 'scene_threshold', 'frame_fps', 'asr_model']
-export const TTS_KEYS  = ['tts_provider', 'tts_voice', 'tts_rate', 'tts_volume']
+export const TTS_KEYS  = [
+  'tts_provider',
+  // edge-tts
+  'tts_voice', 'tts_rate', 'tts_volume',
+  // openai / bailian (openai-compatible)
+  'tts_base_url', 'tts_api_key', 'tts_model', 'tts_format',
+  // bailian
+  'bailian_app_key',
+  // volcengine
+  'volcengine_app_id', 'volcengine_token', 'volcengine_cluster',
+  // gpt-sovits
+  'gsv_ref_audio', 'gsv_ref_text', 'gsv_lang',
+  // index-tts
+  'index_tts_ref_audio',
+  // custom-http
+  'custom_tts_method', 'custom_tts_url', 'custom_tts_headers', 'custom_tts_body',
+  'custom_tts_response_type', 'custom_tts_audio_key',
+]

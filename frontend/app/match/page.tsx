@@ -56,7 +56,20 @@ export default function MatchPage() {
 
   function splitGlobalQuery() {
     if (!globalQuery.trim()) return
-    const parts = globalQuery.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    // 1st pass: split by blank lines
+    let parts = globalQuery.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    // 2nd pass: if still only 1 chunk, split by sentence-ending punctuation
+    if (parts.length <= 1) {
+      parts = globalQuery
+        .split(/(?<=[。！？!?])\s*/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+    }
+    // 3rd pass: if still 1 chunk, split by newlines
+    if (parts.length <= 1) {
+      parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
+    }
+    if (parts.length === 0) return
     setCounter((c) => {
       setSegments(parts.map((text, i) => makeSeg(`seg-${c + i}`, text)))
       return c + parts.length

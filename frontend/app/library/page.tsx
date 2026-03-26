@@ -1,26 +1,79 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useAppStore, type Video } from '@/lib/store'
-import apiClient from '@/lib/api'
-import { Upload, Trash2, Play, Calendar, Film, X } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { useAppStore } from '@/lib/store'
+import { videosApi, type Video } from '@/lib/api'
+import { Film } from 'lucide-react'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { UploadZone } from './_components/UploadZone'
+import { VideoCard } from './_components/VideoCard'
+import { SearchBar, type SortKey, type StatusFilter } from './_components/SearchBar'
+import { Pagination } from './_components/Pagination'
+import { PreviewModal } from './_components/PreviewModal'
+
+const PAGE_SIZE_DEFAULT = 12
+
+function applyFilters(
+  videos: Video[],
+  query: string,
+  status: StatusFilter,
+  sort: SortKey,
+): Video[] {
+  let result = [...videos]
+
+  if (query.trim()) {
+    const q = query.trim().toLowerCase()
+    result = result.filter((v) => v.name.toLowerCase().includes(q))
+  }
+
+  if (status !== 'all') {
+    result = result.filter((v) => v.status === status)
+  }
+
+  result.sort((a, b) => {
+    switch (sort) {
+      case 'upload_at_asc':
+        return new Date(a.upload_at).getTime() - new Date(b.upload_at).getTime()
+      case 'name_asc':
+        return a.name.localeCompare(b.name, 'zh-CN')
+      case 'name_desc':
+        return b.name.localeCompare(a.name, 'zh-CN')
+      case 'upload_at_desc':
+      default:
+        return new Date(b.upload_at).getTime() - new Date(a.upload_at).getTime()
+    }
+  })
+
+  return result
+}
 
 export default function LibraryPage() {
   const { videos, setVideos, addVideo, removeVideo } = useAppStore()
+
+  // Remote data state
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [dragActive, setDragActive] = useState(false)
+
+  // Preview state
   const [previewVideo, setPreviewVideo] = useState<Video | null>(null)
   const [previewError, setPreviewError] = useState(false)
 
-  // 加载视频列表
+  // Search / filter / sort state
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<SortKey>('upload_at_desc')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+
+  // Pagination state
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT)
+
+  // Load videos
   useEffect(() => {
     const fetchVideos = async () => {
       try {
         setLoading(true)
-        const data = await apiClient.get('/api/videos')
+        const data = await videosApi.list()
         setVideos(data || [])
       } catch (error) {
         console.error('Failed to fetch videos:', error)
@@ -28,10 +81,72 @@ export default function LibraryPage() {
         setLoading(false)
       }
     }
-
     fetchVideos()
   }, [setVideos])
 
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1)
+  }, [query, statusFilter, sort, pageSize])
+
+  // Filtered + sorted list
+  const filtered = useMemo(
+    () => applyFilters(videos, query, statusFilter, sort),
+    [videos, query, statusFilter, sort],
+  )
+
+  // Paginated slice
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const paginated = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, page, pageSize])
+
+  // Upload handler
+  const handleUpload = async (files: FileList) => {
+    if (!files || files.length === 0) return
+    setUploading(true)
+    for (const file of Array.from(files)) {
+      try {
+        const response = await videosApi.upload(file)
+        addVideo(response)
+      } catch (error) {
+        console.error('Upload failed:', error)
+        alert(`上传失败: ${file.name}`)
+      }
+    }
+    setUploading(false)
+  }
+
+  // Delete handler
+  const handleDelete = async (id: string) => {
+    if (!confirm('确定要删除这个视频吗？')) return
+    try {
+      await videosApi.delete(id)
+      removeVideo(id)
+      if (previewVideo?.id === id) closePreview()
+    } catch (error) {
+      console.error('Delete failed:', error)
+      alert('删除失败')
+    }
+  }
+
+  // Drag handlers
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') setDragActive(true)
+    else if (e.type === 'dragleave') setDragActive(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    handleUpload(e.dataTransfer.files)
+  }
+
+  // Preview handlers
   const openPreview = (video: Video) => {
     setPreviewError(false)
     setPreviewVideo(video)
@@ -42,252 +157,122 @@ export default function LibraryPage() {
     setPreviewError(false)
   }
 
-  // 处理文件上传
-  const handleUpload = async (files: FileList) => {
-    if (!files || files.length === 0) return
-
-    setUploading(true)
-    for (const file of Array.from(files)) {
-      try {
-        const formData = new FormData()
-        formData.append('file', file)
-
-        const response = await apiClient.post('/api/videos/upload', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        })
-
-        addVideo({
-          id: response.id,
-          name: response.name,
-          file_path: '',
-          duration: null,
-          total_clips: 0,
-          split_mode: 'scene',
-          status: 'pending',
-          upload_at: response.upload_at,
-        })
-      } catch (error) {
-        console.error('Upload failed:', error)
-        alert(`上传失败: ${file.name}`)
-      }
-    }
-    setUploading(false)
-  }
-
-  // 处理删除
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个视频吗？')) return
-
-    try {
-      await apiClient.delete(`/api/videos/${id}`)
-      removeVideo(id)
-      if (previewVideo?.id === id) closePreview()
-    } catch (error) {
-      console.error('Delete failed:', error)
-      alert('删除失败')
-    }
-  }
-
-  // 拖拽处理
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true)
-    } else if (e.type === 'dragleave') {
-      setDragActive(false)
-    }
-  }
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragActive(false)
-    handleUpload(e.dataTransfer.files)
-  }
-
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
+    <main className="min-h-screen bg-[#0d0f14]">
+      {/* subtle dot-grid background */}
+      <div
+        className="fixed inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            'radial-gradient(circle, rgba(148,163,184,0.06) 1px, transparent 1px)',
+          backgroundSize: '28px 28px',
+        }}
+      />
+
+      <div className="relative max-w-7xl mx-auto px-6 py-10">
+        {/* ── Header ── */}
         <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2 text-slate-100">素材库</h1>
-          <p className="text-slate-400">管理和处理您的视频素材</p>
+          <div className="flex items-end justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-100">素材库</h1>
+              <p className="text-slate-500 text-sm mt-1">管理和处理您的视频素材</p>
+            </div>
+            {!loading && videos.length > 0 && (
+              <div className="text-xs text-slate-600 tabular-nums">
+                共 {videos.length} 个视频
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Upload Area */}
-        <div
-          onDragEnter={handleDrag}
-          onDragLeave={handleDrag}
-          onDragOver={handleDrag}
+        {/* ── Upload Zone ── */}
+        <UploadZone
+          uploading={uploading}
+          dragActive={dragActive}
+          onDrag={handleDrag}
           onDrop={handleDrop}
-          className={`mb-8 border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-            dragActive
-              ? 'border-blue-400 bg-blue-500/10'
-              : 'border-slate-600 bg-slate-800/30'
-          }`}
-        >
-          <Upload className="w-12 h-12 mx-auto mb-4 text-slate-400" />
-          <h2 className="text-xl font-semibold text-slate-100 mb-2">
-            拖拽视频文件到此处
-          </h2>
-          <p className="text-slate-400 mb-4">或点击下方按钮选择文件</p>
-          <label className="inline-block">
-            <input
-              type="file"
-              multiple
-              accept="video/*"
-              onChange={(e) => e.target.files && handleUpload(e.target.files)}
-              disabled={uploading}
-              className="hidden"
-            />
-            <span className="inline-block px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer transition-colors disabled:opacity-50">
-              {uploading ? '上传中...' : '选择文件'}
-            </span>
-          </label>
-        </div>
+          onFileSelect={handleUpload}
+        />
 
-        {/* Videos Grid */}
+        {/* ── Loading ── */}
         {loading ? (
-          <div className="text-center py-12">
-            <div className="inline-block w-8 h-8 border-4 border-slate-600 border-t-blue-400 rounded-full animate-spin"></div>
-            <p className="text-slate-400 mt-4">加载中...</p>
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
+            <div className="w-10 h-10 rounded-full border-2 border-slate-700 border-t-cyan-400 animate-spin" />
+            <p className="text-slate-500 text-sm">加载中…</p>
           </div>
         ) : videos.length === 0 ? (
-          <div className="text-center py-12">
-            <Film className="w-16 h-16 mx-auto text-slate-600 mb-4" />
-            <p className="text-slate-400">还没有上传任何视频</p>
+          /* ── Empty state ── */
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
+            <div className="w-20 h-20 rounded-2xl bg-slate-800/60 flex items-center justify-center">
+              <Film className="w-10 h-10 text-slate-600" />
+            </div>
+            <p className="text-slate-500">还没有上传任何视频，从上方开始上传吧</p>
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {videos.map((video) => (
-              <div
-                key={video.id}
-                className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-lg overflow-hidden hover:border-blue-500/50 transition-colors group"
-              >
-                {/* Thumbnail — click to preview */}
-                <div
-                  className="relative bg-slate-900 aspect-video flex items-center justify-center overflow-hidden cursor-pointer"
-                  onClick={() => openPreview(video)}
+          <>
+            {/* ── Search / Filter / Sort ── */}
+            <SearchBar
+              query={query}
+              onQueryChange={setQuery}
+              sort={sort}
+              onSortChange={setSort}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              total={videos.length}
+              filtered={filtered.length}
+            />
+
+            {/* ── No results ── */}
+            {filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <Film className="w-12 h-12 text-slate-700" />
+                <p className="text-slate-500 text-sm">没有符合条件的素材</p>
+                <button
+                  onClick={() => {
+                    setQuery('')
+                    setStatusFilter('all')
+                  }}
+                  className="text-xs text-cyan-500 hover:text-cyan-400 transition-colors underline underline-offset-2"
                 >
-                  <Play className="w-12 h-12 text-slate-600 group-hover:text-blue-400 transition-colors" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <span className="absolute bottom-2 right-2 text-xs text-white/80 bg-black/60 px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                    点击预览
-                  </span>
-                </div>
-
-                {/* Info */}
-                <div className="p-4">
-                  <h3 className="font-semibold text-slate-100 truncate mb-2">
-                    {video.name}
-                  </h3>
-
-                  {/* Status Badge */}
-                  <div className="mb-3">
-                    <span
-                      className={`inline-block px-2 py-1 text-xs rounded-full ${
-                        video.status === 'pending'
-                          ? 'bg-yellow-500/20 text-yellow-300'
-                          : video.status === 'processing'
-                            ? 'bg-blue-500/20 text-blue-300'
-                            : video.status === 'done'
-                              ? 'bg-green-500/20 text-green-300'
-                              : 'bg-red-500/20 text-red-300'
-                      }`}
-                    >
-                      {video.status === 'pending'
-                        ? '待处理'
-                        : video.status === 'processing'
-                          ? '处理中'
-                          : video.status === 'done'
-                            ? '已完成'
-                            : '错误'}
-                    </span>
-                  </div>
-
-                  {/* Meta */}
-                  <div className="space-y-1 text-sm text-slate-400 mb-4">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4" />
-                      <span>
-                        {new Date(video.upload_at).toLocaleDateString('zh-CN')}
-                      </span>
-                    </div>
-                    {video.total_clips > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Film className="w-4 h-4" />
-                        <span>{video.total_clips} 个片段</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex gap-2">
-                    <a
-                      href={`/process?video=${video.id}`}
-                      className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors text-center"
-                    >
-                      处理
-                    </a>
-                    <button
-                      onClick={() => handleDelete(video.id)}
-                      className="px-3 py-2 bg-red-600/20 text-red-400 text-sm rounded hover:bg-red-600/30 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                  清除筛选条件
+                </button>
               </div>
-            ))}
-          </div>
+            ) : (
+              <>
+                {/* ── Grid ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                  {paginated.map((video) => (
+                    <VideoCard
+                      key={video.id}
+                      video={video}
+                      onPreview={openPreview}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </div>
+
+                {/* ── Pagination ── */}
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                  onPageSizeChange={setPageSize}
+                />
+              </>
+            )}
+          </>
         )}
       </div>
 
-      {/* Video Preview Modal */}
+      {/* ── Preview Modal ── */}
       {previewVideo && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-          onClick={closePreview}
-        >
-          <div
-            className="relative w-full max-w-4xl mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-slate-100 font-semibold truncate max-w-[85%]">
-                {previewVideo.name}
-              </h3>
-              <button
-                onClick={closePreview}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Video Player */}
-            <div className="rounded-xl overflow-hidden bg-black shadow-2xl ring-1 ring-slate-700 min-h-[120px] flex items-center justify-center">
-              {previewError ? (
-                <p className="text-slate-400 text-sm text-center px-8 py-10">
-                  该视频格式浏览器不支持直接预览（如 MKV / AVI），请用本地播放器打开。
-                </p>
-              ) : (
-                <video
-                  key={previewVideo.id}
-                  src={`${API_BASE_URL}/api/videos/${previewVideo.id}/stream`}
-                  controls
-                  autoPlay
-                  className="w-full max-h-[70vh] object-contain"
-                  onError={() => setPreviewError(true)}
-                />
-              )}
-            </div>
-          </div>
-        </div>
+        <PreviewModal
+          video={previewVideo}
+          hasError={previewError}
+          onClose={closePreview}
+          onError={() => setPreviewError(true)}
+        />
       )}
     </main>
   )

@@ -1,15 +1,7 @@
 import { create } from 'zustand'
+import type { Video } from './api'
 
-export interface Video {
-  id: string
-  name: string
-  file_path: string
-  duration: number | null
-  total_clips: number
-  split_mode: string
-  status: string
-  upload_at: string
-}
+export type { Video }
 
 export interface AppState {
   videos: Video[]

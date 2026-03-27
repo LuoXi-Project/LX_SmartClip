@@ -117,6 +117,7 @@ export interface Video {
   id: string
   name: string
   file_path: string
+  thumbnail_path: string | null
   duration: number | null
   total_clips: number
   split_mode: string

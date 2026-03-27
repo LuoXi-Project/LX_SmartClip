@@ -30,6 +30,14 @@ async def migrate():
         await db.execute(CREATE_CLIPS)
         await db.execute(CREATE_CONFIG)
 
+        # 为旧数据库补充 thumbnail_path 列（幂等）
+        try:
+            await db.execute("ALTER TABLE videos ADD COLUMN thumbnail_path TEXT")
+            await db.commit()
+            print("  [迁移] videos 表新增 thumbnail_path 列")
+        except Exception:
+            pass  # 列已存在，忽略
+
         added = 0
         updated = 0
 

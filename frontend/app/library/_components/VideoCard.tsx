@@ -1,7 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { Trash2, Play, Calendar, Film, Scissors } from 'lucide-react'
 import type { Video } from '@/lib/store'
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   pending: { label: '待处理', cls: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30' },
@@ -18,6 +21,11 @@ interface VideoCardProps {
 
 export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
   const status = STATUS_MAP[video.status] ?? STATUS_MAP.error
+  const [thumbError, setThumbError] = useState(false)
+
+  const thumbnailUrl = !thumbError
+    ? `${API_BASE_URL}/api/videos/${video.id}/thumbnail`
+    : null
 
   const formatDuration = (seconds: number | null) => {
     if (!seconds) return null
@@ -33,21 +41,34 @@ export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
         className="relative bg-slate-900/80 aspect-video flex items-center justify-center overflow-hidden cursor-pointer"
         onClick={() => onPreview(video)}
       >
-        {/* subtle noise texture */}
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-800/40 to-slate-900/80" />
+        {/* Cover image — shows if ffmpeg extracted a frame */}
+        {thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            alt={video.name}
+            onError={() => setThumbError(true)}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-800/40 to-slate-900/80" />
+        )}
+
+        {/* Play button (always shown on top) */}
         <div className="relative z-10 flex flex-col items-center gap-2">
-          <div className="w-12 h-12 rounded-full bg-slate-700/80 flex items-center justify-center group-hover:bg-cyan-600/80 transition-colors">
-            <Play className="w-5 h-5 text-slate-300 group-hover:text-white translate-x-0.5 transition-colors" />
+          <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center group-hover:bg-cyan-600/80 transition-colors">
+            <Play className="w-5 h-5 text-white/80 group-hover:text-white translate-x-0.5 transition-colors" />
           </div>
         </div>
-        {/* hover overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+
+        {/* Hover overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
         <span className="absolute bottom-2 right-2 text-xs text-white/70 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity">
           点击预览
         </span>
-        {/* duration badge */}
+
+        {/* Duration badge */}
         {video.duration && (
-          <span className="absolute top-2 left-2 text-xs text-white/80 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-md">
+          <span className="absolute top-2 left-2 text-xs text-white/80 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-md z-10">
             {formatDuration(video.duration)}
           </span>
         )}

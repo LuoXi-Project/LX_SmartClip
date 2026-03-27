@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS videos (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     file_path TEXT NOT NULL,
+    thumbnail_path TEXT,
     duration REAL,
     total_clips INTEGER DEFAULT 0,
     split_mode TEXT DEFAULT 'scene',

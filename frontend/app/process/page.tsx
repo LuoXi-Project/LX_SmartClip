@@ -1,9 +1,9 @@
-'use client'
+﻿'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import apiClient, { createProcessWebSocket, type ProcessMessage, type Video } from '@/lib/api'
-import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const STEPS = [
   { key: 'split',          label: '视频切分',       desc: '按镜头或固定时长切分视频' },
@@ -35,6 +35,9 @@ function cardCls(s: StepStatus) {
   if (s === 'skip') return 'border-slate-800 opacity-40'
   return 'border-slate-800 bg-slate-900/30'
 }
+
+const PAGE_SIZE = 9
+
 export default function ProcessPage() {
   const [videos, setVideos] = useState<Video[]>([])
   const [selId, setSelId] = useState('')
@@ -42,6 +45,8 @@ export default function ProcessPage() {
   const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
   const [steps, setSteps] = useState<Record<StepKey, SS>>(blank)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -56,6 +61,19 @@ export default function ProcessPage() {
   }, [])
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [steps])
+
+  const filteredVideos = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return q ? videos.filter((v) => v.name.toLowerCase().includes(q)) : videos
+  }, [videos, search])
+
+  const totalPages = Math.max(1, Math.ceil(filteredVideos.length / PAGE_SIZE))
+  const pagedVideos = filteredVideos.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const handleSearch = (val: string) => {
+    setSearch(val)
+    setPage(1)
+  }
 
   const applyMsg = (msg: ProcessMessage) => {
     if (msg.step === 'done' || msg.step === 'error') return
@@ -91,7 +109,7 @@ export default function ProcessPage() {
 
   const handleStop = () => { wsRef.current?.close(); setRunning(false) }
   const selVideo = videos.find((v) => v.id === selId)
-  const pct = Math.round(STEPS.filter((s) => ['done','skip'].includes(steps[s.key].status)).length / STEPS.length * 100)
+  const pct = Math.round(STEPS.filter((s) => ['done', 'skip'].includes(steps[s.key].status)).length / STEPS.length * 100)
 
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
@@ -105,32 +123,86 @@ export default function ProcessPage() {
       </header>
 
       <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
+
         <section className="space-y-3">
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">选择视频</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">选择视频</h2>
+            {!loading && videos.length > 0 && (
+              <span className="text-xs text-slate-600">
+                {search ? `${filteredVideos.length} / ${videos.length}` : videos.length} 个视频
+              </span>
+            )}
+          </div>
+
+          {!loading && videos.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => handleSearch(e.target.value)}
+                placeholder="搜索视频名称..."
+                className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
+              />
+              {search && (
+                <button
+                  onClick={() => handleSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div className="flex items-center gap-2 text-slate-500 text-sm"><Loader2 className="w-4 h-4 animate-spin" />加载中...</div>
           ) : videos.length === 0 ? (
             <p className="text-slate-500 text-sm">暂无视频，请先前往<Link href="/library" className="text-indigo-400 hover:underline ml-1">素材库</Link>上传。</p>
+          ) : filteredVideos.length === 0 ? (
+            <p className="text-slate-500 text-sm">未找到匹配「{search}」的视频。</p>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {videos.map((v) => (
-                <button key={v.id} disabled={running} onClick={() => !running && setSelId(v.id)}
-                  className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                    selId === v.id ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'border-slate-700 bg-slate-800/40 hover:border-slate-500'
-                  }`}>
-                  <div className="flex items-start gap-3">
-                    <Film className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{v.name}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {{pending:'待处理',processing:'处理中',done:'已完成',error:'错误'}[v.status]}
-                        {v.total_clips > 0 && ` · ${v.total_clips} 片段`}
-                      </p>
+            <>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {pagedVideos.map((v) => (
+                  <button key={v.id} disabled={running} onClick={() => !running && setSelId(v.id)}
+                    className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      selId === v.id ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'border-slate-700 bg-slate-800/40 hover:border-slate-500'
+                    }`}>
+                    <div className="flex items-start gap-3">
+                      <Film className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{v.name}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {{ pending: '待处理', processing: '处理中', done: '已完成', error: '错误' }[v.status]}
+                          {v.total_clips > 0 && ` · ${v.total_clips} 片段`}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
-            </div>
+                  </button>
+                ))}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />上一页
+                  </button>
+                  <span className="text-xs text-slate-500">{page} / {totalPages}</span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    下一页<ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
 

@@ -107,6 +107,24 @@ export interface MergeRequest {
   project_name?: string
 }
 
+export interface CopyGenRequest {
+  video_ids: string[]
+  user_prompt: string
+  style?: string
+  max_segments?: number
+  stream?: boolean
+}
+
+export const copyGenApi = {
+  /** Stream SSE — returns raw Response for caller to consume */
+  generateStream: (payload: CopyGenRequest): Promise<Response> =>
+    fetch(`${API_BASE_URL}/api/copy-gen/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, stream: true }),
+    }),
+}
+
 export const ttsApi = {
   synthesize: (payload: TTSRequest) => apiClient.post<unknown, TTSResponse>('/api/tts/synthesize', payload),
   listVoices: (locale?: string) => apiClient.get<unknown, VoiceInfo[]>(`/api/tts/voices${locale ? `?locale=${locale}` : ''}`),

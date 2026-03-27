@@ -20,6 +20,7 @@ from app.api.match import router as match_router
 from app.api.tts import router as tts_router
 from app.api.export import router as export_router
 from app.api.chat import router as chat_router
+from app.api.copy_gen import router as copy_gen_router
 
 
 @asynccontextmanager
@@ -51,6 +52,7 @@ app.include_router(match_router)
 app.include_router(tts_router)
 app.include_router(export_router)
 app.include_router(chat_router)
+app.include_router(copy_gen_router)
 
 
 @app.get("/health")

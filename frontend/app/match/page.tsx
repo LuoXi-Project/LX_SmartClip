@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import apiClient, { exportApi, ttsApi, type MatchClip, type MergedSegment, type Video } from '@/lib/api'
 import { type Segment, type ExportMode, audioSrc } from './_components/types'
+import { CopyGeneratorPanel } from './_components/CopyGeneratorPanel'
 import { PreviewModal } from './_components/ClipCard'
 import { SegmentRow } from './_components/SegmentRow'
 import { ExportSidebar } from './_components/ExportSidebar'
@@ -89,6 +90,14 @@ export default function MatchPage() {
     if (parts.length <= 1) {
       parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
     }
+    if (parts.length === 0) return
+    setCounter((c) => {
+      setSegments(parts.map((text, i) => makeSeg(`seg-${c + i}`, text)))
+      return c + parts.length
+    })
+  }
+
+  function handleAiApply(parts: string[]) {
     if (parts.length === 0) return
     setCounter((c) => {
       setSegments(parts.map((text, i) => makeSeg(`seg-${c + i}`, text)))
@@ -303,6 +312,11 @@ export default function MatchPage() {
                 className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200" />
             </label>
           </div>
+
+          <CopyGeneratorPanel
+            selectedVideoIds={selectedVideoIds}
+            onApply={handleAiApply}
+          />
 
           <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">

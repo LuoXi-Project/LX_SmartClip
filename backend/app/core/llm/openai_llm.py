@@ -76,11 +76,24 @@ class OpenAILLM(ILLM):
             )
             raw = resp.choices[0].message.content.strip()
 
+            # 去除 thinking 模型的 <think>...</think> 块
+            import re
+            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
             # 提取 JSON（兼容 markdown 代码块）
             if "```" in raw:
-                raw = raw.split("```")[1]
+                parts = raw.split("```")
+                raw = parts[1] if len(parts) > 1 else parts[0]
                 if raw.startswith("json"):
                     raw = raw[4:]
+                raw = raw.strip()
+
+            # 兜底：直接定位 JSON 数组范围
+            start = raw.find("[")
+            end = raw.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                raw = raw[start:end + 1]
+
             ranked = json.loads(raw)
 
             # 与候选数据合并

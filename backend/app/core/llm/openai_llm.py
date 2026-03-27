@@ -75,10 +75,11 @@ class OpenAILLM(ILLM):
                 max_tokens=1024,
             )
             raw = resp.choices[0].message.content.strip()
+            logger.debug("LLM 原始返回: %r", raw[:500])
 
-            # 去除 thinking 模型的 <think>...</think> 块
+            # 去除 thinking 模型的 <think>...</think> 块（含变体格式）
             import re
-            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            raw = re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=re.IGNORECASE).strip()
 
             # 提取 JSON（兼容 markdown 代码块）
             if "```" in raw:
@@ -94,7 +95,18 @@ class OpenAILLM(ILLM):
             if start != -1 and end != -1 and end > start:
                 raw = raw[start:end + 1]
 
-            ranked = json.loads(raw)
+            logger.debug("LLM 提取后 JSON: %r", raw[:500])
+
+            try:
+                ranked = json.loads(raw)
+            except json.JSONDecodeError:
+                # 尝试用 json_repair 修复
+                try:
+                    from json_repair import repair_json
+                    ranked = json.loads(repair_json(raw))
+                    logger.warning("LLM 返回 JSON 格式有误，已自动修复")
+                except Exception:
+                    raise
 
             # 与候选数据合并
             clip_map = {c["clip_id"]: c for c in candidates}

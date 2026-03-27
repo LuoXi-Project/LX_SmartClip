@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
-  AlertCircle, ArrowLeft, Film, Loader2,
+  AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Film, Loader2,
   Plus, Search, Sparkles, SplitSquareHorizontal,
 } from 'lucide-react'
 import apiClient, { exportApi, ttsApi, type MatchClip, type MergedSegment, type Video } from '@/lib/api'
@@ -12,9 +12,13 @@ import { PreviewModal } from './_components/ClipCard'
 import { SegmentRow } from './_components/SegmentRow'
 import { ExportSidebar } from './_components/ExportSidebar'
 
+const VIDEO_PAGE_SIZE = 9
+
 export default function MatchPage() {
   const [videos, setVideos] = useState<Video[]>([])
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([])
+  const [videoSearch, setVideoSearch] = useState('')
+  const [videoPage, setVideoPage] = useState(1)
   const [topK, setTopK] = useState(12)
   const [topN, setTopN] = useState(5)
   const [globalQuery, setGlobalQuery] = useState('')
@@ -38,6 +42,19 @@ export default function MatchPage() {
   }, [])
 
   const doneVideos = videos.filter((v) => v.status === 'done' && v.total_clips > 0)
+
+  const filteredDoneVideos = useMemo(() => {
+    const q = videoSearch.trim().toLowerCase()
+    return q ? doneVideos.filter((v) => v.name.toLowerCase().includes(q)) : doneVideos
+  }, [doneVideos, videoSearch])
+
+  const videoTotalPages = Math.max(1, Math.ceil(filteredDoneVideos.length / VIDEO_PAGE_SIZE))
+  const pagedDoneVideos = filteredDoneVideos.slice((videoPage - 1) * VIDEO_PAGE_SIZE, videoPage * VIDEO_PAGE_SIZE)
+
+  const handleVideoSearch = (val: string) => {
+    setVideoSearch(val)
+    setVideoPage(1)
+  }
 
   function makeSeg(id: string, text = ''): Segment {
     return { id, text, clips: [], chosenIdx: 0, ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false }
@@ -203,23 +220,76 @@ export default function MatchPage() {
           )}
 
           {doneVideos.length > 0 && (
-            <section className="space-y-2">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                限定视频范围<span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {doneVideos.map((v) => (
-                  <button key={v.id} onClick={() => toggleVideo(v.id)}
-                    className={`px-3 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors ${
-                      selectedVideoIds.includes(v.id)
-                        ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
-                        : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500'
-                    }`}
-                  >
-                    <Film className="w-3 h-3" />{v.name}
-                  </button>
-                ))}
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                  限定视频范围<span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
+                </p>
+                <span className="text-xs text-slate-600">
+                  {videoSearch ? `${filteredDoneVideos.length} / ${doneVideos.length}` : doneVideos.length} 个视频
+                </span>
               </div>
+
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                <input
+                  type="text"
+                  value={videoSearch}
+                  onChange={(e) => handleVideoSearch(e.target.value)}
+                  placeholder="搜索视频名称..."
+                  className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
+                />
+                {videoSearch && (
+                  <button
+                    onClick={() => handleVideoSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {filteredDoneVideos.length === 0 ? (
+                <p className="text-slate-500 text-sm">未找到匹配「{videoSearch}」的视频。</p>
+              ) : (
+                <>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {pagedDoneVideos.map((v) => (
+                      <button key={v.id} onClick={() => toggleVideo(v.id)}
+                        className={`text-left px-3 py-2.5 rounded-lg border text-xs flex items-center gap-2 transition-colors ${
+                          selectedVideoIds.includes(v.id)
+                            ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
+                            : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500'
+                        }`}
+                      >
+                        <Film className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{v.name}</span>
+                        <span className="ml-auto shrink-0 text-slate-600">{v.total_clips}片</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {videoTotalPages > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        onClick={() => setVideoPage((p) => Math.max(1, p - 1))}
+                        disabled={videoPage === 1}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />上一页
+                      </button>
+                      <span className="text-xs text-slate-500">{videoPage} / {videoTotalPages}</span>
+                      <button
+                        onClick={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
+                        disabled={videoPage === videoTotalPages}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      >
+                        下一页<ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </section>
           )}
 

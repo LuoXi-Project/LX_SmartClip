@@ -65,7 +65,7 @@ async def chat_completions(req: ChatRequest):
     }
 
     proxy = _get_proxy()
-    logger.info("Chat endpoint: %s, model: %s, proxy: %s", endpoint, model, proxy)
+    # logger.info("Chat endpoint: %s, model: %s, proxy: %s", endpoint, model, proxy)
 
     messages = [
         {"role": m.role, "content": m.content} for m in req.messages

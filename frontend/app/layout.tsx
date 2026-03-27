@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import './globals.css'
+import AIChatPanel from './_components/AIChatPanel'
 
 export const metadata: Metadata = {
   title: 'LX SmartClip - AI智能剪辑工具',
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </nav>
         <div className="pt-12">{children}</div>
+        <AIChatPanel />
       </body>
     </html>
   )

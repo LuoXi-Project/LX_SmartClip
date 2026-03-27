@@ -46,8 +46,11 @@ export default function ProcessPage() {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    apiClient.get<unknown, Video[]>('/api/videos')
-      .then((d) => setVideos(d || []))
+    apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
+      .then((d) => {
+        if (Array.isArray(d)) setVideos(d)
+        else setVideos((d as { items: Video[] })?.items || [])
+      })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])

@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
 import { videosApi, type Video, type VideoListParams } from '@/lib/api'
 import { Film } from 'lucide-react'
+import { useConfirm } from '@/hooks/use-confirm'
+import { useToast } from '@/components/ui/toast-provider'
 
 import { UploadZone } from './_components/UploadZone'
 import { VideoCard } from './_components/VideoCard'
@@ -13,6 +15,8 @@ import { PreviewModal } from './_components/PreviewModal'
 
 export default function LibraryPage() {
   const { addVideo, removeVideo } = useAppStore()
+  const confirm = useConfirm()
+  const toast = useToast()
 
   // Server-driven list state
   const [items, setItems] = useState<Video[]>([])
@@ -83,9 +87,10 @@ export default function LibraryPage() {
       try {
         const response = await videosApi.upload(file)
         addVideo(response)
+        toast.success(`上传成功: ${file.name}`)
       } catch (error) {
         console.error('Upload failed:', error)
-        alert(`上传失败: ${file.name}`)
+        toast.error(`上传失败: ${file.name}`)
       }
     }
     setUploading(false)
@@ -102,11 +107,19 @@ export default function LibraryPage() {
 
   // Delete handler
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个视频吗？')) return
+    const ok = await confirm({
+      title: '确认删除',
+      description: '此操作将永久删除该视频及其所有处理数据，无法恢复。',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       await videosApi.delete(id)
       removeVideo(id)
       if (previewVideo?.id === id) closePreview()
+      toast.success('视频已删除')
       // Refresh
       fetchVideos({
         q: debouncedQuery || undefined,
@@ -117,7 +130,7 @@ export default function LibraryPage() {
       })
     } catch (error) {
       console.error('Delete failed:', error)
-      alert('删除失败')
+      toast.error('删除失败，请重试')
     }
   }
 

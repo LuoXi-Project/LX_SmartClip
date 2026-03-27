@@ -100,7 +100,7 @@ export default function ProcessPage() {
           <ArrowLeft className="w-4 h-4" />素材库
         </Link>
         <div className="h-4 w-px bg-slate-700" />
-        <h1 className="text-lg font-semibold">处理管线</h1>
+        <h1 className="text-lg font-semibold">素材处理</h1>
         <Link href="/" className="ml-auto text-sm text-slate-500 hover:text-slate-300 transition-colors">首页</Link>
       </header>
 

@@ -15,8 +15,8 @@
 - [x] ASR 语音识别（Whisper）
 - [x] VLM 视觉描述（OpenAI Vision）
 - [x] 向量化与入库（FAISS）
-- [x] 全处理管线整合（HTTP + WebSocket）
-- [x] 前端处理管线页面（实时进度）
+- [x] 全素材处理整合（HTTP + WebSocket）
+- [x] 前端素材处理页面（实时进度）
 - [x] 全局导航栏
 
 ## ✅ Phase 8 完成

@@ -110,7 +110,7 @@ async def _save_clips_to_db(video_id: str, clips):
 
 
 async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: list = None):
-    """串联执行全处理管线：split -> frames -> asr -> vlm -> embed"""
+    """串联执行全素材处理：split -> frames -> asr -> vlm -> embed"""
     skip_steps = skip_steps or []
 
     video = await _get_video(video_id)

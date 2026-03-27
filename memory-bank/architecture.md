@@ -38,7 +38,7 @@ backend/
 app/
 ├── main.py           # FastAPI 应用入口
 ├── api/              # 路由层（HTTP 接口）
-├── core/             # 业务逻辑层（AI 模块、处理管线）
+├── core/             # 业务逻辑层（AI 模块、素材处理）
 ├── db/               # 数据库层（连接管理、建表、初始化）
 └── __init__.py
 ```
@@ -134,7 +134,7 @@ get_db() -> AsyncGenerator[aiosqlite.Connection, None]
 **默认配置（`INSERT OR IGNORE`，幂等，不覆盖已有值）：**
 11 条默认配置项，涵盖：切分模式、场景阈值、固定时长、向量维度、TopK、VLM/ASR/TTS 服务参数。
 
-**注意：** `videos.status` 字段已预建（`pending/processing/done/error`），为 Phase 7 处理管线状态追踪预留，当前 Phase 不使用。
+**注意：** `videos.status` 字段已预建（`pending/processing/done/error`），为 Phase 7 素材处理状态追踪预留，当前 Phase 不使用。
 
 ---
 

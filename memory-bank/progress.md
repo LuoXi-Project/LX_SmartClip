@@ -48,7 +48,7 @@ Phase 0-8 已完成，Phase 9（TTS 配音）准备开始。
 - `app/api/embed.py`：
   - `POST /api/videos/{id}/process-embed`
 
-### Phase 7：全处理管线整合（✅ 完成）
+### Phase 7：全素材处理整合（✅ 完成）
 - `app/api/process.py`：
   - `POST /api/videos/{id}/process`
   - `WS /api/videos/{id}/process-ws`

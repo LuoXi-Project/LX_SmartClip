@@ -32,10 +32,11 @@ const SPLIT_MODES = [
 ]
 
 const PARAM_HINTS: Record<string, string> = {
-  fixed_duration: '仅在「固定时长」模式下生效，每段片段的秒数',
-  scene_threshold: '仅在「镜头检测」模式下生效，值越小越灵敏（0.1 ~ 1.0）',
-  frame_fps:       '每秒从片段中抽取的帧数，用于 VLM 画面描述',
-  asr_model:       'Whisper 语音识别模型规格，越大精度越高但越慢',
+  fixed_duration:      '仅在「固定时长」模式下生效，每段片段的秒数',
+  scene_threshold:     '仅在「镜头检测」模式下生效，值越小越灵敏（0.1 ~ 1.0）',
+  frame_fps:           '每秒从片段中抽取的帧数，用于 VLM 画面描述',
+  frame_target_pixels: '抽帧时将图像长边压制到此像素（如 512），0 表示不压制。配合 VLM 可显著降低 token 消耗',
+  asr_model:           'Whisper 语音识别模型规格，越大精度越高但越慢',
 }
 
 export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSaveGroup }: Props) {

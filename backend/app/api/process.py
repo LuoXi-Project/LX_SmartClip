@@ -136,6 +136,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         vlm_api_key     = await _read_config(db, "vlm_api_key", "")
         vector_dim      = int(await _read_config(db, "vector_dimension", "1536"))
         frame_fps       = float(await _read_config(db, "frame_fps", "1"))
+        frame_target_pixels = int(await _read_config(db, "frame_target_pixels", "0"))
         vlm_max_images    = int(await _read_config(db, "vlm_max_images_per_batch", "10"))
         vlm_context_length = int(await _read_config(db, "vlm_context_length", "8192"))
         vlm_concurrency  = int(await _read_config(db, "vlm_concurrency", "3"))
@@ -183,7 +184,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         frame_errors = 0
         for clip in clips_rows:
             try:
-                await loop.run_in_executor(None, splitter.extract_frames, clip["clip_path"], frame_fps)
+                await loop.run_in_executor(None, splitter.extract_frames, clip["clip_path"], frame_fps, frame_target_pixels)
             except Exception as e:
                 logger.warning("片段 %s 抽帧失败: %s", clip["id"], e)
                 frame_errors += 1
@@ -270,7 +271,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                                 )
                             else:
                                 frame_paths = await loop.run_in_executor(
-                                    None, splitter.extract_frames, clip_path, frame_fps
+                                    None, splitter.extract_frames, clip_path, frame_fps, frame_target_pixels
                                 )
                             if not frame_paths:
                                 return

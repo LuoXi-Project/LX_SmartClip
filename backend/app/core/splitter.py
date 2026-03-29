@@ -301,13 +301,14 @@ class VideoSplitter:
         except subprocess.CalledProcessError:
             return False
 
-    def extract_frames(self, clip_path: str, fps: float = 1.0) -> List[str]:
+    def extract_frames(self, clip_path: str, fps: float = 1.0, target_pixels: int = 0) -> List[str]:
         """
         按帧率从视频片段中抽帧（每秒抽 fps 帧）
 
         Args:
             clip_path: 视频片段路径
             fps: 抽帧帧率（帧/秒），例如 1.0 表示每秒 1 帧，0.5 表示每 2 秒 1 帧
+            target_pixels: 输出帧的长边像素限制，0 表示不压制，>0 时将长边等比缩放到该值
 
         Returns:
             帧文件路径列表
@@ -332,7 +333,8 @@ class VideoSplitter:
         frames_output_dir = os.path.join(self.frames_dir, clip_name)
         os.makedirs(frames_output_dir, exist_ok=True)
 
-        logger.info(f"抽取帧: {clip_path}, fps={fps}, 时长={duration:.2f}s, 共 {n_frames} 帧")
+        px_info = f", 长边压制={target_pixels}px" if target_pixels > 0 else ""
+        logger.info(f"抽取帧: {clip_path}, fps={fps}, 时长={duration:.2f}s, 共 {n_frames} 帧{px_info}")
 
         frame_paths = []
 
@@ -353,9 +355,19 @@ class VideoSplitter:
                 "-map", "0:v:0",
                 "-vframes", "1",
                 "-q:v", "2",  # 高质量
-                "-y",
-                frame_path,
             ]
+
+            # 若设置了目标像素，按长边等比缩放（不放大原图）
+            if target_pixels and target_pixels > 0:
+                p = target_pixels
+                # scale: 长边超过 target_pixels 则缩放，否则保持原尺寸；宽高保持偶数
+                vf = (
+                    f"scale='if(gt(iw,ih),min({p},iw),trunc(oh*a/2)*2)':"
+                    f"'if(gt(iw,ih),trunc(ow/a/2)*2,min({p},ih))':flags=lanczos"
+                )
+                cmd += ["-vf", vf]
+
+            cmd += ["-y", frame_path]
 
             try:
                 logger.info(f"抽取帧 {i+1}/{n_frames}: {timestamp:.2f}s")

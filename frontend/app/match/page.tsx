@@ -6,12 +6,13 @@ import {
   AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Film, Loader2,
   Plus, Search, Sparkles, SplitSquareHorizontal,
 } from 'lucide-react'
-import apiClient, { exportApi, ttsApi, type MatchClip, type MergedSegment, type Video } from '@/lib/api'
-import { type Segment, type ExportMode, audioSrc } from './_components/types'
+import apiClient, { exportApi, ttsApi, subtitleApi, type MatchClip, type MergedSegment, type Video } from '@/lib/api'
+import { type Segment, type ExportMode, type SubtitleStyle, type SRTEntry, DEFAULT_SUBTITLE_STYLE, audioSrc } from './_components/types'
 import { CopyGeneratorPanel } from './_components/CopyGeneratorPanel'
 import { PreviewModal } from './_components/ClipCard'
 import { SegmentRow } from './_components/SegmentRow'
 import { ExportSidebar } from './_components/ExportSidebar'
+import { SubtitlePanel } from './_components/SubtitlePanel'
 
 const VIDEO_PAGE_SIZE = 9
 
@@ -32,77 +33,52 @@ export default function MatchPage() {
   const [exportError, setExportError] = useState('')
   const [exportMode, setExportMode] = useState<ExportMode>('zip')
   const [globalMatching, setGlobalMatching] = useState(false)
+  const [subtitleEnabled, setSubtitleEnabled] = useState(false)
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE)
+  const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
+  const [srtContent, setSrtContent] = useState('')
+  const [timingSource, setTimingSource] = useState('')
+  const [generatingSrt, setGeneratingSrt] = useState(false)
+  const [srtError, setSrtError] = useState('')
 
   useEffect(() => {
     apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
-      .then((d) => {
-        if (Array.isArray(d)) setVideos(d)
-        else setVideos((d as { items: Video[] })?.items || [])
-      })
+      .then((d) => { if (Array.isArray(d)) setVideos(d); else setVideos((d as { items: Video[] })?.items || []) })
       .catch(console.error)
   }, [])
 
   const doneVideos = videos.filter((v) => v.status === 'done' && v.total_clips > 0)
-
   const filteredDoneVideos = useMemo(() => {
     const q = videoSearch.trim().toLowerCase()
     return q ? doneVideos.filter((v) => v.name.toLowerCase().includes(q)) : doneVideos
   }, [doneVideos, videoSearch])
-
   const videoTotalPages = Math.max(1, Math.ceil(filteredDoneVideos.length / VIDEO_PAGE_SIZE))
   const pagedDoneVideos = filteredDoneVideos.slice((videoPage - 1) * VIDEO_PAGE_SIZE, videoPage * VIDEO_PAGE_SIZE)
-
-  const handleVideoSearch = (val: string) => {
-    setVideoSearch(val)
-    setVideoPage(1)
-  }
+  const handleVideoSearch = (val: string) => { setVideoSearch(val); setVideoPage(1) }
 
   function makeSeg(id: string, text = ''): Segment {
     return { id, text, clips: [], chosenIdx: 0, ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false }
   }
-
-  function patchSeg(id: string, patch: Partial<Segment>) {
-    setSegments((prev) => prev.map((s) => s.id === id ? { ...s, ...patch } : s))
+  function patchSeg(id: string, p: Partial<Segment>) {
+    setSegments((prev) => prev.map((s) => s.id === id ? { ...s, ...p } : s))
   }
-
   function addSegment(text = '') {
-    const id = `seg-${counter}`
-    setCounter((c) => c + 1)
+    const id = `seg-${counter}`; setCounter((c) => c + 1)
     setSegments((prev) => [...prev, makeSeg(id, text)])
   }
-
-  function removeSegment(id: string) {
-    setSegments((prev) => prev.filter((s) => s.id !== id))
-  }
+  function removeSegment(id: string) { setSegments((prev) => prev.filter((s) => s.id !== id)) }
 
   function splitGlobalQuery() {
     if (!globalQuery.trim()) return
-    // 1st pass: split by blank lines
     let parts = globalQuery.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
-    // 2nd pass: if still only 1 chunk, split by sentence-ending punctuation
-    if (parts.length <= 1) {
-      parts = globalQuery
-        .split(/(?<=[。！？!?])\s*/)
-        .map((p) => p.trim())
-        .filter(Boolean)
-    }
-    // 3rd pass: if still 1 chunk, split by newlines
-    if (parts.length <= 1) {
-      parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
-    }
-    if (parts.length === 0) return
-    setCounter((c) => {
-      setSegments(parts.map((text, i) => makeSeg(`seg-${c + i}`, text)))
-      return c + parts.length
-    })
+    if (parts.length <= 1) parts = globalQuery.split(/(?<=[。！？!?])\s*/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length <= 1) parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
+    if (!parts.length) return
+    setCounter((c) => { setSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
   }
-
   function handleAiApply(parts: string[]) {
-    if (parts.length === 0) return
-    setCounter((c) => {
-      setSegments(parts.map((text, i) => makeSeg(`seg-${c + i}`, text)))
-      return c + parts.length
-    })
+    if (!parts.length) return
+    setCounter((c) => { setSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
   }
 
   async function matchSegment(id: string) {
@@ -117,16 +93,10 @@ export default function MatchPage() {
       const clips = data.recommended?.length ? data.recommended : data.candidates
       patchSeg(id, { clips, chosenIdx: 0, matchLoading: false })
     } catch (e: unknown) {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      patchSeg(id, { matchLoading: false, matchError: detail || '匹配失败' })
+      patchSeg(id, { matchLoading: false, matchError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '匹配失败' })
     }
   }
-
-  async function matchAll() {
-    setGlobalMatching(true)
-    await Promise.all(segments.map((s) => matchSegment(s.id)))
-    setGlobalMatching(false)
-  }
+  async function matchAll() { setGlobalMatching(true); await Promise.all(segments.map((s) => matchSegment(s.id))); setGlobalMatching(false) }
 
   async function synthesiseTts(id: string) {
     const seg = segments.find((s) => s.id === id)
@@ -136,81 +106,76 @@ export default function MatchPage() {
       const res = await ttsApi.synthesize({ text: seg.text.trim() })
       patchSeg(id, { ttsLoading: false, ttsFilename: res.filename })
     } catch (e: unknown) {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      patchSeg(id, { ttsLoading: false, ttsError: detail || 'TTS 合成失败' })
+      patchSeg(id, { ttsLoading: false, ttsError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'TTS失败' })
     }
   }
 
   function playAudio(segId: string, filename: string) {
     audioRef.current?.pause()
-    const audio = new Audio(audioSrc(filename))
-    audioRef.current = audio
-    setPlayingSegId(segId)
-    audio.play()
-    audio.onended = () => setPlayingSegId(null)
-    audio.onerror = () => setPlayingSegId(null)
+    const audio = new Audio(audioSrc(filename)); audioRef.current = audio; setPlayingSegId(segId)
+    audio.play(); audio.onended = () => setPlayingSegId(null); audio.onerror = () => setPlayingSegId(null)
   }
-
-  function stopAudio() {
-    audioRef.current?.pause()
-    audioRef.current = null
-    setPlayingSegId(null)
-  }
+  function stopAudio() { audioRef.current?.pause(); audioRef.current = null; setPlayingSegId(null) }
 
   const readySegs = segments.filter((s) => s.clips.length > 0)
 
+  async function generateSrt(): Promise<string> {
+    setGeneratingSrt(true); setSrtError('')
+    try {
+      const segsInput = readySegs
+        .map((s) => ({ copy_text: s.text, clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined }))
+        .filter((s) => s.clip_id)
+      const res = await subtitleApi.generate({ segments: segsInput, style: subtitleStyle, use_tts_timing: true })
+      setSrtEntries(res.entries); setSrtContent(res.srt_content); setTimingSource(res.timing_source)
+      return res.srt_content
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'SRT生成失败'
+      setSrtError(msg); throw new Error(msg)
+    } finally { setGeneratingSrt(false) }
+  }
+
   async function handleExport() {
     if (exporting || readySegs.length === 0) return
-    setExporting(true)
-    setExportError('')
+    setExporting(true); setExportError('')
     const projectName = globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
     try {
       if (exportMode === 'zip') {
         const clipIds = readySegs.map((s) => s.clips[s.chosenIdx]?.clip_id).filter(Boolean) as string[]
-        const ttsFilenames = readySegs.map((s) => s.ttsFilename ?? '')
-        const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: ttsFilenames })
+        const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: readySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
-      } else {
-        const segs: MergedSegment[] = readySegs
-          .map((s) => ({ clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined, copy_text: s.text }))
-          .filter((s) => s.clip_id)
+      } else if (exportMode === 'merged') {
+        const segs: MergedSegment[] = readySegs.map((s) => ({ clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined, copy_text: s.text })).filter((s) => s.clip_id)
         const blob = await exportApi.downloadMerged({ segments: segs, project_name: projectName })
         triggerDownload(blob as unknown as Blob, `${projectName}.mp4`)
+      } else {
+        const currentSrt = await generateSrt()
+        const segsInput = readySegs.map((s) => ({ copy_text: s.text, clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined })).filter((s) => s.clip_id)
+        const blob = await subtitleApi.burn({ segments: segsInput, srt_content: currentSrt, style: subtitleStyle, project_name: projectName })
+        triggerDownload(blob as unknown as Blob, `${projectName}_subtitled.mp4`)
       }
     } catch (e: unknown) {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setExportError(detail || '导出失败，请重试。')
-    } finally {
-      setExporting(false)
-    }
+      setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
+    } finally { setExporting(false) }
   }
 
   function triggerDownload(blob: Blob, filename: string) {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = filename; a.click()
-    URL.revokeObjectURL(url)
+    const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
   }
-
   const toggleVideo = (id: string) =>
     setSelectedVideoIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
 
-  // ── JSX
+  // PLACEHOLDER_JSX
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
       <ExportSidebar
-        segments={segments}
-        exportMode={exportMode}
-        setExportMode={setExportMode}
-        exporting={exporting}
-        exportError={exportError}
-        onExport={handleExport}
+        segments={segments} exportMode={exportMode} setExportMode={setExportMode}
+        exporting={exporting} exportError={exportError} onExport={handleExport}
+        subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
+        srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
       />
-
-      {/* main content, padded right to clear the fixed sidebar */}
       <div className="pr-64">
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
               <ArrowLeft className="w-4 h-4" />首页
@@ -220,79 +185,48 @@ export default function MatchPage() {
               <Sparkles className="w-5 h-5 text-indigo-400" />文案匹配 · 配音 · 成片
             </h1>
           </div>
-
           {doneVideos.length === 0 && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />
-              <p className="text-sm text-slate-300">暂无可匹配素材，请先在<Link href="/process" className="mx-1 text-indigo-400 hover:underline">素材处理</Link>完成视频处理。</p>
+              <p className="text-sm text-slate-300">暂无可匹配素材，请先在<Link href="/process" className="mx-1 text-indigo-400 hover:underline">素材处理</Link>完成。</p>
             </div>
           )}
-
           {doneVideos.length > 0 && (
             <section className="space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                  限定视频范围<span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
-                </p>
-                <span className="text-xs text-slate-600">
-                  {videoSearch ? `${filteredDoneVideos.length} / ${doneVideos.length}` : doneVideos.length} 个视频
-                </span>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">限定视频范围<span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span></p>
+                <span className="text-xs text-slate-600">{videoSearch ? `${filteredDoneVideos.length} / ${doneVideos.length}` : doneVideos.length} 个视频</span>
               </div>
-
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
-                <input
-                  type="text"
-                  value={videoSearch}
-                  onChange={(e) => handleVideoSearch(e.target.value)}
-                  placeholder="搜索视频名称..."
-                  className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
-                />
-                {videoSearch && (
-                  <button
-                    onClick={() => handleVideoSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs"
-                  >
-                    ✕
-                  </button>
-                )}
+                <input type="text" value={videoSearch} onChange={(e) => handleVideoSearch(e.target.value)} placeholder="搜索视频名称..."
+                  className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors" />
+                {videoSearch && <button onClick={() => handleVideoSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs">✕</button>}
               </div>
-
               {filteredDoneVideos.length === 0 ? (
-                <p className="text-slate-500 text-sm">未找到匹配「{videoSearch}」的视频。</p>
+                <p className="text-slate-500 text-sm">未找到「{videoSearch}」。</p>
               ) : (
                 <>
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {pagedDoneVideos.map((v) => (
                       <button key={v.id} onClick={() => toggleVideo(v.id)}
                         className={`text-left px-3 py-2.5 rounded-lg border text-xs flex items-center gap-2 transition-colors ${
-                          selectedVideoIds.includes(v.id)
-                            ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
-                            : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500'
-                        }`}
-                      >
-                        <Film className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">{v.name}</span>
+                          selectedVideoIds.includes(v.id) ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300' : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500'
+                        }`}>
+                        <Film className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{v.name}</span>
                         <span className="ml-auto shrink-0 text-slate-600">{v.total_clips}片</span>
                       </button>
                     ))}
                   </div>
-
                   {videoTotalPages > 1 && (
                     <div className="flex items-center justify-between pt-1">
-                      <button
-                        onClick={() => setVideoPage((p) => Math.max(1, p - 1))}
-                        disabled={videoPage === 1}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      >
+                      <button onClick={() => setVideoPage((p) => Math.max(1, p - 1))} disabled={videoPage === 1}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
                         <ChevronLeft className="w-3.5 h-3.5" />上一页
                       </button>
                       <span className="text-xs text-slate-500">{videoPage} / {videoTotalPages}</span>
-                      <button
-                        onClick={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
-                        disabled={videoPage === videoTotalPages}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      >
+                      <button onClick={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))} disabled={videoPage === videoTotalPages}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
                         下一页<ChevronRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -301,7 +235,7 @@ export default function MatchPage() {
               )}
             </section>
           )}
-
+          {/* PLACEHOLDER_REST */}
           <div className="flex flex-wrap items-center gap-4">
             <label className="text-xs text-slate-500 flex items-center gap-2">初筛
               <input type="number" min={1} max={50} value={topK} onChange={(e) => setTopK(+e.target.value)}
@@ -312,23 +246,14 @@ export default function MatchPage() {
                 className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200" />
             </label>
           </div>
-
-          <CopyGeneratorPanel
-            selectedVideoIds={selectedVideoIds}
-            onApply={handleAiApply}
-          />
-
+          <CopyGeneratorPanel selectedVideoIds={selectedVideoIds} onApply={handleAiApply} />
           <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
               <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />批量拆分文案
             </p>
-            <textarea
-              value={globalQuery}
-              onChange={(e) => setGlobalQuery(e.target.value)}
-              placeholder="粘贴完整文案，按空行自动拆分为多段分别匹配..."
-              rows={4}
-              className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm outline-none focus:border-indigo-500 placeholder-slate-600 resize-none"
-            />
+            <textarea value={globalQuery} onChange={(e) => setGlobalQuery(e.target.value)}
+              placeholder="粘贴完整文案，按空行自动拆分为多段分别匹配..." rows={4}
+              className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm outline-none focus:border-indigo-500 placeholder-slate-600 resize-none" />
             <div className="flex items-center gap-3">
               <button onClick={splitGlobalQuery} disabled={!globalQuery.trim()}
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-sm flex items-center gap-2 border border-slate-700 transition-colors">
@@ -347,19 +272,14 @@ export default function MatchPage() {
               </button>
             </div>
           </section>
-
           {segments.length > 0 && (
             <section className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                  文案段落 · {segments.length} 段
-                </p>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">文案段落 · {segments.length} 段</p>
                 <button onClick={() => setSegments([])} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空全部</button>
               </div>
               {segments.map((seg, i) => (
-                <SegmentRow
-                  key={seg.id}
-                  seg={seg} index={i}
+                <SegmentRow key={seg.id} seg={seg} index={i}
                   onTextChange={(t) => patchSeg(seg.id, { text: t })}
                   onRemove={() => removeSegment(seg.id)}
                   onMatch={() => matchSegment(seg.id)}
@@ -374,11 +294,32 @@ export default function MatchPage() {
               ))}
             </section>
           )}
-
+          {exportMode !== 'zip' && segments.length > 0 && (
+            <SubtitlePanel
+              style={subtitleStyle} onChange={setSubtitleStyle}
+              entries={srtEntries} enabled={subtitleEnabled}
+              onToggle={setSubtitleEnabled} timingSource={timingSource}
+            />
+          )}
+          {srtError && (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">字幕错误：{srtError}</div>
+          )}
+          {exportMode === 'subtitle' && readySegs.length > 0 && (
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-400 space-y-1">
+              <p className="font-semibold">💬 一键成片流程</p>
+              <ol className="list-decimal list-inside space-y-0.5 text-cyan-500/80">
+                <li>读取已合成 TTS 音频的实际时长（ffprobe）</li>
+                <li>LLM 自动生成精确字幕时间轴</li>
+                <li>ffmpeg 合并视频 + 替换音轨 + ASS 字幕硬烧</li>
+                <li>输出带字幕完整 MP4</li>
+              </ol>
+              {generatingSrt && <p className="flex items-center gap-2 text-amber-400 mt-1"><Loader2 className="w-3 h-3 animate-spin" />正在生成字幕时间轴...</p>}
+            </div>
+          )}
         </div>
       </div>
-
       {previewClip && <PreviewModal clip={previewClip} onClose={() => setPreviewClip(null)} />}
     </main>
   )
 }
+

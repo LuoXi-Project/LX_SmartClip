@@ -116,6 +116,62 @@ export interface CopyGenRequest {
   stream?: boolean
 }
 
+export interface SubtitleStyleApi {
+  font_name?: string
+  font_size?: number
+  font_color?: string
+  outline_color?: string
+  outline_width?: number
+  shadow?: number
+  bold?: boolean
+  italic?: boolean
+  position?: string
+  margin_v?: number
+  background?: boolean
+  max_chars_per_line?: number
+}
+
+export interface SubtitleSegmentInput {
+  copy_text: string
+  clip_id: string
+  tts_filename?: string
+}
+
+export interface GenerateSRTRequest {
+  segments: SubtitleSegmentInput[]
+  style?: SubtitleStyleApi
+  use_tts_timing?: boolean
+}
+
+export interface SRTEntryApi {
+  index: number
+  start: number
+  end: number
+  text: string
+  clip_id: string
+}
+
+export interface GenerateSRTResponse {
+  srt_content: string
+  entries: SRTEntryApi[]
+  total_duration: number
+  timing_source: string
+}
+
+export interface BurnSubtitleRequest {
+  segments: SubtitleSegmentInput[]
+  srt_content: string
+  style?: SubtitleStyleApi
+  project_name?: string
+}
+
+export const subtitleApi = {
+  generate: (payload: GenerateSRTRequest) =>
+    apiClient.post<unknown, GenerateSRTResponse>('/api/subtitle/generate', payload),
+  burn: (payload: BurnSubtitleRequest) =>
+    apiClient.post('/api/subtitle/burn', payload, { responseType: 'blob' }),
+}
+
 export const copyGenApi = {
   /** Stream SSE — returns raw Response for caller to consume */
   generateStream: (payload: CopyGenRequest): Promise<Response> =>

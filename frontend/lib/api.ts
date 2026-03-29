@@ -75,6 +75,7 @@ export const videosApi = {
     })
   },
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
+  rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),
 }
 

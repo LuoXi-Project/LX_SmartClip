@@ -6,6 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.db.database import get_db_conn
 
@@ -227,6 +228,35 @@ async def stream_video(video_id: str):
     }
     media_type = _mime_map.get(ext, "video/mp4")
     return FileResponse(file_path, media_type=media_type, filename=os.path.basename(file_path))
+
+
+class RenamePayload(BaseModel):
+    name: str
+
+
+@router.patch("/{video_id}")
+async def rename_video(video_id: str, payload: RenamePayload):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="名称不能为空")
+
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT id FROM videos WHERE id = ?", (video_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+
+        await db.execute(
+            "UPDATE videos SET name = ? WHERE id = ?", (name, video_id)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {"id": video_id, "name": name}
 
 
 @router.delete("/{video_id}")

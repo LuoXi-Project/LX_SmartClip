@@ -105,6 +105,20 @@ export default function LibraryPage() {
     setPage(1)
   }
 
+  // Rename handler
+  const handleRename = async (id: string, name: string) => {
+    try {
+      await videosApi.rename(id, name)
+      setItems((prev) => prev.map((v) => (v.id === id ? { ...v, name } : v)))
+      if (previewVideo?.id === id) setPreviewVideo((p) => p ? { ...p, name } : p)
+      toast.success('已重命名')
+    } catch (error) {
+      console.error('Rename failed:', error)
+      toast.error('重命名失败，请重试')
+      throw error
+    }
+  }
+
   // Delete handler
   const handleDelete = async (id: string) => {
     const ok = await confirm({
@@ -250,6 +264,7 @@ export default function LibraryPage() {
                       video={video}
                       onPreview={openPreview}
                       onDelete={handleDelete}
+                      onRename={handleRename}
                     />
                   ))}
                 </div>

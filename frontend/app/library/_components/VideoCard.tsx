@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Trash2, Play, Calendar, Film, Scissors } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Trash2, Play, Calendar, Film, Scissors, Pencil, Check, X } from 'lucide-react'
 import type { Video } from '@/lib/store'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -17,11 +17,31 @@ interface VideoCardProps {
   video: Video
   onPreview: (video: Video) => void
   onDelete: (id: string) => void
+  onRename: (id: string, name: string) => Promise<void>
 }
 
-export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
+export function VideoCard({ video, onPreview, onDelete, onRename }: VideoCardProps) {
   const status = STATUS_MAP[video.status] ?? STATUS_MAP.error
   const [thumbError, setThumbError] = useState(false)
+
+  // Rename state
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(video.name)
+  const [renaming, setRenaming] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Keep draft in sync if the video prop name changes externally
+  useEffect(() => {
+    if (!editing) setDraft(video.name)
+  }, [video.name, editing])
+
+  // Auto-focus & select all when entering edit mode
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
 
   const thumbnailUrl = !thumbError
     ? `${API_BASE_URL}/api/videos/${video.id}/thumbnail`
@@ -34,6 +54,37 @@ export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
     return `${m}:${s.toString().padStart(2, '0')}`
   }
 
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setDraft(video.name)
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setDraft(video.name)
+  }
+
+  const commitEdit = async () => {
+    const trimmed = draft.trim()
+    if (!trimmed || trimmed === video.name) {
+      cancelEdit()
+      return
+    }
+    setRenaming(true)
+    try {
+      await onRename(video.id, trimmed)
+      setEditing(false)
+    } finally {
+      setRenaming(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') commitEdit()
+    else if (e.key === 'Escape') cancelEdit()
+  }
+
   return (
     <div className="group flex flex-col bg-slate-800/40 backdrop-blur-sm border border-slate-700/60 rounded-xl overflow-hidden hover:border-cyan-500/40 hover:bg-slate-800/60 transition-all duration-200 hover:shadow-xl hover:shadow-cyan-900/10">
       {/* Thumbnail */}
@@ -41,7 +92,6 @@ export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
         className="relative bg-slate-900/80 aspect-video flex items-center justify-center overflow-hidden cursor-pointer"
         onClick={() => onPreview(video)}
       >
-        {/* Cover image — shows if ffmpeg extracted a frame */}
         {thumbnailUrl ? (
           <img
             src={thumbnailUrl}
@@ -53,7 +103,7 @@ export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
           <div className="absolute inset-0 bg-gradient-to-br from-slate-800/40 to-slate-900/80" />
         )}
 
-        {/* Play button (always shown on top) */}
+        {/* Play button */}
         <div className="relative z-10 flex flex-col items-center gap-2">
           <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center group-hover:bg-cyan-600/80 transition-colors">
             <Play className="w-5 h-5 text-white/80 group-hover:text-white translate-x-0.5 transition-colors" />
@@ -76,11 +126,55 @@ export function VideoCard({ video, onPreview, onDelete }: VideoCardProps) {
 
       {/* Content */}
       <div className="flex flex-col flex-1 p-4 gap-3">
-        {/* Title + Status */}
+        {/* Title row */}
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-medium text-slate-100 text-sm leading-snug line-clamp-2 flex-1" title={video.name}>
-            {video.name}
-          </h3>
+          {editing ? (
+            /* ── Inline rename input ── */
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              <input
+                ref={inputRef}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={renaming}
+                className="flex-1 min-w-0 bg-slate-700/80 border border-cyan-500/60 rounded-md px-2 py-0.5 text-sm text-slate-100 outline-none focus:ring-1 focus:ring-cyan-500/80 disabled:opacity-50"
+              />
+              <button
+                onClick={commitEdit}
+                disabled={renaming || !draft.trim()}
+                className="shrink-0 p-1 rounded-md text-emerald-400 hover:bg-emerald-500/15 disabled:opacity-40 transition-colors"
+                title="确认"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={cancelEdit}
+                disabled={renaming}
+                className="shrink-0 p-1 rounded-md text-slate-400 hover:bg-slate-600/40 disabled:opacity-40 transition-colors"
+                title="取消"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            /* ── Static title with edit button ── */
+            <div className="flex items-start gap-1 flex-1 min-w-0">
+              <h3
+                className="font-medium text-slate-100 text-sm leading-snug line-clamp-2 flex-1"
+                title={video.name}
+              >
+                {video.name}
+              </h3>
+              <button
+                onClick={startEdit}
+                className="shrink-0 p-1 rounded-md text-slate-500 hover:text-cyan-400 hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-all"
+                title="重命名"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           <span className={`shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${status.cls}`}>
             {status.label}
           </span>

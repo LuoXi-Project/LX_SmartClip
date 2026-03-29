@@ -223,6 +223,21 @@ class VideoSplitter:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)
             clip_path = os.path.join(self.clips_dir, os.path.basename(video_path))
+            # 若目标文件不存在，用 FFmpeg 无损复制到 clips 目录
+            if not os.path.exists(clip_path):
+                cmd = [
+                    "ffmpeg",
+                    "-i", video_path,
+                    "-c", "copy",
+                    "-y",
+                    clip_path,
+                ]
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True)
+                    logger.info(f"整段视频已复制到 clips 目录: {clip_path}")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"复制视频失败: {e.stderr.decode()}")
+                    raise RuntimeError(f"复制视频失败: {str(e)}")
             return [ClipInfo(clip_path, 0, total_duration, total_duration)]
 
         logger.info(f"检测到 {len(scenes)} 个场景")

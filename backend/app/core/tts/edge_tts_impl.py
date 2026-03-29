@@ -5,6 +5,7 @@ from typing import Optional
 import edge_tts
 
 from .base import ITTS
+from app.core.retry import retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +40,19 @@ class EdgeTTS(ITTS):
 
         logger.info("TTS 合成: voice=%s rate=%s volume=%s text_len=%d", _voice, _rate, _volume, len(text))
 
-        communicate = edge_tts.Communicate(text=text, voice=_voice, rate=_rate, volume=_volume)
-        await communicate.save(output_path)
+        async def _call_tts():
+            communicate = edge_tts.Communicate(text=text, voice=_voice, rate=_rate, volume=_volume)
+            await communicate.save(output_path)
+
+        await retry_async(_call_tts)
         logger.info("TTS 完成: %s", output_path)
         return output_path
 
     async def list_voices(self, locale: Optional[str] = None) -> list[dict]:
-        voices_raw = await edge_tts.list_voices()
+        async def _fetch():
+            return await edge_tts.list_voices()
+
+        voices_raw = await retry_async(_fetch)
         result = []
         for v in voices_raw:
             if locale and not v["Locale"].startswith(locale):

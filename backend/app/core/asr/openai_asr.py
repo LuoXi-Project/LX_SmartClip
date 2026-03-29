@@ -1,7 +1,8 @@
-﻿import os
+import os
 import logging
 import httpx
 from app.core.asr.base import IASR
+from app.core.retry import retry_sync
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +63,18 @@ class OpenAIASR(IASR):
 
         timeout = _calc_timeout(audio_path)
         logger.info("开始 OpenAI ASR 转写: %s (超时 %.0fs)", audio_path, timeout)
-        try:
+
+        def _call_api():
             with open(audio_path, "rb") as f:
-                response = self.client.audio.transcriptions.create(
+                return self.client.audio.transcriptions.create(
                     model=self.model,
                     file=f,
                     language=self.language,
                     timeout=httpx.Timeout(timeout, connect=10),
                 )
+
+        try:
+            response = retry_sync(_call_api)
             text = response.text.strip()
             logger.info("OpenAI ASR 转写成功: %d 个字符", len(text))
             return text

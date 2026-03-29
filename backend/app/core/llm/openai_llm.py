@@ -3,6 +3,7 @@ import logging
 from typing import List
 
 from app.core.llm.base import ILLM
+from app.core.retry import retry_sync
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +66,19 @@ class OpenAILLM(ILLM):
 
         try:
             logger.info("LLM 精排: query_len=%d, candidates=%d", len(query), len(candidates))
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=1024,
-            )
+
+            def _call_api():
+                return self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=1024,
+                )
+
+            resp = retry_sync(_call_api)
             raw = resp.choices[0].message.content.strip()
             logger.debug("LLM 原始返回: %r", raw[:500])
 

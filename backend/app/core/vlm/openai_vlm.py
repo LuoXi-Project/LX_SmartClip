@@ -4,6 +4,7 @@ import base64
 import logging
 from typing import List
 from app.core.vlm.base import IVLM
+from app.core.retry import retry_sync
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,6 @@ class OpenAIVLM(IVLM):
                 openai_tokens = self._calculate_image_tokens(w, h, detail)
                 qwen_tokens = self._qwen_image_tokens(w, h)
                 glm_tokens = self._glm_image_tokens(w, h)
-                is_glm = 'glm' in self.model.lower()
                 logger.debug(
                     f"图片 token 估算 [{os.path.basename(path)}] "
                     f"{w}x{h} → OpenAI={openai_tokens}, Qwen={qwen_tokens}, GLM={glm_tokens}"
@@ -165,11 +165,12 @@ class OpenAIVLM(IVLM):
     def generate_description(self, frame_paths: List[str], max_images: int = 0, context_length: int = 0) -> str:
         """
         根据图像帧生成描述
-        
+
         Args:
             frame_paths: 图像文件路径列表
             max_images: 单次传入的最大图片数，0 表示不限制
-            
+            context_length: 模型上下文长度限制，0 表示不限制
+
         Returns:
             生成的描述文本
         """
@@ -188,6 +189,7 @@ class OpenAIVLM(IVLM):
         if context_length > 0 and len(frame_paths) > 1:
             is_glm = 'glm' in self.model.lower()
             is_qwen = any(k in self.model.lower() for k in ('qwen', 'glm')) and not is_glm
+
             def _tokens_per_img(w, h):
                 if is_glm:
                     return self._glm_image_tokens(w, h)
@@ -195,6 +197,7 @@ class OpenAIVLM(IVLM):
                     return self._qwen_image_tokens(w, h)
                 else:
                     return self._calculate_image_tokens(w, h)
+
             try:
                 from PIL import Image as PILImage
                 first_path = next((p for p in frame_paths if os.path.exists(p)), None)
@@ -230,7 +233,6 @@ class OpenAIVLM(IVLM):
                 logger.warning(f"图像文件不存在: {frame_path}")
                 continue
 
-            
             # 读取图像并转换为 base64
             with open(frame_path, 'rb') as f:
                 image_data = base64.standard_b64encode(f.read()).decode('utf-8')
@@ -248,10 +250,10 @@ class OpenAIVLM(IVLM):
                 }
             )
 
-        try:
-            # 调用 OpenAI API
-            logger.info(f'调用 OpenAI API: model={self.model}')
-            response = self.client.chat.completions.create(
+        logger.info(f'调用 OpenAI VLM API: model={self.model}')
+
+        def _call_api():
+            return self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
@@ -263,6 +265,8 @@ class OpenAIVLM(IVLM):
                 temperature=0.7,
             )
 
+        try:
+            response = retry_sync(_call_api)
             description = response.choices[0].message.content.strip()
             logger.info(f"描述生成成功: {len(description)} 个字符")
             return description

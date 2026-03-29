@@ -126,7 +126,11 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         split_mode      = await _read_config(db, "split_mode", "scene")
         scene_threshold = float(await _read_config(db, "scene_threshold", "0.4"))
         fixed_duration  = float(await _read_config(db, "fixed_duration", "10"))
+        asr_provider    = await _read_config(db, "asr_provider", "whisper")
         asr_model       = await _read_config(db, "asr_model", "base")
+        asr_base_url    = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
+        asr_api_key     = await _read_config(db, "asr_api_key", "")
+        asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
         vlm_base_url    = await _read_config(db, "vlm_base_url", "https://api.openai.com/v1")
         vlm_model       = await _read_config(db, "vlm_model", "gpt-4o")
         vlm_api_key     = await _read_config(db, "vlm_api_key", "")
@@ -189,10 +193,19 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
     # STEP 3: ASR
     if "asr" not in skip_steps:
-        await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 开始语音识别...")
         try:
-            from app.core.asr.whisper_asr import WhisperASR
-            asr_instance = await loop.run_in_executor(None, WhisperASR, asr_model)
+            if asr_provider == "openai":
+                await reporter.send("asr", "running", f"使用 OpenAI ASR ({asr_openai_model}) 开始语音识别...")
+                from app.core.asr.openai_asr import OpenAIASR
+                asr_instance = OpenAIASR(
+                    base_url=asr_base_url,
+                    api_key=asr_api_key,
+                    model=asr_openai_model,
+                )
+            else:
+                await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 开始语音识别...")
+                from app.core.asr.whisper_asr import WhisperASR
+                asr_instance = await loop.run_in_executor(None, WhisperASR, asr_model)
             processed_asr = 0
             for i, clip in enumerate(clips_rows):
                 clip_id   = clip["id"]

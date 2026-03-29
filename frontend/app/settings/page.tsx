@@ -10,6 +10,7 @@ import { VlmSection } from './_components/VlmSection'
 import { EmbeddingSection } from './_components/EmbeddingSection'
 import { VideoSection } from './_components/VideoSection'
 import { TtsSection } from './_components/TtsSection'
+import { AsrSection } from './_components/AsrSection'
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<ConfigMap>({})
@@ -21,6 +22,7 @@ export default function SettingsPage() {
   const [vlmProvider, setVlmProvider] = useState('custom')
   const [embProvider, setEmbProvider] = useState('custom')
   const [ttsProvider, setTtsProvider] = useState('edge-tts')
+  const [asrProvider, setAsrProvider] = useState('whisper')
 
   useEffect(() => {
     apiClient.get<unknown, ConfigMap>('/api/config')
@@ -41,6 +43,8 @@ export default function SettingsPage() {
         if (matchedEmb) setEmbProvider(matchedEmb.id)
         const savedTtsProv = data?.tts_provider?.value ?? ''
         if (savedTtsProv) setTtsProvider(savedTtsProv)
+        const savedAsrProv = data?.asr_provider?.value ?? ''
+        if (savedAsrProv) setAsrProvider(savedAsrProv)
       })
       .catch(() => setError('加载配置失败，请检查后端服务。'))
       .finally(() => setLoading(false))
@@ -87,6 +91,12 @@ export default function SettingsPage() {
     if (p.baseUrl) set('embedding_base_url', p.baseUrl)
     if (p.defaultModel) set('embedding_model', p.defaultModel)
   }
+  const applyAsrProvider = (p: ProviderPreset) => {
+    setAsrProvider(p.id)
+    set('asr_provider', p.id)
+    if (p.baseUrl) set('asr_base_url', p.baseUrl)
+    if (p.defaultModel) set('asr_openai_model', p.defaultModel)
+  }
   const applyTtsProvider = (p: ProviderPreset) => {
     setTtsProvider(p.id)
     set('tts_provider', p.id)
@@ -124,6 +134,7 @@ export default function SettingsPage() {
           <div className="space-y-6">
             <VlmSection {...sharedProps} vlmProvider={vlmProvider} onApplyProvider={applyVlmProvider} />
             <EmbeddingSection {...sharedProps} embProvider={embProvider} onApplyProvider={applyEmbProvider} />
+            <AsrSection {...sharedProps} asrProvider={asrProvider} onApplyProvider={applyAsrProvider} />
             <VideoSection {...sharedProps} />
             <TtsSection {...sharedProps} ttsProvider={ttsProvider} onApplyProvider={applyTtsProvider} />
           </div>

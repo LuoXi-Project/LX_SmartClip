@@ -44,7 +44,7 @@ export default function Home() {
         {/* Header */}
         <div className="text-center mb-16">
           <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-            LX SmartClip
+            洛曦智剪
           </h1>
           <p className="text-xl text-slate-300 mb-2">
             本地轻量化 AI 智能素材匹配剪辑工具

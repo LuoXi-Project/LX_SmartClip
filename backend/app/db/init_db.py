@@ -107,6 +107,9 @@ DEFAULT_CONFIG = [
     ("custom_tts_response_type", "binary", "select", "响应类型", '["binary","json"]'),
     ("custom_tts_audio_key", "", "string", "响应 JSON 音频字段路径 (支持 a.b.0.c)", None),
     ("frame_fps", "1", "number", "抽帧帧率 (帧/秒)", None),
+    ("vlm_context_length", "8192", "number", "VLM 上下文长度 (tokens)", None),
+    ("vlm_max_images_per_batch", "10", "number", "VLM 单次最大图片数量", None),
+    ("vlm_concurrency", "3", "number", "VLM 并发数量", None),
 ]
 
 

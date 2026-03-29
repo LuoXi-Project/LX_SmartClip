@@ -136,6 +136,9 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         vlm_api_key     = await _read_config(db, "vlm_api_key", "")
         vector_dim      = int(await _read_config(db, "vector_dimension", "1536"))
         frame_fps       = float(await _read_config(db, "frame_fps", "1"))
+        vlm_max_images    = int(await _read_config(db, "vlm_max_images_per_batch", "10"))
+        vlm_context_length = int(await _read_config(db, "vlm_context_length", "8192"))
+        vlm_concurrency  = int(await _read_config(db, "vlm_concurrency", "3"))
         embedding_base_url = await _read_config(db, "embedding_base_url", "https://api.openai.com/v1")
         embedding_api_key  = await _read_config(db, "embedding_api_key", "")
         embedding_model    = await _read_config(db, "embedding_model", "text-embedding-3-small")
@@ -249,39 +252,47 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 )
                 clips_rows = await _get_clips(video_id)
                 processed_vlm = 0
-                for i, clip in enumerate(clips_rows):
+                sem = asyncio.Semaphore(max(1, vlm_concurrency))
+
+                async def _process_clip_vlm(i: int, clip):
+                    nonlocal processed_vlm
                     clip_id   = clip["id"]
                     clip_path = clip["clip_path"]
-                    try:
-                        clip_name  = os.path.splitext(os.path.basename(clip_path))[0]
-                        frames_dir = os.path.join(splitter.frames_dir, clip_name)
-                        if os.path.isdir(frames_dir):
-                            frame_paths = sorted(
-                                os.path.join(frames_dir, f)
-                                for f in os.listdir(frames_dir)
-                                if f.lower().endswith((".jpg", ".png"))
+                    async with sem:
+                        try:
+                            clip_name  = os.path.splitext(os.path.basename(clip_path))[0]
+                            frames_dir = os.path.join(splitter.frames_dir, clip_name)
+                            if os.path.isdir(frames_dir):
+                                frame_paths = sorted(
+                                    os.path.join(frames_dir, f)
+                                    for f in os.listdir(frames_dir)
+                                    if f.lower().endswith((".jpg", ".png"))
+                                )
+                            else:
+                                frame_paths = await loop.run_in_executor(
+                                    None, splitter.extract_frames, clip_path, frame_fps
+                                )
+                            if not frame_paths:
+                                return
+                            description = await loop.run_in_executor(
+                                None, vlm_instance.generate_description, frame_paths, vlm_max_images, vlm_context_length
                             )
-                        else:
-                            frame_paths = await loop.run_in_executor(
-                                None, splitter.extract_frames, clip_path, frame_fps
+                            await _update_clip_field(clip_id, "vlm_description", description)
+                            processed_vlm += 1
+                            await reporter.send(
+                                "vlm", "running",
+                                f"VLM {i+1}/{len(clips_rows)} 完成",
+                                {"current": i + 1, "total": len(clips_rows)},
                             )
-                        if not frame_paths:
-                            continue
-                        description = await loop.run_in_executor(
-                            None, vlm_instance.generate_description, frame_paths
-                        )
-                        await _update_clip_field(clip_id, "vlm_description", description)
-                        processed_vlm += 1
-                        await reporter.send(
-                            "vlm", "running",
-                            f"VLM {i+1}/{len(clips_rows)} 完成",
-                            {"current": i + 1, "total": len(clips_rows)},
-                        )
-                    except Exception as e:
-                        logger.warning("片段 %s VLM 失败: %s", clip_id, e)
+                        except Exception as e:
+                            logger.warning("片段 %s VLM 失败: %s", clip_id, e)
+
+                await asyncio.gather(*[
+                    _process_clip_vlm(i, clip) for i, clip in enumerate(clips_rows)
+                ])
                 await reporter.send(
                     "vlm", "done",
-                    f"视觉描述完成，成功 {processed_vlm}/{len(clips_rows)} 个",
+                    f"视觉描述完成，成功 {processed_vlm}/{len(clips_rows)} 个（并发={vlm_concurrency})",
                     {"processed": processed_vlm, "total": len(clips_rows)},
                 )
             except Exception as e:

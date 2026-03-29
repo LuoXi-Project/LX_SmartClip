@@ -32,7 +32,7 @@ export const ASR_PROVIDERS: ProviderPreset[] = [
   { id: 'openai',   name: 'OpenAI / 兼容',  logo: '🟢', baseUrl: 'https://api.openai.com/v1', defaultModel: 'whisper-1' },
 ]
 
-export const VLM_KEYS  = ['vlm_base_url', 'vlm_api_key', 'vlm_model', 'vlm_provider', 'llm_model']
+export const VLM_KEYS  = ['vlm_base_url', 'vlm_api_key', 'vlm_model', 'vlm_provider', 'llm_model', 'vlm_context_length', 'vlm_max_images_per_batch', 'vlm_concurrency']
 export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'vector_dimension', 'top_k', 'match_top_k', 'match_top_n']
 export const VIDEO_KEYS = ['split_mode', 'fixed_duration', 'scene_threshold', 'frame_fps']
 export const ASR_KEYS  = ['asr_provider', 'asr_model', 'asr_base_url', 'asr_api_key', 'asr_openai_model']

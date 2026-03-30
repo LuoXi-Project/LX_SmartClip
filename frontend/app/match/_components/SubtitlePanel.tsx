@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Captions, Eye, EyeOff } from 'lucide-react'
+import { ChevronDown, ChevronUp, Subtitles, Eye, EyeOff } from 'lucide-react'
 import type { SubtitleStyle, SRTEntry } from './types'
 import { DEFAULT_SUBTITLE_STYLE } from './types'
 
@@ -28,7 +28,7 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-slate-800/40 transition-colors"
       >
-        <Captions className="w-4 h-4 text-cyan-400 shrink-0" />
+        <Subtitles className="w-4 h-4 text-cyan-400 shrink-0" />
         <span className="text-sm font-medium text-slate-200">字幕设置</span>
         {timingSource && (
           <span className={`text-[10px] px-2 py-0.5 rounded-full border ml-1 ${
@@ -43,7 +43,7 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
         )}
         <div className="flex-1" />
         {/* enable toggle */}
-        <span className="text-xs text-slate-500 mr-2">烧录字幕</span>
+        <span className="text-xs text-slate-500 mr-2">添加字幕</span>
         <button
           onClick={e => { e.stopPropagation(); onToggle(!enabled) }}
           className={`relative w-10 h-5 rounded-full transition-colors ${

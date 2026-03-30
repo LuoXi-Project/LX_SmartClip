@@ -7,7 +7,9 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+import os
 from app.db.init_db import init_db
 from app.api.config import router as config_router
 from app.api.videos import router as videos_router
@@ -55,6 +57,14 @@ app.include_router(export_router)
 app.include_router(chat_router)
 app.include_router(copy_gen_router)
 app.include_router(subtitle_router)
+
+
+# 挂载 storage 目录，供前端直接下载烧录视频等静态文件
+# __file__ = backend/app/main.py  → dirname = backend/app  → ".." = backend/
+_storage_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage"))
+if os.path.isdir(_storage_path):
+    print(f"挂载路径:{_storage_path}")
+    app.mount("/storage", StaticFiles(directory=_storage_path), name="storage")
 
 
 @app.get("/health")

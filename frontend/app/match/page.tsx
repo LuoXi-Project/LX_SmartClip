@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -6,35 +6,59 @@ import {
   AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Film, Loader2,
   Plus, Search, Sparkles, SplitSquareHorizontal,
 } from 'lucide-react'
-import apiClient, { exportApi, ttsApi, subtitleApi, type MatchClip, type MergedSegment, type Video } from '@/lib/api'
+import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video } from '@/lib/api'
 import { type Segment, type ExportMode, type SubtitleStyle, type SRTEntry, DEFAULT_SUBTITLE_STYLE, audioSrc } from './_components/types'
 import { CopyGeneratorPanel } from './_components/CopyGeneratorPanel'
 import { PreviewModal } from './_components/ClipCard'
 import { SegmentRow } from './_components/SegmentRow'
 import { ExportSidebar } from './_components/ExportSidebar'
 import { SubtitlePanel } from './_components/SubtitlePanel'
+import { useMatchStore } from '@/lib/store'
 
 const VIDEO_PAGE_SIZE = 9
 
 export default function MatchPage() {
+  const {
+    segments,
+    setMatchSegments,
+    globalQuery,
+    setMatchGlobalQuery,
+    selectedVideoIds,
+    setMatchSelectedVideoIds,
+    topK,
+    setMatchTopK,
+    topN,
+    setMatchTopN,
+    subtitleEnabled,
+    setMatchSubtitleEnabled,
+    subtitleStyle,
+    setMatchSubtitleStyle,
+    exportMode,
+    setMatchExportMode,
+  } = useMatchStore()
+
+  const setSegments = (fn: Segment[] | ((prev: Segment[]) => Segment[])) =>
+    setMatchSegments(typeof fn === 'function' ? fn(useMatchStore.getState().segments) : fn)
+  const setSelectedVideoIds = (fn: string[] | ((prev: string[]) => string[])) =>
+    setMatchSelectedVideoIds(typeof fn === 'function' ? fn(useMatchStore.getState().selectedVideoIds) : fn)
+  const setGlobalQuery = setMatchGlobalQuery
+  const setTopK = setMatchTopK
+  const setTopN = setMatchTopN
+  const setSubtitleEnabled = setMatchSubtitleEnabled
+  const setSubtitleStyle = setMatchSubtitleStyle
+  const setExportMode = setMatchExportMode
+
+
   const [videos, setVideos] = useState<Video[]>([])
-  const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([])
   const [videoSearch, setVideoSearch] = useState('')
   const [videoPage, setVideoPage] = useState(1)
-  const [topK, setTopK] = useState(12)
-  const [topN, setTopN] = useState(5)
-  const [globalQuery, setGlobalQuery] = useState('')
-  const [segments, setSegments] = useState<Segment[]>([])
   const [counter, setCounter] = useState(0)
   const [previewClip, setPreviewClip] = useState<MatchClip | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegId, setPlayingSegId] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
-  const [exportMode, setExportMode] = useState<ExportMode>('zip')
   const [globalMatching, setGlobalMatching] = useState(false)
-  const [subtitleEnabled, setSubtitleEnabled] = useState(false)
-  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE)
   const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
   const [srtContent, setSrtContent] = useState('')
   const [timingSource, setTimingSource] = useState('')
@@ -60,13 +84,13 @@ export default function MatchPage() {
     return { id, text, clips: [], chosenIdx: 0, ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false }
   }
   function patchSeg(id: string, p: Partial<Segment>) {
-    setSegments((prev) => prev.map((s) => s.id === id ? { ...s, ...p } : s))
+    setMatchSegments(useMatchStore.getState().segments.map((s) => s.id === id ? { ...s, ...p } : s))
   }
   function addSegment(text = '') {
     const id = `seg-${counter}`; setCounter((c) => c + 1)
-    setSegments((prev) => [...prev, makeSeg(id, text)])
+    setMatchSegments([...useMatchStore.getState().segments, makeSeg(id, text)])
   }
-  function removeSegment(id: string) { setSegments((prev) => prev.filter((s) => s.id !== id)) }
+  function removeSegment(id: string) { setMatchSegments(useMatchStore.getState().segments.filter((s) => s.id !== id)) }
 
   function splitGlobalQuery() {
     if (!globalQuery.trim()) return
@@ -74,15 +98,15 @@ export default function MatchPage() {
     if (parts.length <= 1) parts = globalQuery.split(/(?<=[。！？!?])\s*/).map((p) => p.trim()).filter(Boolean)
     if (parts.length <= 1) parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
     if (!parts.length) return
-    setCounter((c) => { setSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
+    setCounter((c) => { setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
   }
   function handleAiApply(parts: string[]) {
     if (!parts.length) return
-    setCounter((c) => { setSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
+    setCounter((c) => { setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
   }
 
   async function matchSegment(id: string) {
-    const seg = segments.find((s) => s.id === id)
+    const seg = useMatchStore.getState().segments.find((s) => s.id === id)
     if (!seg || !seg.text.trim()) return
     patchSeg(id, { matchLoading: true, matchError: '' })
     try {
@@ -99,7 +123,7 @@ export default function MatchPage() {
   async function matchAll() { setGlobalMatching(true); await Promise.all(segments.map((s) => matchSegment(s.id))); setGlobalMatching(false) }
 
   async function synthesiseTts(id: string) {
-    const seg = segments.find((s) => s.id === id)
+    const seg = useMatchStore.getState().segments.find((s) => s.id === id)
     if (!seg || !seg.text.trim()) return
     patchSeg(id, { ttsLoading: true, ttsError: '' })
     try {
@@ -143,15 +167,15 @@ export default function MatchPage() {
         const clipIds = readySegs.map((s) => s.clips[s.chosenIdx]?.clip_id).filter(Boolean) as string[]
         const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: readySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
-      } else if (exportMode === 'merged') {
-        const segs: MergedSegment[] = readySegs.map((s) => ({ clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined, copy_text: s.text })).filter((s) => s.clip_id)
-        const blob = await exportApi.downloadMerged({ segments: segs, project_name: projectName })
-        triggerDownload(blob as unknown as Blob, `${projectName}.mp4`)
       } else {
         const currentSrt = await generateSrt()
         const segsInput = readySegs.map((s) => ({ copy_text: s.text, clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined })).filter((s) => s.clip_id)
-        const blob = await subtitleApi.burn({ segments: segsInput, srt_content: currentSrt, style: subtitleStyle, project_name: projectName })
-        triggerDownload(blob as unknown as Blob, `${projectName}_subtitled.mp4`)
+        const res = await subtitleApi.burn({ segments: segsInput, srt_content: currentSrt, style: subtitleStyle, project_name: projectName })
+        const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.download = res.filename
+        a.click()
       }
     } catch (e: unknown) {
       setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
@@ -159,8 +183,14 @@ export default function MatchPage() {
   }
 
   function triggerDownload(blob: Blob, filename: string) {
-    const url = URL.createObjectURL(blob); const a = document.createElement('a')
-    a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 500)
   }
   const toggleVideo = (id: string) =>
     setSelectedVideoIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
@@ -276,7 +306,7 @@ export default function MatchPage() {
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">文案段落 · {segments.length} 段</p>
-                <button onClick={() => setSegments([])} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空全部</button>
+                <button onClick={() => setMatchSegments([])} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空全部</button>
               </div>
               {segments.map((seg, i) => (
                 <SegmentRow key={seg.id} seg={seg} index={i}

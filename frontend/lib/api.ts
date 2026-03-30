@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -86,8 +86,6 @@ export const matchApi = {
 export const exportApi = {
   downloadProject: (payload: ExportRequest) =>
     apiClient.post('/api/export/project', payload, { responseType: 'blob' }),
-  downloadMerged: (payload: MergeRequest) =>
-    apiClient.post('/api/export/merged', payload, { responseType: 'blob' }),
 }
 
 export interface ExportRequest {
@@ -97,16 +95,6 @@ export interface ExportRequest {
   tts_filenames?: string[]
 }
 
-export interface MergedSegment {
-  clip_id: string
-  tts_filename?: string
-  copy_text?: string
-}
-
-export interface MergeRequest {
-  segments: MergedSegment[]
-  project_name?: string
-}
 
 export interface CopyGenRequest {
   video_ids: string[]
@@ -165,11 +153,16 @@ export interface BurnSubtitleRequest {
   project_name?: string
 }
 
+export interface BurnSubtitleResponse {
+  filename: string
+  url: string
+}
+
 export const subtitleApi = {
   generate: (payload: GenerateSRTRequest) =>
     apiClient.post<unknown, GenerateSRTResponse>('/api/subtitle/generate', payload),
   burn: (payload: BurnSubtitleRequest) =>
-    apiClient.post('/api/subtitle/burn', payload, { responseType: 'blob' }),
+    apiClient.post<unknown, BurnSubtitleResponse>('/api/subtitle/burn', payload),
 }
 
 export const copyGenApi = {

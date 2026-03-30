@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, ChevronDown, Download, Loader2, Play, RefreshCw, Square, Settings } from 'lucide-react'
 import { ttsApi, apiClient, type TTSResponse, type VoiceInfo } from '@/lib/api'
 import type { ConfigMap } from '@/app/settings/_components/types'
+import { useTtsStore, type TtsHistoryItem } from '@/lib/store'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 function buildAudioUrl(f: string) { return `${API_BASE}/api/tts/audio/${f}` }
@@ -18,7 +19,8 @@ const PROVIDER_LABELS: Record<string,string> = {
   'volcengine':'火山引擎','gpt-sovits':'GPT-SoVITS','index-tts':'IndexTTS','custom-http':'自定义 HTTP',
 }
 
-interface HistoryItem { id:string; text:string; voice:string; rate:string; volume:string; filename:string }
+// HistoryItem 类型由 store 统一导出，此处直接使用 TtsHistoryItem
+type HistoryItem = TtsHistoryItem
 
 function HistoryCard({item,playing,onPlay,onStop,onDownload}:{item:HistoryItem;playing:boolean;onPlay:()=>void;onStop:()=>void;onDownload:()=>void}) {
   return (
@@ -38,15 +40,26 @@ function HistoryCard({item,playing,onPlay,onStop,onDownload}:{item:HistoryItem;p
 }
 
 export default function TTSPage() {
-  const [text, setText] = useState('')
+  // ── 持久化状态（切换页面后保留）─────────────────────────────────────────
+  const {
+    ttsHistory: history,
+    addTtsHistory,
+    ttsText: text,
+    setTtsText: setText,
+    ttsSelectedVoice: selectedVoice,
+    setTtsSelectedVoice: setSelectedVoice,
+    ttsRate: rate,
+    setTtsRate: setRate,
+    ttsVolume: volume,
+    setTtsVolume: setVolume,
+    clearTtsHistory,
+  } = useTtsStore()
+  // ─────────────────────────────────────────────────────────────────────────
+
   const [voices, setVoices] = useState<VoiceInfo[]>([])
   const [voicesLoading, setVoicesLoading] = useState(false)
-  const [selectedVoice, setSelectedVoice] = useState('')
-  const [rate, setRate] = useState('+0%')
-  const [volume, setVolume] = useState('+0%')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [history, setHistory] = useState<HistoryItem[]>([])
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [showVoiceDropdown, setShowVoiceDropdown] = useState(false)
   const [voiceSearch, setVoiceSearch] = useState('')
@@ -60,9 +73,13 @@ export default function TTSPage() {
       .then((data) => {
         const provider = data?.tts_provider?.value || 'edge-tts'
         setTtsProvider(provider)
-        if (data?.tts_voice?.value) setSelectedVoice(data.tts_voice.value)
-        if (data?.tts_rate?.value) setRate(data.tts_rate.value)
-        if (data?.tts_volume?.value) setVolume(data.tts_volume.value)
+        // 只在 store 中尚无值时才用配置覆盖，保留用户上次的选择
+        if (!useTtsStore.getState().ttsSelectedVoice && data?.tts_voice?.value)
+          setSelectedVoice(data.tts_voice.value)
+        if (useTtsStore.getState().ttsRate === '+0%' && data?.tts_rate?.value)
+          setRate(data.tts_rate.value)
+        if (useTtsStore.getState().ttsVolume === '+0%' && data?.tts_volume?.value)
+          setVolume(data.tts_volume.value)
       })
       .catch(console.error)
       .finally(() => setConfigLoading(false))
@@ -99,7 +116,7 @@ export default function TTSPage() {
       else if (VOICE_INPUT_PROVIDERS.includes(ttsProvider) && selectedVoice) { payload.voice = selectedVoice }
       const res: TTSResponse = await ttsApi.synthesize(payload)
       const item: HistoryItem = { id: res.filename, text: text.trim(), voice: res.voice || selectedVoice, rate: res.rate || rate, volume: res.volume || volume, filename: res.filename }
-      setHistory((prev) => [item, ...prev])
+      addTtsHistory(item)
       playAudio(item)
     } catch (e: unknown) {
       const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -250,7 +267,10 @@ export default function TTSPage() {
         {/* 历史记录 */}
         {history.length > 0 && (
           <div className="space-y-2">
-            <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">合成历史</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">合成历史</h2>
+              <button onClick={clearTtsHistory} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空历史</button>
+            </div>
             {history.map((item) => (
               <HistoryCard key={item.id} item={item} playing={playingId===item.id}
                 onPlay={() => playAudio(item)} onStop={stopAudio} onDownload={() => downloadAudio(item)} />

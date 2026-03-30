@@ -1,4 +1,4 @@
-import { Captions, Loader2 } from 'lucide-react'
+import { Subtitles, Loader2 } from 'lucide-react'
 import type { ExportMode, Segment } from './types'
 
 export function ExportSidebar({
@@ -31,7 +31,6 @@ export function ExportSidebar({
 
   const modeLabel: Record<ExportMode, { icon: string; title: string; desc: string; color: string; active: string }> = {
     zip:      { icon: '📦', title: '素材压缩包',     desc: '视频切片 + 音频 ZIP',     color: 'indigo', active: 'border-indigo-500 bg-indigo-500/10 text-indigo-200' },
-    merged:   { icon: '🎬', title: '完整带配音视频', desc: 'ffmpeg 合成 MP4',         color: 'violet', active: 'border-violet-500 bg-violet-500/10 text-violet-200' },
     subtitle: { icon: '💬', title: '一键成片',       desc: '配音 + 字幕烧录 MP4',     color: 'cyan',   active: 'border-cyan-500   bg-cyan-500/10   text-cyan-200'   },
   }
 
@@ -69,13 +68,13 @@ export function ExportSidebar({
         ))}
       </div>
 
-      {/* subtitle toggle (shown for merged/subtitle modes) */}
+      {/* subtitle toggle (shown for subtitle modes) */}
       {exportMode !== 'zip' && (
         <div className="px-5 py-3 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Captions className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="text-xs text-slate-300">烧录字幕</span>
+              <Subtitles className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-xs text-slate-300">添加字幕</span>
             </div>
             <button
               onClick={() => onToggleSubtitle(!subtitleEnabled)}
@@ -109,8 +108,6 @@ export function ExportSidebar({
           className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
             exportMode === 'subtitle'
               ? 'bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600'
-              : exportMode === 'merged'
-              ? 'bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600'
               : 'bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600'
           }`}
         >

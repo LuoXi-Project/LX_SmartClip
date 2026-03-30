@@ -60,9 +60,13 @@ async def match_clips(req: MatchRequest):
         embed_api_key  = _read_cfg(conn, "embedding_api_key", "")
         embed_model    = _read_cfg(conn, "embedding_model", "text-embedding-3-small")
 
-        llm_base_url   = _read_cfg(conn, "vlm_base_url", "https://api.openai.com/v1")
-        llm_api_key    = _read_cfg(conn, "vlm_api_key", "")
+        llm_base_url   = _read_cfg(conn, "llm_base_url", "https://api.openai.com/v1")
+        llm_api_key    = _read_cfg(conn, "llm_api_key", "")
         llm_model      = _read_cfg(conn, "llm_model", "gpt-4o-mini")
+        llm_temperature = float(_read_cfg(conn, "llm_temperature", "0.7"))
+        llm_max_tokens  = int(_read_cfg(conn, "llm_max_tokens", "20480"))
+        llm_max_context_tokens = int(_read_cfg(conn, "llm_max_context_tokens", "128000"))
+        llm_concurrency = int(_read_cfg(conn, "llm_concurrency", "3"))
 
         vector_dim     = int(_read_cfg(conn, "vector_dimension", "1536"))
         top_k_cfg      = int(_read_cfg(conn, "match_top_k", "12"))
@@ -79,7 +83,7 @@ async def match_clips(req: MatchRequest):
         if not llm_api_key:
             raise HTTPException(
                 status_code=400,
-                detail="LLM API Key 未配置，请在设置页面填写 vlm_api_key"
+                detail="LLM API Key 未配置，请在设置页面填写 llm_api_key"
             )
 
         # 初始化 Embedder

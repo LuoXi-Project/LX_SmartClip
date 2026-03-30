@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useMemo, useState } from 'react'
 import { VLM_PROVIDERS, VLM_KEYS } from './constants'
@@ -130,7 +130,7 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
 
         {config.vlm_api_key && (
           <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 密鑰</label>
+            <label className="text-xs text-slate-400">API 密钥</label>
             <div className="flex gap-2">
               <input type="password" value={v('vlm_api_key')} onChange={(e) => onSet('vlm_api_key', e.target.value)}
                 className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
@@ -152,20 +152,6 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
             </div>
           </div>
         )}
-
-        {config.llm_model && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">LLM 模型 (文本)</label>
-            <div className="flex gap-2 items-start">
-              <div className="flex-1">
-                <ModelPicker value={v('llm_model')} onChange={(val) => onSet('llm_model', val)}
-                  baseUrl={v('vlm_base_url')} apiKey={v('vlm_api_key')} placeholder="gpt-4o-mini" />
-              </div>
-              <SaveBtn dirty={isDirty('llm_model')} saving={!!saving['llm_model']} saved={!!saved['llm_model']} onSave={() => onSave('llm_model')} />
-            </div>
-          </div>
-        )}
-
         <div className="border-t border-slate-800/70" />
         <p className="text-xs font-medium text-slate-500 -mt-1">图像分析参数</p>
 

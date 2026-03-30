@@ -5,8 +5,9 @@ import Link from 'next/link'
 import { ArrowLeft, Loader2, Settings2, AlertCircle } from 'lucide-react'
 import apiClient from '@/lib/api'
 import type { ConfigMap, ProviderPreset } from './_components/types'
-import { VLM_PROVIDERS, EMBEDDING_PROVIDERS } from './_components/constants'
+import { VLM_PROVIDERS, LLM_PROVIDERS, EMBEDDING_PROVIDERS } from './_components/constants'
 import { VlmSection } from './_components/VlmSection'
+import { LlmSection } from './_components/LlmSection'
 import { EmbeddingSection } from './_components/EmbeddingSection'
 import { VideoSection } from './_components/VideoSection'
 import { TtsSection } from './_components/TtsSection'
@@ -20,6 +21,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState<Record<string, boolean>>({})
   const [error, setError] = useState('')
   const [vlmProvider, setVlmProvider] = useState('custom')
+  const [llmProvider, setLlmProvider] = useState('custom')
   const [embProvider, setEmbProvider] = useState('custom')
   const [ttsProvider, setTtsProvider] = useState('edge-tts')
   const [asrProvider, setAsrProvider] = useState('whisper')
@@ -36,6 +38,11 @@ export default function SettingsPage() {
           (p) => p.id !== 'custom' && p.baseUrl && savedVlmUrl.startsWith(p.baseUrl.split('/v1')[0])
         )
         if (matchedVlm) setVlmProvider(matchedVlm.id)
+        const savedLlmUrl = data?.llm_base_url?.value ?? ''
+        const matchedLlm = LLM_PROVIDERS.find(
+          (p) => p.id !== 'custom' && p.baseUrl && savedLlmUrl.startsWith(p.baseUrl.split('/v1')[0])
+        )
+        if (matchedLlm) setLlmProvider(matchedLlm.id)
         const savedEmbUrl = data?.embedding_base_url?.value ?? ''
         const matchedEmb = EMBEDDING_PROVIDERS.find(
           (p) => p.id !== 'custom' && p.baseUrl && savedEmbUrl.startsWith(p.baseUrl.split('/v1')[0])
@@ -86,6 +93,11 @@ export default function SettingsPage() {
     if (p.baseUrl) set('vlm_base_url', p.baseUrl)
     if (p.defaultModel) set('vlm_model', p.defaultModel)
   }
+  const applyLlmProvider = (p: ProviderPreset) => {
+    setLlmProvider(p.id)
+    if (p.baseUrl) set('llm_base_url', p.baseUrl)
+    if (p.defaultModel) set('llm_model', p.defaultModel)
+  }
   const applyEmbProvider = (p: ProviderPreset) => {
     setEmbProvider(p.id)
     if (p.baseUrl) set('embedding_base_url', p.baseUrl)
@@ -133,6 +145,7 @@ export default function SettingsPage() {
         {!loading && (
           <div className="space-y-6">
             <VlmSection {...sharedProps} vlmProvider={vlmProvider} onApplyProvider={applyVlmProvider} />
+            <LlmSection {...sharedProps} llmProvider={llmProvider} onApplyProvider={applyLlmProvider} />
             <EmbeddingSection {...sharedProps} embProvider={embProvider} onApplyProvider={applyEmbProvider} />
             <AsrSection {...sharedProps} asrProvider={asrProvider} onApplyProvider={applyAsrProvider} />
             <VideoSection {...sharedProps} />

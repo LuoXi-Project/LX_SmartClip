@@ -1,4 +1,4 @@
-"""LLM 配置管理工具"""
+﻿"""LLM 配置管理工具"""
 import logging
 from typing import Optional
 import aiosqlite
@@ -19,8 +19,8 @@ class LLMConfig:
     @staticmethod
     async def get_llm_params(
         db: aiosqlite.Connection,
-        base_url_key: str = "vlm_base_url",
-        api_key_key: str = "vlm_api_key",
+        base_url_key: str = "llm_base_url",
+        api_key_key: str = "llm_api_key",
         model_key: str = "llm_model",
         fallback_model_key: str = "vlm_model",
     ) -> tuple[str, str, str]:
@@ -62,8 +62,8 @@ class LLMConfig:
     @staticmethod
     async def get_llm_params_with_defaults(
         db: aiosqlite.Connection,
-        base_url_key: str = "vlm_base_url",
-        api_key_key: str = "vlm_api_key",
+        base_url_key: str = "llm_base_url",
+        api_key_key: str = "llm_api_key",
         model_key: str = "llm_model",
         fallback_model_key: str = "vlm_model",
         temperature_key: str = "llm_temperature",

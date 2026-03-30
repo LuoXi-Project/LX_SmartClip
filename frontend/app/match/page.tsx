@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -102,6 +102,7 @@ export default function MatchPage() {
   }
   function handleAiApply(parts: string[]) {
     if (!parts.length) return
+    setGlobalQuery(parts.join('\n\n'))
     setCounter((c) => { setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
   }
 

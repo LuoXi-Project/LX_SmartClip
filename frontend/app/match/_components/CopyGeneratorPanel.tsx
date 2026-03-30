@@ -179,7 +179,7 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply }: Props) {
           try {
             const json = JSON.parse(data)
             if (json.error) throw new Error(json.detail || json.error)
-            const delta = json?.choices?.[0]?.delta?.content
+            const delta = json?.choices?.[0]?.delta?.content ?? json?.content
             if (delta) {
               accumulated += delta
               setGenerated(accumulated)

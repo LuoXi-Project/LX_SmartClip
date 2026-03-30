@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ILLM(ABC):
@@ -21,3 +24,89 @@ class ILLM(ABC):
     @abstractmethod
     def get_model_info(self) -> dict:
         """返回模型信息"""
+
+
+class LLMClient:
+    """通用 LLM 客户端，支持 OpenAI 兼容 API"""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 20480,
+        timeout: float = 60.0,
+    ):
+        """
+        初始化 LLM 客户端。
+
+        Args:
+            base_url: API 基础 URL
+            api_key: API 密钥
+            model: 模型名称
+            temperature: 温度参数（0-2）
+            max_tokens: 最大 token 数
+            timeout: 请求超时时间（秒）
+        """
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            raise ImportError("请安装 openai: pip install openai")
+
+        self.base_url = base_url
+        self.api_key = api_key
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        logger.info(
+            "初始化 LLMClient: model=%s, base_url=%s, temp=%.1f, max_tokens=%d",
+            model,
+            base_url,
+            temperature,
+            max_tokens,
+        )
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        调用 LLM 进行对话。
+
+        Args:
+            messages: 消息列表，格式 [{"role": "system|user|assistant", "content": "..."}]
+            temperature: 覆盖默认温度
+            max_tokens: 覆盖默认 max_tokens
+
+        Returns:
+            LLM 返回的文本内容
+        """
+        temp = temperature if temperature is not None else self.temperature
+        tokens = max_tokens if max_tokens is not None else self.max_tokens
+
+        try:
+            resp = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temp,
+                max_tokens=tokens,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error("LLM 调用失败: %s", e)
+            raise
+
+    def get_config(self) -> dict:
+        """返回客户端配置信息"""
+        return {
+            "base_url": self.base_url,
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "timeout": self.timeout,
+        }

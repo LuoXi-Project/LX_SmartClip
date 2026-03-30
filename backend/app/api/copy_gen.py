@@ -175,7 +175,7 @@ async def generate_copy(req: CopyGenRequest):
         "messages": messages,
         "stream": req.stream,
         "temperature": 0.85,
-        "max_tokens": 2048,
+        "max_tokens": 20480,
     }
 
     if req.stream:

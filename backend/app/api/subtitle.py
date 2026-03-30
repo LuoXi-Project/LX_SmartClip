@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 
 from app.db.database import DB_PATH
 from app.core.subtitle.srt import build_srt, parse_srt
-from app.core.subtitle.timeline import read_cfg, resolve_durations, rule_timeline, llm_timeline
+from app.core.subtitle.timeline import resolve_durations, rule_timeline, llm_timeline
 from app.core.subtitle.burn import burn_to_mp4
+from app.core.llm import LLMClient, LLMConfig
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subtitle", tags=["subtitle"])
@@ -28,8 +29,6 @@ _FONTS_DIR = os.path.join(_BACKEND_DIR, "fonts")
 # 持久化存储：烧录成品统一放 backend/storage/burned_videos/
 _BURNED_VIDEOS_DIR = os.path.join(_BACKEND_DIR, "storage", "burned_videos")
 os.makedirs(_BURNED_VIDEOS_DIR, exist_ok=True)
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -98,9 +97,19 @@ async def generate_srt(req: GenerateSRTRequest):
     ids = [s.clip_id for s in req.segments]
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        bu = await read_cfg(db, "vlm_base_url")
-        ak = await read_cfg(db, "vlm_api_key")
-        model = await read_cfg(db, "llm_model") or await read_cfg(db, "vlm_model")
+        try:
+            llm_params = await LLMConfig.get_llm_params_with_defaults(
+                db,
+                temperature_key="llm_temperature",
+                max_tokens_key="llm_max_tokens",
+                default_temperature=0.2,
+                default_max_tokens=20480,
+            )
+            llm_client = LLMClient(**llm_params)
+        except ValueError:
+            llm_client = None
+            logger.info("LLM 未配置，将使用规则法生成时间轴")
+
         async with db.execute(
             f"SELECT id,duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})", ids
         ) as cur:
@@ -112,15 +121,17 @@ async def generate_srt(req: GenerateSRTRequest):
     durs, src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, req.use_tts_timing)
 
     raw_entries: list = []
-    if bu and ak and model:
+    if llm_client:
         try:
             logger.info("LLM生成时间轴...")
-            raw_entries = await llm_timeline(req.segments, durs, bu, ak, model)
+            raw_entries = await llm_timeline(req.segments, durs, llm_client)
         except Exception as e:
             logger.warning("LLM失败降级rule: %s", e)
             raw_entries = rule_timeline(req.segments, durs, max_chars)
     else:
         raw_entries = rule_timeline(req.segments, durs, max_chars)
+
+    logger.warning(f"raw_entries: {raw_entries}")
 
     out = [
         SRTEntry(

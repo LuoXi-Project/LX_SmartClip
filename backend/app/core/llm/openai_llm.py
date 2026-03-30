@@ -75,7 +75,7 @@ class OpenAILLM(ILLM):
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.2,
-                    max_tokens=1024,
+                    max_tokens=20480,
                 )
 
             resp = retry_sync(_call_api)

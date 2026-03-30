@@ -5,32 +5,16 @@ import json
 import logging
 import os
 import re
-import urllib.request as _urllib
 from typing import TYPE_CHECKING
 
-import httpx
+from json_repair import repair_json
+
+from app.core.llm import LLMClient
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# 代理 & 配置读取
-# ---------------------------------------------------------------------------
-
-def get_proxy() -> str | None:
-    """从系统代理设置中获取 HTTPS/HTTP 代理地址。"""
-    p = _urllib.getproxies()
-    return p.get("https") or p.get("http") or None
-
-
-async def read_cfg(db, key: str, default: str = "") -> str:
-    """从 config 表读取配置值。"""
-    async with db.execute("SELECT value FROM config WHERE key = ?", (key,)) as c:
-        row = await c.fetchone()
-    return row[0] if row else default
-
 
 # ---------------------------------------------------------------------------
 # 音频时长
@@ -117,43 +101,68 @@ _LLM_SYS_PROMPT = (
 async def llm_timeline(
     segments,
     durations: list[float],
-    base_url: str,
-    api_key: str,
-    model: str,
+    llm_client: LLMClient,
 ) -> list:
     """
     调用 LLM 生成字幕时间轴。
-    返回 [{clip_id, start, end, text}, ...]
+    
+    Args:
+        segments: 字幕段落列表
+        durations: 每个段落的时长列表
+        llm_client: LLMClient 实例
+    
+    Returns:
+        [{clip_id, start, end, text}, ...]
     """
     info = []
     cum = 0.0
     for seg, dur in zip(segments, durations):
         info.append(f'clip_id={seg.clip_id} start={cum:.3f}s dur={dur:.3f}s text="{seg.copy_text}"')
         cum += dur
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _LLM_SYS_PROMPT},
-            {"role": "user", "content": "生成时间轴:\n" + "\n".join(info)},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 4096,
-    }
-    async with httpx.AsyncClient(timeout=60, proxy=get_proxy()) as c:
-        r = await c.post(
-            base_url.rstrip("/") + "/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=body,
-        )
-    if r.status_code != 200:
-        raise RuntimeError(f"LLM {r.status_code}: {r.text[:200]}")
-    raw = r.json()["choices"][0]["message"]["content"]
+
+    messages = [
+        {"role": "system", "content": _LLM_SYS_PROMPT},
+        {"role": "user", "content": "生成时间轴:\n" + "\n".join(info)},
+    ]
+
     try:
+        raw = await llm_client.chat(messages, temperature=0.2, max_tokens=20480)
+    except Exception as e:
+        logger.error("LLM 时间轴生成失败: %s", e)
+        raise RuntimeError(f"LLM 调用失败: {e}")
+
+    # 第一步：尝试直接解析 JSON
+    try:
+        # logger.warning(f"raw: {raw}")
         p = json.loads(raw)
         entries = p.get("entries", []) if isinstance(p, dict) else p
         if not entries and isinstance(p, dict):
             entries = next((v for v in p.values() if isinstance(v, list)), [])
+        return entries
     except json.JSONDecodeError:
+        logger.debug("JSON 直接解析失败，尝试正则提取")
+
+    # 第二步：尝试正则提取 JSON 数组
+    try:
         m2 = re.search(r"\[.*\]", raw, re.DOTALL)
-        entries = json.loads(m2.group()) if m2 else []
-    return entries
+        if m2:
+            entries = json.loads(m2.group())
+            return entries
+    except json.JSONDecodeError:
+        logger.debug("正则提取后 JSON 解析失败，尝试 json_repair 修复")
+
+    # 第三步：使用 json_repair 修复
+    try:
+        repaired = repair_json(raw)
+        p = json.loads(repaired)
+        entries = p.get("entries", []) if isinstance(p, dict) else p
+        if not entries and isinstance(p, dict):
+            entries = next((v for v in p.values() if isinstance(v, list)), [])
+        logger.info("json_repair 修复成功")
+        return entries
+    except Exception as e:
+        logger.error("json_repair 修复失败: %s", e)
+
+    # 第四步：修复失败，输出原结果日志便于排查
+    logger.error("JSON 解析最终失败，原始 LLM 输出: %s", raw)
+    return []

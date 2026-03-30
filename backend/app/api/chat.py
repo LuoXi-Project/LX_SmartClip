@@ -76,7 +76,7 @@ async def chat_completions(req: ChatRequest):
         "messages": messages,
         "stream": req.stream,
         "temperature": 0.7,
-        "max_tokens": 2048,
+        "max_tokens": 20480,
     }
 
     if req.stream:

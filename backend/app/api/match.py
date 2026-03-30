@@ -2,7 +2,7 @@ import sqlite3
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.db.database import DB_PATH
@@ -28,6 +28,8 @@ class ClipResult(BaseModel):
     duration: float
     asr_text: Optional[str] = None
     vlm_description: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    preview_url: Optional[str] = None
     score: float
     reason: str
 
@@ -45,7 +47,7 @@ def _read_cfg(conn: sqlite3.Connection, key: str, default: str = "") -> str:
 
 
 @router.post("/match", response_model=MatchResponse)
-async def match_clips(req: MatchRequest):
+async def match_clips(req: MatchRequest, request: Request):
     """
     三级匹配引擎：向量初筛 -> LLM 精排 -> 返回推荐
     """
@@ -102,12 +104,15 @@ async def match_clips(req: MatchRequest):
         from app.core.matcher import Matcher
         matcher = Matcher(embedder=embedder, vector_db=vector_db, llm=llm)
 
+        api_base_url = str(request.base_url).rstrip("/")
+
         result = matcher.match(
             query=req.query,
             db_conn=conn,
             top_k=top_k,
             top_n=top_n,
             video_ids=req.video_ids,
+            api_base_url=api_base_url,
         )
 
         return MatchResponse(

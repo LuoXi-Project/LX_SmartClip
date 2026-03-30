@@ -25,7 +25,9 @@ export function ClipCard({
 }: {
   clip: MatchClip; chosen: boolean; onChoose: () => void; onPreview: () => void
 }) {
+  const [thumbErr, setThumbErr] = useState(false)
   const name = clip.clip_path.split(/[/\\]/).pop() ?? clip.clip_path
+
   return (
     <div
       onClick={onChoose}
@@ -40,10 +42,20 @@ export function ClipCard({
           <CheckCircle2 className="w-3.5 h-3.5 text-white" />
         </div>
       )}
-      <div className="w-full h-24 rounded-t-xl bg-slate-800 flex items-center justify-center">
+      <div className="w-full h-24 rounded-t-xl bg-slate-800 relative overflow-hidden flex items-center justify-center">
+        {clip.thumbnail_url && !thumbErr ? (
+          <img
+            src={clip.thumbnail_url}
+            alt={name}
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+            onError={() => setThumbErr(true)}
+          />
+        ) : null}
+        <div className="absolute inset-0 bg-black/35" />
         <button
           onClick={(e) => { e.stopPropagation(); onPreview() }}
-          className="w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center transition-colors"
+          className="relative z-10 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center transition-colors"
         >
           <Play className="w-4 h-4 text-white ml-0.5" />
         </button>
@@ -64,6 +76,8 @@ export function ClipCard({
 export function PreviewModal({ clip, onClose }: { clip: MatchClip; onClose: () => void }) {
   const [err, setErr] = useState(false)
   const name = clip.clip_path.split(/[/\\]/).pop() ?? clip.clip_path
+  const src = clip.preview_url || clipStreamUrl(clip.clip_id)
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
@@ -85,7 +99,7 @@ export function PreviewModal({ clip, onClose }: { clip: MatchClip; onClose: () =
           ) : (
             <video
               key={clip.clip_id}
-              src={clipStreamUrl(clip.clip_id)}
+              src={src}
               controls autoPlay
               className="w-full max-h-[65vh] object-contain"
               onError={() => setErr(true)}

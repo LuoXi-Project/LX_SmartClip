@@ -31,6 +31,7 @@ class Matcher:
         top_k: int = 12,
         top_n: int = 5,
         video_ids: Optional[List[str]] = None,
+        api_base_url: str = "",
     ) -> dict:
         """
         执行三级匹配。
@@ -91,7 +92,14 @@ class Matcher:
                 c.setdefault("score", round(1.0 - i * 0.05, 3))
                 c.setdefault("reason", "向量相似度排序")
 
-        # ── Level 3：返回结果 ──────────────────────────────────────────
+        # ── Level 3：补充预览/封面 URL 并返回 ───────────────────────────
+        base_url = api_base_url.rstrip("/") if api_base_url else ""
+        for c in candidates:
+            clip_id = c.get("clip_id")
+            video_id = c.get("video_id")
+            c["preview_url"] = f"{base_url}/api/videos/clips/{clip_id}/stream" if base_url else f"/api/videos/clips/{clip_id}/stream"
+            c["thumbnail_url"] = f"{base_url}/api/videos/{video_id}/thumbnail" if base_url else f"/api/videos/{video_id}/thumbnail"
+
         recommended = candidates[:top_n]
         logger.info("[Matcher] 匹配完成: 推荐 %d 个，候选共 %d 个", len(recommended), len(candidates))
         return {

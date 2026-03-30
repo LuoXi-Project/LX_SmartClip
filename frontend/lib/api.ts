@@ -216,6 +216,8 @@ export interface MatchClip {
   duration: number
   asr_text: string | null
   vlm_description: string | null
+  thumbnail_url: string | null
+  preview_url: string | null
   score: number
   reason: string
 }

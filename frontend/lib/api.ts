@@ -264,3 +264,63 @@ export interface MatchResponse {
   recommended: MatchClip[]
   candidates: MatchClip[]
 }
+
+// 自动一键成片 · Plan
+export type AutoEditMode = 'auto' | 'voiceover' | 'original'
+
+export interface PlanKeepFlagsApi {
+  clips?: boolean
+  subtitles?: boolean
+  transitions?: boolean
+  bgm?: boolean
+}
+
+export interface AutoEditPlanRequestApi {
+  video_ids: string[]
+  user_prompt: string
+  mode?: AutoEditMode
+  target_duration_sec?: number
+  num_plans?: number
+  allow_cross_video?: boolean
+  subtitle_policy?: 'auto' | 'asr' | 'rewrite'
+  transition_policy?: 'auto' | 'hard_cut' | 'soft'
+  bgm_policy?: 'auto' | 'none' | 'user' | 'ai'
+  plan_keep_flags?: PlanKeepFlagsApi
+  prev_plan_id?: string | null
+  prev_plan?: unknown
+}
+
+export interface AutoEditSegmentPlanApi {
+  id: string
+  chapter_id?: string | null
+  order: number
+  start_time_sec: number
+  end_time_sec: number
+  audio_mode: 'original' | 'tts' | 'mute'
+  subtitle?: {
+    strategy: 'auto' | 'asr' | 'rewrite' | 'none'
+    text: string
+    source: 'asr' | 'llm' | 'user'
+  }
+}
+
+export interface AutoEditPlanApi {
+  plan_id: string
+  title: string
+  summary: string
+  mode: AutoEditMode
+  target_duration_sec?: number | null
+  estimated_duration_sec?: number | null
+  segments: AutoEditSegmentPlanApi[]
+}
+
+export interface AutoEditPlanResponseApi {
+  plans: AutoEditPlanApi[]
+}
+
+export const autoEditApi = {
+  plan: (payload: AutoEditPlanRequestApi) =>
+    apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/plan', payload),
+  realize: (payload: { plan: AutoEditPlanApi; project_name?: string }) =>
+    apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
+}

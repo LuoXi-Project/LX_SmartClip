@@ -78,7 +78,8 @@ async def _build_video_context(db: aiosqlite.Connection, video_ids: List[str]) -
         if vlm:
             parts.append(f"画面：{vlm}")
         if parts:
-            lines.append(f"  [{t0}→{t1}] " + " | ".join(parts))
+            # 显式带上 clip_id，方便后续 Plan 严格复用真实 ID
+            lines.append(f"  [clip_id={row['id']}] [{t0}→{t1}] " + " | ".join(parts))
 
     return "\n".join(lines)
 

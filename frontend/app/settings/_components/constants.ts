@@ -3,7 +3,7 @@ import type { ProviderPreset } from './types'
 export const VLM_PROVIDERS: ProviderPreset[] = [
   { id: 'openai',      name: 'OpenAI',         logo: '🟢', baseUrl: 'https://api.openai.com/v1',            defaultModel: 'gpt-4o' },
   { id: 'deepseek',    name: 'DeepSeek',        logo: '🔵', baseUrl: 'https://api.deepseek.com/v1',          defaultModel: 'deepseek-chat' },
-  { id: 'iflowai',    name: 'iFlow AI',         logo: '🟣', baseUrl: 'https://api.iflow.ai/v1',             defaultModel: '' },
+  { id: 'iflowai',    name: 'iFlow AI',         logo: '🟣', baseUrl: 'https://apis.iflow.cn/v1',             defaultModel: '' },
   { id: 'siliconflow', name: 'SiliconFlow',     logo: '🟠', baseUrl: 'https://api.siliconflow.cn/v1',       defaultModel: 'Qwen/Qwen2-VL-72B-Instruct' },
   { id: 'zhipuai',    name: '智谱 AI',          logo: '🔴', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4v' },
   { id: 'moonshot',   name: 'Moonshot (Kimi)',  logo: '🌙', baseUrl: 'https://api.moonshot.cn/v1',          defaultModel: 'moonshot-v1-8k' },
@@ -13,7 +13,7 @@ export const VLM_PROVIDERS: ProviderPreset[] = [
 export const LLM_PROVIDERS: ProviderPreset[] = [
   { id: 'openai',      name: 'OpenAI',         logo: '🟢', baseUrl: 'https://api.openai.com/v1',      defaultModel: 'gpt-4o-mini' },
   { id: 'deepseek',    name: 'DeepSeek',        logo: '🔵', baseUrl: 'https://api.deepseek.com/v1',    defaultModel: 'deepseek-chat' },
-  { id: 'iflowai',    name: 'iFlow AI',         logo: '🟣', baseUrl: 'https://api.iflow.ai/v1',       defaultModel: '' },
+  { id: 'iflowai',    name: 'iFlow AI',         logo: '🟣', baseUrl: 'https://apis.iflow.cn/v1',       defaultModel: '' },
   { id: 'siliconflow', name: 'SiliconFlow',     logo: '🟠', baseUrl: 'https://api.siliconflow.cn/v1', defaultModel: 'Qwen/Qwen2.5-72B-Instruct' },
   { id: 'moonshot',   name: 'Moonshot (Kimi)',  logo: '🌙', baseUrl: 'https://api.moonshot.cn/v1',    defaultModel: 'moonshot-v1-8k' },
   { id: 'custom',     name: '自定义',           logo: '⚙️', baseUrl: '' },

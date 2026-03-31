@@ -24,6 +24,7 @@ from app.api.export import router as export_router
 from app.api.chat import router as chat_router
 from app.api.copy_gen import router as copy_gen_router
 from app.api.subtitle import router as subtitle_router
+from app.api.auto_edit import router as auto_edit_router
 
 
 @asynccontextmanager
@@ -57,6 +58,7 @@ app.include_router(export_router)
 app.include_router(chat_router)
 app.include_router(copy_gen_router)
 app.include_router(subtitle_router)
+app.include_router(auto_edit_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

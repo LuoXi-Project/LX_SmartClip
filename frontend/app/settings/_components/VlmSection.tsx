@@ -101,7 +101,7 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/80">
         <div>
-          <h2 className="font-semibold text-slate-100">API / 大模型</h2>
+          <h2 className="font-semibold text-slate-100">VLM 视觉模型</h2>
           <p className="text-xs text-slate-500 mt-0.5">视觉描述 (VLM) 与文本模型配置</p>
         </div>
         <div className="flex items-center gap-3">

@@ -60,7 +60,7 @@ export default function SettingsPage() {
   }, [])
 
   const sections = useMemo(() => ([
-    { id: 'vlm', label: 'API / 大模型' },
+    { id: 'vlm', label: 'VLM 视觉模型' },
     { id: 'llm', label: 'LLM 文本模型' },
     { id: 'embedding', label: '向量检索' },
     { id: 'asr', label: '语音识别' },

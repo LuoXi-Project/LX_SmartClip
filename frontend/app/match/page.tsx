@@ -74,6 +74,23 @@ export default function MatchPage() {
   const [autoPlans, setAutoPlans] = useState<AutoEditPlanApi[]>([])
   const [autoRealizingId, setAutoRealizingId] = useState<string | null>(null)
   const [autoRealizeMsg, setAutoRealizeMsg] = useState('')
+  const [autoPlanLogs, setAutoPlanLogs] = useState<string[]>([])
+  const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null)
+  const [autoPlanElapsedSec, setAutoPlanElapsedSec] = useState(0)
+
+  function appendAutoPlanLog(message: string) {
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    setAutoPlanLogs((prev) => [...prev, `${time} ${message}`])
+  }
+
+  useEffect(() => {
+    if (!autoLoading || autoPlanStartedAt === null) return
+    setAutoPlanElapsedSec(Math.max(0, Math.floor((Date.now() - autoPlanStartedAt) / 1000)))
+    const timer = window.setInterval(() => {
+      setAutoPlanElapsedSec(Math.max(0, Math.floor((Date.now() - autoPlanStartedAt) / 1000)))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [autoLoading, autoPlanStartedAt])
 
   useEffect(() => {
     apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
@@ -467,24 +484,90 @@ export default function MatchPage() {
                       if (selectedVideoIds.length === 0 && doneVideos.length === 0) return
                       setAutoLoading(true)
                       setAutoError('')
+                      const startedAt = Date.now()
+                      setAutoPlanStartedAt(startedAt)
+                      setAutoPlanElapsedSec(0)
+                      setAutoPlanLogs([])
+                      appendAutoPlanLog('已开始生成方案')
+                      appendAutoPlanLog('正在创建 SSE 规划会话...')
                       try {
-                        const res = await autoEditApi.plan({
+                        const payload = {
                           video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id),
                           user_prompt: autoPrompt.trim(),
                           mode: autoMode,
                           target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
                           num_plans: autoNumPlans,
                           allow_cross_video: true,
-                          subtitle_policy: 'auto',
-                          transition_policy: 'auto',
-                          bgm_policy: 'auto',
+                          subtitle_policy: 'auto' as const,
+                          transition_policy: 'auto' as const,
+                          bgm_policy: 'auto' as const,
+                        }
+                        const session = await autoEditApi.createPlanSession(payload)
+                        appendAutoPlanLog('会话已创建，正在连接实时流...')
+
+                        await new Promise<void>((resolve, reject) => {
+                          const streamUrl = `${API_BASE_URL}${session.stream_url}`
+                          const es = new EventSource(streamUrl)
+                          let finished = false
+
+                          const closeStream = () => {
+                            es.close()
+                          }
+
+                          es.addEventListener('progress', (ev) => {
+                            try {
+                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { message?: string }
+                              appendAutoPlanLog(data.message || '收到进度更新')
+                            } catch {
+                              appendAutoPlanLog('收到进度更新')
+                            }
+                          })
+
+                          es.addEventListener('result', (ev) => {
+                            try {
+                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { plans?: AutoEditPlanApi[] }
+                              const plans = data.plans || []
+                              setAutoPlans(plans)
+                              appendAutoPlanLog(`生成完成，返回 ${plans.length} 个方案`)
+                              finished = true
+                              closeStream()
+                              resolve()
+                            } catch {
+                              finished = true
+                              closeStream()
+                              reject(new Error('解析实时结果失败'))
+                            }
+                          })
+
+                          es.addEventListener('failed', (ev) => {
+                            let msg = '生成方案失败'
+                            try {
+                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { message?: string }
+                              msg = data.message || msg
+                            } catch {
+                              // ignore parse error
+                            }
+                            finished = true
+                            closeStream()
+                            reject(new Error(msg))
+                          })
+
+                          es.onerror = () => {
+                            if (finished) return
+                            closeStream()
+                            reject(new Error('实时连接中断，请重试'))
+                          }
                         })
-                        setAutoPlans(res.plans || [])
                       } catch (e: unknown) {
-                        const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '生成方案失败'
+                        const msg =
+                          (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+                          || (e as Error)?.message
+                          || '生成方案失败'
                         setAutoError(msg)
+                        appendAutoPlanLog(`生成失败：${msg}`)
                       } finally {
                         setAutoLoading(false)
+                        setAutoPlanStartedAt(null)
                       }
                     }}
                     disabled={autoLoading || !autoPrompt.trim()}
@@ -499,6 +582,41 @@ export default function MatchPage() {
                     </span>
                   )}
                 </div>
+                {(autoLoading || autoPlanLogs.length > 0) && (
+                  <div className="rounded-xl border border-emerald-500/30 bg-slate-950/60 px-4 py-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-emerald-300 flex items-center gap-1.5">
+                        {autoLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {autoLoading ? '实时生成进度' : '最近一次生成记录'}
+                      </span>
+                      <span className="text-slate-500">
+                        {autoLoading
+                          ? `已等待 ${autoPlanElapsedSec}s`
+                          : `总耗时约 ${autoPlanElapsedSec}s`}
+                      </span>
+                    </div>
+                    {autoLoading && (
+                      <p className="text-[11px] text-slate-400">
+                        {autoPlanElapsedSec < 3
+                          ? '正在初始化模型与策略...'
+                          : autoPlanElapsedSec < 10
+                            ? '正在分析提示词并筛选素材...'
+                            : '正在生成候选方案，请稍候...'}
+                      </p>
+                    )}
+                    <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                      {autoPlanLogs.length === 0 ? (
+                        <p className="text-[11px] text-slate-500">等待日志...</p>
+                      ) : (
+                        autoPlanLogs.map((line, idx) => (
+                          <p key={`${line}-${idx}`} className="text-[11px] text-slate-400 leading-5">
+                            {line}
+                          </p>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </section>
 
               {/* 候选方案列表 */}

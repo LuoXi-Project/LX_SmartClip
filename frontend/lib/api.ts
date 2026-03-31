@@ -318,9 +318,16 @@ export interface AutoEditPlanResponseApi {
   plans: AutoEditPlanApi[]
 }
 
+export interface AutoEditPlanSessionResponseApi {
+  session_id: string
+  stream_url: string
+}
+
 export const autoEditApi = {
   plan: (payload: AutoEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/plan', payload),
+  createPlanSession: (payload: AutoEditPlanRequestApi) =>
+    apiClient.post<unknown, AutoEditPlanSessionResponseApi>('/api/auto-edit/plan/session', payload),
   realize: (payload: { plan: AutoEditPlanApi; project_name?: string }) =>
     apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
 }

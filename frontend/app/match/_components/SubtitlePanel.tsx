@@ -117,7 +117,7 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
             <div className="space-y-1">
               <label className="text-[10px] text-slate-500 uppercase tracking-widest">字号 {style.font_size}px</label>
               <input
-                type="range" min={14} max={60} value={style.font_size}
+                type="range" min={1} max={200} value={style.font_size}
                 onChange={e => patch('font_size', +e.target.value)}
                 className="w-full accent-cyan-500"
               />

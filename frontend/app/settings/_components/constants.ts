@@ -44,7 +44,26 @@ export const ASR_PROVIDERS: ProviderPreset[] = [
 export const VLM_KEYS  = ['vlm_base_url', 'vlm_api_key', 'vlm_model', 'vlm_provider', 'vlm_context_length', 'vlm_max_images_per_batch', 'vlm_concurrency']
 export const LLM_KEYS  = ['llm_base_url', 'llm_api_key', 'llm_model', 'llm_temperature', 'llm_max_tokens', 'llm_max_context_tokens', 'llm_concurrency']
 export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'vector_dimension', 'top_k', 'match_top_k', 'match_top_n']
-export const VIDEO_KEYS = ['split_mode', 'fixed_duration', 'scene_threshold', 'frame_fps', 'frame_target_pixels']
+export const VIDEO_KEYS = [
+  'split_mode',
+  'fixed_duration',
+  'scene_threshold',
+  'scene_min_scene_len',
+  'frame_fps',
+  'frame_target_pixels',
+  // ffmpeg transcode options for clip outputs
+  'clip_container',
+  'clip_vcodec',
+  'clip_acodec',
+  'clip_preset',
+  'clip_crf',
+  'clip_video_bitrate_kbps',
+  'clip_audio_bitrate_kbps',
+  'clip_fps',
+  'clip_scale_width',
+  'clip_scale_height',
+  'clip_pix_fmt',
+]
 export const ASR_KEYS  = ['asr_provider', 'asr_model', 'asr_base_url', 'asr_api_key', 'asr_openai_model']
 export const TTS_KEYS  = [
   'tts_provider',

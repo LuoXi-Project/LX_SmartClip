@@ -1,6 +1,6 @@
 import os
 import subprocess
-from typing import List
+from typing import Dict, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,103 @@ class VideoSplitter:
             logger.error(f"获取视频时长失败: {e}")
             raise RuntimeError(f"获取视频时长失败: {str(e)}")
 
-    def split_by_fixed(self, video_path: str, duration: float) -> List[ClipInfo]:
+    def _build_transcode_args(
+        self,
+        *,
+        has_video_stream: bool,
+        output_container: str,
+        opts: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
+        """
+        根据配置构建 FFmpeg 编码参数（用于切分输出片段）。
+
+        opts 约定（均为字符串，便于从配置表读取）：
+        - clip_vcodec: libx264/libx265/libvpx-vp9/copy...
+        - clip_acodec: aac/libopus/copy...
+        - clip_preset: ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow
+        - clip_crf: 0~51（仅 x264/x265）
+        - clip_video_bitrate_kbps: 例如 2500（>0 则优先生效，且会忽略 crf）
+        - clip_audio_bitrate_kbps: 例如 128（>0 生效）
+        - clip_fps: 例如 30（>0 则通过滤镜强制 CFR）
+        - clip_scale_width / clip_scale_height: 例如 1920/1080（0=不限制；可只填一边）
+        - clip_pix_fmt: yuv420p/yuv422p...
+        """
+        opts = opts or {}
+
+        vcodec = (opts.get("clip_vcodec") or "libx264").strip()
+        acodec = (opts.get("clip_acodec") or "aac").strip()
+        preset = (opts.get("clip_preset") or "veryfast").strip()
+        pix_fmt = (opts.get("clip_pix_fmt") or "yuv420p").strip()
+
+        def _to_int(name: str, default: int = 0) -> int:
+            try:
+                return int(float((opts.get(name) or "").strip() or default))
+            except Exception:
+                return default
+
+        def _to_float(name: str, default: float = 0.0) -> float:
+            try:
+                return float((opts.get(name) or "").strip() or default)
+            except Exception:
+                return default
+
+        crf = _to_int("clip_crf", 23)
+        v_bitrate_kbps = _to_int("clip_video_bitrate_kbps", 0)
+        a_bitrate_kbps = _to_int("clip_audio_bitrate_kbps", 128)
+        fps = _to_float("clip_fps", 0.0)
+        scale_w = _to_int("clip_scale_width", 0)
+        scale_h = _to_int("clip_scale_height", 0)
+
+        vf_parts: List[str] = []
+        if scale_w > 0 or scale_h > 0:
+            # 只设置一边时，另一边保持等比（-2 以保证偶数）
+            sw = scale_w if scale_w > 0 else -2
+            sh = scale_h if scale_h > 0 else -2
+            vf_parts.append(f"scale={sw}:{sh}:flags=lanczos")
+        if fps and fps > 0:
+            vf_parts.append(f"fps={fps}")
+
+        args: List[str] = []
+        if has_video_stream:
+            args += ["-map", "0:v:0", "-map", "0:a?"]
+            args += ["-c:v", vcodec]
+            if vcodec in ("libx264", "libx265") and preset:
+                args += ["-preset", preset]
+            if v_bitrate_kbps > 0:
+                args += ["-b:v", f"{v_bitrate_kbps}k"]
+            else:
+                # bitrate 未指定时使用 CRF（仅 x264/x265 有意义，其他编码器忽略也不会致命）
+                if crf >= 0:
+                    args += ["-crf", str(crf)]
+            if pix_fmt:
+                args += ["-pix_fmt", pix_fmt]
+            if vf_parts:
+                args += ["-vf", ",".join(vf_parts)]
+
+            args += ["-c:a", acodec]
+            if a_bitrate_kbps > 0 and acodec not in ("copy",):
+                args += ["-b:a", f"{a_bitrate_kbps}k"]
+            args += ["-shortest"]
+        else:
+            # 音频-only：不映射视频流
+            args += ["-map", "0:a?", "-vn"]
+            args += ["-c:a", acodec]
+            if a_bitrate_kbps > 0 and acodec not in ("copy",):
+                args += ["-b:a", f"{a_bitrate_kbps}k"]
+            args += ["-shortest"]
+
+        # faststart 只对 mp4/mov 系更有意义
+        if output_container.lower() in ("mp4", "m4v", "mov"):
+            args += ["-movflags", "+faststart"]
+
+        return args
+
+    def split_by_fixed(
+        self,
+        video_path: str,
+        duration: float,
+        transcode_opts: Optional[Dict[str, str]] = None,
+    ) -> List[ClipInfo]:
         """
         固定时长切分视频
         
@@ -126,6 +222,7 @@ class VideoSplitter:
 
         # 预先探测一次，避免每个片段都重复 ffprobe
         video_has_stream = self.has_video_stream(video_path)
+        output_container = (transcode_opts or {}).get("clip_container", "mp4").strip() or "mp4"
 
         # 获取视频总时长
         total_duration = self.get_video_duration(video_path)
@@ -144,7 +241,7 @@ class VideoSplitter:
             clip_duration = end_time - start_time
 
             # 生成片段文件路径
-            clip_filename = f"{video_name}_clip_{i:03d}.mp4"
+            clip_filename = f"{video_name}_clip_{i:03d}.{output_container}"
             clip_path = os.path.join(self.clips_dir, clip_filename)
 
             # 使用 FFmpeg 切分视频
@@ -153,36 +250,17 @@ class VideoSplitter:
                 "-i", video_path,
                 "-ss", str(start_time),
                 "-to", str(end_time),
-                "-movflags", "+faststart",
             ]
 
-            # 为了让浏览器可以直接播放：将视频转成 H.264 + AAC（并固定像素格式）
-            # 说明：原先这里使用了 "-c copy"，如果源视频编码浏览器不支持，仍然会导致播放失败。
-            if video_has_stream:
-                cmd = cmd_base + [
-                    "-map", "0:v:0",
-                    "-map", "0:a?",
-                    "-c:v", "libx264",
-                    "-preset", "veryfast",
-                    "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-shortest",
-                    "-y",  # 覆盖已存在的文件
-                    clip_path,
-                ]
-            else:
-                # 音频-only 情况：仍尝试封装成 mp4 容器（播放器可能无法播放，但不会中断切分流程）
-                cmd = cmd_base + [
-                    "-map", "0:a?",
-                    "-vn",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-shortest",
-                    "-y",  # 覆盖已存在的文件
-                    clip_path,
-                ]
+            transcode_args = self._build_transcode_args(
+                has_video_stream=video_has_stream,
+                output_container=output_container,
+                opts=transcode_opts,
+            )
+            cmd = cmd_base + transcode_args + [
+                "-y",  # 覆盖已存在的文件
+                clip_path,
+            ]
 
             try:
                 logger.info(f"切分片段 {i+1}/{num_clips}: {start_time:.2f}s - {end_time:.2f}s")
@@ -200,6 +278,7 @@ class VideoSplitter:
         video_path: str,
         threshold: float = 30.0,
         min_scene_len: int = 30,
+        transcode_opts: Optional[Dict[str, str]] = None,
     ) -> List[ClipInfo]:
         """
         使用 PySceneDetect 进行镜头识别切分
@@ -223,6 +302,7 @@ class VideoSplitter:
 
         # 预先探测一次，避免在每个场景片段都重复 ffprobe
         video_has_stream = self.has_video_stream(video_path)
+        output_container = (transcode_opts or {}).get("clip_container", "mp4").strip() or "mp4"
 
         # 兼容旧配置：若传入 0~1 的阈值（如 0.4），按新版参数回退到推荐值
         threshold_value = float(threshold)
@@ -253,32 +333,16 @@ class VideoSplitter:
         if not scenes:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)
-            clip_path = os.path.join(self.clips_dir, os.path.basename(video_path))
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            clip_path = os.path.join(self.clips_dir, f"{video_name}.{output_container}")
             # 若目标文件不存在，用 FFmpeg 生成浏览器可播放的 mp4 到 clips 目录
             if not os.path.exists(clip_path):
                 cmd = ["ffmpeg", "-i", video_path]
-                if video_has_stream:
-                    cmd += [
-                        "-map", "0:v:0",
-                        "-map", "0:a?",
-                        "-c:v", "libx264",
-                        "-preset", "veryfast",
-                        "-crf", "23",
-                        "-pix_fmt", "yuv420p",
-                        "-c:a", "aac",
-                        "-b:a", "128k",
-                        "-movflags", "+faststart",
-                        "-shortest",
-                    ]
-                else:
-                    cmd += [
-                        "-map", "0:a?",
-                        "-vn",
-                        "-c:a", "aac",
-                        "-b:a", "128k",
-                        "-movflags", "+faststart",
-                        "-shortest",
-                    ]
+                cmd += self._build_transcode_args(
+                    has_video_stream=video_has_stream,
+                    output_container=output_container,
+                    opts=transcode_opts,
+                )
                 cmd += ["-y", clip_path]
                 try:
                     subprocess.run(cmd, check=True, capture_output=True)
@@ -300,31 +364,16 @@ class VideoSplitter:
             clip_duration = end_time - start_time
 
             # 生成片段文件路径
-            clip_filename = f"{video_name}_scene_{i:03d}.mp4"
+            clip_filename = f"{video_name}_scene_{i:03d}.{output_container}"
             clip_path = os.path.join(self.clips_dir, clip_filename)
 
             # 使用 FFmpeg 切分视频
-            cmd = ["ffmpeg", "-i", video_path, "-ss", str(start_time), "-to", str(end_time), "-movflags", "+faststart"]
-            if video_has_stream:
-                cmd += [
-                    "-map", "0:v:0",
-                    "-map", "0:a?",
-                    "-c:v", "libx264",
-                    "-preset", "veryfast",
-                    "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-shortest",
-                ]
-            else:
-                cmd += [
-                    "-map", "0:a?",
-                    "-vn",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-shortest",
-                ]
+            cmd = ["ffmpeg", "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
+            cmd += self._build_transcode_args(
+                has_video_stream=video_has_stream,
+                output_container=output_container,
+                opts=transcode_opts,
+            )
             cmd += ["-y", clip_path]
 
             try:

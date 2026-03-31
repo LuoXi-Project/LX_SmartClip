@@ -12,6 +12,12 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 splitter = VideoSplitter()
 
 
+async def _get_config_value(db, key: str, default: str) -> str:
+    cursor = await db.execute("SELECT value FROM config WHERE key = ?", (key,))
+    row = await cursor.fetchone()
+    return row["value"] if row and row["value"] is not None else default
+
+
 @router.post("/{video_id}/extract-audio")
 async def extract_audio(video_id: str):
     """提取视频音频"""
@@ -61,29 +67,39 @@ async def split_video(video_id: str):
         split_mode = row["split_mode"]
 
         # 从配置读取参数
-        cursor = await db.execute(
-            "SELECT value FROM config WHERE key = ?", ("scene_threshold",)
-        )
-        threshold_row = await cursor.fetchone()
-        scene_threshold = float(threshold_row["value"]) if threshold_row else 30.0
+        scene_threshold = float(await _get_config_value(db, "scene_threshold", "30.0"))
+        scene_min_scene_len = int(await _get_config_value(db, "scene_min_scene_len", "30"))
+        fixed_duration = float(await _get_config_value(db, "fixed_duration", "10"))
 
-        cursor = await db.execute(
-            "SELECT value FROM config WHERE key = ?", ("scene_min_scene_len",)
-        )
-        min_scene_len_row = await cursor.fetchone()
-        scene_min_scene_len = int(min_scene_len_row["value"]) if min_scene_len_row else 30
-
-        cursor = await db.execute(
-            "SELECT value FROM config WHERE key = ?", ("fixed_duration",)
-        )
-        duration_row = await cursor.fetchone()
-        fixed_duration = float(duration_row["value"]) if duration_row else 10
+        # 切分输出转码参数（由前端设置）
+        transcode_opts = {
+            "clip_container": await _get_config_value(db, "clip_container", "mp4"),
+            "clip_vcodec": await _get_config_value(db, "clip_vcodec", "libx264"),
+            "clip_acodec": await _get_config_value(db, "clip_acodec", "aac"),
+            "clip_preset": await _get_config_value(db, "clip_preset", "veryfast"),
+            "clip_crf": await _get_config_value(db, "clip_crf", "23"),
+            "clip_video_bitrate_kbps": await _get_config_value(db, "clip_video_bitrate_kbps", "0"),
+            "clip_audio_bitrate_kbps": await _get_config_value(db, "clip_audio_bitrate_kbps", "128"),
+            "clip_fps": await _get_config_value(db, "clip_fps", "0"),
+            "clip_scale_width": await _get_config_value(db, "clip_scale_width", "0"),
+            "clip_scale_height": await _get_config_value(db, "clip_scale_height", "0"),
+            "clip_pix_fmt": await _get_config_value(db, "clip_pix_fmt", "yuv420p"),
+        }
 
         # 执行切分
         if split_mode == "scene":
-            clips = splitter.split_by_scene(video_path, scene_threshold, scene_min_scene_len)
+            clips = splitter.split_by_scene(
+                video_path,
+                scene_threshold,
+                scene_min_scene_len,
+                transcode_opts=transcode_opts,
+            )
         elif split_mode == "fixed":
-            clips = splitter.split_by_fixed(video_path, fixed_duration)
+            clips = splitter.split_by_fixed(
+                video_path,
+                fixed_duration,
+                transcode_opts=transcode_opts,
+            )
         else:
             raise HTTPException(status_code=400, detail=f"不支持的切分模式: {split_mode}")
 
@@ -128,13 +144,14 @@ async def split_video(video_id: str):
 
 
 @router.post("/{video_id}/extract-frames")
-async def extract_frames(video_id: str, n_frames: int = 3):
+async def extract_frames(video_id: str, fps: float | None = None, target_pixels: int | None = None):
     """
     为视频的所有片段抽取帧
 
     Args:
         video_id: 视频 ID
-        n_frames: 每个片段抽取的帧数
+        fps: 抽帧帧率（覆盖配置，可选）
+        target_pixels: 抽帧目标像素（覆盖配置，可选）
     """
     db = await get_db_conn()
     try:
@@ -147,6 +164,11 @@ async def extract_frames(video_id: str, n_frames: int = 3):
         if not clips:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 没有片段")
 
+        cfg_fps = float(await _get_config_value(db, "frame_fps", "1"))
+        cfg_px = int(await _get_config_value(db, "frame_target_pixels", "512"))
+        use_fps = float(fps) if fps is not None else cfg_fps
+        use_px = int(target_pixels) if target_pixels is not None else cfg_px
+
         # 为每个片段抽取帧
         results = []
         for clip in clips:
@@ -154,7 +176,7 @@ async def extract_frames(video_id: str, n_frames: int = 3):
             clip_path = clip["clip_path"]
 
             try:
-                frame_paths = splitter.extract_frames(clip_path, n_frames)
+                frame_paths = splitter.extract_frames(clip_path, fps=use_fps, target_pixels=use_px)
                 results.append(
                     {
                         "clip_id": clip_id,
@@ -174,6 +196,8 @@ async def extract_frames(video_id: str, n_frames: int = 3):
         return {
             "video_id": video_id,
             "total_clips": len(clips),
+            "fps": use_fps,
+            "target_pixels": use_px,
             "results": results,
         }
     except HTTPException:

@@ -34,9 +34,21 @@ const SPLIT_MODES = [
 const PARAM_HINTS: Record<string, string> = {
   fixed_duration:      '仅在「固定时长」模式下生效，每段片段的秒数',
   scene_threshold:     '仅在「镜头检测」模式下生效，值越小越灵敏（0.1 ~ 1.0）',
+  scene_min_scene_len: '仅在「镜头检测」模式下生效，用于抑制过碎切分；单位为帧（越大越不容易切碎）',
   frame_fps:           '每秒从片段中抽取的帧数，用于 VLM 画面描述',
   frame_target_pixels: '抽帧时将图像长边压制到此像素（如 512），0 表示不压制。配合 VLM 可显著降低 token 消耗',
   asr_model:           'Whisper 语音识别模型规格，越大精度越高但越慢',
+  clip_container: '切分输出片段的容器格式（影响后缀与兼容性；常用 mp4）',
+  clip_vcodec: '视频编码器：兼容性优先选 libx264；copy 表示尽量不转码（但浏览器可能无法播放）',
+  clip_acodec: '音频编码器：mp4 常用 aac；webm 常用 libopus；copy 表示不转码',
+  clip_preset: '编码速度/压缩效率权衡（仅 x264/x265 有效），越慢通常越省码率',
+  clip_crf: '恒定质量模式：越小越清晰但文件更大（仅在未指定视频码率时使用）',
+  clip_video_bitrate_kbps: '指定视频码率（kbps）。>0 时优先使用码率模式并忽略 CRF',
+  clip_audio_bitrate_kbps: '指定音频码率（kbps）',
+  clip_fps: '强制输出帧率（0=跟随源视频）',
+  clip_scale_width: '强制输出宽度（0=不限制；可只填宽或高，另一边自动等比）',
+  clip_scale_height: '强制输出高度（0=不限制；可只填宽或高，另一边自动等比）',
+  clip_pix_fmt: '像素格式。yuv420p 兼容性最好（尤其浏览器播放）',
 }
 
 export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSaveGroup }: Props) {

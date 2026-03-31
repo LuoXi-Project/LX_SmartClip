@@ -1,7 +1,6 @@
 import os
 import subprocess
-from pathlib import Path
-from typing import List, Tuple
+from typing import List
 import logging
 
 logger = logging.getLogger(__name__)
@@ -125,6 +124,9 @@ class VideoSplitter:
         if duration <= 0:
             raise ValueError(f"时长必须大于 0: {duration}")
 
+        # 预先探测一次，避免每个片段都重复 ffprobe
+        video_has_stream = self.has_video_stream(video_path)
+
         # 获取视频总时长
         total_duration = self.get_video_duration(video_path)
         
@@ -146,15 +148,41 @@ class VideoSplitter:
             clip_path = os.path.join(self.clips_dir, clip_filename)
 
             # 使用 FFmpeg 切分视频
-            cmd = [
+            cmd_base = [
                 "ffmpeg",
                 "-i", video_path,
                 "-ss", str(start_time),
                 "-to", str(end_time),
-                "-c", "copy",  # 不重新编码，直接复制
-                "-y",  # 覆盖已存在的文件
-                clip_path,
+                "-movflags", "+faststart",
             ]
+
+            # 为了让浏览器可以直接播放：将视频转成 H.264 + AAC（并固定像素格式）
+            # 说明：原先这里使用了 "-c copy"，如果源视频编码浏览器不支持，仍然会导致播放失败。
+            if video_has_stream:
+                cmd = cmd_base + [
+                    "-map", "0:v:0",
+                    "-map", "0:a?",
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-crf", "23",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-shortest",
+                    "-y",  # 覆盖已存在的文件
+                    clip_path,
+                ]
+            else:
+                # 音频-only 情况：仍尝试封装成 mp4 容器（播放器可能无法播放，但不会中断切分流程）
+                cmd = cmd_base + [
+                    "-map", "0:a?",
+                    "-vn",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-shortest",
+                    "-y",  # 覆盖已存在的文件
+                    clip_path,
+                ]
 
             try:
                 logger.info(f"切分片段 {i+1}/{num_clips}: {start_time:.2f}s - {end_time:.2f}s")
@@ -193,6 +221,9 @@ class VideoSplitter:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
+        # 预先探测一次，避免在每个场景片段都重复 ffprobe
+        video_has_stream = self.has_video_stream(video_path)
+
         # 兼容旧配置：若传入 0~1 的阈值（如 0.4），按新版参数回退到推荐值
         threshold_value = float(threshold)
         if 0.0 < threshold_value <= 1.0:
@@ -223,21 +254,38 @@ class VideoSplitter:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)
             clip_path = os.path.join(self.clips_dir, os.path.basename(video_path))
-            # 若目标文件不存在，用 FFmpeg 无损复制到 clips 目录
+            # 若目标文件不存在，用 FFmpeg 生成浏览器可播放的 mp4 到 clips 目录
             if not os.path.exists(clip_path):
-                cmd = [
-                    "ffmpeg",
-                    "-i", video_path,
-                    "-c", "copy",
-                    "-y",
-                    clip_path,
-                ]
+                cmd = ["ffmpeg", "-i", video_path]
+                if video_has_stream:
+                    cmd += [
+                        "-map", "0:v:0",
+                        "-map", "0:a?",
+                        "-c:v", "libx264",
+                        "-preset", "veryfast",
+                        "-crf", "23",
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "aac",
+                        "-b:a", "128k",
+                        "-movflags", "+faststart",
+                        "-shortest",
+                    ]
+                else:
+                    cmd += [
+                        "-map", "0:a?",
+                        "-vn",
+                        "-c:a", "aac",
+                        "-b:a", "128k",
+                        "-movflags", "+faststart",
+                        "-shortest",
+                    ]
+                cmd += ["-y", clip_path]
                 try:
                     subprocess.run(cmd, check=True, capture_output=True)
-                    logger.info(f"整段视频已复制到 clips 目录: {clip_path}")
+                    logger.info(f"整段视频已编码生成到 clips 目录: {clip_path}")
                 except subprocess.CalledProcessError as e:
-                    logger.error(f"复制视频失败: {e.stderr.decode()}")
-                    raise RuntimeError(f"复制视频失败: {str(e)}")
+                    logger.error(f"编码视频失败: {e.stderr.decode()}")
+                    raise RuntimeError(f"编码视频失败: {str(e)}")
             return [ClipInfo(clip_path, 0, total_duration, total_duration)]
 
         logger.info(f"检测到 {len(scenes)} 个场景")
@@ -256,15 +304,28 @@ class VideoSplitter:
             clip_path = os.path.join(self.clips_dir, clip_filename)
 
             # 使用 FFmpeg 切分视频
-            cmd = [
-                "ffmpeg",
-                "-i", video_path,
-                "-ss", str(start_time),
-                "-to", str(end_time),
-                "-c", "copy",
-                "-y",
-                clip_path,
-            ]
+            cmd = ["ffmpeg", "-i", video_path, "-ss", str(start_time), "-to", str(end_time), "-movflags", "+faststart"]
+            if video_has_stream:
+                cmd += [
+                    "-map", "0:v:0",
+                    "-map", "0:a?",
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-crf", "23",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-shortest",
+                ]
+            else:
+                cmd += [
+                    "-map", "0:a?",
+                    "-vn",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-shortest",
+                ]
+            cmd += ["-y", clip_path]
 
             try:
                 logger.info(f"切分场景 {i+1}/{len(scenes)}: {start_time:.2f}s - {end_time:.2f}s")

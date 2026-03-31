@@ -324,3 +324,39 @@ export const autoEditApi = {
   realize: (payload: { plan: AutoEditPlanApi; project_name?: string }) =>
     apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
 }
+
+// BGM 音乐库管理
+export interface BgmTrack {
+  id: string
+  title: string
+  mood?: string | null
+  bpm?: number | null
+  tags: string[]
+  filename: string
+  url: string
+}
+
+export interface BgmUpdatePayload {
+  title?: string
+  mood?: string | null
+  bpm?: number | null
+  tags?: string[]
+}
+
+export const bgmApi = {
+  list: () => apiClient.get<unknown, BgmTrack[]>('/api/bgm/tracks'),
+  upload: (file: File, meta?: { title?: string; mood?: string; bpm?: number; tags?: string[] }) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (meta?.title) formData.append('title', meta.title)
+    if (meta?.mood) formData.append('mood', meta.mood)
+    if (typeof meta?.bpm === 'number') formData.append('bpm', String(meta.bpm))
+    if (meta?.tags?.length) formData.append('tags', meta.tags.join(','))
+    return apiClient.post<unknown, BgmTrack>('/api/bgm/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  update: (id: string, payload: BgmUpdatePayload) =>
+    apiClient.patch<unknown, BgmTrack>(`/api/bgm/tracks/${id}`, payload),
+  delete: (id: string) => apiClient.delete(`/api/bgm/tracks/${id}`),
+}

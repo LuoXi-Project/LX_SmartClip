@@ -282,7 +282,7 @@ export interface AutoEditPlanRequestApi {
   target_duration_sec?: number
   num_plans?: number
   allow_cross_video?: boolean
-  subtitle_policy?: 'auto' | 'asr' | 'rewrite'
+  subtitle_policy?: 'auto' | 'asr' | 'rewrite' | 'none'
   transition_policy?: 'auto' | 'hard_cut' | 'soft'
   bgm_policy?: 'auto' | 'none' | 'user' | 'ai'
   plan_keep_flags?: PlanKeepFlagsApi
@@ -328,7 +328,7 @@ export const autoEditApi = {
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/plan', payload),
   createPlanSession: (payload: AutoEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanSessionResponseApi>('/api/auto-edit/plan/session', payload),
-  realize: (payload: { plan: AutoEditPlanApi; project_name?: string }) =>
+  realize: (payload: { plan: AutoEditPlanApi; project_name?: string; include_subtitle?: boolean }) =>
     apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
 }
 

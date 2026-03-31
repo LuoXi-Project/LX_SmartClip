@@ -16,6 +16,20 @@ import { SubtitlePanel } from './_components/SubtitlePanel'
 import { useMatchStore } from '@/lib/store'
 
 const VIDEO_PAGE_SIZE = 9
+const AUTO_EDIT_CACHE_KEY = 'lx-auto-edit-state-v1'
+type AutoPlanStage = 'idle' | 'preparing' | 'connecting' | 'planning' | 'done' | 'failed'
+
+function normalizeAutoPlanStage(stage?: string): AutoPlanStage {
+  if (!stage) return 'planning'
+  const lower = stage.toLowerCase()
+  if (lower === 'idle') return 'idle'
+  if (lower === 'preparing' || lower === 'init') return 'preparing'
+  if (lower === 'connecting' || lower === 'context') return 'connecting'
+  if (lower === 'planning' || lower === 'llm' || lower === 'post') return 'planning'
+  if (lower === 'done' || lower === 'result') return 'done'
+  if (lower === 'failed' || lower === 'error') return 'failed'
+  return 'planning'
+}
 
 export default function MatchPage() {
   const {
@@ -74,9 +88,52 @@ export default function MatchPage() {
   const [autoPlans, setAutoPlans] = useState<AutoEditPlanApi[]>([])
   const [autoRealizingId, setAutoRealizingId] = useState<string | null>(null)
   const [autoRealizeMsg, setAutoRealizeMsg] = useState('')
+  const [autoRealizeDownloads, setAutoRealizeDownloads] = useState<Record<string, { filename: string; url: string }>>({})
+  const [autoExpandedPlanIds, setAutoExpandedPlanIds] = useState<string[]>([])
   const [autoPlanLogs, setAutoPlanLogs] = useState<string[]>([])
   const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null)
   const [autoPlanElapsedSec, setAutoPlanElapsedSec] = useState(0)
+  const [autoPlanStage, setAutoPlanStage] = useState<AutoPlanStage>('idle')
+
+  const autoPlanStagePercent: Record<AutoPlanStage, number> = {
+    idle: 0,
+    preparing: 10,
+    connecting: 25,
+    planning: 70,
+    done: 100,
+    failed: 100,
+  }
+
+  function restoreAutoEditCache() {
+    try {
+      const raw = window.localStorage.getItem(AUTO_EDIT_CACHE_KEY)
+      if (!raw) return
+      const cached = JSON.parse(raw) as {
+        autoPrompt?: string
+        autoMode?: AutoEditMode
+        autoTargetDuration?: number | ''
+        autoNumPlans?: number
+        autoPlans?: AutoEditPlanApi[]
+        autoRealizeDownloads?: Record<string, { filename: string; url: string }>
+        autoExpandedPlanIds?: string[]
+        autoPlanLogs?: string[]
+      }
+      if (typeof cached.autoPrompt === 'string') setAutoPrompt(cached.autoPrompt)
+      if (cached.autoMode) setAutoMode(cached.autoMode)
+      if (typeof cached.autoTargetDuration === 'number' || cached.autoTargetDuration === '') {
+        setAutoTargetDuration(cached.autoTargetDuration)
+      }
+      if (typeof cached.autoNumPlans === 'number') setAutoNumPlans(cached.autoNumPlans)
+      if (Array.isArray(cached.autoPlans)) setAutoPlans(cached.autoPlans)
+      if (cached.autoRealizeDownloads && typeof cached.autoRealizeDownloads === 'object') {
+        setAutoRealizeDownloads(cached.autoRealizeDownloads)
+      }
+      if (Array.isArray(cached.autoExpandedPlanIds)) setAutoExpandedPlanIds(cached.autoExpandedPlanIds)
+      if (Array.isArray(cached.autoPlanLogs)) setAutoPlanLogs(cached.autoPlanLogs)
+    } catch {
+      // ignore invalid cache
+    }
+  }
 
   function appendAutoPlanLog(message: string) {
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -91,6 +148,45 @@ export default function MatchPage() {
     }, 1000)
     return () => window.clearInterval(timer)
   }, [autoLoading, autoPlanStartedAt])
+
+  useEffect(() => {
+    restoreAutoEditCache()
+  }, [])
+
+  useEffect(() => {
+    if (mode !== 'auto') return
+    // 每次切回自动成片面板时重新恢复一次缓存，避免误切换后状态看起来“丢失”。
+    restoreAutoEditCache()
+  }, [mode])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        AUTO_EDIT_CACHE_KEY,
+        JSON.stringify({
+          autoPrompt,
+          autoMode,
+          autoTargetDuration,
+          autoNumPlans,
+          autoPlans,
+          autoRealizeDownloads,
+          autoExpandedPlanIds,
+          autoPlanLogs,
+        })
+      )
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    autoPrompt,
+    autoMode,
+    autoTargetDuration,
+    autoNumPlans,
+    autoPlans,
+    autoRealizeDownloads,
+    autoExpandedPlanIds,
+    autoPlanLogs,
+  ])
 
   useEffect(() => {
     apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
@@ -488,6 +584,7 @@ export default function MatchPage() {
                       setAutoPlanStartedAt(startedAt)
                       setAutoPlanElapsedSec(0)
                       setAutoPlanLogs([])
+                      setAutoPlanStage('preparing')
                       appendAutoPlanLog('已开始生成方案')
                       appendAutoPlanLog('正在创建 SSE 规划会话...')
                       try {
@@ -498,11 +595,12 @@ export default function MatchPage() {
                           target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
                           num_plans: autoNumPlans,
                           allow_cross_video: true,
-                          subtitle_policy: 'auto' as const,
+                          subtitle_policy: subtitleEnabled ? 'auto' as const : 'none' as const,
                           transition_policy: 'auto' as const,
                           bgm_policy: 'auto' as const,
                         }
                         const session = await autoEditApi.createPlanSession(payload)
+                        setAutoPlanStage('connecting')
                         appendAutoPlanLog('会话已创建，正在连接实时流...')
 
                         await new Promise<void>((resolve, reject) => {
@@ -516,9 +614,11 @@ export default function MatchPage() {
 
                           es.addEventListener('progress', (ev) => {
                             try {
-                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { message?: string }
+                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { stage?: string; message?: string }
+                              setAutoPlanStage(normalizeAutoPlanStage(data.stage))
                               appendAutoPlanLog(data.message || '收到进度更新')
                             } catch {
+                              setAutoPlanStage('planning')
                               appendAutoPlanLog('收到进度更新')
                             }
                           })
@@ -528,11 +628,13 @@ export default function MatchPage() {
                               const data = JSON.parse((ev as MessageEvent).data || '{}') as { plans?: AutoEditPlanApi[] }
                               const plans = data.plans || []
                               setAutoPlans(plans)
+                              setAutoPlanStage('done')
                               appendAutoPlanLog(`生成完成，返回 ${plans.length} 个方案`)
                               finished = true
                               closeStream()
                               resolve()
                             } catch {
+                              setAutoPlanStage('failed')
                               finished = true
                               closeStream()
                               reject(new Error('解析实时结果失败'))
@@ -547,6 +649,7 @@ export default function MatchPage() {
                             } catch {
                               // ignore parse error
                             }
+                            setAutoPlanStage('failed')
                             finished = true
                             closeStream()
                             reject(new Error(msg))
@@ -554,8 +657,13 @@ export default function MatchPage() {
 
                           es.onerror = () => {
                             if (finished) return
-                            closeStream()
-                            reject(new Error('实时连接中断，请重试'))
+                            if (es.readyState === EventSource.CLOSED) {
+                              setAutoPlanStage('failed')
+                              closeStream()
+                              reject(new Error('实时连接中断，请重试'))
+                              return
+                            }
+                            appendAutoPlanLog('连接波动，正在自动重连...')
                           }
                         })
                       } catch (e: unknown) {
@@ -564,6 +672,7 @@ export default function MatchPage() {
                           || (e as Error)?.message
                           || '生成方案失败'
                         setAutoError(msg)
+                        setAutoPlanStage('failed')
                         appendAutoPlanLog(`生成失败：${msg}`)
                       } finally {
                         setAutoLoading(false)
@@ -584,6 +693,35 @@ export default function MatchPage() {
                 </div>
                 {(autoLoading || autoPlanLogs.length > 0) && (
                   <div className="rounded-xl border border-emerald-500/30 bg-slate-950/60 px-4 py-3 space-y-2">
+                    <div className="space-y-1 text-[11px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-300">
+                          当前阶段：
+                          {autoPlanStage === 'idle'
+                            ? '待开始'
+                            : autoPlanStage === 'preparing'
+                              ? '准备中'
+                              : autoPlanStage === 'connecting'
+                                ? '连接中'
+                                : autoPlanStage === 'planning'
+                                  ? '规划中'
+                                  : autoPlanStage === 'done'
+                                    ? '已完成'
+                                    : '失败'}
+                        </span>
+                        <span className={autoPlanStage === 'failed' ? 'text-red-400' : 'text-slate-400'}>
+                          {autoPlanStage === 'failed' ? '失败' : `${autoPlanStagePercent[autoPlanStage]}%`}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-500 ${
+                            autoPlanStage === 'failed' ? 'bg-red-500' : 'bg-emerald-500'
+                          }`}
+                          style={{ width: `${autoPlanStagePercent[autoPlanStage]}%` }}
+                        />
+                      </div>
+                    </div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-emerald-300 flex items-center gap-1.5">
                         {autoLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -594,6 +732,47 @@ export default function MatchPage() {
                           ? `已等待 ${autoPlanElapsedSec}s`
                           : `总耗时约 ${autoPlanElapsedSec}s`}
                       </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[
+                        { key: 'init', label: '初始化' },
+                        { key: 'context', label: '素材分析' },
+                        { key: 'llm', label: '方案生成' },
+                        { key: 'post', label: '结果整理' },
+                      ].map((step, idx) => {
+                        const stepRankMap: Record<string, number> = { init: 1, context: 2, llm: 3, post: 4 }
+                        const stageRankMap: Record<AutoPlanStage, number> = {
+                          idle: 0,
+                          preparing: 1,
+                          connecting: 2,
+                          planning: 3,
+                          done: 4,
+                          failed: 0,
+                        }
+                        const currentRank = stageRankMap[autoPlanStage] ?? 0
+                        const stepRank = stepRankMap[step.key]
+                        const active = currentRank === stepRank && autoLoading
+                        const passed = currentRank > stepRank || autoPlanStage === 'done'
+                        return (
+                          <span
+                            key={step.key}
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                              active
+                                ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                                : passed
+                                  ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-200'
+                                  : 'border-slate-700 bg-slate-900/70 text-slate-500'
+                            }`}
+                          >
+                            {idx + 1}. {step.label}
+                          </span>
+                        )
+                      })}
+                      {autoPlanStage === 'failed' && (
+                        <span className="inline-flex items-center rounded-full border border-red-400/60 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300">
+                          失败
+                        </span>
+                      )}
                     </div>
                     {autoLoading && (
                       <p className="text-[11px] text-slate-400">
@@ -651,16 +830,47 @@ export default function MatchPage() {
                           </div>
                         </div>
                         {p.summary && (
-                          <p className="text-xs text-slate-300 line-clamp-3">{p.summary}</p>
+                          <div className="space-y-1">
+                            <p className={`text-xs text-slate-300 ${autoExpandedPlanIds.includes(p.plan_id) ? '' : 'line-clamp-3'}`}>
+                              {p.summary}
+                            </p>
+                            {p.summary.length > 80 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setAutoExpandedPlanIds((prev) =>
+                                    prev.includes(p.plan_id)
+                                      ? prev.filter((id) => id !== p.plan_id)
+                                      : [...prev, p.plan_id]
+                                  )
+                                }
+                                className="text-[11px] text-cyan-300 hover:text-cyan-200"
+                              >
+                                {autoExpandedPlanIds.includes(p.plan_id) ? '收起详情' : '展开详情'}
+                              </button>
+                            )}
+                          </div>
                         )}
-                        <div className="text-[11px] text-slate-500">
-                          片段预览：
-                          {p.segments?.slice(0, 3).map((s) => (
-                            <span key={s.id} className="inline-block mr-2">
-                              #{s.order}（{Math.round(s.start_time_sec)}-{Math.round(s.end_time_sec)}s）
-                            </span>
-                          ))}
-                          {p.segments?.length > 3 && <span>…</span>}
+                        <div className="text-[11px] text-slate-500 space-y-0.5">
+                          <p>
+                            输出：
+                            {p.mode === 'original'
+                              ? subtitleEnabled
+                                ? '原声 + 字幕'
+                                : '原声（无字幕）'
+                              : subtitleEnabled
+                                ? '配音 + 字幕'
+                                : '配音（无字幕）'}
+                          </p>
+                          <p>
+                            片段预览：
+                            {p.segments?.slice(0, 3).map((s) => (
+                              <span key={s.id} className="inline-block mr-2">
+                                #{s.order}（{Math.round(s.start_time_sec)}-{Math.round(s.end_time_sec)}s）
+                              </span>
+                            ))}
+                            {p.segments?.length > 3 && <span>…</span>}
+                          </p>
                         </div>
                         <div className="pt-1 space-y-1">
                           <button
@@ -671,13 +881,14 @@ export default function MatchPage() {
                                 const res = await autoEditApi.realize({
                                   plan: p,
                                   project_name: `autoedit_${(p.title || `plan_${idx + 1}`).slice(0, 20)}`,
+                                  include_subtitle: subtitleEnabled,
                                 })
                                 const downloadUrl = `${API_BASE_URL}${res.url}`
-                                const a = document.createElement('a')
-                                a.href = downloadUrl
-                                a.download = res.filename
-                                a.click()
-                                setAutoRealizeMsg('成片已生成，浏览器应已开始下载。')
+                                setAutoRealizeDownloads((prev) => ({
+                                  ...prev,
+                                  [p.plan_id]: { filename: res.filename, url: downloadUrl },
+                                }))
+                                setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
                               } catch (e: unknown) {
                                 const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '一键成片失败'
                                 setAutoRealizeMsg(msg)
@@ -699,6 +910,17 @@ export default function MatchPage() {
                           </button>
                           {autoRealizeMsg && (
                             <p className="text-[11px] text-emerald-300/80">{autoRealizeMsg}</p>
+                          )}
+                          {autoRealizeDownloads[p.plan_id] && (
+                            <a
+                              href={autoRealizeDownloads[p.plan_id].url}
+                              download={autoRealizeDownloads[p.plan_id].filename}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block text-[11px] text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                            >
+                              下载成片：{autoRealizeDownloads[p.plan_id].filename}
+                            </a>
                           )}
                         </div>
                       </div>

@@ -120,7 +120,7 @@ class AutoEditPlanRequest(BaseModel):
     )
     num_plans: int = Field(3, ge=1, le=5, description="候选方案数量")
     allow_cross_video: bool = True
-    subtitle_policy: Literal["auto", "asr", "rewrite"] = "auto"
+    subtitle_policy: Literal["auto", "asr", "rewrite", "none"] = "auto"
     transition_policy: Literal["auto", "hard_cut", "soft"] = "auto"
     bgm_policy: Literal["auto", "none", "user", "ai"] = "auto"
     plan_keep_flags: Optional[PlanKeepFlags] = None
@@ -439,6 +439,7 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
 class AutoEditRealizeRequest(BaseModel):
     plan: Plan
     project_name: Optional[str] = None
+    include_subtitle: bool = True
 
 
 class AutoEditRealizeResponse(BaseModel):
@@ -1006,18 +1007,37 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
 
     # voiceover / auto -> 统一走配音管线（若某段未生成 TTS，会回落到 clip 时长）
     if plan.mode in ("auto", "voiceover"):
-        # 先生成 SRT 时间轴（用 TTS 时长优先）
-        srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True)
-        from app.api.subtitle import generate_srt as generate_srt_route, burn_subtitle as burn_route
-
-        srt_res = await generate_srt_route(srt_req)
-        burn_req = BurnSubtitleRequest(
-            segments=seg_inputs,
-            srt_content=srt_res.srt_content,
-            style=style,
-            project_name=project_name,
+        from app.api.subtitle import (
+            generate_srt as generate_srt_route,
+            burn_subtitle as burn_route,
+            export_original as export_original_route,
         )
-        burn_res = await burn_route(burn_req)
+
+        if req.include_subtitle:
+            # 先生成 SRT 时间轴（用 TTS 时长优先）
+            srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True)
+            srt_res = await generate_srt_route(srt_req)
+            burn_req = BurnSubtitleRequest(
+                segments=seg_inputs,
+                srt_content=srt_res.srt_content,
+                style=style,
+                project_name=project_name,
+            )
+            burn_res = await burn_route(burn_req)
+        else:
+            export_req = ExportOriginalRequest(
+                segments=seg_inputs,
+                style=style,
+                project_name=project_name,
+                include_subtitle=False,
+                normalize_audio=True,
+            )
+            export_res = await export_original_route(export_req)
+            # export_original_route 在内部被 FastAPI 包装为 dict 响应，这里按 dict 处理
+            burn_res = {
+                "filename": export_res.get("filename"),
+                "url": export_res.get("url"),
+            }
         final_filename, final_url = _apply_bgm_postprocess_if_needed(
             plan=plan,
             filename=burn_res["filename"],
@@ -1032,14 +1052,15 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
         segments=seg_inputs,
         style=style,
         project_name=project_name,
-        include_subtitle=True,
+        include_subtitle=req.include_subtitle,
         normalize_audio=True,
     )
     res = await export_original_route(export_req)
+    # 这里同样按 dict 响应处理
     final_filename, final_url = _apply_bgm_postprocess_if_needed(
         plan=plan,
-        filename=res.filename,
-        url=res.url,
+        filename=res.get("filename"),
+        url=res.get("url"),
     )
     return AutoEditRealizeResponse(mode="original", filename=final_filename, url=final_url)
 

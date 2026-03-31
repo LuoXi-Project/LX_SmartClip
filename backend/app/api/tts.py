@@ -8,6 +8,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.core.tts.providers import (
+    synthesize_custom_http,
+    synthesize_gpt_sovits,
+    synthesize_index_tts,
+    synthesize_openai_like,
+    synthesize_volcengine,
+)
 from app.db.database import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -52,141 +59,6 @@ async def _read_cfg(db: aiosqlite.Connection, key: str, default: str = "") -> st
     async with db.execute("SELECT value FROM config WHERE key = ?", (key,)) as cur:
         row = await cur.fetchone()
     return row[0] if row else default
-
-
-def _get_nested(data: dict, path: str):
-    """按点号路径取嵌套值，支持数字索引，如 data.result.0.url"""
-    cur = data
-    for part in path.split("."):
-        if isinstance(cur, dict):
-            cur = cur.get(part)
-        elif isinstance(cur, list):
-            try:
-                cur = cur[int(part)]
-            except (ValueError, IndexError):
-                return None
-        else:
-            return None
-        if cur is None:
-            return None
-    return cur
-
-
-async def _synthesize_custom_get(
-    text: str, output_path: str,
-    url_template: str, response_type: str, audio_key: str,
-) -> str:
-    """自定义 GET TTS：直接响应音频(binary) 或 JSON 中取 URL 再下载"""
-    import httpx
-    url = url_template.replace("{text}", text)
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.get(url)
-    if resp.status_code != 200:
-        raise RuntimeError(f"自定义 GET 请求失败: HTTP {resp.status_code}")
-
-    content_type = resp.headers.get("content-type", "")
-
-    if response_type == "binary" or "audio" in content_type or "octet-stream" in content_type:
-        # 直接写入音频字节
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
-        return output_path
-
-    # JSON 模式：解析后按路径取音频 URL 再下载
-    try:
-        data = resp.json()
-    except Exception:
-        # 解析失败时降级为 binary
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
-        return output_path
-
-    audio_url = _get_nested(data, audio_key) if audio_key else None
-    if not audio_url:
-        raise RuntimeError(f"JSON 响应中未找到路径 '{audio_key}'，响应体: {str(data)[:200]}")
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        audio_resp = await client.get(audio_url)
-    if audio_resp.status_code != 200:
-        raise RuntimeError(f"下载音频 URL 失败: HTTP {audio_resp.status_code}")
-    with open(output_path, "wb") as f:
-        f.write(audio_resp.content)
-    return output_path
-
-
-
-async def _do_custom_http(
-    text: str,
-    output_path: str,
-    method: str,
-    url_template: str,
-    headers_raw: str,
-    body_template: str,
-    response_type: str,
-    audio_key: str,
-) -> str:
-    """
-    Custom HTTP TTS:
-    - GET or POST
-    - {text} placeholder in URL and body
-    - Headers as JSON string
-    - Response: binary (direct audio) or json (extract URL by dot-path then download)
-    """
-    import httpx
-    import json as _json
-
-    url = url_template.replace("{text}", text)
-
-    headers: dict = {}
-    if headers_raw.strip():
-        try:
-            headers = _json.loads(headers_raw)
-        except Exception:
-            raise RuntimeError(f"请求头 JSON 解析失败: {headers_raw[:200]}")
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        if method.upper() == "POST":
-            body_str = body_template.replace("{text}", text) if body_template.strip() else None
-            body_data = None
-            if body_str:
-                try:
-                    body_data = _json.loads(body_str)
-                except Exception:
-                    raise RuntimeError(f"请求体 JSON 解析失败: {body_str[:200]}")
-            if "Content-Type" not in headers:
-                headers["Content-Type"] = "application/json"
-            resp = await client.post(url, headers=headers, json=body_data)
-        else:
-            resp = await client.get(url, headers=headers)
-
-    if resp.status_code != 200:
-        raise RuntimeError(f"自定义 HTTP TTS 请求失败: HTTP {resp.status_code} {resp.text[:200]}")
-
-    content_type = resp.headers.get("content-type", "")
-    if response_type == "binary" or "audio" in content_type or "octet-stream" in content_type:
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
-        return output_path
-
-    # json mode
-    try:
-        data = resp.json()
-    except Exception:
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
-        return output_path
-
-    audio_url = _get_nested(data, audio_key) if audio_key else None
-    if not audio_url:
-        raise RuntimeError(f"JSON 响应中未找到路径 '{audio_key}'，响应体: {str(data)[:300]}")
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        audio_resp = await client.get(str(audio_url))
-    if audio_resp.status_code != 200:
-        raise RuntimeError(f"下载音频 URL 失败: HTTP {audio_resp.status_code}")
-    with open(output_path, "wb") as f:
-        f.write(audio_resp.content)
-    return output_path
 
 # ──────────────────────────── 路由 ──────────────────────────── #
 
@@ -237,76 +109,49 @@ async def synthesize(req: SynthesizeRequest):
                                  voice=voice, rate=rate, volume=volume)
 
         elif provider in ("openai", "bailian"):
-            import httpx
-            base = tts_base_url.rstrip("/")
-            endpoint = f"{base}/audio/speech"
-            headers = {"Authorization": f"Bearer {tts_api_key}", "Content-Type": "application/json"}
-            if provider == "bailian" and bailian_app_key:
-                headers["X-DashScope-AppId"] = bailian_app_key
-            body = {"model": tts_model or "tts-1", "input": req.text,
-                    "voice": voice, "response_format": ext}
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(endpoint, headers=headers, json=body)
-            if resp.status_code != 200:
-                raise RuntimeError(f"OpenAI TTS 请求失败: HTTP {resp.status_code} {resp.text[:200]}")
-            with open(output_path, "wb") as f:
-                f.write(resp.content)
+            await synthesize_openai_like(
+                text=req.text,
+                output_path=output_path,
+                base_url=tts_base_url,
+                api_key=tts_api_key,
+                model=tts_model,
+                voice=voice,
+                response_format=ext,
+                app_key=bailian_app_key if provider == "bailian" else "",
+            )
 
         elif provider == "volcengine":
-            import httpx, json as _json
-            endpoint = f"{tts_base_url.rstrip('/')}/api/v1/tts"
-            headers = {"Authorization": f"Bearer;{volc_token}", "Content-Type": "application/json"}
-            body = {
-                "app": {"appid": volc_app_id, "token": volc_token, "cluster": volc_cluster},
-                "user": {"uid": "smartclip"},
-                "audio": {"voice_type": voice, "encoding": ext, "rate": 24000},
-                "request": {"reqid": uuid.uuid4().hex, "text": req.text,
-                             "text_type": "plain", "operation": "query"}
-            }
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(endpoint, headers=headers, json=body)
-            data = resp.json()
-            audio_b64 = _get_nested(data, "data")
-            if not audio_b64:
-                raise RuntimeError(f"火山引擎 TTS 响应异常: {str(data)[:300]}")
-            import base64
-            with open(output_path, "wb") as f:
-                f.write(base64.b64decode(audio_b64))
+            await synthesize_volcengine(
+                text=req.text,
+                output_path=output_path,
+                base_url=tts_base_url,
+                app_id=volc_app_id,
+                token=volc_token,
+                cluster=volc_cluster,
+                voice=voice,
+                encoding=ext,
+            )
 
         elif provider == "gpt-sovits":
-            import httpx
-            params = {
-                "refer_wav_path": gsv_ref_audio,
-                "prompt_text": gsv_ref_text,
-                "prompt_language": gsv_lang,
-                "text": req.text,
-                "text_language": gsv_lang,
-            }
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.get(tts_base_url.rstrip("/"), params=params)
-            if resp.status_code != 200:
-                raise RuntimeError(f"GPT-SoVITS 请求失败: HTTP {resp.status_code}")
-            with open(output_path, "wb") as f:
-                f.write(resp.content)
+            await synthesize_gpt_sovits(
+                text=req.text,
+                output_path=output_path,
+                base_url=tts_base_url,
+                ref_audio=gsv_ref_audio,
+                ref_text=gsv_ref_text,
+                lang=gsv_lang,
+            )
 
         elif provider == "index-tts":
-            import httpx
-            endpoint = f"{tts_base_url.rstrip('/')}/run/predict"
-            body = {"data": [req.text, index_ref_audio]}
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(endpoint, json=body)
-            data = resp.json()
-            # Gradio 返回 {"data": [{"url": "..."}]} 或 {"data": ["http://..."]}
-            audio_url = _get_nested(data, "data.0.url") or _get_nested(data, "data.0")
-            if not audio_url:
-                raise RuntimeError(f"IndexTTS 响应异常: {str(data)[:300]}")
-            async with httpx.AsyncClient(timeout=60) as client:
-                audio_resp = await client.get(audio_url)
-            with open(output_path, "wb") as f:
-                f.write(audio_resp.content)
+            await synthesize_index_tts(
+                text=req.text,
+                output_path=output_path,
+                base_url=tts_base_url,
+                ref_audio=index_ref_audio,
+            )
 
         elif provider == "custom-http":
-            await _do_custom_http(
+            await synthesize_custom_http(
                 text=req.text, output_path=output_path,
                 method=ch_method, url_template=ch_url,
                 headers_raw=ch_headers, body_template=ch_body,

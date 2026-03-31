@@ -27,6 +27,7 @@ export interface SRTEntry {
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 export const clipStreamUrl = (id: string) => `${API_BASE}/api/videos/clips/${id}/stream`
+export const videoStreamUrl = (id: string) => `${API_BASE}/api/videos/${id}/stream`
 export const audioSrc = (f: string) => `${API_BASE}/api/tts/audio/${f}`
 
 export function fmt(s: number) {

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
 import { type AutoPlanStage } from './autoEditTypes'
-import { clipStreamUrl, fmt } from './types'
+import { clipStreamUrl, fmt, videoStreamUrl } from './types'
 
 type AutoEditPanelProps = {
   autoPrompt: string
@@ -64,6 +64,8 @@ export function AutoEditPanel({
     segmentId: string
     order: number
     clipId: string
+    videoId: string | null
+    source: 'video' | 'clip'
     startSec: number
     endSec: number
   } | null>(null)
@@ -77,9 +79,14 @@ export function AutoEditPanel({
   }
 
   const previewSrc = useMemo(() => {
-    if (!selectedPreview?.clipId) return ''
+    if (!selectedPreview) return ''
+    if (selectedPreview.source === 'video') {
+      if (!selectedPreview.videoId) return ''
+      return videoStreamUrl(selectedPreview.videoId)
+    }
+    if (!selectedPreview.clipId) return ''
     return clipStreamUrl(selectedPreview.clipId)
-  }, [selectedPreview?.clipId])
+  }, [selectedPreview])
 
   useEffect(() => {
     const video = previewVideoRef.current
@@ -301,7 +308,13 @@ export function AutoEditPanel({
                 {selectedPreview ? (
                   <p className="text-[11px] text-slate-500 mt-0.5 truncate">
                     {selectedPreview.planTitle} · #{selectedPreview.order}（{fmt(selectedPreview.startSec)} - {fmt(selectedPreview.endSec)}）
-                    <span className="ml-2 text-slate-600">clip_id: {selectedPreview.clipId}</span>
+                    <span className="ml-2 text-slate-600">
+                      {selectedPreview.source === 'video' ? (
+                        <>原视频预览 · video_id: {selectedPreview.videoId || '-'}</>
+                      ) : (
+                        <>片段预览 · clip_id: {selectedPreview.clipId || '-'}</>
+                      )}
+                    </span>
                   </p>
                 ) : (
                   <p className="text-[11px] text-slate-500 mt-0.5">点击下方任意“片段预览”按钮，在这里跳转到对应时间点播放。</p>
@@ -309,6 +322,37 @@ export function AutoEditPanel({
               </div>
               {selectedPreview && (
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-1.5 mr-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedPreview((prev) =>
+                          prev?.videoId ? { ...prev, source: 'video' } : prev
+                        )
+                      }
+                      disabled={!selectedPreview.videoId}
+                      className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
+                        selectedPreview.source === 'video'
+                          ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200'
+                          : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:bg-slate-950/70 disabled:opacity-50'
+                      }`}
+                      title={selectedPreview.videoId ? '按原视频绝对时间预览/跳转' : '该段缺少 video_id，无法切换到原视频预览'}
+                    >
+                      原视频
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPreview((prev) => (prev ? { ...prev, source: 'clip' } : prev))}
+                      className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
+                        selectedPreview.source === 'clip'
+                          ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-200'
+                          : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:bg-slate-950/70'
+                      }`}
+                      title="按片段文件时间轴预览/跳转"
+                    >
+                      片段
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -346,7 +390,7 @@ export function AutoEditPanel({
             <div className="rounded-xl overflow-hidden border border-slate-800 bg-black">
               {selectedPreview && !previewVideoErr ? (
                 <video
-                  key={selectedPreview.clipId}
+                  key={`${selectedPreview.source}:${selectedPreview.source === 'video' ? selectedPreview.videoId : selectedPreview.clipId}`}
                   ref={previewVideoRef}
                   src={previewSrc}
                   controls
@@ -414,6 +458,7 @@ export function AutoEditPanel({
                   >
                     {(p.segments ?? []).map((s) => {
                       const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
+                      const videoId = s.clip_group?.[0]?.video_id || null
                       const planTitle = p.title || `方案 ${idx + 1}`
                       return (
                         <button
@@ -427,6 +472,9 @@ export function AutoEditPanel({
                               segmentId: s.id,
                               order: s.order,
                               clipId,
+                              videoId,
+                              // 默认优先按“原视频绝对时间”预览（如果后端给了 video_id）
+                              source: videoId ? 'video' : 'clip',
                               startSec: s.start_time_sec,
                               endSec: s.end_time_sec,
                             })

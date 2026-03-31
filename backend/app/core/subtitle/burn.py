@@ -66,6 +66,17 @@ def _style_to_ass_header(style: "SubtitleStyle", video_size: tuple) -> str:
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+    if getattr(style, "background", False):
+        # 底层背景盒样式：使用 BorderStyle=3 的 box，仅用于承载背景，不覆盖文字描边样式。
+        header = header.replace(
+            "\n[Events]\n",
+            (
+                f"Style: BgBox,{style.font_name},{style.font_size},"
+                "&HFF000000,&HFF000000,&HFF000000,&H70000000,"
+                f"0,0,0,0,100,100,0,0,3,6,0,{alignment},10,10,{margin_v},1\n"
+                "\n[Events]\n"
+            ),
+        )
     return header
 
 
@@ -98,8 +109,13 @@ def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> s
             continue
         # 用 \pos 锚定坐标，确保导出位置与前端预览一致。
         text = f"{{\\pos({pos_x},{pos_y})}}{text}"
+        if getattr(style, "background", False):
+            lines.append(
+                f"Dialogue: 0,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"
+                f"BgBox,,0,0,0,,{text}"
+            )
         lines.append(
-            f"Dialogue: 0,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"
+            f"Dialogue: 1,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"
             f"Default,,0,0,0,,{text}"
         )
     return "\n".join(lines) + "\n"

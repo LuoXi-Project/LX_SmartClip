@@ -4,14 +4,14 @@ import type { Segment } from './types'
 import { ClipCard } from './ClipCard'
 
 export function SegmentRow({
-  seg, index, onTextChange, onRemove, onMatch, onChoose,
+  seg, index, onTextChange, onRemove, onMatch, onToggleSelect,
   onTts, onPlayAudio, onStopAudio, playingAudio, onPreview, onToggleExpand,
 }: {
   seg: Segment; index: number
   onTextChange: (t: string) => void
   onRemove: () => void
   onMatch: () => void
-  onChoose: (idx: number) => void
+  onToggleSelect: (clipId: string) => void
   onTts: () => void
   onPlayAudio: () => void
   onStopAudio: () => void
@@ -19,7 +19,10 @@ export function SegmentRow({
   onPreview: (clip: MatchClip) => void
   onToggleExpand: () => void
 }) {
-  const chosen = seg.clips[seg.chosenIdx] ?? null
+  const primaryId = seg.selectedClipIds?.[0] ?? ''
+  const chosen = primaryId ? (seg.clips.find((c) => c.clip_id === primaryId) ?? null) : null
+  const selectedCount = seg.selectedClipIds?.length ?? 0
+  const orderIndexOf = (clipId: string) => (seg.selectedClipIds?.indexOf(clipId) ?? -1)
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-[#0e1017] overflow-hidden">
@@ -30,9 +33,9 @@ export function SegmentRow({
         </div>
         <span className="text-xs text-slate-400 font-medium">段落 {index + 1}</span>
         <div className="flex-1" />
-        {chosen && (
+        {selectedCount > 0 && (
           <span className="text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-0.5">
-            已选片段
+            已选 {selectedCount} 个
           </span>
         )}
         {seg.ttsFilename && (
@@ -74,15 +77,19 @@ export function SegmentRow({
           <div>
             <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2.5">
               候选视频 · {seg.clips.length} 个
-              <span className="normal-case font-normal ml-1 text-slate-600">— 点击选择</span>
+              <span className="normal-case font-normal ml-1 text-slate-600">— 点击勾选序号</span>
             </p>
             <div className="flex gap-3 overflow-x-auto pb-2">
               {seg.clips.map((clip, ci) => (
                 <ClipCard
                   key={clip.clip_id}
                   clip={clip}
-                  chosen={seg.chosenIdx === ci}
-                  onChoose={() => onChoose(ci)}
+                  chosen={clip.clip_id === primaryId || (primaryId === '' && seg.chosenIdx === ci)}
+                  order={(() => {
+                    const idx = orderIndexOf(clip.clip_id)
+                    return idx >= 0 ? idx + 1 : undefined
+                  })()}
+                  onChoose={() => onToggleSelect(clip.clip_id)}
                   onPreview={() => onPreview(clip)}
                 />
               ))}

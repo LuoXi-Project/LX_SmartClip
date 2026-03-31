@@ -82,7 +82,7 @@ export default function MatchPage() {
   const handleVideoSearch = (val: string) => { setVideoSearch(val); setVideoPage(1) }
 
   function makeSeg(id: string, text = ''): Segment {
-    return { id, text, clips: [], chosenIdx: 0, ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false }
+    return { id, text, clips: [], chosenIdx: 0, selectedClipIds: [], ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false }
   }
   function patchSeg(id: string, p: Partial<Segment>) {
     setMatchSegments(useMatchStore.getState().segments.map((s) => s.id === id ? { ...s, ...p } : s))
@@ -117,7 +117,9 @@ export default function MatchPage() {
         video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : null,
       })
       const clips = data.recommended?.length ? data.recommended : data.candidates
-      patchSeg(id, { clips, chosenIdx: 0, matchLoading: false })
+      // 匹配后默认把最高分 clip 设为唯一选中（保留用户之前手动勾选的逻辑由 toggleClipSelected 管理）
+      const defaultSelected = clips.length > 0 ? [clips[0].clip_id] : []
+      patchSeg(id, { clips, chosenIdx: 0, selectedClipIds: defaultSelected, matchLoading: false })
     } catch (e: unknown) {
       patchSeg(id, { matchLoading: false, matchError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '匹配失败' })
     }
@@ -142,6 +144,16 @@ export default function MatchPage() {
     audio.play(); audio.onended = () => setPlayingSegId(null); audio.onerror = () => setPlayingSegId(null)
   }
   function stopAudio() { audioRef.current?.pause(); audioRef.current = null; setPlayingSegId(null) }
+
+  function buildSegmentClipIds(seg: Segment): string[] {
+    const primary = seg.selectedClipIds?.[0] || seg.clips[seg.chosenIdx]?.clip_id
+    const ordered = [
+      ...(primary ? [primary] : []),
+      ...(seg.selectedClipIds ?? []),
+      ...seg.clips.map((c) => c.clip_id),
+    ]
+    return Array.from(new Set(ordered.filter(Boolean)))
+  }
 
   const readySegs = segments.filter((s) => s.clips.length > 0)
   const firstReadyClipId = useMemo(() => {
@@ -171,7 +183,11 @@ export default function MatchPage() {
     setGeneratingSrt(true); setSrtError('')
     try {
       const segsInput = readySegs
-        .map((s) => ({ copy_text: s.text, clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined }))
+        .map((s) => ({
+          copy_text: s.text,
+          clip_id: (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? '',
+          tts_filename: s.ttsFilename ?? undefined,
+        }))
         .filter((s) => s.clip_id)
       const res = await subtitleApi.generate({ segments: segsInput, style: subtitleStyle, use_tts_timing: true })
       setSrtEntries(res.entries); setSrtContent(res.srt_content); setTimingSource(res.timing_source)
@@ -188,12 +204,24 @@ export default function MatchPage() {
     const projectName = globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
     try {
       if (exportMode === 'zip') {
-        const clipIds = readySegs.map((s) => s.clips[s.chosenIdx]?.clip_id).filter(Boolean) as string[]
+        const clipIds = readySegs
+          .map((s) => (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id))
+          .filter(Boolean) as string[]
         const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: readySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
       } else {
         const currentSrt = await generateSrt()
-        const segsInput = readySegs.map((s) => ({ copy_text: s.text, clip_id: s.clips[s.chosenIdx]?.clip_id ?? '', tts_filename: s.ttsFilename ?? undefined })).filter((s) => s.clip_id)
+        const segsInput = readySegs
+          .map((s) => {
+            const clip_ids = buildSegmentClipIds(s)
+            return {
+              copy_text: s.text,
+              clip_id: clip_ids[0] ?? '',
+              clip_ids,
+              tts_filename: s.ttsFilename ?? undefined,
+            }
+          })
+          .filter((s) => s.clip_id)
         const res = await subtitleApi.burn({ segments: segsInput, srt_content: currentSrt, style: subtitleStyle, project_name: projectName })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
@@ -218,6 +246,17 @@ export default function MatchPage() {
   }
   const toggleVideo = (id: string) =>
     setSelectedVideoIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+
+  function toggleClipSelected(segId: string, clipId: string) {
+    const seg = useMatchStore.getState().segments.find((s) => s.id === segId)
+    if (!seg) return
+
+    const prev = seg.selectedClipIds ?? []
+    const next = prev.includes(clipId) ? prev.filter((x) => x !== clipId) : [...prev, clipId]
+    const primaryId = next[0] ?? ''
+    const nextChosenIdx = primaryId ? Math.max(0, seg.clips.findIndex((c) => c.clip_id === primaryId)) : 0
+    patchSeg(segId, { selectedClipIds: next, chosenIdx: nextChosenIdx })
+  }
 
   // PLACEHOLDER_JSX
   return (
@@ -337,7 +376,7 @@ export default function MatchPage() {
                   onTextChange={(t) => patchSeg(seg.id, { text: t })}
                   onRemove={() => removeSegment(seg.id)}
                   onMatch={() => matchSegment(seg.id)}
-                  onChoose={(ci) => patchSeg(seg.id, { chosenIdx: ci })}
+                  onToggleSelect={(clipId) => toggleClipSelected(seg.id, clipId)}
                   onTts={() => synthesiseTts(seg.id)}
                   onPlayAudio={() => seg.ttsFilename && playAudio(seg.id, seg.ttsFilename)}
                   onStopAudio={stopAudio}

@@ -65,6 +65,7 @@ async def _load_render_opts(db) -> dict:
 class SubtitleSegmentInput(BaseModel):
     copy_text: str
     clip_id: str
+    clip_ids: Optional[List[str]] = None
     tts_filename: Optional[str] = None
 
 
@@ -123,7 +124,13 @@ async def generate_srt(req: GenerateSRTRequest):
     if not req.segments:
         raise HTTPException(400, "segments不能为空")
 
-    ids = [s.clip_id for s in req.segments]
+    ids: List[str] = []
+    for seg in req.segments:
+        if seg.clip_id:
+            ids.append(seg.clip_id)
+        if seg.clip_ids:
+            ids.extend([cid for cid in seg.clip_ids if cid])
+    ids = list(dict.fromkeys(ids))
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -170,7 +177,13 @@ async def burn_subtitle(req: BurnSubtitleRequest):
     if not req.segments:
         raise HTTPException(400, "segments不能为空")
 
-    ids = [s.clip_id for s in req.segments]
+    ids: List[str] = []
+    for seg in req.segments:
+        if seg.clip_id:
+            ids.append(seg.clip_id)
+        if seg.clip_ids:
+            ids.extend([cid for cid in seg.clip_ids if cid])
+    ids = list(dict.fromkeys(ids))
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(

@@ -168,6 +168,12 @@ def _probe_duration(path: str) -> float:
         return 0.0
 
 
+def _write_concat_list(paths: List[str], output_path: str) -> None:
+    with open(output_path, "w", encoding="utf-8") as f:
+        for p in paths:
+            f.write(f"file '{p.replace(chr(92), '/')}' \n")
+
+
 def _to_int(opts: Dict[str, str], key: str, default: int) -> int:
     try:
         return int(float((opts.get(key) or "").strip() or default))
@@ -271,9 +277,19 @@ def burn_to_mp4(
         # ------------------------------------------------------------------
         seg_paths: List[str] = []
         for i, seg in enumerate(segments):
-            info = clip_map.get(seg.clip_id)
-            if not info or not os.path.isfile(info["path"] or ""):
-                raise HTTPException(404, f"片段不存在: {seg.clip_id}")
+            raw_ids = list(getattr(seg, "clip_ids", None) or [])
+            if not raw_ids and getattr(seg, "clip_id", None):
+                raw_ids = [seg.clip_id]
+            clip_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
+            if not clip_ids:
+                raise HTTPException(400, f"片段缺少 clip_id: seg_{i + 1}")
+
+            infos = []
+            for cid in clip_ids:
+                info = clip_map.get(cid)
+                if not info or not os.path.isfile(info["path"] or ""):
+                    raise HTTPException(404, f"片段不存在: {cid}")
+                infos.append(info)
 
             tts_path = (
                 os.path.join(tts_audio_dir, os.path.basename(seg.tts_filename))
@@ -284,22 +300,26 @@ def burn_to_mp4(
             seg_out = os.path.join(tmp, f"seg_{i:03d}.mp4")
 
             if tts_path and os.path.isfile(tts_path):
-                # 有 TTS：严格以音频时长为准；视频不足则循环，视频过长则裁切
+                # 有 TTS：先顺序使用候选 clip 组；若总时长不足，再按整组循环补齐。
                 audio_dur = _probe_duration(tts_path)
-                video_dur = float(info.get("dur") or _probe_duration(info["path"]) or 0.0)
+                video_dur = sum(float(info.get("dur") or _probe_duration(info["path"]) or 0.0) for info in infos)
                 if audio_dur <= 0:
                     raise HTTPException(400, f"TTS 音频无效: {seg.tts_filename}")
                 if video_dur <= 0:
-                    raise HTTPException(400, f"视频片段无效: {seg.clip_id}")
+                    raise HTTPException(400, f"视频片段无效: {','.join(clip_ids)}")
 
                 loop_count = max(0, math.ceil(audio_dur / video_dur) - 1)
+                concat_list_path = os.path.join(tmp, f"seg_{i:03d}_concat.txt")
+                _write_concat_list([info["path"] for info in infos], concat_list_path)
                 seg_codec_args = _build_render_codec_args(render_opts)
                 seg_filter_parts = _build_extra_video_filters(render_opts)
                 seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
                 _run_ffmpeg(
                     [
                         "-stream_loop", str(loop_count),
-                        "-i", info["path"],
+                        "-f", "concat",
+                        "-safe", "0",
+                        "-i", concat_list_path,
                         "-i", tts_path,
                         "-map", "0:v:0",
                         "-map", "1:a:0",
@@ -313,20 +333,30 @@ def burn_to_mp4(
                     desc=f"fit seg {i+1} to tts",
                 )
                 logger.info(
-                    "seg %d (TTS对齐) -> %s (audio=%.2fs, video=%.2fs, loop=%d)",
+                    "seg %d (TTS对齐) -> %s (audio=%.2fs, video_group=%.2fs, clips=%d, loop=%d)",
                     i + 1,
                     seg_out,
                     audio_dur,
                     video_dur,
+                    len(clip_ids),
                     loop_count,
                 )
             else:
-                # 无 TTS：直接用 FFmpeg 流复制，零损耗极速
-                _run_ffmpeg(
-                    ["-i", info["path"], "-c", "copy", seg_out],
-                    desc=f"copy seg {i+1}",
-                )
-                logger.info("seg %d (copy) -> %s", i + 1, seg_out)
+                if len(infos) == 1:
+                    # 无 TTS 且单 clip：直接复制，最快。
+                    _run_ffmpeg(
+                        ["-i", infos[0]["path"], "-c", "copy", seg_out],
+                        desc=f"copy seg {i+1}",
+                    )
+                else:
+                    # 无 TTS 且多 clip：先拼接一遍 clip 组，不做循环。
+                    concat_list_path = os.path.join(tmp, f"seg_{i:03d}_concat.txt")
+                    _write_concat_list([info["path"] for info in infos], concat_list_path)
+                    _run_ffmpeg(
+                        ["-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", seg_out],
+                        desc=f"concat seg {i+1}",
+                    )
+                logger.info("seg %d (copy/concat) -> %s (clips=%d)", i + 1, seg_out, len(clip_ids))
 
             seg_paths.append(seg_out)
 

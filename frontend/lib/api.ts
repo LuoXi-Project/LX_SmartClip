@@ -124,6 +124,7 @@ export interface SubtitleStyleApi {
 export interface SubtitleSegmentInput {
   copy_text: string
   clip_id: string
+  clip_ids?: string[]
   tts_filename?: string
 }
 

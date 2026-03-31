@@ -7,6 +7,8 @@ export interface Segment {
   text: string
   clips: MatchClip[]
   chosenIdx: number
+  /** 已按勾选顺序记录的 clip_id 列表（第一个为当前展示/主选） */
+  selectedClipIds: string[]
   ttsFilename: string | null
   ttsLoading: boolean
   ttsError: string

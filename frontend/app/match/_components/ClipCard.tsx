@@ -21,9 +21,13 @@ export function ScoreBar({ score }: { score: number }) {
 
 // ── ClipCard ──────────────────────────────────────────────────────────────────
 export function ClipCard({
-  clip, chosen, onChoose, onPreview,
+  clip, chosen, order, onChoose, onPreview,
 }: {
-  clip: MatchClip; chosen: boolean; onChoose: () => void; onPreview: () => void
+  clip: MatchClip
+  chosen: boolean
+  order?: number
+  onChoose: () => void
+  onPreview: () => void
 }) {
   const [thumbErr, setThumbErr] = useState(false)
   const name = clip.clip_path.split(/[/\\]/).pop() ?? clip.clip_path
@@ -37,7 +41,12 @@ export function ClipCard({
           : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'
       }`}
     >
-      {chosen && (
+      {typeof order === 'number' && order > 0 && (
+        <div className="absolute top-2 right-2 min-w-5 h-5 px-1 rounded-full bg-indigo-500 flex items-center justify-center z-10">
+          <span className="text-[10px] text-white font-semibold tabular-nums">{order}</span>
+        </div>
+      )}
+      {chosen && typeof order !== 'number' && (
         <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center z-10">
           <CheckCircle2 className="w-3.5 h-3.5 text-white" />
         </div>

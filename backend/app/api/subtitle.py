@@ -79,6 +79,8 @@ class SubtitleStyle(BaseModel):
     italic: bool = False
     position: str = "bottom"   # bottom | center | top
     margin_v: int = 20
+    pos_x_pct: float = 50.0
+    pos_y_pct: float = 90.0
     background: bool = False
     max_chars_per_line: int = 20
 

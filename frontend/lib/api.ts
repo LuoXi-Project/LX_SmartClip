@@ -115,6 +115,8 @@ export interface SubtitleStyleApi {
   italic?: boolean
   position?: string
   margin_v?: number
+  pos_x_pct?: number
+  pos_y_pct?: number
   background?: boolean
   max_chars_per_line?: number
 }

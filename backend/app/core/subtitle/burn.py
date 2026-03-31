@@ -28,7 +28,7 @@ def _style_to_ass_header(style: "SubtitleStyle", video_size: tuple) -> str:
         r, g, b = h[0:2], h[2:4], h[4:6]
         return f"&H{alpha:02X}{b}{g}{r}"
 
-    # 垂直位置：Alignment 2=底中 8=顶中 5=正中
+    # 垂直位置：Alignment 2=底中 8=顶中 5=正中（兼容旧字段）
     if style.position == "bottom":
         alignment = 2
         margin_v = style.margin_v
@@ -69,6 +69,16 @@ def _style_to_ass_header(style: "SubtitleStyle", video_size: tuple) -> str:
     return header
 
 
+def _style_to_ass_pos(style: "SubtitleStyle", video_size: tuple) -> tuple[int, int]:
+    """将百分比坐标映射为 ASS 像素坐标。"""
+    vw, vh = video_size
+    x_pct = max(0.0, min(100.0, float(getattr(style, "pos_x_pct", 50.0))))
+    y_pct = max(0.0, min(100.0, float(getattr(style, "pos_y_pct", 90.0))))
+    x = int(round(vw * x_pct / 100.0))
+    y = int(round(vh * y_pct / 100.0))
+    return x, y
+
+
 def _ass_time(s: float) -> str:
     """秒 -> ASS 时间格式 H:MM:SS.cc"""
     cs = int(round(s * 100))
@@ -81,10 +91,13 @@ def _ass_time(s: float) -> str:
 def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> str:
     """将 srt_entries 列表转换为完整 ASS 字幕字符串。"""
     lines = [_style_to_ass_header(style, video_size)]
+    pos_x, pos_y = _style_to_ass_pos(style, video_size)
     for entry in srt_entries:
         text = entry["text"].strip().replace("\n", "\\N")
         if not text or entry["end"] <= entry["start"]:
             continue
+        # 用 \pos 锚定坐标，确保导出位置与前端预览一致。
+        text = f"{{\\pos({pos_x},{pos_y})}}{text}"
         lines.append(
             f"Dialogue: 0,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"
             f"Default,,0,0,0,,{text}"

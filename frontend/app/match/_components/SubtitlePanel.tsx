@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Subtitles, Eye, EyeOff } from 'lucide-react'
+import { ChevronDown, ChevronUp, Subtitles, Eye } from 'lucide-react'
 import type { SubtitleStyle, SRTEntry } from './types'
 import { DEFAULT_SUBTITLE_STYLE } from './types'
 
@@ -12,14 +12,29 @@ interface Props {
   enabled: boolean
   onToggle: (v: boolean) => void
   timingSource?: string
+  previewVideoSize?: { width: number; height: number } | null
 }
 
-export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, timingSource }: Props) {
+export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, timingSource, previewVideoSize }: Props) {
   const [open, setOpen] = useState(false)
 
   function patch(k: keyof SubtitleStyle, v: SubtitleStyle[typeof k]) {
     onChange({ ...style, [k]: v })
   }
+
+  function applyPresetPosition(pos: 'bottom' | 'center' | 'top') {
+    if (pos === 'bottom') onChange({ ...style, position: pos, pos_x_pct: 50, pos_y_pct: 90 })
+    else if (pos === 'center') onChange({ ...style, position: pos, pos_x_pct: 50, pos_y_pct: 50 })
+    else onChange({ ...style, position: pos, pos_x_pct: 50, pos_y_pct: 10 })
+  }
+
+  const sourceW = previewVideoSize?.width && previewVideoSize.width > 0 ? previewVideoSize.width : 1920
+  const sourceH = previewVideoSize?.height && previewVideoSize.height > 0 ? previewVideoSize.height : 1080
+  const scale = Math.min(420 / sourceW, 220 / sourceH, 1)
+  const previewW = Math.round(sourceW * scale)
+  const previewH = Math.round(sourceH * scale)
+  const xPct = typeof style.pos_x_pct === 'number' ? style.pos_x_pct : 50
+  const yPct = typeof style.pos_y_pct === 'number' ? style.pos_y_pct : 90
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
@@ -115,7 +130,7 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
                 {(['bottom','center','top'] as const).map(pos => (
                   <button
                     key={pos}
-                    onClick={() => patch('position', pos)}
+                    onClick={() => applyPresetPosition(pos)}
                     className={`flex-1 py-1 rounded-lg text-xs transition-colors ${
                       style.position === pos
                         ? 'bg-cyan-600 text-white'
@@ -134,6 +149,24 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
               <input
                 type="range" min={0} max={80} value={style.margin_v}
                 onChange={e => patch('margin_v', +e.target.value)}
+                className="w-full accent-cyan-500"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] text-slate-500 uppercase tracking-widest">横向坐标 {Math.round(xPct)}%</label>
+              <input
+                type="range" min={0} max={100} value={xPct}
+                onChange={e => patch('pos_x_pct', +e.target.value)}
+                className="w-full accent-cyan-500"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] text-slate-500 uppercase tracking-widest">纵向坐标 {Math.round(yPct)}%</label>
+              <input
+                type="range" min={0} max={100} value={yPct}
+                onChange={e => patch('pos_y_pct', +e.target.value)}
                 className="w-full accent-cyan-500"
               />
             </div>
@@ -199,15 +232,20 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
           </div>
 
           {/* live preview box */}
-          <div
-            className="relative rounded-xl overflow-hidden bg-slate-950 border border-slate-800"
-            style={{ height: 80 }}
-          >
-            <div className="absolute inset-0 flex items-end justify-center pb-3">
+          <div className="rounded-xl bg-slate-950 border border-slate-800 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[9px] text-slate-600">预览像素: {sourceW} × {sourceH}</span>
+              <span className="text-[9px] text-slate-700">坐标: {Math.round(xPct)}%, {Math.round(yPct)}%</span>
+            </div>
+            <div
+              className="relative overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900"
+              style={{ width: previewW, height: previewH }}
+            >
               <span
+                className="absolute"
                 style={{
                   fontFamily: style.font_name,
-                  fontSize: Math.max(style.font_size * 0.5, 12),
+                  fontSize: Math.max(style.font_size * scale, 10),
                   color: style.font_color,
                   fontWeight: style.bold ? 'bold' : 'normal',
                   fontStyle: style.italic ? 'italic' : 'normal',
@@ -215,15 +253,18 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
                     ? `0 0 ${style.outline_width}px ${style.outline_color}, 0 0 ${style.outline_width}px ${style.outline_color}`
                     : 'none',
                   background: style.background ? 'rgba(0,0,0,0.5)' : 'transparent',
-                  padding: style.background ? '2px 8px' : undefined,
+                  padding: style.background ? `${Math.max(1, Math.round(scale * 2))}px ${Math.max(4, Math.round(scale * 8))}px` : undefined,
                   borderRadius: style.background ? 4 : undefined,
-                  ...(style.position === 'top' ? { top: 8, bottom: 'auto' } : {}),
+                  left: `${xPct}%`,
+                  top: `${yPct}%`,
+                  transform: 'translate(-50%, -50%)',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 字幕预览 Preview 123
               </span>
+              <span className="absolute top-1 left-2 text-[9px] text-slate-700">预览</span>
             </div>
-            <span className="absolute top-1 left-2 text-[9px] text-slate-700">预览</span>
           </div>
         </div>
       )}

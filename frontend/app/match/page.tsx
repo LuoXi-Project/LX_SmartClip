@@ -64,6 +64,7 @@ export default function MatchPage() {
   const [timingSource, setTimingSource] = useState('')
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
+  const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
     apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
@@ -143,6 +144,28 @@ export default function MatchPage() {
   function stopAudio() { audioRef.current?.pause(); audioRef.current = null; setPlayingSegId(null) }
 
   const readySegs = segments.filter((s) => s.clips.length > 0)
+  const firstReadyClipId = useMemo(() => {
+    const first = segments.find((s) => s.clips.length > 0)
+    if (!first) return ''
+    return first.clips[first.chosenIdx]?.clip_id ?? ''
+  }, [segments])
+
+  useEffect(() => {
+    if (!firstReadyClipId) {
+      setPreviewVideoSize(null)
+      return
+    }
+
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.src = `${API_BASE_URL}/api/videos/clips/${firstReadyClipId}/stream`
+    video.onloadedmetadata = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setPreviewVideoSize({ width: video.videoWidth, height: video.videoHeight })
+      }
+    }
+    video.onerror = () => setPreviewVideoSize(null)
+  }, [firstReadyClipId])
 
   async function generateSrt(): Promise<string> {
     setGeneratingSrt(true); setSrtError('')
@@ -330,6 +353,7 @@ export default function MatchPage() {
               style={subtitleStyle} onChange={setSubtitleStyle}
               entries={srtEntries} enabled={subtitleEnabled}
               onToggle={setSubtitleEnabled} timingSource={timingSource}
+              previewVideoSize={previewVideoSize}
             />
           )}
           {srtError && (

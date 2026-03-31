@@ -294,6 +294,12 @@ export interface AutoEditSegmentPlanApi {
   id: string
   chapter_id?: string | null
   order: number
+  clip_group?: Array<{
+    clip_id: string
+    video_id: string
+    weight?: number
+  }>
+  selected_clip_ids?: string[]
   start_time_sec: number
   end_time_sec: number
   audio_mode: 'original' | 'tts' | 'mute'

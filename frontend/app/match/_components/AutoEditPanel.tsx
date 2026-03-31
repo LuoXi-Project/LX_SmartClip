@@ -1,8 +1,10 @@
 'use client'
 
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
 import { type AutoPlanStage } from './autoEditTypes'
+import { clipStreamUrl, fmt } from './types'
 
 type AutoEditPanelProps = {
   autoPrompt: string
@@ -55,6 +57,62 @@ export function AutoEditPanel({
   onGeneratePlans,
   onRealizePlan,
 }: AutoEditPanelProps) {
+  const [expandedPreviewPlanIds, setExpandedPreviewPlanIds] = useState<string[]>([])
+  const [selectedPreview, setSelectedPreview] = useState<{
+    planId: string
+    planTitle: string
+    segmentId: string
+    order: number
+    clipId: string
+    startSec: number
+    endSec: number
+  } | null>(null)
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null)
+  const [previewVideoErr, setPreviewVideoErr] = useState(false)
+
+  const togglePreviewExpand = (planId: string) => {
+    setExpandedPreviewPlanIds((prev) =>
+      prev.includes(planId) ? prev.filter((id) => id !== planId) : [...prev, planId]
+    )
+  }
+
+  const previewSrc = useMemo(() => {
+    if (!selectedPreview?.clipId) return ''
+    return clipStreamUrl(selectedPreview.clipId)
+  }, [selectedPreview?.clipId])
+
+  useEffect(() => {
+    const video = previewVideoRef.current
+    if (!video) return
+    if (!selectedPreview) return
+
+    setPreviewVideoErr(false)
+
+    const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
+    const target = Math.max(0, selectedPreview.startSec || 0)
+
+    const trySeek = () => {
+      try {
+        const duration = Number.isFinite(video.duration) ? video.duration : NaN
+        if (Number.isFinite(duration) && duration > 0) {
+          video.currentTime = clamp(target, 0, Math.max(0, duration - 0.05))
+        } else {
+          video.currentTime = Math.max(0, target)
+        }
+        void video.play().catch(() => {})
+      } catch {
+        // ignore seek/play errors
+      }
+    }
+
+    if (video.readyState >= 1) {
+      trySeek()
+      return
+    }
+    video.addEventListener('loadedmetadata', trySeek, { once: true })
+    return () => video.removeEventListener('loadedmetadata', trySeek)
+  }, [selectedPreview, previewSrc])
+
   return (
     <>
       <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 space-y-4">
@@ -236,6 +294,74 @@ export function AutoEditPanel({
       {autoPlans.length > 0 && (
         <section className="space-y-3">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">候选方案 · {autoPlans.length} 个</p>
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-300">片段预览播放器</p>
+                {selectedPreview ? (
+                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                    {selectedPreview.planTitle} · #{selectedPreview.order}（{fmt(selectedPreview.startSec)} - {fmt(selectedPreview.endSec)}）
+                    <span className="ml-2 text-slate-600">clip_id: {selectedPreview.clipId}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500 mt-0.5">点击下方任意“片段预览”按钮，在这里跳转到对应时间点播放。</p>
+                )}
+              </div>
+              {selectedPreview && (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const v = previewVideoRef.current
+                      if (!v) return
+                      v.currentTime = Math.max(0, selectedPreview.startSec || 0)
+                      void v.play().catch(() => {})
+                    }}
+                    className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
+                  >
+                    跳到起点
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const v = previewVideoRef.current
+                      if (!v) return
+                      v.currentTime = Math.max(0, selectedPreview.endSec || 0)
+                      void v.play().catch(() => {})
+                    }}
+                    className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
+                  >
+                    跳到终点
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPreview(null)}
+                    className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-300 hover:bg-slate-950/70"
+                  >
+                    清空
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="rounded-xl overflow-hidden border border-slate-800 bg-black">
+              {selectedPreview && !previewVideoErr ? (
+                <video
+                  key={selectedPreview.clipId}
+                  ref={previewVideoRef}
+                  src={previewSrc}
+                  controls
+                  className="w-full max-h-[45vh] object-contain"
+                  onError={() => setPreviewVideoErr(true)}
+                />
+              ) : (
+                <div className="px-4 py-10 text-center text-sm text-slate-500">
+                  {selectedPreview
+                    ? '该片段浏览器无法直接预览（视频编码或格式不支持）。'
+                    : '未选择片段。'}
+                </div>
+              )}
+            </div>
+          </div>
           <div className="grid md:grid-cols-2 gap-3">
             {autoPlans.map((p, idx) => (
               <div key={p.plan_id || idx} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
@@ -266,7 +392,7 @@ export function AutoEditPanel({
                     )}
                   </div>
                 )}
-                <div className="text-[11px] text-slate-500 space-y-0.5">
+                <div className="text-[11px] text-slate-500 space-y-1">
                   <p>
                     输出：
                     {p.mode === 'original'
@@ -279,13 +405,50 @@ export function AutoEditPanel({
                   </p>
                   <p>
                     片段预览：
-                    {p.segments?.slice(0, 3).map((s) => (
-                      <span key={s.id} className="inline-block mr-2">
-                        #{s.order}（{Math.round(s.start_time_sec)}-{Math.round(s.end_time_sec)}s）
-                      </span>
-                    ))}
-                    {p.segments?.length > 3 && <span>…</span>}
+                    <span className="ml-1 text-slate-600">（共 {p.segments?.length ?? 0} 段）</span>
                   </p>
+                  <div
+                    className={`mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-2 ${
+                      expandedPreviewPlanIds.includes(p.plan_id) ? 'max-h-none' : 'max-h-24 overflow-y-auto'
+                    }`}
+                  >
+                    {(p.segments ?? []).map((s) => {
+                      const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
+                      const planTitle = p.title || `方案 ${idx + 1}`
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => {
+                            if (!clipId) return
+                            setSelectedPreview({
+                              planId: p.plan_id,
+                              planTitle,
+                              segmentId: s.id,
+                              order: s.order,
+                              clipId,
+                              startSec: s.start_time_sec,
+                              endSec: s.end_time_sec,
+                            })
+                          }}
+                          disabled={!clipId}
+                          className="inline-flex items-center rounded-md border border-cyan-500/40 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900/50 disabled:text-slate-500"
+                          title={clipId ? '点击预览该片段对应视频' : '该片段缺少 clip_id，暂不可预览'}
+                        >
+                          #{s.order}（{fmt(s.start_time_sec)}-{fmt(s.end_time_sec)}）
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {(p.segments?.length ?? 0) > 12 && (
+                    <button
+                      type="button"
+                      onClick={() => togglePreviewExpand(p.plan_id)}
+                      className="mt-1 text-[11px] text-cyan-300 hover:text-cyan-200"
+                    >
+                      {expandedPreviewPlanIds.includes(p.plan_id) ? '折叠列表' : '展开列表'}
+                    </button>
+                  )}
                 </div>
                 <div className="pt-1 space-y-1">
                   <button

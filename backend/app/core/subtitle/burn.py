@@ -72,7 +72,8 @@ def _style_to_ass_header(style: "SubtitleStyle", video_size: tuple) -> str:
             "\n[Events]\n",
             (
                 f"Style: BgBox,{style.font_name},{style.font_size},"
-                "&HFF000000,&HFF000000,&HFF000000,&H70000000,"
+                # BorderStyle=3 时，盒子主色取 OutlineColour；此前误配为全透明导致背景不可见。
+                "&HFF000000,&HFF000000,&H70000000,&HFF000000,"
                 f"0,0,0,0,100,100,0,0,3,6,0,{alignment},10,10,{margin_v},1\n"
                 "\n[Events]\n"
             ),

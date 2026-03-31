@@ -161,11 +161,21 @@ export interface BurnSubtitleResponse {
   url: string
 }
 
+export interface ExportOriginalRequest {
+  segments: SubtitleSegmentInput[]
+  style?: SubtitleStyleApi
+  project_name?: string
+  include_subtitle?: boolean
+  normalize_audio?: boolean
+}
+
 export const subtitleApi = {
   generate: (payload: GenerateSRTRequest) =>
     apiClient.post<unknown, GenerateSRTResponse>('/api/subtitle/generate', payload),
   burn: (payload: BurnSubtitleRequest) =>
     apiClient.post<unknown, BurnSubtitleResponse>('/api/subtitle/burn', payload),
+  exportOriginal: (payload: ExportOriginalRequest) =>
+    apiClient.post<unknown, BurnSubtitleResponse>('/api/subtitle/export_original', payload),
 }
 
 export const copyGenApi = {

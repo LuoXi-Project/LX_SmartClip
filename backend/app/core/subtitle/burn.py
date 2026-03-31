@@ -245,6 +245,7 @@ def burn_to_mp4(
     tts_audio_dir: str,
     fonts_dir: str,
     render_opts: Optional[Dict[str, str]] = None,
+    normalize_audio: bool = False,
     output_dir: str = None,
 ) -> tuple:
     """
@@ -264,6 +265,7 @@ def burn_to_mp4(
         project_name:  输出文件名（不含扩展名）
         tts_audio_dir: TTS 音频目录
         fonts_dir:     字体目录（供 FFmpeg subtitles filter 引用，可选）
+        normalize_audio: 是否对最终音频做归一化/限幅
 
     Returns:
         (data: bytes, saved_path: str | None)
@@ -412,12 +414,20 @@ def burn_to_mp4(
         extra_filters = _build_extra_video_filters(render_opts)
         if extra_filters:
             vf_filter = f"{vf_filter},{','.join(extra_filters)}"
+        af_filter = None
         concat_codec_args = _build_render_codec_args(render_opts)
+        if normalize_audio:
+            # 需要音频滤镜时必须重编码，避免 clip_acodec=copy 导致滤镜失效
+            af_filter = "dynaudnorm=f=150:g=15,alimiter=limit=0.98"
+            norm_render_opts = dict(render_opts or {})
+            norm_render_opts["clip_acodec"] = "aac"
+            concat_codec_args = _build_render_codec_args(norm_render_opts)
 
         _run_ffmpeg(
             [
                 "-f", "concat", "-safe", "0", "-i", concat_list,
                 "-vf", vf_filter,
+                *([] if not af_filter else ["-af", af_filter]),
                 *concat_codec_args,
                 "-movflags", "+faststart",
                 out_path,

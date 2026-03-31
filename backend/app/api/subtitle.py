@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.db.database import DB_PATH
 from app.core.subtitle.srt import build_srt, parse_srt
-from app.core.subtitle.timeline import resolve_durations, rule_timeline
+from app.core.subtitle.timeline import resolve_durations, rule_timeline, rule_timeline_equal_units
 from app.core.subtitle.burn import burn_to_mp4
 
 logger = logging.getLogger(__name__)
@@ -107,11 +107,32 @@ class GenerateSRTResponse(BaseModel):
     timing_source: str
 
 
+class BurnSubtitleResponse(BaseModel):
+    filename: str
+    url: str
+
+
 class BurnSubtitleRequest(BaseModel):
     segments: List[SubtitleSegmentInput]
     srt_content: str
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     project_name: Optional[str] = "smartclip_subtitled"
+
+
+class ExportOriginalRequest(BaseModel):
+    """
+    原声导出：
+    - 不使用 TTS（忽略 tts_filename）
+    - 段落（segments 内每一段）的总时长 = 该段选中 clip 组的时长之和
+    - 可选：按“句子/换行”切分文案，并在该段总时长内等分
+    - 可选：对最终音频做归一化/限幅
+    """
+
+    segments: List[SubtitleSegmentInput]
+    style: SubtitleStyle = Field(default_factory=SubtitleStyle)
+    project_name: Optional[str] = "smartclip_original"
+    include_subtitle: bool = True
+    normalize_audio: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +241,97 @@ async def burn_subtitle(req: BurnSubtitleRequest):
 
     filename = os.path.basename(saved_path)
     logger.info("烧录完成，已保存: %s", saved_path)
+    return {
+        "filename": filename,
+        "url": f"/storage/burned_videos/{filename}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Route: 原声导出（保留原音 + 可选字幕）
+# ---------------------------------------------------------------------------
+@router.post("/export_original", response_model=BurnSubtitleResponse)
+async def export_original(req: ExportOriginalRequest):
+    """
+    根据原始素材（不使用 TTS）拼接视频：
+    - 音频：保留原声，并对最终结果做归一化/限幅（可选）
+    - 字幕：可选；字幕内容取文案，时间轴按“句子/换行等分”映射到每段总时长
+    """
+    if not req.segments:
+        raise HTTPException(400, "segments不能为空")
+
+    ids: List[str] = []
+    for seg in req.segments:
+        if seg.clip_id:
+            ids.append(seg.clip_id)
+        if seg.clip_ids:
+            ids.extend([cid for cid in seg.clip_ids if cid])
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise HTTPException(400, "segments 缺少 clip_id/clip_ids")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT id,clip_path,duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
+            ids,
+        ) as cur:
+            rows = await cur.fetchall()
+        render_opts = await _load_render_opts(db)
+
+    clip_map = {
+        r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
+        for r in rows
+    }
+    clip_dur = {cid: float(info["dur"] or 5) for cid, info in clip_map.items()}
+
+    # 每段（segments 内每个 seg 对应的“段落”）总时长 = 该段选中 clip 组时长之和
+    seg_durs: List[float] = []
+    for seg in req.segments:
+        raw_ids = list(getattr(seg, "clip_ids", None) or [])
+        if not raw_ids and getattr(seg, "clip_id", None):
+            raw_ids = [seg.clip_id]
+        group_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
+        total = sum(clip_dur.get(cid, 5.0) for cid in group_ids)
+        if total <= 0:
+            total = 5.0
+        seg_durs.append(total)
+
+    srt_entries = (
+        rule_timeline_equal_units(req.segments, seg_durs) if req.include_subtitle else []
+    )
+
+    # 显式忽略 tts_filename，确保 burn_to_mp4 走“保留原声/拼接”的分支。
+    segments_for_burn: List[SubtitleSegmentInput] = []
+    for seg in req.segments:
+        segments_for_burn.append(
+            SubtitleSegmentInput(
+                copy_text=seg.copy_text,
+                clip_id=seg.clip_id,
+                clip_ids=seg.clip_ids,
+                tts_filename=None,
+            )
+        )
+
+    unique_project_name = f"{req.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    _, saved_path = burn_to_mp4(
+        segments=segments_for_burn,
+        srt_entries=srt_entries,
+        clip_map=clip_map,
+        style=req.style,
+        project_name=unique_project_name,
+        tts_audio_dir=TTS_AUDIO_DIR,
+        fonts_dir=_FONTS_DIR,
+        render_opts=render_opts,
+        output_dir=_BURNED_VIDEOS_DIR,
+        normalize_audio=req.normalize_audio,
+    )
+
+    if not saved_path or not os.path.exists(saved_path):
+        raise HTTPException(500, "原声导出失败")
+
+    filename = os.path.basename(saved_path)
+    logger.info("原声导出完成，已保存: %s", saved_path)
     return {
         "filename": filename,
         "url": f"/storage/burned_videos/{filename}",

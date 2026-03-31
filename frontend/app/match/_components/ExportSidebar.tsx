@@ -25,13 +25,19 @@ export function ExportSidebar({
   generatingSrt: boolean
 }) {
   const readySegs  = segments.filter((s) => s.clips.length > 0)
-  const doneCount  = readySegs.length
-  const ttsCount   = readySegs.filter((s) => s.ttsFilename).length
+  const matchedCount = readySegs.length
+  const selectedSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+  const selectedCount = selectedSegs.length
+  const ttsCount = readySegs.filter((s) => s.ttsFilename).length
   const totalCount = segments.length
+  const audioReadyLabel = exportMode === 'subtitle' ? '配音就绪' : exportMode === 'original' ? '原声就绪' : '素材就绪'
+  const audioReadyCount = exportMode === 'subtitle' ? ttsCount : exportMode === 'original' ? selectedCount : matchedCount
+  const doneCount = exportMode === 'original' ? selectedCount : matchedCount
 
   const modeLabel: Record<ExportMode, { icon: string; title: string; desc: string; color: string; active: string }> = {
     zip:      { icon: '📦', title: '素材压缩包',     desc: '视频切片 + 音频 ZIP',     color: 'indigo', active: 'border-indigo-500 bg-indigo-500/10 text-indigo-200' },
     subtitle: { icon: '💬', title: '一键成片',       desc: '配音 + 字幕烧录 MP4',     color: 'cyan',   active: 'border-cyan-500   bg-cyan-500/10   text-cyan-200'   },
+    original: { icon: '🔇', title: '原声成片',       desc: '保留原声拼接 + 可选字幕 MP4', color: 'slate', active: 'border-slate-500 bg-slate-500/10 text-slate-200' },
   }
 
   return (
@@ -44,8 +50,8 @@ export function ExportSidebar({
       {/* progress */}
       <div className="px-5 py-4 space-y-3 border-b border-slate-800">
         <StatRow label="总段落"  value={totalCount} total={totalCount} color="slate"  />
-        <StatRow label="已匹配"  value={doneCount}  total={totalCount} color="indigo" />
-        <StatRow label="配音就绪" value={ttsCount}   total={totalCount} color="violet" />
+        <StatRow label="已匹配"  value={matchedCount}  total={totalCount} color="indigo" />
+        <StatRow label={audioReadyLabel} value={audioReadyCount} total={totalCount} color="violet" />
       </div>
 
       {/* mode toggle */}

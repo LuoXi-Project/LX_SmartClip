@@ -87,6 +87,96 @@ def rule_timeline(segments, durations: list[float], max_chars: int = 20) -> list
     return entries
 
 
+def split_text_units_by_sentence_and_newline(text: str) -> list[str]:
+    """
+    将文本按“换行 + 句子结束符”切分为若干字幕单位。
+
+    单位切分规则（尽量贴近产品语义）：
+    - 先按换行拆行（空行忽略）
+    - 再在每一行内按句子结束符拆分：。！？!?
+    - 同时把省略号（… / ……）当做结束符处理
+    """
+    if text is None:
+        return []
+    # 统一换行
+    text = str(text).replace("\r\n", "\n").replace("\r", "\n")
+
+    units: list[str] = []
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        buf: list[str] = []
+        i = 0
+        while i < len(line):
+            # 处理省略号
+            if line.startswith("……", i):
+                buf.append("……")
+                units.append("".join(buf).strip())
+                buf = []
+                i += 2
+                continue
+            if line.startswith("…", i):
+                buf.append("…")
+                units.append("".join(buf).strip())
+                buf = []
+                i += 1
+                continue
+
+            ch = line[i]
+            buf.append(ch)
+            if ch in "。！？!?":
+                units.append("".join(buf).strip())
+                buf = []
+            i += 1
+
+        if buf:
+            tail = "".join(buf).strip()
+            if tail:
+                units.append(tail)
+
+    return [u for u in units if u]
+
+
+def rule_timeline_equal_units(segments, durations: list[float]) -> list[dict]:
+    """
+    将每段文本切分为多个“单位”，并把该段的总时长平均分配到各单位。
+    返回格式：[{start, end, text}, ...]
+    """
+    entries: list[dict] = []
+    t = 0.0
+
+    for seg, seg_dur in zip(segments, durations):
+        dur = float(seg_dur or 0.0)
+        if dur <= 0:
+            dur = 5.0
+
+        units = split_text_units_by_sentence_and_newline(getattr(seg, "copy_text", "") or "")
+        n = len(units)
+        if n == 0:
+            t += dur
+            continue
+
+        unit_dur = dur / n
+        for i, unit in enumerate(units):
+            start = t + i * unit_dur
+            end = t + (i + 1) * unit_dur
+            # 保证最后一个单位精确落在段尾（避免浮点误差）
+            if i == n - 1:
+                end = t + dur
+            entries.append(
+                {
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "text": unit.strip(),
+                }
+            )
+        t += dur
+
+    return entries
+
+
 # ---------------------------------------------------------------------------
 # LLM 法时间轴
 # ---------------------------------------------------------------------------

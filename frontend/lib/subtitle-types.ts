@@ -32,4 +32,4 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   max_chars_per_line: 20,
 }
 
-export type ExportMode = 'zip' | 'subtitle'
+export type ExportMode = 'zip' | 'subtitle' | 'original'

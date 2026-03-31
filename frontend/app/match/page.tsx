@@ -7,7 +7,7 @@ import {
   Plus, Search, Sparkles, SplitSquareHorizontal,
 } from 'lucide-react'
 import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video } from '@/lib/api'
-import { type Segment, type ExportMode, type SubtitleStyle, type SRTEntry, DEFAULT_SUBTITLE_STYLE, audioSrc } from './_components/types'
+import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { CopyGeneratorPanel } from './_components/CopyGeneratorPanel'
 import { PreviewModal } from './_components/ClipCard'
 import { SegmentRow } from './_components/SegmentRow'
@@ -37,8 +37,6 @@ export default function MatchPage() {
     setMatchExportMode,
   } = useMatchStore()
 
-  const setSegments = (fn: Segment[] | ((prev: Segment[]) => Segment[])) =>
-    setMatchSegments(typeof fn === 'function' ? fn(useMatchStore.getState().segments) : fn)
   const setSelectedVideoIds = (fn: string[] | ((prev: string[]) => string[])) =>
     setMatchSelectedVideoIds(typeof fn === 'function' ? fn(useMatchStore.getState().selectedVideoIds) : fn)
   const setGlobalQuery = setMatchGlobalQuery
@@ -60,7 +58,6 @@ export default function MatchPage() {
   const [exportError, setExportError] = useState('')
   const [globalMatching, setGlobalMatching] = useState(false)
   const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
-  const [srtContent, setSrtContent] = useState('')
   const [timingSource, setTimingSource] = useState('')
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
@@ -190,7 +187,7 @@ export default function MatchPage() {
         }))
         .filter((s) => s.clip_id)
       const res = await subtitleApi.generate({ segments: segsInput, style: subtitleStyle, use_tts_timing: true })
-      setSrtEntries(res.entries); setSrtContent(res.srt_content); setTimingSource(res.timing_source)
+      setSrtEntries(res.entries); setTimingSource(res.timing_source)
       return res.srt_content
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'SRT生成失败'
@@ -199,7 +196,7 @@ export default function MatchPage() {
   }
 
   async function handleExport() {
-    if (exporting || readySegs.length === 0) return
+    if (exporting) return
     setExporting(true); setExportError('')
     const projectName = globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
     try {
@@ -209,8 +206,9 @@ export default function MatchPage() {
           .filter(Boolean) as string[]
         const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: readySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
-      } else {
-        const currentSrt = await generateSrt()
+      } else if (exportMode === 'subtitle') {
+        if (readySegs.length === 0) return
+        const currentSrt = subtitleEnabled ? await generateSrt() : ''
         const segsInput = readySegs
           .map((s) => {
             const clip_ids = buildSegmentClipIds(s)
@@ -222,7 +220,39 @@ export default function MatchPage() {
             }
           })
           .filter((s) => s.clip_id)
-        const res = await subtitleApi.burn({ segments: segsInput, srt_content: currentSrt, style: subtitleStyle, project_name: projectName })
+        const res = await subtitleApi.burn({
+          segments: segsInput,
+          srt_content: currentSrt,
+          style: subtitleStyle,
+          project_name: projectName,
+        })
+        const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.download = res.filename
+        a.click()
+      } else if (exportMode === 'original') {
+        const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+        if (exportSegs.length === 0) return
+        const segsInput = exportSegs
+          .map((s) => {
+            const clip_ids = s.selectedClipIds
+            return {
+              copy_text: s.text,
+              clip_id: clip_ids[0] ?? '',
+              clip_ids,
+              // 原声模式：不使用/不传 TTS
+              tts_filename: undefined,
+            }
+          })
+          .filter((s) => s.clip_id)
+        const res = await subtitleApi.exportOriginal({
+          segments: segsInput,
+          style: subtitleStyle,
+          project_name: projectName,
+          include_subtitle: subtitleEnabled,
+          normalize_audio: true,
+        })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
         a.href = downloadUrl
@@ -390,8 +420,10 @@ export default function MatchPage() {
           {exportMode !== 'zip' && segments.length > 0 && (
             <SubtitlePanel
               style={subtitleStyle} onChange={setSubtitleStyle}
-              entries={srtEntries} enabled={subtitleEnabled}
-              onToggle={setSubtitleEnabled} timingSource={timingSource}
+              entries={exportMode === 'subtitle' ? srtEntries : []}
+              enabled={subtitleEnabled}
+              onToggle={setSubtitleEnabled}
+              timingSource={exportMode === 'subtitle' ? timingSource : ''}
               previewVideoSize={previewVideoSize}
             />
           )}
@@ -408,6 +440,18 @@ export default function MatchPage() {
                 <li>输出带字幕完整 MP4</li>
               </ol>
               {generatingSrt && <p className="flex items-center gap-2 text-amber-400 mt-1"><Loader2 className="w-3 h-3 animate-spin" />正在生成字幕时间轴...</p>}
+            </div>
+          )}
+
+          {exportMode === 'original' && readySegs.length > 0 && (
+            <div className="rounded-xl border border-slate-500/20 bg-slate-500/5 px-4 py-3 text-xs text-slate-200 space-y-1">
+              <p className="font-semibold">🔇 原声成片流程</p>
+              <ol className="list-decimal list-inside space-y-0.5 text-slate-300/80">
+                <li>按当前段落的选中 clip 组计算总时长</li>
+                <li>跳过 TTS，直接保留原声拼接视频</li>
+                <li>对最终音频做归一化/限幅（减少音量突变）</li>
+                <li>{subtitleEnabled ? '按句子/换行等分生成字幕并硬烧' : '不生成字幕文件（仅拼接原声）'}</li>
+              </ol>
             </div>
           )}
         </div>

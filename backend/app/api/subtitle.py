@@ -6,6 +6,7 @@ import os
 import uuid
 from datetime import datetime
 from typing import List, Optional
+from urllib.parse import quote
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException
@@ -14,9 +15,8 @@ from pydantic import BaseModel, Field
 
 from app.db.database import DB_PATH
 from app.core.subtitle.srt import build_srt, parse_srt
-from app.core.subtitle.timeline import resolve_durations, rule_timeline, llm_timeline
+from app.core.subtitle.timeline import resolve_durations, rule_timeline
 from app.core.subtitle.burn import burn_to_mp4
-from app.core.llm import LLMClient, LLMConfig
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subtitle", tags=["subtitle"])
@@ -29,6 +29,33 @@ _FONTS_DIR = os.path.join(_BACKEND_DIR, "fonts")
 # 持久化存储：烧录成品统一放 backend/storage/burned_videos/
 _BURNED_VIDEOS_DIR = os.path.join(_BACKEND_DIR, "storage", "burned_videos")
 os.makedirs(_BURNED_VIDEOS_DIR, exist_ok=True)
+
+
+async def _get_config_value(db, key: str, default: str) -> str:
+    cur = await db.execute("SELECT value FROM config WHERE key = ?", (key,))
+    row = await cur.fetchone()
+    return row["value"] if row and row["value"] is not None else default
+
+
+async def _load_render_opts(db) -> dict:
+    """读取烧录渲染参数（来源 config 表，不在路由层硬编码默认值）。"""
+    keys = [
+        "clip_vcodec",
+        "clip_acodec",
+        "clip_preset",
+        "clip_crf",
+        "clip_video_bitrate_kbps",
+        "clip_audio_bitrate_kbps",
+        "clip_fps",
+        "clip_scale_width",
+        "clip_scale_height",
+        "clip_pix_fmt",
+        "clip_container",
+    ]
+    opts = {}
+    for key in keys:
+        opts[key] = await _get_config_value(db, key, "")
+    return opts
 
 
 # ---------------------------------------------------------------------------
@@ -90,26 +117,13 @@ class BurnSubtitleRequest(BaseModel):
 
 @router.post("/generate", response_model=GenerateSRTResponse)
 async def generate_srt(req: GenerateSRTRequest):
-    """生成SRT时间轴，TTS音频时长优先于视频片段时长。"""
+    """生成SRT时间轴，按TTS音频时长严格切分并对齐。"""
     if not req.segments:
         raise HTTPException(400, "segments不能为空")
 
     ids = [s.clip_id for s in req.segments]
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        try:
-            llm_params = await LLMConfig.get_llm_params_with_defaults(
-                db,
-                temperature_key="llm_temperature",
-                max_tokens_key="llm_max_tokens",
-                default_temperature=0.2,
-                default_max_tokens=20480,
-            )
-            llm_client = LLMClient(**llm_params)
-        except ValueError:
-            llm_client = None
-            logger.info("LLM 未配置，将使用规则法生成时间轴")
-
         async with db.execute(
             f"SELECT id,duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})", ids
         ) as cur:
@@ -120,16 +134,8 @@ async def generate_srt(req: GenerateSRTRequest):
 
     durs, src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, req.use_tts_timing)
 
-    raw_entries: list = []
-    if llm_client:
-        try:
-            logger.info("LLM生成时间轴...")
-            raw_entries = await llm_timeline(req.segments, durs, llm_client)
-        except Exception as e:
-            logger.warning("LLM失败降级rule: %s", e)
-            raw_entries = rule_timeline(req.segments, durs, max_chars)
-    else:
-        raw_entries = rule_timeline(req.segments, durs, max_chars)
+    # 一键成片默认走规则法，确保字幕与配音时长完全可控，避免 LLM 对齐偏差。
+    raw_entries = rule_timeline(req.segments, durs, max_chars)
 
     logger.warning(f"raw_entries: {raw_entries}")
 
@@ -170,6 +176,7 @@ async def burn_subtitle(req: BurnSubtitleRequest):
             ids,
         ) as cur:
             rows = await cur.fetchall()
+        render_opts = await _load_render_opts(db)
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -189,6 +196,7 @@ async def burn_subtitle(req: BurnSubtitleRequest):
         project_name=unique_project_name,
         tts_audio_dir=TTS_AUDIO_DIR,
         fonts_dir=_FONTS_DIR,
+        render_opts=render_opts,
         output_dir=_BURNED_VIDEOS_DIR,
     )
 
@@ -213,8 +221,14 @@ async def download_video(filename: str):
     filepath = os.path.join(_BURNED_VIDEOS_DIR, filename)
     if not os.path.exists(filepath):
         raise HTTPException(404, "文件不存在")
+    # 避免中文文件名导致 latin-1 编码报错：使用 RFC 5987 filename*
+    encoded_filename = quote(filename)
+    content_disposition = (
+        'attachment; filename="smartclip_subtitled.mp4"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
     return FileResponse(
         filepath,
         media_type="video/mp4",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": content_disposition}
     )

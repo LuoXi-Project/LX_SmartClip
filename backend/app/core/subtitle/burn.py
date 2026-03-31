@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 import tempfile
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
     from app.api.subtitle import SubtitleStyle
@@ -113,6 +114,88 @@ def _run_ffmpeg(args: List[str], desc: str = "") -> None:
         )
 
 
+def _probe_duration(path: str) -> float:
+    """使用 ffprobe 获取媒体时长（秒）。"""
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+    )
+    try:
+        return float(probe.stdout.decode().strip() or 0.0)
+    except Exception:
+        logger.warning("ffprobe 时长探测失败: %s", path)
+        return 0.0
+
+
+def _to_int(opts: Dict[str, str], key: str, default: int) -> int:
+    try:
+        return int(float((opts.get(key) or "").strip() or default))
+    except Exception:
+        return default
+
+
+def _to_float(opts: Dict[str, str], key: str, default: float) -> float:
+    try:
+        return float((opts.get(key) or "").strip() or default)
+    except Exception:
+        return default
+
+
+def _build_render_codec_args(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """根据配置构建编码参数，避免硬编码渲染质量。"""
+    opts = render_opts or {}
+    vcodec = (opts.get("clip_vcodec") or "libx264").strip()
+    acodec = (opts.get("clip_acodec") or "aac").strip()
+    preset = (opts.get("clip_preset") or "veryfast").strip()
+    pix_fmt = (opts.get("clip_pix_fmt") or "yuv420p").strip()
+    crf = _to_int(opts, "clip_crf", 23)
+    v_bitrate_kbps = _to_int(opts, "clip_video_bitrate_kbps", 0)
+    a_bitrate_kbps = _to_int(opts, "clip_audio_bitrate_kbps", 128)
+
+    args: List[str] = ["-c:v", vcodec]
+    if vcodec in ("libx264", "libx265") and preset:
+        args += ["-preset", preset]
+    if v_bitrate_kbps > 0:
+        args += ["-b:v", f"{v_bitrate_kbps}k"]
+    elif crf >= 0 and vcodec in ("libx264", "libx265"):
+        args += ["-crf", str(crf)]
+    if pix_fmt:
+        args += ["-pix_fmt", pix_fmt]
+
+    args += ["-c:a", acodec]
+    if a_bitrate_kbps > 0 and acodec != "copy":
+        args += ["-b:a", f"{a_bitrate_kbps}k"]
+    return args
+
+
+def _build_extra_video_filters(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """根据配置构建额外视频滤镜（缩放/帧率）。"""
+    opts = render_opts or {}
+    fps = _to_float(opts, "clip_fps", 0.0)
+    scale_w = _to_int(opts, "clip_scale_width", 0)
+    scale_h = _to_int(opts, "clip_scale_height", 0)
+
+    filters: List[str] = []
+    if scale_w > 0 or scale_h > 0:
+        sw = scale_w if scale_w > 0 else -2
+        sh = scale_h if scale_h > 0 else -2
+        filters.append(f"scale={sw}:{sh}:flags=lanczos")
+    if fps > 0:
+        filters.append(f"fps={fps}")
+    return filters
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -125,6 +208,7 @@ def burn_to_mp4(
     project_name: str,
     tts_audio_dir: str,
     fonts_dir: str,
+    render_opts: Optional[Dict[str, str]] = None,
     output_dir: str = None,
 ) -> tuple:
     """
@@ -148,7 +232,6 @@ def burn_to_mp4(
     Returns:
         (data: bytes, saved_path: str | None)
     """
-    from moviepy import AudioFileClip, VideoFileClip
     from fastapi import HTTPException
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -171,23 +254,42 @@ def burn_to_mp4(
             seg_out = os.path.join(tmp, f"seg_{i:03d}.mp4")
 
             if tts_path and os.path.isfile(tts_path):
-                # 有 TTS：用 MoviePy 替换音轨后导出
-                video = VideoFileClip(info["path"])
-                tts_audio = AudioFileClip(tts_path)
-                duration = min(video.duration, tts_audio.duration)
-                video = video.subclipped(0, duration).with_audio(
-                    tts_audio.subclipped(0, duration)
+                # 有 TTS：严格以音频时长为准；视频不足则循环，视频过长则裁切
+                audio_dur = _probe_duration(tts_path)
+                video_dur = float(info.get("dur") or _probe_duration(info["path"]) or 0.0)
+                if audio_dur <= 0:
+                    raise HTTPException(400, f"TTS 音频无效: {seg.tts_filename}")
+                if video_dur <= 0:
+                    raise HTTPException(400, f"视频片段无效: {seg.clip_id}")
+
+                loop_count = max(0, math.ceil(audio_dur / video_dur) - 1)
+                seg_codec_args = _build_render_codec_args(render_opts)
+                seg_filter_parts = _build_extra_video_filters(render_opts)
+                seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
+                _run_ffmpeg(
+                    [
+                        "-stream_loop", str(loop_count),
+                        "-i", info["path"],
+                        "-i", tts_path,
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        "-t", f"{audio_dur:.3f}",
+                        *seg_vf_args,
+                        *seg_codec_args,
+                        "-shortest",
+                        "-movflags", "+faststart",
+                        seg_out,
+                    ],
+                    desc=f"fit seg {i+1} to tts",
                 )
-                video.write_videofile(
+                logger.info(
+                    "seg %d (TTS对齐) -> %s (audio=%.2fs, video=%.2fs, loop=%d)",
+                    i + 1,
                     seg_out,
-                    codec="libx264",
-                    audio_codec="aac",
-                    preset="ultrafast",
-                    logger=None,
+                    audio_dur,
+                    video_dur,
+                    loop_count,
                 )
-                video.close()
-                tts_audio.close()
-                logger.info("seg %d (TTS) -> %s (%.2fs)", i + 1, seg_out, duration)
             else:
                 # 无 TTS：直接用 FFmpeg 流复制，零损耗极速
                 _run_ffmpeg(
@@ -247,13 +349,16 @@ def burn_to_mp4(
         if fonts_dir and os.path.isdir(fonts_dir):
             safe_fonts = fonts_dir.replace("\\", "/").replace(":", "\\:")
             vf_filter = f"ass='{ass_filter_path}':fontsdir='{safe_fonts}'"
+        extra_filters = _build_extra_video_filters(render_opts)
+        if extra_filters:
+            vf_filter = f"{vf_filter},{','.join(extra_filters)}"
+        concat_codec_args = _build_render_codec_args(render_opts)
 
         _run_ffmpeg(
             [
                 "-f", "concat", "-safe", "0", "-i", concat_list,
                 "-vf", vf_filter,
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-                "-c:a", "aac", "-b:a", "128k",
+                *concat_codec_args,
                 "-movflags", "+faststart",
                 out_path,
             ],

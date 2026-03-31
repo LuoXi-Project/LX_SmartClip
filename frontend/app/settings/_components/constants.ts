@@ -29,10 +29,10 @@ export const EMBEDDING_PROVIDERS: ProviderPreset[] = [
 export const TTS_PROVIDERS: ProviderPreset[] = [
   { id: 'edge-tts',    name: 'Edge TTS',      logo: '🔷', baseUrl: '',                                       defaultModel: '' },
   { id: 'openai',      name: 'OpenAI TTS',    logo: '🟢', baseUrl: 'https://api.openai.com/v1',             defaultModel: 'tts-1' },
-  { id: 'bailian',     name: '百炼 (阿里云)', logo: '🟡', baseUrl: 'https://dashscope.aliyuncs.com/api/v1', defaultModel: 'cosyvoice-v1' },
-  { id: 'volcengine',  name: '火山引擎',      logo: '🌋', baseUrl: 'https://openspeech.bytedance.com',      defaultModel: '' },
-  { id: 'gpt-sovits',  name: 'GPT-SoVITS',   logo: '🎙️', baseUrl: 'http://127.0.0.1:9880',                defaultModel: '' },
-  { id: 'index-tts',   name: 'IndexTTS',      logo: '🎵', baseUrl: 'http://127.0.0.1:7860',                defaultModel: '' },
+  // { id: 'bailian',     name: '百炼 (阿里云)', logo: '🟡', baseUrl: 'https://dashscope.aliyuncs.com/api/v1', defaultModel: 'cosyvoice-v1' },
+  // { id: 'volcengine',  name: '火山引擎',      logo: '🌋', baseUrl: 'https://openspeech.bytedance.com',      defaultModel: '' },
+  // { id: 'gpt-sovits',  name: 'GPT-SoVITS',   logo: '🎙️', baseUrl: 'http://127.0.0.1:9880',                defaultModel: '' },
+  // { id: 'index-tts',   name: 'IndexTTS',      logo: '🎵', baseUrl: 'http://127.0.0.1:7860',                defaultModel: '' },
   { id: 'custom-http', name: '自定义 HTTP',   logo: '⚙️', baseUrl: '',                                       defaultModel: '' },
 ]
 

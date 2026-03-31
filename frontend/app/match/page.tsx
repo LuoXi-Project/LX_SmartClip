@@ -3,21 +3,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
-  AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Film, Loader2,
-  Plus, Search, Sparkles, SplitSquareHorizontal,
+  AlertCircle, Loader2,
 } from 'lucide-react'
 import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditMode } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
-import { CopyGeneratorPanel } from './_components/CopyGeneratorPanel'
 import { PreviewModal } from './_components/ClipCard'
-import { SegmentRow } from './_components/SegmentRow'
 import { ExportSidebar } from './_components/ExportSidebar'
 import { SubtitlePanel } from './_components/SubtitlePanel'
+import { MatchPageHeader } from './_components/MatchPageHeader'
+import { VideoScopeSelector } from './_components/VideoScopeSelector'
+import { ManualMatchPanel } from './_components/ManualMatchPanel'
+import { AutoEditPanel } from './_components/AutoEditPanel'
+import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 
 const VIDEO_PAGE_SIZE = 9
 const AUTO_EDIT_CACHE_KEY = 'lx-auto-edit-state-v1'
-type AutoPlanStage = 'idle' | 'preparing' | 'connecting' | 'planning' | 'done' | 'failed'
 
 function normalizeAutoPlanStage(stage?: string): AutoPlanStage {
   if (!stage) return 'planning'
@@ -413,6 +414,140 @@ export default function MatchPage() {
     patchSeg(segId, { selectedClipIds: next, chosenIdx: nextChosenIdx })
   }
 
+  function toggleAutoExpandedPlan(planId: string) {
+    setAutoExpandedPlanIds((prev) =>
+      prev.includes(planId) ? prev.filter((id) => id !== planId) : [...prev, planId]
+    )
+  }
+
+  async function handleGenerateAutoPlans() {
+    if (!autoPrompt.trim()) return
+    if (selectedVideoIds.length === 0 && doneVideos.length === 0) return
+    setAutoLoading(true)
+    setAutoError('')
+    const startedAt = Date.now()
+    setAutoPlanStartedAt(startedAt)
+    setAutoPlanElapsedSec(0)
+    setAutoPlanLogs([])
+    setAutoPlanStage('preparing')
+    appendAutoPlanLog('已开始生成方案')
+    appendAutoPlanLog('正在创建 SSE 规划会话...')
+    try {
+      const payload = {
+        video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id),
+        user_prompt: autoPrompt.trim(),
+        mode: autoMode,
+        target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
+        num_plans: autoNumPlans,
+        allow_cross_video: true,
+        subtitle_policy: subtitleEnabled ? 'auto' as const : 'none' as const,
+        transition_policy: 'auto' as const,
+        bgm_policy: 'auto' as const,
+      }
+      const session = await autoEditApi.createPlanSession(payload)
+      setAutoPlanStage('connecting')
+      appendAutoPlanLog('会话已创建，正在连接实时流...')
+
+      await new Promise<void>((resolve, reject) => {
+        const streamUrl = `${API_BASE_URL}${session.stream_url}`
+        const es = new EventSource(streamUrl)
+        let finished = false
+
+        const closeStream = () => {
+          es.close()
+        }
+
+        es.addEventListener('progress', (ev) => {
+          try {
+            const data = JSON.parse((ev as MessageEvent).data || '{}') as { stage?: string; message?: string }
+            setAutoPlanStage(normalizeAutoPlanStage(data.stage))
+            appendAutoPlanLog(data.message || '收到进度更新')
+          } catch {
+            setAutoPlanStage('planning')
+            appendAutoPlanLog('收到进度更新')
+          }
+        })
+
+        es.addEventListener('result', (ev) => {
+          try {
+            const data = JSON.parse((ev as MessageEvent).data || '{}') as { plans?: AutoEditPlanApi[] }
+            const plans = data.plans || []
+            setAutoPlans(plans)
+            setAutoPlanStage('done')
+            appendAutoPlanLog(`生成完成，返回 ${plans.length} 个方案`)
+            finished = true
+            closeStream()
+            resolve()
+          } catch {
+            setAutoPlanStage('failed')
+            finished = true
+            closeStream()
+            reject(new Error('解析实时结果失败'))
+          }
+        })
+
+        es.addEventListener('failed', (ev) => {
+          let msg = '生成方案失败'
+          try {
+            const data = JSON.parse((ev as MessageEvent).data || '{}') as { message?: string }
+            msg = data.message || msg
+          } catch {
+            // ignore parse error
+          }
+          setAutoPlanStage('failed')
+          finished = true
+          closeStream()
+          reject(new Error(msg))
+        })
+
+        es.onerror = () => {
+          if (finished) return
+          if (es.readyState === EventSource.CLOSED) {
+            setAutoPlanStage('failed')
+            closeStream()
+            reject(new Error('实时连接中断，请重试'))
+            return
+          }
+          appendAutoPlanLog('连接波动，正在自动重连...')
+        }
+      })
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (e as Error)?.message
+        || '生成方案失败'
+      setAutoError(msg)
+      setAutoPlanStage('failed')
+      appendAutoPlanLog(`生成失败：${msg}`)
+    } finally {
+      setAutoLoading(false)
+      setAutoPlanStartedAt(null)
+    }
+  }
+
+  async function handleAutoRealizePlan(plan: AutoEditPlanApi, index: number) {
+    setAutoRealizeMsg('')
+    setAutoRealizingId(plan.plan_id)
+    try {
+      const res = await autoEditApi.realize({
+        plan,
+        project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
+        include_subtitle: subtitleEnabled,
+      })
+      const downloadUrl = `${API_BASE_URL}${res.url}`
+      setAutoRealizeDownloads((prev) => ({
+        ...prev,
+        [plan.plan_id]: { filename: res.filename, url: downloadUrl },
+      }))
+      setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '一键成片失败'
+      setAutoRealizeMsg(msg)
+    } finally {
+      setAutoRealizingId(null)
+    }
+  }
+
   // PLACEHOLDER_JSX
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
@@ -424,573 +559,87 @@ export default function MatchPage() {
       />
       <div className="pr-64">
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
-              <ArrowLeft className="w-4 h-4" />首页
-            </Link>
-            <div className="w-px h-4 bg-slate-700" />
-            <div className="flex flex-col gap-1">
-              <h1 className="text-xl font-semibold flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-indigo-400" />文案匹配 · 配音 · 成片
-              </h1>
-              <div className="inline-flex items-center gap-1 rounded-full bg-slate-900/70 border border-slate-700 px-1 py-1 text-xs">
-                <button
-                  onClick={() => setMode('manual')}
-                  className={`px-3 py-0.5 rounded-full transition-colors ${
-                    mode === 'manual'
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  手动匹配
-                </button>
-                <button
-                  onClick={() => setMode('auto')}
-                  className={`px-3 py-0.5 rounded-full transition-colors ${
-                    mode === 'auto'
-                      ? 'bg-emerald-500 text-slate-900'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  自动一键成片（实验）
-                </button>
-              </div>
-            </div>
-          </div>
+          <MatchPageHeader mode={mode} onModeChange={setMode} />
           {doneVideos.length === 0 && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />
               <p className="text-sm text-slate-300">暂无可匹配素材，请先在<Link href="/process" className="mx-1 text-indigo-400 hover:underline">素材处理</Link>完成。</p>
             </div>
           )}
-          {doneVideos.length > 0 && (
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">限定视频范围<span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span></p>
-                <span className="text-xs text-slate-600">{videoSearch ? `${filteredDoneVideos.length} / ${doneVideos.length}` : doneVideos.length} 个视频</span>
-              </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
-                <input type="text" value={videoSearch} onChange={(e) => handleVideoSearch(e.target.value)} placeholder="搜索视频名称..."
-                  className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors" />
-                {videoSearch && <button onClick={() => handleVideoSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs">✕</button>}
-              </div>
-              {filteredDoneVideos.length === 0 ? (
-                <p className="text-slate-500 text-sm">未找到「{videoSearch}」。</p>
-              ) : (
-                <>
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {pagedDoneVideos.map((v) => (
-                      <button key={v.id} onClick={() => toggleVideo(v.id)}
-                        className={`text-left px-3 py-2.5 rounded-lg border text-xs flex items-center gap-2 transition-colors ${
-                          selectedVideoIds.includes(v.id) ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300' : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500'
-                        }`}>
-                        <Film className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{v.name}</span>
-                        <span className="ml-auto shrink-0 text-slate-600">{v.total_clips}片</span>
-                      </button>
-                    ))}
-                  </div>
-                  {videoTotalPages > 1 && (
-                    <div className="flex items-center justify-between pt-1">
-                      <button onClick={() => setVideoPage((p) => Math.max(1, p - 1))} disabled={videoPage === 1}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-                        <ChevronLeft className="w-3.5 h-3.5" />上一页
-                      </button>
-                      <span className="text-xs text-slate-500">{videoPage} / {videoTotalPages}</span>
-                      <button onClick={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))} disabled={videoPage === videoTotalPages}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/40 text-xs text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-                        下一页<ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-          )}
+          <VideoScopeSelector
+            doneVideos={doneVideos}
+            filteredDoneVideos={filteredDoneVideos}
+            pagedDoneVideos={pagedDoneVideos}
+            videoSearch={videoSearch}
+            videoPage={videoPage}
+            videoTotalPages={videoTotalPages}
+            selectedVideoIds={selectedVideoIds}
+            onToggleVideo={toggleVideo}
+            onSearchChange={handleVideoSearch}
+            onPrevPage={() => setVideoPage((p) => Math.max(1, p - 1))}
+            onNextPage={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
+          />
 
           {mode === 'auto' ? (
-            <>
-              {/* 自动一键成片 · Plan 配置区 */}
-              <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 space-y-4">
-                <p className="text-xs font-semibold text-emerald-300 uppercase tracking-widest flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" />
-                  自动一键成片 · 方案规划
-                </p>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-slate-300 flex items-center justify-between">
-                      目标时长（秒）
-                      <span className="text-[11px] text-slate-500">10 - 600</span>
-                    </label>
-                    <input
-                      type="number"
-                      min={10}
-                      max={600}
-                      value={autoTargetDuration}
-                      onChange={(e) => setAutoTargetDuration(e.target.value ? Number(e.target.value) : '')}
-                      className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-slate-300">候选方案数量</label>
-                    <select
-                      value={autoNumPlans}
-                      onChange={(e) => setAutoNumPlans(Number(e.target.value))}
-                      className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
-                    >
-                      {[1, 2, 3, 5].map((n) => (
-                        <option key={n} value={n}>
-                          {n} 个方案
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-slate-300">成片模式</label>
-                    <select
-                      value={autoMode}
-                      onChange={(e) => setAutoMode(e.target.value as AutoEditMode)}
-                      className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
-                    >
-                      <option value="auto">自动（智能选择原声/配音）</option>
-                      <option value="voiceover">配音为主</option>
-                      <option value="original">原声为主</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-slate-300">创作提示词 / 文案 / 提纲</label>
-                  <textarea
-                    value={autoPrompt}
-                    onChange={(e) => setAutoPrompt(e.target.value)}
-                    placeholder="例如：做一个 60 秒的搞笑职场翻车集锦，节奏轻快，适合短视频平台..."
-                    rows={4}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-700 px-4 py-3 text-sm outline-none focus:border-emerald-400 placeholder-slate-600 resize-none"
-                  />
-                </div>
-                {autoError && (
-                  <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                    {autoError}
-                  </div>
-                )}
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={async () => {
-                      if (!autoPrompt.trim()) return
-                      if (selectedVideoIds.length === 0 && doneVideos.length === 0) return
-                      setAutoLoading(true)
-                      setAutoError('')
-                      const startedAt = Date.now()
-                      setAutoPlanStartedAt(startedAt)
-                      setAutoPlanElapsedSec(0)
-                      setAutoPlanLogs([])
-                      setAutoPlanStage('preparing')
-                      appendAutoPlanLog('已开始生成方案')
-                      appendAutoPlanLog('正在创建 SSE 规划会话...')
-                      try {
-                        const payload = {
-                          video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id),
-                          user_prompt: autoPrompt.trim(),
-                          mode: autoMode,
-                          target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
-                          num_plans: autoNumPlans,
-                          allow_cross_video: true,
-                          subtitle_policy: subtitleEnabled ? 'auto' as const : 'none' as const,
-                          transition_policy: 'auto' as const,
-                          bgm_policy: 'auto' as const,
-                        }
-                        const session = await autoEditApi.createPlanSession(payload)
-                        setAutoPlanStage('connecting')
-                        appendAutoPlanLog('会话已创建，正在连接实时流...')
-
-                        await new Promise<void>((resolve, reject) => {
-                          const streamUrl = `${API_BASE_URL}${session.stream_url}`
-                          const es = new EventSource(streamUrl)
-                          let finished = false
-
-                          const closeStream = () => {
-                            es.close()
-                          }
-
-                          es.addEventListener('progress', (ev) => {
-                            try {
-                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { stage?: string; message?: string }
-                              setAutoPlanStage(normalizeAutoPlanStage(data.stage))
-                              appendAutoPlanLog(data.message || '收到进度更新')
-                            } catch {
-                              setAutoPlanStage('planning')
-                              appendAutoPlanLog('收到进度更新')
-                            }
-                          })
-
-                          es.addEventListener('result', (ev) => {
-                            try {
-                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { plans?: AutoEditPlanApi[] }
-                              const plans = data.plans || []
-                              setAutoPlans(plans)
-                              setAutoPlanStage('done')
-                              appendAutoPlanLog(`生成完成，返回 ${plans.length} 个方案`)
-                              finished = true
-                              closeStream()
-                              resolve()
-                            } catch {
-                              setAutoPlanStage('failed')
-                              finished = true
-                              closeStream()
-                              reject(new Error('解析实时结果失败'))
-                            }
-                          })
-
-                          es.addEventListener('failed', (ev) => {
-                            let msg = '生成方案失败'
-                            try {
-                              const data = JSON.parse((ev as MessageEvent).data || '{}') as { message?: string }
-                              msg = data.message || msg
-                            } catch {
-                              // ignore parse error
-                            }
-                            setAutoPlanStage('failed')
-                            finished = true
-                            closeStream()
-                            reject(new Error(msg))
-                          })
-
-                          es.onerror = () => {
-                            if (finished) return
-                            if (es.readyState === EventSource.CLOSED) {
-                              setAutoPlanStage('failed')
-                              closeStream()
-                              reject(new Error('实时连接中断，请重试'))
-                              return
-                            }
-                            appendAutoPlanLog('连接波动，正在自动重连...')
-                          }
-                        })
-                      } catch (e: unknown) {
-                        const msg =
-                          (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-                          || (e as Error)?.message
-                          || '生成方案失败'
-                        setAutoError(msg)
-                        setAutoPlanStage('failed')
-                        appendAutoPlanLog(`生成失败：${msg}`)
-                      } finally {
-                        setAutoLoading(false)
-                        setAutoPlanStartedAt(null)
-                      }
-                    }}
-                    disabled={autoLoading || !autoPrompt.trim()}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-sm font-medium text-slate-950 transition-colors"
-                  >
-                    {autoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                    {autoLoading ? '方案生成中...' : '生成自动成片方案'}
-                  </button>
-                  {autoPlans.length > 0 && (
-                    <span className="text-xs text-emerald-300/80">
-                      已生成 {autoPlans.length} 个方案，可进一步与成片管线打通。
-                    </span>
-                  )}
-                </div>
-                {(autoLoading || autoPlanLogs.length > 0) && (
-                  <div className="rounded-xl border border-emerald-500/30 bg-slate-950/60 px-4 py-3 space-y-2">
-                    <div className="space-y-1 text-[11px]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-300">
-                          当前阶段：
-                          {autoPlanStage === 'idle'
-                            ? '待开始'
-                            : autoPlanStage === 'preparing'
-                              ? '准备中'
-                              : autoPlanStage === 'connecting'
-                                ? '连接中'
-                                : autoPlanStage === 'planning'
-                                  ? '规划中'
-                                  : autoPlanStage === 'done'
-                                    ? '已完成'
-                                    : '失败'}
-                        </span>
-                        <span className={autoPlanStage === 'failed' ? 'text-red-400' : 'text-slate-400'}>
-                          {autoPlanStage === 'failed' ? '失败' : `${autoPlanStagePercent[autoPlanStage]}%`}
-                        </span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-500 ${
-                            autoPlanStage === 'failed' ? 'bg-red-500' : 'bg-emerald-500'
-                          }`}
-                          style={{ width: `${autoPlanStagePercent[autoPlanStage]}%` }}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-emerald-300 flex items-center gap-1.5">
-                        {autoLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        {autoLoading ? '实时生成进度' : '最近一次生成记录'}
-                      </span>
-                      <span className="text-slate-500">
-                        {autoLoading
-                          ? `已等待 ${autoPlanElapsedSec}s`
-                          : `总耗时约 ${autoPlanElapsedSec}s`}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {[
-                        { key: 'init', label: '初始化' },
-                        { key: 'context', label: '素材分析' },
-                        { key: 'llm', label: '方案生成' },
-                        { key: 'post', label: '结果整理' },
-                      ].map((step, idx) => {
-                        const stepRankMap: Record<string, number> = { init: 1, context: 2, llm: 3, post: 4 }
-                        const stageRankMap: Record<AutoPlanStage, number> = {
-                          idle: 0,
-                          preparing: 1,
-                          connecting: 2,
-                          planning: 3,
-                          done: 4,
-                          failed: 0,
-                        }
-                        const currentRank = stageRankMap[autoPlanStage] ?? 0
-                        const stepRank = stepRankMap[step.key]
-                        const active = currentRank === stepRank && autoLoading
-                        const passed = currentRank > stepRank || autoPlanStage === 'done'
-                        return (
-                          <span
-                            key={step.key}
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
-                              active
-                                ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
-                                : passed
-                                  ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-200'
-                                  : 'border-slate-700 bg-slate-900/70 text-slate-500'
-                            }`}
-                          >
-                            {idx + 1}. {step.label}
-                          </span>
-                        )
-                      })}
-                      {autoPlanStage === 'failed' && (
-                        <span className="inline-flex items-center rounded-full border border-red-400/60 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300">
-                          失败
-                        </span>
-                      )}
-                    </div>
-                    {autoLoading && (
-                      <p className="text-[11px] text-slate-400">
-                        {autoPlanElapsedSec < 3
-                          ? '正在初始化模型与策略...'
-                          : autoPlanElapsedSec < 10
-                            ? '正在分析提示词并筛选素材...'
-                            : '正在生成候选方案，请稍候...'}
-                      </p>
-                    )}
-                    <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
-                      {autoPlanLogs.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">等待日志...</p>
-                      ) : (
-                        autoPlanLogs.map((line, idx) => (
-                          <p key={`${line}-${idx}`} className="text-[11px] text-slate-400 leading-5">
-                            {line}
-                          </p>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              {/* 候选方案列表 */}
-              {autoPlans.length > 0 && (
-                <section className="space-y-3">
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                    候选方案 · {autoPlans.length} 个
-                  </p>
-                  <div className="grid md:grid-cols-2 gap-3">
-                    {autoPlans.map((p, idx) => (
-                      <div
-                        key={p.plan_id || idx}
-                        className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-100 truncate">
-                              {p.title || `方案 ${idx + 1}`}
-                            </p>
-                            <p className="text-[11px] text-slate-500 mt-0.5">
-                              模式：{p.mode === 'auto' ? '自动' : p.mode === 'voiceover' ? '配音为主' : '原声为主'}
-                            </p>
-                          </div>
-                          <div className="text-right text-[11px] text-slate-500 space-y-0.5">
-                            {p.target_duration_sec && (
-                              <p>目标：{Math.round(p.target_duration_sec)}s</p>
-                            )}
-                            {p.estimated_duration_sec && (
-                              <p>预估：{Math.round(p.estimated_duration_sec)}s</p>
-                            )}
-                            <p>段落：{p.segments?.length ?? 0}</p>
-                          </div>
-                        </div>
-                        {p.summary && (
-                          <div className="space-y-1">
-                            <p className={`text-xs text-slate-300 ${autoExpandedPlanIds.includes(p.plan_id) ? '' : 'line-clamp-3'}`}>
-                              {p.summary}
-                            </p>
-                            {p.summary.length > 80 && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setAutoExpandedPlanIds((prev) =>
-                                    prev.includes(p.plan_id)
-                                      ? prev.filter((id) => id !== p.plan_id)
-                                      : [...prev, p.plan_id]
-                                  )
-                                }
-                                className="text-[11px] text-cyan-300 hover:text-cyan-200"
-                              >
-                                {autoExpandedPlanIds.includes(p.plan_id) ? '收起详情' : '展开详情'}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                        <div className="text-[11px] text-slate-500 space-y-0.5">
-                          <p>
-                            输出：
-                            {p.mode === 'original'
-                              ? subtitleEnabled
-                                ? '原声 + 字幕'
-                                : '原声（无字幕）'
-                              : subtitleEnabled
-                                ? '配音 + 字幕'
-                                : '配音（无字幕）'}
-                          </p>
-                          <p>
-                            片段预览：
-                            {p.segments?.slice(0, 3).map((s) => (
-                              <span key={s.id} className="inline-block mr-2">
-                                #{s.order}（{Math.round(s.start_time_sec)}-{Math.round(s.end_time_sec)}s）
-                              </span>
-                            ))}
-                            {p.segments?.length > 3 && <span>…</span>}
-                          </p>
-                        </div>
-                        <div className="pt-1 space-y-1">
-                          <button
-                            onClick={async () => {
-                              setAutoRealizeMsg('')
-                              setAutoRealizingId(p.plan_id)
-                              try {
-                                const res = await autoEditApi.realize({
-                                  plan: p,
-                                  project_name: `autoedit_${(p.title || `plan_${idx + 1}`).slice(0, 20)}`,
-                                  include_subtitle: subtitleEnabled,
-                                })
-                                const downloadUrl = `${API_BASE_URL}${res.url}`
-                                setAutoRealizeDownloads((prev) => ({
-                                  ...prev,
-                                  [p.plan_id]: { filename: res.filename, url: downloadUrl },
-                                }))
-                                setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
-                              } catch (e: unknown) {
-                                const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '一键成片失败'
-                                setAutoRealizeMsg(msg)
-                              } finally {
-                                setAutoRealizingId(null)
-                              }
-                            }}
-                            disabled={autoRealizingId !== null}
-                            className="w-full inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-500/50 bg-emerald-500/10 text-[11px] text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 transition-colors"
-                          >
-                            {autoRealizingId === p.plan_id ? (
-                              <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                成片生成中...
-                              </>
-                            ) : (
-                              <>一键成片</>
-                            )}
-                          </button>
-                          {autoRealizeMsg && (
-                            <p className="text-[11px] text-emerald-300/80">{autoRealizeMsg}</p>
-                          )}
-                          {autoRealizeDownloads[p.plan_id] && (
-                            <a
-                              href={autoRealizeDownloads[p.plan_id].url}
-                              download={autoRealizeDownloads[p.plan_id].filename}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block text-[11px] text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
-                            >
-                              下载成片：{autoRealizeDownloads[p.plan_id].filename}
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </>
+            <AutoEditPanel
+              autoPrompt={autoPrompt}
+              onAutoPromptChange={setAutoPrompt}
+              autoMode={autoMode}
+              onAutoModeChange={setAutoMode}
+              autoTargetDuration={autoTargetDuration}
+              onAutoTargetDurationChange={setAutoTargetDuration}
+              autoNumPlans={autoNumPlans}
+              onAutoNumPlansChange={setAutoNumPlans}
+              autoLoading={autoLoading}
+              autoError={autoError}
+              autoPlans={autoPlans}
+              autoExpandedPlanIds={autoExpandedPlanIds}
+              onTogglePlanExpand={toggleAutoExpandedPlan}
+              autoRealizingId={autoRealizingId}
+              autoRealizeMsg={autoRealizeMsg}
+              autoRealizeDownloads={autoRealizeDownloads}
+              autoPlanLogs={autoPlanLogs}
+              autoPlanElapsedSec={autoPlanElapsedSec}
+              autoPlanStage={autoPlanStage}
+              autoPlanStagePercent={autoPlanStagePercent}
+              subtitleEnabled={subtitleEnabled}
+              onGeneratePlans={handleGenerateAutoPlans}
+              onRealizePlan={handleAutoRealizePlan}
+            />
           ) : (
-            <>
-              {/* 手动文案匹配模式 · 原有内容 */}
-              <div className="flex flex-wrap items-center gap-4">
-                <label className="text-xs text-slate-500 flex items-center gap-2">初筛
-                  <input type="number" min={1} max={50} value={topK} onChange={(e) => setTopK(+e.target.value)}
-                    className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200" />
-                </label>
-                <label className="text-xs text-slate-500 flex items-center gap-2">推荐
-                  <input type="number" min={1} max={20} value={topN} onChange={(e) => setTopN(+e.target.value)}
-                    className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200" />
-                </label>
-              </div>
-              <CopyGeneratorPanel selectedVideoIds={selectedVideoIds} onApply={handleAiApply} />
-              <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />批量拆分文案
-                </p>
-                <textarea value={globalQuery} onChange={(e) => setGlobalQuery(e.target.value)}
-                  placeholder="粘贴完整文案，按空行自动拆分为多段分别匹配..." rows={4}
-                  className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm outline-none focus:border-indigo-500 placeholder-slate-600 resize-none" />
-                <div className="flex items-center gap-3">
-                  <button onClick={splitGlobalQuery} disabled={!globalQuery.trim()}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-sm flex items-center gap-2 border border-slate-700 transition-colors">
-                    <SplitSquareHorizontal className="w-4 h-4" />拆分为段落
-                  </button>
-                  {segments.length > 0 && (
-                    <button onClick={matchAll} disabled={globalMatching}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors">
-                      {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                      {globalMatching ? '全部匹配中...' : '全部匹配'}
-                    </button>
-                  )}
-                  <button onClick={() => addSegment()}
-                    className="ml-auto px-3 py-2 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-400 flex items-center gap-1.5 transition-colors">
-                    <Plus className="w-3.5 h-3.5" />手动添加段落
-                  </button>
-                </div>
-              </section>
-              {segments.length > 0 && (
-                <section className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">文案段落 · {segments.length} 段</p>
-                    <button onClick={() => setMatchSegments([])} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空全部</button>
-                  </div>
-                  {segments.map((seg, i) => (
-                    <SegmentRow key={seg.id} seg={seg} index={i}
-                      onTextChange={(t) => patchSeg(seg.id, { text: t })}
-                      onRemove={() => removeSegment(seg.id)}
-                      onMatch={() => matchSegment(seg.id)}
-                      onToggleSelect={(clipId) => toggleClipSelected(seg.id, clipId)}
-                      onTts={() => synthesiseTts(seg.id)}
-                      onPlayAudio={() => seg.ttsFilename && playAudio(seg.id, seg.ttsFilename)}
-                      onStopAudio={stopAudio}
-                      playingAudio={playingSegId === seg.id}
-                      onPreview={(clip) => setPreviewClip(clip)}
-                      onToggleExpand={() => patchSeg(seg.id, { expanded: !seg.expanded })}
-                    />
-                  ))}
-                </section>
-              )}
-            </>
+            <ManualMatchPanel
+              topK={topK}
+              topN={topN}
+              onTopKChange={setTopK}
+              onTopNChange={setTopN}
+              selectedVideoIds={selectedVideoIds}
+              onAiApply={handleAiApply}
+              globalQuery={globalQuery}
+              onGlobalQueryChange={setGlobalQuery}
+              onSplit={splitGlobalQuery}
+              onMatchAll={matchAll}
+              globalMatching={globalMatching}
+              onAddSegment={() => addSegment()}
+              segments={segments}
+              onClearAll={() => setMatchSegments([])}
+              onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}
+              onRemoveSegment={removeSegment}
+              onMatchSegment={matchSegment}
+              onToggleClipSelected={toggleClipSelected}
+              onSynthesiseTts={synthesiseTts}
+              onPlayAudio={(segId) => {
+                const seg = segments.find((s) => s.id === segId)
+                if (seg?.ttsFilename) playAudio(segId, seg.ttsFilename)
+              }}
+              onStopAudio={stopAudio}
+              playingSegId={playingSegId}
+              onPreview={setPreviewClip}
+              onToggleExpand={(segId) => {
+                const seg = segments.find((s) => s.id === segId)
+                if (!seg) return
+                patchSeg(seg.id, { expanded: !seg.expanded })
+              }}
+            />
           )}
           {exportMode !== 'zip' && segments.length > 0 && (
             <SubtitlePanel

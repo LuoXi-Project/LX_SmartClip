@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
 import { type AutoPlanStage } from './autoEditTypes'
-import { clipStreamUrl, fmt, videoStreamUrl } from './types'
+import { API_BASE, clipStreamUrl, fmt, videoStreamUrl } from './types'
 
 type AutoEditPanelProps = {
   autoPrompt: string
@@ -71,6 +71,10 @@ export function AutoEditPanel({
   } | null>(null)
   const previewVideoRef = useRef<HTMLVideoElement | null>(null)
   const [previewVideoErr, setPreviewVideoErr] = useState(false)
+  const [resolvedVideoIdByClip, setResolvedVideoIdByClip] = useState<Record<string, string>>({})
+
+  const isUuidLike = (v: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
 
   const togglePreviewExpand = (planId: string) => {
     setExpandedPreviewPlanIds((prev) =>
@@ -81,12 +85,40 @@ export function AutoEditPanel({
   const previewSrc = useMemo(() => {
     if (!selectedPreview) return ''
     if (selectedPreview.source === 'video') {
-      if (!selectedPreview.videoId) return ''
-      return videoStreamUrl(selectedPreview.videoId)
+      const vid =
+        (selectedPreview.videoId && isUuidLike(selectedPreview.videoId) ? selectedPreview.videoId : null) ||
+        (selectedPreview.clipId ? resolvedVideoIdByClip[selectedPreview.clipId] : null)
+      if (!vid) return ''
+      return videoStreamUrl(vid)
     }
     if (!selectedPreview.clipId) return ''
     return clipStreamUrl(selectedPreview.clipId)
-  }, [selectedPreview])
+  }, [resolvedVideoIdByClip, selectedPreview])
+
+  useEffect(() => {
+    if (!selectedPreview) return
+    if (selectedPreview.source !== 'video') return
+    if (!selectedPreview.clipId) return
+
+    const already = resolvedVideoIdByClip[selectedPreview.clipId]
+    const planVid = selectedPreview.videoId
+    if (already) return
+    if (planVid && isUuidLike(planVid)) return
+
+    const ac = new AbortController()
+    void fetch(`${API_BASE}/api/videos/clips/${selectedPreview.clipId}`, { signal: ac.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(String(r.status))
+        return (await r.json()) as { video_id: string }
+      })
+      .then((data) => {
+        if (data?.video_id) {
+          setResolvedVideoIdByClip((prev) => ({ ...prev, [selectedPreview.clipId]: data.video_id }))
+        }
+      })
+      .catch(() => {})
+    return () => ac.abort()
+  }, [resolvedVideoIdByClip, selectedPreview])
 
   useEffect(() => {
     const video = previewVideoRef.current
@@ -310,7 +342,12 @@ export function AutoEditPanel({
                     {selectedPreview.planTitle} · #{selectedPreview.order}（{fmt(selectedPreview.startSec)} - {fmt(selectedPreview.endSec)}）
                     <span className="ml-2 text-slate-600">
                       {selectedPreview.source === 'video' ? (
-                        <>原视频预览 · video_id: {selectedPreview.videoId || '-'}</>
+                        <>
+                          原视频预览 · video_id:{' '}
+                          {((selectedPreview.videoId && isUuidLike(selectedPreview.videoId) ? selectedPreview.videoId : null) ||
+                            (selectedPreview.clipId ? resolvedVideoIdByClip[selectedPreview.clipId] : null) ||
+                            '-') as string}
+                        </>
                       ) : (
                         <>片段预览 · clip_id: {selectedPreview.clipId || '-'}</>
                       )}
@@ -400,7 +437,9 @@ export function AutoEditPanel({
               ) : (
                 <div className="px-4 py-10 text-center text-sm text-slate-500">
                   {selectedPreview
-                    ? '该片段浏览器无法直接预览（视频编码或格式不支持）。'
+                    ? selectedPreview.source === 'video'
+                      ? '原视频无法直接预览（接口 404 / 编码或格式不支持）。'
+                      : '该片段浏览器无法直接预览（视频编码或格式不支持）。'
                     : '未选择片段。'}
                 </div>
               )}

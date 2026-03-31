@@ -271,3 +271,26 @@ async def stream_clip(clip_id: str):
     }
     media_type = _mime_map.get(ext, "video/mp4")
     return FileResponse(clip_path, media_type=media_type, filename=os.path.basename(clip_path))
+
+
+@router.get("/clips/{clip_id}")
+async def get_clip_meta(clip_id: str):
+    """获取 clip 元信息（用于前端把 clip 关联回原视频）"""
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT id, video_id, start_time, end_time, duration FROM clips WHERE id = ?",
+            (clip_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"片段 '{clip_id}' 不存在")
+        return {
+            "clip_id": str(row["id"]),
+            "video_id": str(row["video_id"]),
+            "start_time": float(row["start_time"]),
+            "end_time": float(row["end_time"]),
+            "duration": float(row["duration"]),
+        }
+    finally:
+        await db.close()

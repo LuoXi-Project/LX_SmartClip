@@ -62,7 +62,7 @@ export function UploadZone({
           {dragActive ? '松开以上传' : '拖拽视频文件到此处'}
         </h2>
         <p className="text-slate-500 text-sm mb-5">
-          支持 MP4、MOV、AVI、MKV 等格式
+          支持 MP4格式(MOV、AVI、MKV 等视频格式待测试)
         </p>
 
         <label className="inline-block cursor-pointer">

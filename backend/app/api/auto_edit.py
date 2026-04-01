@@ -159,7 +159,7 @@ def _build_sse_event(event: str, payload: dict) -> str:
 
 
 SYSTEM_PROMPT = """你是一位专业的视频剪辑规划师。
-现在需要你基于给定的视频素材（已包含 ASR 台词和 VLM 画面描述），
+现在需要你基于给定的视频素材（可能包含 ASR 台词与/或 VLM 画面描述；有些素材可能没有 ASR），
 结合用户的创作诉求，生成「自动一键成片」的结构化剪辑方案（Plan）。
 
 重要约束（必须严格遵守）：
@@ -173,6 +173,7 @@ SYSTEM_PROMPT = """你是一位专业的视频剪辑规划师。
 - JSON 顶层结构为 {"plans": [Plan, ...]}，其中 Plan 结构严格遵循下面 schema。
 - 所有时间单位均为秒（float）。
 - 请确保 segments 能首尾相接，整体时长尽量接近 target_duration_sec。
+- 当某些片段缺少 ASR 时，你必须主要依赖 VLM 画面描述进行语义匹配与剪辑（必要时在 constraints.match_strategy 选择 vlm_only）。
 - 如果信息不足，可以适度补全文案，但要与已有 ASR/VLM 内容风格一致。
 """
 
@@ -304,6 +305,8 @@ async def _call_llm_for_plans(
     ]
 
     raw = await llm.chat(messages)
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=502, detail="LLM 返回内容为空")
     logger.debug("auto_edit raw LLM output: %s", raw[:500])
     cleaned = _extract_json_array(raw)
 

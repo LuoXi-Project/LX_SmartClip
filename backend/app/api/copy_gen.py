@@ -52,7 +52,10 @@ async def _build_video_context(db: aiosqlite.Connection, video_ids: List[str]) -
         FROM clips c
         JOIN videos v ON v.id = c.video_id
         WHERE c.video_id IN ({placeholders})
-          AND (c.asr_text IS NOT NULL OR c.vlm_description IS NOT NULL)
+          AND (
+            TRIM(COALESCE(c.asr_text, '')) <> ''
+            OR TRIM(COALESCE(c.vlm_description, '')) <> ''
+          )
         ORDER BY v.name, c.start_time
         LIMIT 60
     """
@@ -64,10 +67,11 @@ async def _build_video_context(db: aiosqlite.Connection, video_ids: List[str]) -
 
     lines: list[str] = []
     cur_video = None
+    header_added = False
     for row in rows:
         if row["video_name"] != cur_video:
             cur_video = row["video_name"]
-            lines.append(f"\n【视频：{cur_video}】")
+            header_added = False
         t0 = _fmt_time(row["start_time"])
         t1 = _fmt_time(row["end_time"])
         asr = (row["asr_text"] or "").strip()[:200]
@@ -78,6 +82,9 @@ async def _build_video_context(db: aiosqlite.Connection, video_ids: List[str]) -
         if vlm:
             parts.append(f"画面：{vlm}")
         if parts:
+            if not header_added:
+                lines.append(f"\n【视频：{cur_video}】")
+                header_added = True
             # 显式带上 clip_id，方便后续 Plan 严格复用真实 ID
             lines.append(f"  [clip_id={row['id']}] [{t0}→{t1}] " + " | ".join(parts))
 

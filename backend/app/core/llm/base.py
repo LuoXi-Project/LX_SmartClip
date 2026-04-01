@@ -96,7 +96,21 @@ class LLMClient:
                 temperature=temp,
                 max_tokens=tokens,
             )
-            return resp.choices[0].message.content.strip()
+            choices = getattr(resp, "choices", None)
+            if not choices:
+                resp_repr: Any
+                try:
+                    resp_repr = resp.model_dump()  # type: ignore[attr-defined]
+                except Exception:
+                    resp_repr = repr(resp)
+                raise RuntimeError(f"LLM 返回无 choices（可能为空响应）: {resp_repr}")
+
+            first = choices[0]
+            message = getattr(first, "message", None)
+            content = getattr(message, "content", None) if message is not None else None
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError("LLM 返回 content 为空或非字符串")
+            return content.strip()
         except Exception as e:
             logger.error("LLM 调用失败: %s", e)
             raise

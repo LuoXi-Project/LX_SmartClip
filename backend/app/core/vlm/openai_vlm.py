@@ -267,7 +267,14 @@ class OpenAIVLM(IVLM):
 
         try:
             response = retry_sync(_call_api)
-            description = response.choices[0].message.content.strip()
+            choices = getattr(response, "choices", None)
+            if not choices:
+                raise RuntimeError("VLM 返回无 choices（可能为空响应）")
+            message = getattr(choices[0], "message", None)
+            content = getattr(message, "content", None) if message is not None else None
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError("VLM 返回 content 为空或非字符串")
+            description = content.strip()
             logger.info(f"描述生成成功: {len(description)} 个字符")
             return description
 

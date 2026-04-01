@@ -79,7 +79,14 @@ class OpenAILLM(ILLM):
                 )
 
             resp = retry_sync(_call_api)
-            raw = resp.choices[0].message.content.strip()
+            choices = getattr(resp, "choices", None)
+            if not choices:
+                raise RuntimeError("LLM 返回无 choices（可能为空响应）")
+            message = getattr(choices[0], "message", None)
+            content = getattr(message, "content", None) if message is not None else None
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError("LLM 返回 content 为空或非字符串")
+            raw = content.strip()
             logger.debug("LLM 原始返回: %r", raw[:500])
 
             # 去除 thinking 模型的 <think>...</think> 块（含变体格式）

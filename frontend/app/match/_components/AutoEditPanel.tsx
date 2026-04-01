@@ -73,37 +73,33 @@ export function AutoEditPanel({
   const [previewVideoErr, setPreviewVideoErr] = useState(false)
   const [resolvedVideoIdByClip, setResolvedVideoIdByClip] = useState<Record<string, string>>({})
 
-  const isUuidLike = (v: string) =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
-
   const togglePreviewExpand = (planId: string) => {
     setExpandedPreviewPlanIds((prev) =>
       prev.includes(planId) ? prev.filter((id) => id !== planId) : [...prev, planId]
     )
   }
 
+  /** 仅使用库中 clip→video 的关联；方案 JSON 里的 video_id 不得用于 /api/videos/{id}/stream，否则易 404 */
+  const resolvedVideoId = useMemo(() => {
+    if (!selectedPreview?.clipId) return null
+    return resolvedVideoIdByClip[selectedPreview.clipId] ?? null
+  }, [resolvedVideoIdByClip, selectedPreview])
+
   const previewSrc = useMemo(() => {
     if (!selectedPreview) return ''
     if (selectedPreview.source === 'video') {
-      const vid =
-        (selectedPreview.videoId && isUuidLike(selectedPreview.videoId) ? selectedPreview.videoId : null) ||
-        (selectedPreview.clipId ? resolvedVideoIdByClip[selectedPreview.clipId] : null)
-      if (!vid) return ''
-      return videoStreamUrl(vid)
+      if (!resolvedVideoId) return ''
+      return videoStreamUrl(resolvedVideoId)
     }
     if (!selectedPreview.clipId) return ''
     return clipStreamUrl(selectedPreview.clipId)
-  }, [resolvedVideoIdByClip, selectedPreview])
+  }, [resolvedVideoId, selectedPreview])
 
   useEffect(() => {
-    if (!selectedPreview) return
-    if (selectedPreview.source !== 'video') return
-    if (!selectedPreview.clipId) return
+    if (!selectedPreview?.clipId) return
 
     const already = resolvedVideoIdByClip[selectedPreview.clipId]
-    const planVid = selectedPreview.videoId
     if (already) return
-    if (planVid && isUuidLike(planVid)) return
 
     const ac = new AbortController()
     void fetch(`${API_BASE}/api/videos/clips/${selectedPreview.clipId}`, { signal: ac.signal })
@@ -343,10 +339,7 @@ export function AutoEditPanel({
                     <span className="ml-2 text-slate-600">
                       {selectedPreview.source === 'video' ? (
                         <>
-                          原视频预览 · video_id:{' '}
-                          {((selectedPreview.videoId && isUuidLike(selectedPreview.videoId) ? selectedPreview.videoId : null) ||
-                            (selectedPreview.clipId ? resolvedVideoIdByClip[selectedPreview.clipId] : null) ||
-                            '-') as string}
+                          原视频预览 · video_id: {resolvedVideoId || '解析中…'}
                         </>
                       ) : (
                         <>片段预览 · clip_id: {selectedPreview.clipId || '-'}</>
@@ -364,16 +357,20 @@ export function AutoEditPanel({
                       type="button"
                       onClick={() =>
                         setSelectedPreview((prev) =>
-                          prev?.videoId ? { ...prev, source: 'video' } : prev
+                          prev && resolvedVideoId ? { ...prev, source: 'video' } : prev
                         )
                       }
-                      disabled={!selectedPreview.videoId}
+                      disabled={!resolvedVideoId}
                       className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
                         selectedPreview.source === 'video'
                           ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200'
                           : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:bg-slate-950/70 disabled:opacity-50'
                       }`}
-                      title={selectedPreview.videoId ? '按原视频绝对时间预览/跳转' : '该段缺少 video_id，无法切换到原视频预览'}
+                      title={
+                        resolvedVideoId
+                          ? '按原视频绝对时间预览/跳转（video_id 以片段在库中的记录为准）'
+                          : '正在解析或缺少可用的原视频 ID'
+                      }
                     >
                       原视频
                     </button>
@@ -426,14 +423,22 @@ export function AutoEditPanel({
             </div>
             <div className="rounded-xl overflow-hidden border border-slate-800 bg-black">
               {selectedPreview && !previewVideoErr ? (
-                <video
-                  key={`${selectedPreview.source}:${selectedPreview.source === 'video' ? selectedPreview.videoId : selectedPreview.clipId}`}
-                  ref={previewVideoRef}
-                  src={previewSrc}
-                  controls
-                  className="w-full max-h-[45vh] object-contain"
-                  onError={() => setPreviewVideoErr(true)}
-                />
+                previewSrc ? (
+                  <video
+                    key={`${selectedPreview.source}:${selectedPreview.source === 'video' ? resolvedVideoId || selectedPreview.clipId : selectedPreview.clipId}`}
+                    ref={previewVideoRef}
+                    src={previewSrc}
+                    controls
+                    className="w-full max-h-[45vh] object-contain"
+                    onError={() => setPreviewVideoErr(true)}
+                  />
+                ) : (
+                  <div className="px-4 py-10 text-center text-sm text-slate-500">
+                    {selectedPreview.source === 'video'
+                      ? '正在从片段解析原视频 ID…'
+                      : '无法构建预览地址。'}
+                  </div>
+                )
               ) : (
                 <div className="px-4 py-10 text-center text-sm text-slate-500">
                   {selectedPreview

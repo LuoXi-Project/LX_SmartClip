@@ -16,3 +16,4 @@ moviepy>=2.0.0
 pillow
 cryptography>=42.0.8
 Nuitka>=4.0.7
+pyarmor

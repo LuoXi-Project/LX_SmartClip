@@ -7,6 +7,9 @@ set "FRONTEND_DIR=%ROOT%\frontend"
 set "FRONTEND_OUT=%FRONTEND_DIR%\out"
 set "BACKEND_WEB_DIR=%ROOT%\backend\app\static\frontend"
 set "DIST_DIR=%ROOT%\dist"
+set "BACKEND_BUILDER=%LX_BACKEND_BUILDER%"
+if "%BACKEND_BUILDER%"=="" set "BACKEND_BUILDER=nuitka"
+if not "%~1"=="" set "BACKEND_BUILDER=%~1"
 
 echo [1/5] 检查目录...
 if not exist "%FRONTEND_DIR%\package.json" (
@@ -43,11 +46,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [5/5] Nuitka 构建后端并导出 dist/...
+echo [5/5] 构建后端并导出 dist/... （%BACKEND_BUILDER%）
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_backend_nuitka.ps1"
+if /I "%BACKEND_BUILDER%"=="pyarmor" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_backend_pyarmor_pyinstaller.ps1"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_backend_nuitka.ps1"
+)
 if errorlevel 1 (
-  echo 错误：后端 Nuitka 构建失败
+  echo 错误：后端构建失败（%BACKEND_BUILDER%）
   exit /b 1
 )
 

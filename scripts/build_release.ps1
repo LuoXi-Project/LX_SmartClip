@@ -1,4 +1,16 @@
+param(
+    [ValidateSet("nuitka", "pyarmor")]
+    [string]$Backend = ""
+)
+
 $ErrorActionPreference = "Stop"
+
+if (-not $Backend) { $Backend = $env:LX_BACKEND_BUILDER }
+if (-not $Backend) { $Backend = "nuitka" }
+$Backend = $Backend.ToLowerInvariant()
+if ($Backend -notin @("nuitka", "pyarmor")) {
+    throw "不支持的后端打包方案：$Backend（可选：nuitka / pyarmor）。你也可以通过环境变量 LX_BACKEND_BUILDER 指定。"
+}
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $FrontendDir = Join-Path $Root "frontend"
@@ -40,13 +52,18 @@ if (Test-Path $BackendWebDir) {
 New-Item -Path $BackendWebDir -ItemType Directory -Force | Out-Null
 Copy-Item -Path (Join-Path $FrontendOut "*") -Destination $BackendWebDir -Recurse -Force
 
-Write-Host "[5/5] Nuitka 构建后端并导出 dist/..."
 if (-not (Test-Path $DistDir)) {
     New-Item -Path $DistDir -ItemType Directory -Force | Out-Null
 }
-& (Join-Path $PSScriptRoot "build_backend_nuitka.ps1")
+if ($Backend -eq "pyarmor") {
+    Write-Host "[5/5] PyArmor 加密 + PyInstaller 构建后端并导出 dist/..."
+    & (Join-Path $PSScriptRoot "build_backend_pyarmor_pyinstaller.ps1")
+} else {
+    Write-Host "[5/5] Nuitka 构建后端并导出 dist/..."
+    & (Join-Path $PSScriptRoot "build_backend_nuitka.ps1")
+}
 if ($LASTEXITCODE -ne 0) {
-    throw "后端 Nuitka 构建失败"
+    throw "后端构建失败（方案：$Backend）"
 }
 
 Write-Host ""

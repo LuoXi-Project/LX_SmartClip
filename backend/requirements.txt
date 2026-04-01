@@ -17,3 +17,4 @@ pillow
 cryptography>=42.0.8
 Nuitka>=4.0.7
 pyarmor
+pyinstaller>=6.19.0

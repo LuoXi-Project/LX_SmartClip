@@ -29,3 +29,5 @@ frontend/app/library/_components/PreviewModal.tsx
 backend/app/static/frontend/
 backend/.runtime/backend_url.txt
 dist/
+backend/pyarmor.bug.log
+backend/nuitka-crash-report.xml

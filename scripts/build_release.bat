@@ -8,7 +8,7 @@ set "FRONTEND_OUT=%FRONTEND_DIR%\out"
 set "BACKEND_WEB_DIR=%ROOT%\backend\app\static\frontend"
 set "DIST_DIR=%ROOT%\dist"
 set "BACKEND_BUILDER=%LX_BACKEND_BUILDER%"
-if "%BACKEND_BUILDER%"=="" set "BACKEND_BUILDER=nuitka"
+if "%BACKEND_BUILDER%"=="" set "BACKEND_BUILDER=pyarmor"
 if not "%~1"=="" set "BACKEND_BUILDER=%~1"
 
 echo [1/5] 检查目录...

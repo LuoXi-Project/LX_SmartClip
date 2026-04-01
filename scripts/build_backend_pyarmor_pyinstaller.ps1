@@ -4,7 +4,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# 避免中文输出在某些终端/重定向场景下出现乱码
 try {
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -28,7 +27,6 @@ function Remove-PathForce {
             } else {
                 attrib -r (Join-Path $PathToRemove "*") /s /d 2>$null | Out-Null
             }
-
             Remove-Item -Path $PathToRemove -Recurse -Force -ErrorAction Stop
             return
         } catch {
@@ -52,8 +50,8 @@ $PyinstallerDistDir = Join-Path $WorkDir "pyinstaller_dist"
 $BackendOutDir = Join-Path $DistDir "backend"
 
 $VenvPythonCandidates = @(
-    (Join-Path $Root "venv\Scripts\python.exe"),
-    (Join-Path $BackendDir "venv\Scripts\python.exe")
+    (Join-Path $Root "venv\\Scripts\\python.exe"),
+    (Join-Path $BackendDir "venv\\Scripts\\python.exe")
 )
 $Py = ($VenvPythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
 if (-not $Py) { $Py = "python" }
@@ -64,8 +62,17 @@ if (-not (Test-Path $Entry)) {
 }
 
 Write-Host "[backend] 清理 dist/backend ..."
+if (-not (Test-Path $DistDir)) {
+    New-Item -Path $DistDir -ItemType Directory -Force | Out-Null
+}
 if (Test-Path $BackendOutDir) {
-    Remove-PathForce -PathToRemove $BackendOutDir
+    try {
+        Remove-PathForce -PathToRemove $BackendOutDir
+    } catch {
+        $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $BackendOutDir = Join-Path $DistDir ("backend_" + $Stamp)
+        Write-Host "[backend] 注意：dist/backend 被占用，改用新目录：$BackendOutDir"
+    }
 }
 New-Item -Path $BackendOutDir -ItemType Directory -Force | Out-Null
 
@@ -89,15 +96,14 @@ New-Item -Path $BuildDir -ItemType Directory -Force | Out-Null
 New-Item -Path $SpecDir -ItemType Directory -Force | Out-Null
 New-Item -Path $PyinstallerDistDir -ItemType Directory -Force | Out-Null
 
-# 需要把前端静态资源/存储目录/数据目录一并带到可分发目录中（供后端挂载/生成 DB）
-$FrontendStatic = Join-Path $BackendDir "app\static\frontend"
+$FrontendStatic = Join-Path $BackendDir "app\\static\\frontend"
 $StorageDir = Join-Path $BackendDir "storage"
 $DataDir = Join-Path $BackendDir "data"
 
 Push-Location $BackendDir
 try {
     Write-Host "[backend] 检查 PyArmor / PyInstaller 依赖..."
-    & $Py -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pyarmor') else 1)" *> $null
+    & $Py -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pyarmor.cli') else 1)" *> $null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[backend] 未检测到 PyArmor，正在安装..."
         & $Py -m pip install --upgrade pip
@@ -114,11 +120,8 @@ try {
     }
 
     Write-Host "[backend] PyArmor 加密（递归）..."
-    # 说明：
-    # - 以 backend/ 为工作目录，递归加密 app/ 与入口 start_backend.py
-    # - 输出到 dist/_pyarmor_pyinstaller/obf
     $PyarmorArgs = @(
-        "-m", "pyarmor", "gen",
+        "-m", "pyarmor.cli", "gen",
         "-r",
         "-O", $ObfDir,
         "start_backend.py",
@@ -133,13 +136,61 @@ try {
     }
 
     Write-Host "[backend] PyInstaller 打包（onedir）..."
-    # 在 obf 目录下执行，确保 pyarmor runtime 与加密后的源码在同一树中被收集
     Push-Location $ObfDir
     try {
         $AddData = @()
         if (Test-Path $FrontendStatic) { $AddData += @("--add-data", "$FrontendStatic;app/static/frontend") }
         if (Test-Path $StorageDir) { $AddData += @("--add-data", "$StorageDir;storage") }
         if (Test-Path $DataDir) { $AddData += @("--add-data", "$DataDir;data") }
+
+        $CollectSubmodules = @(
+            "uvicorn"
+            "fastapi"
+            "starlette"
+            "anyio"
+            "pydantic"
+            "aiosqlite"
+            "httpx"
+            "requests"
+            "openai"
+            "whisper"
+            "numpy"
+            "edge_tts"
+            "moviepy"
+            "PIL"
+            "scenedetect"
+            "cryptography"
+            "json_repair"
+            "faiss"
+        )
+
+        $CollectAll = @(
+            "uvicorn"
+            "fastapi"
+            "starlette"
+            "pydantic"
+            "aiosqlite"
+            "numpy"
+            "edge_tts"
+            "whisper"
+            "openai"
+            "moviepy"
+            "PIL"
+            "cryptography"
+            "scenedetect"
+            "faiss"
+        )
+
+        $HiddenImports = @(
+            "app.main"
+            "uvicorn.main"
+            "uvicorn.__main__"
+        )
+
+        $ForceCollectArgs = @()
+        foreach ($m in $HiddenImports) { $ForceCollectArgs += @("--hidden-import", $m) }
+        foreach ($p in $CollectSubmodules) { $ForceCollectArgs += @("--collect-submodules", $p) }
+        foreach ($p in $CollectAll) { $ForceCollectArgs += @("--collect-all", $p) }
 
         $PyinstallerArgs = @(
             "-m", "PyInstaller",
@@ -150,20 +201,17 @@ try {
             "--distpath", $PyinstallerDistDir,
             "--workpath", $BuildDir,
             "--specpath", $SpecDir,
-            "--hidden-import", "app.main",
             "--collect-submodules", "app",
             "--console",
             "start_backend.py"
-        ) + $AddData
+        ) + $ForceCollectArgs + $AddData
 
         & $Py @PyinstallerArgs
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller 打包失败" }
-    }
-    finally {
+    } finally {
         Pop-Location
     }
-}
-finally {
+} finally {
     Pop-Location
 }
 

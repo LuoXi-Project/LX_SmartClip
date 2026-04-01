@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+import asyncio
 from app.db.database import get_db_conn
 from app.core.asr.whisper_asr import WhisperASR
 from app.core.asr.openai_asr import OpenAIASR
@@ -38,6 +39,16 @@ async def _read_config(db, key: str, default: str = "") -> str:
     return row["value"] if row else default
 
 
+def _parse_positive_int(raw: str, default: int, min_v: int = 1, max_v: int = 64) -> int:
+    try:
+        v = int(str(raw or "").strip())
+    except Exception:
+        v = default
+    v = max(min_v, v)
+    v = min(max_v, v)
+    return v
+
+
 @router.post("/{video_id}/process-asr")
 async def process_asr(video_id: str):
     """
@@ -62,6 +73,8 @@ async def process_asr(video_id: str):
         asr_base_url   = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key    = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
+        asr_concurrency_raw = await _read_config(db, "asr_concurrency", "1")
+        asr_concurrency = _parse_positive_int(asr_concurrency_raw, default=1, min_v=1, max_v=16)
 
         # 获取 ASR 实例
         asr_instance = get_asr(
@@ -82,51 +95,43 @@ async def process_asr(video_id: str):
         if not clips:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 没有片段")
 
-        logger.info("开始处理 %d 个片段的 ASR (provider=%s)", len(clips), asr_provider)
+        logger.info(
+            "开始处理 %d 个片段的 ASR (provider=%s, concurrency=%d)",
+            len(clips),
+            asr_provider,
+            asr_concurrency,
+        )
 
-        # 处理每个片段
-        results = []
-        for i, clip in enumerate(clips):
-            clip_id = clip["id"]
-            clip_path = clip["clip_path"]
+        sem = asyncio.Semaphore(asr_concurrency)
 
+        async def _process_one(idx: int, clip_row):
+            clip_id = clip_row["id"]
+            clip_path = clip_row["clip_path"]
             try:
-                logger.info("处理片段 %d/%d: %s", i + 1, len(clips), clip_id)
-
-                # 提取音频
-                audio_path = splitter.extract_audio(clip_path)
-
-                # 转写音频
-                asr_text = asr_instance.transcribe(audio_path)
-
-                # 保存到数据库
-                await db.execute(
-                    "UPDATE clips SET asr_text = ? WHERE id = ?",
-                    (asr_text, clip_id),
-                )
-
-                results.append(
-                    {
-                        "clip_id": clip_id,
-                        "status": "success",
-                        "text_length": len(asr_text),
-                        "text": asr_text[:100] + "..." if len(asr_text) > 100 else asr_text,
-                    }
-                )
-
-                logger.info("片段 %s ASR 成功: %d 个字符", clip_id, len(asr_text))
-
+                logger.info("处理片段 %d/%d: %s", idx + 1, len(clips), clip_id)
+                async with sem:
+                    audio_path = await asyncio.to_thread(splitter.extract_audio, clip_path)
+                    asr_text = await asyncio.to_thread(asr_instance.transcribe, audio_path)
+                return {
+                    "clip_id": clip_id,
+                    "status": "success",
+                    "asr_text": asr_text,
+                    "text_length": len(asr_text),
+                    "text": asr_text[:100] + "..." if len(asr_text) > 100 else asr_text,
+                }
             except Exception as e:
                 logger.error("片段 %s ASR 失败: %s", clip_id, e)
-                results.append(
-                    {
-                        "clip_id": clip_id,
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
+                return {"clip_id": clip_id, "status": "error", "error": str(e)}
 
-        # 提交数据库更改
+        results = await asyncio.gather(*[_process_one(i, clip) for i, clip in enumerate(clips)])
+
+        # 写库：串行更新，避免并发写同一连接
+        for r in results:
+            if r.get("status") == "success":
+                await db.execute(
+                    "UPDATE clips SET asr_text = ? WHERE id = ?",
+                    (r.get("asr_text", ""), r["clip_id"]),
+                )
         await db.commit()
 
         return {

@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from fastapi import APIRouter, HTTPException
 
 from app.core.embedder import Embedder
@@ -29,8 +30,20 @@ async def _get_embedder_and_db():
         base_url = await get_cfg("embedding_base_url", "https://api.openai.com/v1")
         model = await get_cfg("embedding_model", "text-embedding-3-small")
         dimension = int(await get_cfg("vector_dimension", "1536"))
+        concurrency_raw = await get_cfg("embedding_concurrency", "3")
     finally:
         await db.close()
+
+    def _parse_positive_int(raw: str, default: int, min_v: int = 1, max_v: int = 64) -> int:
+        try:
+            v = int(str(raw or "").strip())
+        except Exception:
+            v = default
+        v = max(min_v, v)
+        v = min(max_v, v)
+        return v
+
+    concurrency = _parse_positive_int(concurrency_raw, default=3, min_v=1, max_v=16)
 
     if not api_key:
         raise HTTPException(status_code=400, detail="Embedding API Key 未配置，请在设置页面配置 embedding_api_key")
@@ -41,7 +54,7 @@ async def _get_embedder_and_db():
     if _vector_db is None:
         _vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=dimension)
 
-    return _embedder, _vector_db
+    return _embedder, _vector_db, concurrency
 
 
 @router.post("/{video_id}/process-embed")
@@ -69,28 +82,37 @@ async def process_embed(video_id: str):
     finally:
         await db.close()
 
-    embedder, vector_db = await _get_embedder_and_db()
+    embedder, vector_db, concurrency = await _get_embedder_and_db()
 
     results = []
-    for i, clip in enumerate(clips):
-        clip_id = clip["id"]
-        asr_text = clip["asr_text"] or ""
-        vlm_desc = clip["vlm_description"] or ""
+    logger.info("开始处理 %d 个片段的 Embedding (concurrency=%d)", len(clips), concurrency)
+
+    sem = asyncio.Semaphore(concurrency)
+    add_lock = asyncio.Lock()
+
+    async def _process_one(idx: int, clip_row):
+        clip_id = clip_row["id"]
+        asr_text = clip_row["asr_text"] or ""
+        vlm_desc = clip_row["vlm_description"] or ""
         text = (asr_text + " " + vlm_desc).strip()
 
         if not text:
             logger.warning("片段 %s 没有文本内容，跳过", clip_id)
-            results.append({"clip_id": clip_id, "status": "skipped", "reason": "无文本内容"})
-            continue
+            return {"clip_id": clip_id, "status": "skipped", "reason": "无文本内容"}
 
         try:
-            logger.info("处理片段 %d/%d: %s", i + 1, len(clips), clip_id)
-            embedding = embedder.embed(text)
-            vector_db.add_embedding(clip_id, embedding)
-            results.append({"clip_id": clip_id, "status": "success", "text_length": len(text)})
+            logger.info("处理片段 %d/%d: %s", idx + 1, len(clips), clip_id)
+            async with sem:
+                embedding = await asyncio.to_thread(embedder.embed, text)
+            # Faiss 写入通常非线程安全，串行化写入
+            async with add_lock:
+                await asyncio.to_thread(vector_db.add_embedding, clip_id, embedding)
+            return {"clip_id": clip_id, "status": "success", "text_length": len(text)}
         except Exception as e:
             logger.error("片段 %s Embedding 失败: %s", clip_id, e)
-            results.append({"clip_id": clip_id, "status": "error", "error": str(e)})
+            return {"clip_id": clip_id, "status": "error", "error": str(e)}
+
+    results = await asyncio.gather(*[_process_one(i, clip) for i, clip in enumerate(clips)])
 
     return {
         "video_id": video_id,

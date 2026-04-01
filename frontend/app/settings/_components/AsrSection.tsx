@@ -3,7 +3,7 @@
 import { ASR_PROVIDERS, ASR_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
-import { Save } from 'lucide-react'
+import { Save, Info } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
 
 interface Props {
@@ -22,6 +22,7 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
   const v = (k: string) => edits[k] ?? config[k]?.value ?? ''
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = ASR_KEYS.some((k) => isDirty(k) && config[k])
+  const concurrency = Math.max(1, parseInt(v('asr_concurrency') || '1', 10) || 1)
 
   const Row = ({ cfgKey, label, type = 'text', placeholder = '' }: { cfgKey: string; label: string; type?: string; placeholder?: string }) => (
     <div className="space-y-1.5">
@@ -103,6 +104,31 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
           </>
         )}
 
+        <div className="border-t border-slate-800/70 pt-2" />
+        <p className="text-xs font-medium text-slate-500 -mt-1">并发控制</p>
+        {config.asr_concurrency && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-400 flex items-center gap-1">
+              并发数量
+              <span title="同时并行处理 ASR 的片段数量" className="text-slate-600 cursor-help"><Info className="w-3 h-3" /></span>
+            </label>
+            <div className="flex gap-2 items-center">
+              <div className="flex-1 flex items-center gap-3">
+                <input type="range" min={1} max={16} step={1} value={concurrency}
+                  onChange={(e) => onSet('asr_concurrency', e.target.value)}
+                  className="flex-1 accent-indigo-500 cursor-pointer" />
+                <input type="number" min={1} max={16} step={1} value={v('asr_concurrency')}
+                  onChange={(e) => onSet('asr_concurrency', e.target.value)}
+                  className="w-16 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono text-center" />
+              </div>
+              <SaveBtn dirty={isDirty('asr_concurrency')} saving={!!saving['asr_concurrency']} saved={!!saved['asr_concurrency']} onSave={() => onSave('asr_concurrency')} />
+            </div>
+            <p className="text-xs text-slate-500">
+              当前并发 <span className="text-indigo-400 font-medium">{concurrency}</span> 个片段同时转写
+              {concurrency >= 8 && <span className="text-amber-400 ml-1.5">· 注意 CPU/显存与 API 速率限制</span>}
+            </p>
+          </div>
+        )}
       </div>
     </section>
   )

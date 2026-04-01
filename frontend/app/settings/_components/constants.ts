@@ -43,7 +43,7 @@ export const ASR_PROVIDERS: ProviderPreset[] = [
 
 export const VLM_KEYS  = ['vlm_base_url', 'vlm_api_key', 'vlm_model', 'vlm_provider', 'vlm_context_length', 'vlm_max_images_per_batch', 'vlm_concurrency']
 export const LLM_KEYS  = ['llm_base_url', 'llm_api_key', 'llm_model', 'llm_temperature', 'llm_max_tokens', 'llm_max_context_tokens', 'llm_concurrency']
-export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'vector_dimension', 'top_k', 'match_top_k', 'match_top_n']
+export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'embedding_concurrency', 'vector_dimension', 'top_k', 'match_top_k', 'match_top_n']
 export const VIDEO_KEYS = [
   'split_mode',
   'fixed_duration',
@@ -64,13 +64,15 @@ export const VIDEO_KEYS = [
   'clip_scale_height',
   'clip_pix_fmt',
 ]
-export const ASR_KEYS  = ['asr_provider', 'asr_model', 'asr_base_url', 'asr_api_key', 'asr_openai_model']
+export const ASR_KEYS  = ['asr_provider', 'asr_model', 'asr_base_url', 'asr_api_key', 'asr_openai_model', 'asr_concurrency']
 export const TTS_KEYS  = [
   'tts_provider',
   // edge-tts
   'tts_voice', 'tts_rate', 'tts_volume',
   // openai / bailian (openai-compatible)
   'tts_base_url', 'tts_api_key', 'tts_model', 'tts_format',
+  // concurrency
+  'tts_concurrency',
   // bailian
   'bailian_app_key',
   // volcengine

@@ -893,7 +893,35 @@ async def _segments_from_plan(
     - 若 selected_clip_ids 无效，则按 segment 时间窗自动回退到最接近的素材片段
     """
     seg_inputs: List[SubtitleSegmentInput] = []
-    for seg in plan.segments:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT value FROM config WHERE key = ?", ("tts_concurrency",)) as cur:
+            row = await cur.fetchone()
+        tts_concurrency_raw = (row["value"] if row else "3") if isinstance(row, aiosqlite.Row) else (row[0] if row else "3")
+
+    def _parse_positive_int(raw: str, default: int, min_v: int = 1, max_v: int = 64) -> int:
+        try:
+            v = int(str(raw or "").strip())
+        except Exception:
+            v = default
+        v = max(min_v, v)
+        v = min(max_v, v)
+        return v
+
+    tts_concurrency = _parse_positive_int(str(tts_concurrency_raw), default=3, min_v=1, max_v=16)
+    sem = asyncio.Semaphore(tts_concurrency)
+
+    async def _maybe_tts(seg: SegmentPlan) -> Optional[str]:
+        if seg.audio_mode != "tts" or not seg.subtitle or not seg.subtitle.text:
+            return None
+        async with sem:
+            tts_req = SynthesizeRequest(text=seg.subtitle.text)
+            tts_res: SynthesizeResponse = await tts_synthesize(tts_req)
+            return tts_res.filename
+
+    tts_filenames = await asyncio.gather(*[_maybe_tts(seg) for seg in plan.segments])
+
+    for seg, tts_filename in zip(plan.segments, tts_filenames):
         selected_valid = [cid for cid in seg.selected_clip_ids if cid in valid_clip_ids]
         group_valid = [ref.clip_id for ref in seg.clip_group if ref.clip_id in valid_clip_ids]
         preferred_video_ids = list(
@@ -913,13 +941,6 @@ async def _segments_from_plan(
         if not primary_clip:
             logger.warning("segment %s 缺少可用 clip，跳过", seg.id)
             continue
-
-        tts_filename: Optional[str] = None
-        if seg.audio_mode == "tts" and seg.subtitle and seg.subtitle.text:
-            # 直接调用 TTS 接口生成语音文件
-            tts_req = SynthesizeRequest(text=seg.subtitle.text)
-            tts_res: SynthesizeResponse = await tts_synthesize(tts_req)
-            tts_filename = tts_res.filename
 
         seg_inputs.append(
             SubtitleSegmentInput(

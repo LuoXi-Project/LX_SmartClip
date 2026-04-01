@@ -4,7 +4,7 @@ import { TTS_PROVIDERS, TTS_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save } from 'lucide-react'
+import { Save, Info } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
 
 interface Props {
@@ -23,6 +23,7 @@ export function TtsSection({ config, edits, saving, saved, ttsProvider, onSet, o
   const v = (k: string) => edits[k] ?? config[k]?.value ?? ''
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = TTS_KEYS.some((k) => isDirty(k) && config[k])
+  const concurrency = Math.max(1, parseInt(v('tts_concurrency') || '3', 10) || 3)
 
   const Row = ({ cfgKey, label, type = 'text', placeholder = '' }: { cfgKey: string; label: string; type?: string; placeholder?: string }) => (
     <div className="space-y-1.5">
@@ -156,6 +157,31 @@ export function TtsSection({ config, edits, saving, saved, ttsProvider, onSet, o
           )}
         </>)}
 
+        <div className="border-t border-slate-800/70 pt-2" />
+        <p className="text-xs font-medium text-slate-500 -mt-1">并发控制</p>
+        {config.tts_concurrency && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-400 flex items-center gap-1">
+              并发数量
+              <span title="同时并行合成语音（TTS）的任务数量" className="text-slate-600 cursor-help"><Info className="w-3 h-3" /></span>
+            </label>
+            <div className="flex gap-2 items-center">
+              <div className="flex-1 flex items-center gap-3">
+                <input type="range" min={1} max={16} step={1} value={concurrency}
+                  onChange={(e) => onSet('tts_concurrency', e.target.value)}
+                  className="flex-1 accent-indigo-500 cursor-pointer" />
+                <input type="number" min={1} max={16} step={1} value={v('tts_concurrency')}
+                  onChange={(e) => onSet('tts_concurrency', e.target.value)}
+                  className="w-16 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono text-center" />
+              </div>
+              <SaveBtn dirty={isDirty('tts_concurrency')} saving={!!saving['tts_concurrency']} saved={!!saved['tts_concurrency']} onSave={() => onSave('tts_concurrency')} />
+            </div>
+            <p className="text-xs text-slate-500">
+              当前并发 <span className="text-indigo-400 font-medium">{concurrency}</span> 个任务同时合成
+              {concurrency >= 8 && <span className="text-amber-400 ml-1.5">· 注意 API 速率限制</span>}
+            </p>
+          </div>
+        )}
       </div>
     </section>
   )

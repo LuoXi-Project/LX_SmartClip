@@ -49,7 +49,9 @@ $SpecDir = Join-Path $WorkDir "spec"
 $PyinstallerDistDir = Join-Path $WorkDir "pyinstaller_dist"
 $BackendOutDir = Join-Path $DistDir "backend"
 
-$AppName = "洛曦智剪"
+$AppName = "lx_smartclip_backend"
+# PyInstaller 的 --name 会参与 build 子目录/产物目录命名；为避免 Unicode 路径在部分环境下异常，这里用英文内部名
+$PyinstallerName = "lx_smartclip_backend"
 
 $SecretPy = Join-Path $BackendDir "secret.py"
 $ConfigJson = Join-Path $BackendDir "config.json"
@@ -205,7 +207,7 @@ try {
             "--noconfirm",
             "--clean",
             "--onedir",
-            "--name", $AppName,
+            ("--name=" + $PyinstallerName),
             "--distpath", $PyinstallerDistDir,
             "--workpath", $BuildDir,
             "--specpath", $SpecDir,
@@ -223,13 +225,20 @@ try {
     Pop-Location
 }
 
-$ProducedDir = Join-Path $PyinstallerDistDir $AppName
+$ProducedDir = Join-Path $PyinstallerDistDir $PyinstallerName
 if (-not (Test-Path $ProducedDir)) {
     throw "未找到 PyInstaller 产物目录: $ProducedDir"
 }
 
 Write-Host "[backend] 导出到 dist/backend ..."
 Copy-Item -Path (Join-Path $ProducedDir "*") -Destination $BackendOutDir -Recurse -Force
+
+# 产物重命名为中文可执行文件名（便于用户识别）
+$ProducedExe = Join-Path $BackendOutDir ($PyinstallerName + ".exe")
+$TargetExe = Join-Path $BackendOutDir ($AppName + ".exe")
+if (Test-Path $ProducedExe) {
+    Move-Item -Path $ProducedExe -Destination $TargetExe -Force
+}
 
 # 将 config.json 放到可执行文件同级目录，便于读写/修改（运行时 secret.get_config 会优先读取此处）
 if (Test-Path $ConfigJson) {

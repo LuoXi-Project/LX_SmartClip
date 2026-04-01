@@ -39,8 +39,16 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
       {/* header toggle */}
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(o => !o)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setOpen(o => !o)
+          }
+        }}
         className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-slate-800/40 transition-colors"
       >
         <Subtitles className="w-4 h-4 text-cyan-400 shrink-0" />
@@ -70,7 +78,7 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
           }`} />
         </button>
         {open ? <ChevronUp className="w-4 h-4 text-slate-500 ml-2" /> : <ChevronDown className="w-4 h-4 text-slate-500 ml-2" />}
-      </button>
+      </div>
 
       {open && (
         <div className="px-5 pb-5 space-y-5 border-t border-slate-800">

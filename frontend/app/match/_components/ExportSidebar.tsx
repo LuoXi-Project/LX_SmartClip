@@ -12,6 +12,8 @@ export function ExportSidebar({
   onToggleSubtitle,
   srtReady,
   generatingSrt,
+  /** 自动一键成片（实验）：隐藏手动匹配进度条、导出格式与底部手动导出 */
+  matchMode = 'manual',
 }: {
   segments: Segment[]
   exportMode: ExportMode
@@ -23,6 +25,7 @@ export function ExportSidebar({
   onToggleSubtitle: (v: boolean) => void
   srtReady: boolean
   generatingSrt: boolean
+  matchMode?: 'manual' | 'auto'
 }) {
   const readySegs  = segments.filter((s) => s.clips.length > 0)
   const matchedCount = readySegs.length
@@ -47,35 +50,39 @@ export function ExportSidebar({
         <p className="text-xs font-semibold text-slate-300 uppercase tracking-widest">导出成片</p>
       </div>
 
-      {/* progress */}
-      <div className="px-5 py-4 space-y-3 border-b border-slate-800">
-        <StatRow label="总段落"  value={totalCount} total={totalCount} color="slate"  />
-        <StatRow label="已匹配"  value={matchedCount}  total={totalCount} color="indigo" />
-        <StatRow label={audioReadyLabel} value={audioReadyCount} total={totalCount} color="violet" />
-      </div>
+      {/* progress — 手动匹配专用；实验模式进度在主工作区 */}
+      {matchMode === 'manual' && (
+        <div className="px-5 py-4 space-y-3 border-b border-slate-800">
+          <StatRow label="总段落"  value={totalCount} total={totalCount} color="slate"  />
+          <StatRow label="已匹配"  value={matchedCount}  total={totalCount} color="indigo" />
+          <StatRow label={audioReadyLabel} value={audioReadyCount} total={totalCount} color="violet" />
+        </div>
+      )}
 
-      {/* mode toggle */}
-      <div className="px-5 py-4 space-y-2 border-b border-slate-800">
-        <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-3">导出格式</p>
-        {(Object.entries(modeLabel) as [ExportMode, typeof modeLabel[ExportMode]][]).map(([mode, cfg]) => (
-          <button
-            key={mode}
-            onClick={() => setExportMode(mode)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm transition-colors ${
-              exportMode === mode ? cfg.active : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600'
-            }`}
-          >
-            <span className="text-lg leading-none">{cfg.icon}</span>
-            <div className="text-left">
-              <p className="text-xs font-medium">{cfg.title}</p>
-              <p className="text-[10px] text-slate-500 mt-0.5">{cfg.desc}</p>
-            </div>
-          </button>
-        ))}
-      </div>
+      {/* mode toggle — 手动匹配专用；实验自动成片走主面板 realize，不展示此项 */}
+      {matchMode === 'manual' && (
+        <div className="px-5 py-4 space-y-2 border-b border-slate-800">
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-3">导出格式</p>
+          {(Object.entries(modeLabel) as [ExportMode, typeof modeLabel[ExportMode]][]).map(([mode, cfg]) => (
+            <button
+              key={mode}
+              onClick={() => setExportMode(mode)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm transition-colors ${
+                exportMode === mode ? cfg.active : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600'
+              }`}
+            >
+              <span className="text-lg leading-none">{cfg.icon}</span>
+              <div className="text-left">
+                <p className="text-xs font-medium">{cfg.title}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">{cfg.desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* subtitle toggle (shown for subtitle modes) */}
-      {exportMode !== 'zip' && (
+      {/* 添加字幕：实验模式在主内容区「字幕设置」；此处仅服务手动匹配（zip 时隐藏） */}
+      {matchMode === 'manual' && exportMode !== 'zip' && (
         <div className="px-5 py-3 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -107,23 +114,31 @@ export function ExportSidebar({
 
       {/* export button */}
       <div className="px-5 py-5 space-y-3">
-        {exportError && <p className="text-[11px] text-red-400 leading-snug">{exportError}</p>}
-        <button
-          onClick={onExport}
-          disabled={exporting || doneCount === 0}
-          className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
-            exportMode === 'subtitle'
-              ? 'bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600'
-              : 'bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600'
-          }`}
-        >
-          {exporting ? (
-            <><Loader2 className="w-4 h-4 animate-spin" />导出中...</>
-          ) : (
-            <><span>{modeLabel[exportMode].icon}</span> {modeLabel[exportMode].title} ({doneCount}段)</>
-          )}
-        </button>
-        {doneCount === 0 && <p className="text-[10px] text-slate-600 text-center">请先匹配并选择片段</p>}
+        {matchMode === 'auto' ? (
+          <p className="text-[11px] text-slate-500 leading-snug text-center">
+            实验模式请在主工作区方案卡片中点击「一键成片」导出成片。
+          </p>
+        ) : (
+          <>
+            {exportError && <p className="text-[11px] text-red-400 leading-snug">{exportError}</p>}
+            <button
+              onClick={onExport}
+              disabled={exporting || doneCount === 0}
+              className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
+                exportMode === 'subtitle'
+                  ? 'bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600'
+                  : 'bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600'
+              }`}
+            >
+              {exporting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />导出中...</>
+              ) : (
+                <><span>{modeLabel[exportMode].icon}</span> {modeLabel[exportMode].title} ({doneCount}段)</>
+              )}
+            </button>
+            {doneCount === 0 && <p className="text-[10px] text-slate-600 text-center">请先匹配并选择片段</p>}
+          </>
+        )}
       </div>
     </div>
   )

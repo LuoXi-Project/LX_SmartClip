@@ -223,8 +223,8 @@ export function AutoEditPanel({
               className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
             >
               <option value="auto">自动（智能选择原声/配音）</option>
-              <option value="voiceover">配音为主</option>
-              <option value="original">原声为主</option>
+              <option value="voiceover">配音剪辑</option>
+              <option value="original">原声剪辑</option>
             </select>
           </div>
         </div>
@@ -506,7 +506,7 @@ export function AutoEditPanel({
                   <div>
                     <p className="text-sm font-semibold text-slate-100 truncate">{p.title || `方案 ${idx + 1}`}</p>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      模式：{p.mode === 'auto' ? '自动' : p.mode === 'voiceover' ? '配音为主' : '原声为主'}
+                      模式：{p.mode === 'auto' ? '自动' : p.mode === 'voiceover' ? '配音剪辑' : '原声剪辑'}
                     </p>
                   </div>
                   <div className="text-right text-[11px] text-slate-500 space-y-0.5">

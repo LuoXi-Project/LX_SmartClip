@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertCircle, Loader2,
@@ -150,11 +150,12 @@ export default function MatchPage() {
     return () => window.clearInterval(timer)
   }, [autoLoading, autoPlanStartedAt])
 
-  useEffect(() => {
+  // 必须在 layout 阶段恢复：若放在 useEffect，紧随其后的持久化 effect 仍读到初始空状态，会覆盖 localStorage。
+  useLayoutEffect(() => {
     restoreAutoEditCache()
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (mode !== 'auto') return
     // 每次切回自动成片面板时重新恢复一次缓存，避免误切换后状态看起来“丢失”。
     restoreAutoEditCache()
@@ -556,6 +557,7 @@ export default function MatchPage() {
         exporting={exporting} exportError={exportError} onExport={handleExport}
         subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
         srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
+        matchMode={mode}
       />
       <div className="pr-64">
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
@@ -641,13 +643,14 @@ export default function MatchPage() {
               }}
             />
           )}
-          {exportMode !== 'zip' && segments.length > 0 && (
+          {/* 实验自动成片：与 exportMode/段落数无关，主区需保留字幕开关与样式（realize 烧录用） */}
+          {(mode === 'auto' || (exportMode !== 'zip' && segments.length > 0)) && (
             <SubtitlePanel
               style={subtitleStyle} onChange={setSubtitleStyle}
-              entries={exportMode === 'subtitle' ? srtEntries : []}
+              entries={mode === 'auto' ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
               enabled={subtitleEnabled}
               onToggle={setSubtitleEnabled}
-              timingSource={exportMode === 'subtitle' ? timingSource : ''}
+              timingSource={mode === 'auto' ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
               previewVideoSize={previewVideoSize}
             />
           )}

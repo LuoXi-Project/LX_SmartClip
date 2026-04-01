@@ -157,15 +157,34 @@ def get_mac_address():
 
     return None
 
-# 读取配置文件（与 secret.py 同目录下的 config.json，避免受进程 cwd 影响）
+# 读取配置文件（源码运行：与 secret.py 同目录；打包运行：优先 exe 同目录）
 def get_config():
     import os
+    import sys
 
-    root = os.path.abspath(os.path.dirname(__file__))
-    config_file = os.path.join(root, "config.json")
-    if os.path.exists(config_file):
-        with open(config_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+    candidates: list[str] = []
+
+    # PyInstaller/冻结环境：允许用户在 exe 同目录放置可编辑 config.json
+    if getattr(sys, "frozen", False):
+        try:
+            exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+            candidates.append(os.path.join(exe_dir, "config.json"))
+        except Exception:
+            pass
+
+    # 源码运行/兜底：与 secret.py 同目录（避免受进程 cwd 影响）
+    candidates.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), "config.json"))
+
+    for config_file in candidates:
+        try:
+            if os.path.exists(config_file):
+                with open(config_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except PermissionError as e:
+            logger.error("读取 config.json 失败（权限不足）: %s (%s)", config_file, e)
+        except Exception as e:
+            logger.error("读取 config.json 失败: %s (%s)", config_file, e)
+
     return {}
 
 

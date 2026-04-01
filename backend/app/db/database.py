@@ -1,4 +1,4 @@
-﻿import aiosqlite
+import aiosqlite
 import os
 from typing import AsyncGenerator
 

@@ -49,6 +49,9 @@ $SpecDir = Join-Path $WorkDir "spec"
 $PyinstallerDistDir = Join-Path $WorkDir "pyinstaller_dist"
 $BackendOutDir = Join-Path $DistDir "backend"
 
+$SecretPy = Join-Path $BackendDir "secret.py"
+$ConfigJson = Join-Path $BackendDir "config.json"
+
 $VenvPythonCandidates = @(
     (Join-Path $Root "venv\\Scripts\\python.exe"),
     (Join-Path $BackendDir "venv\\Scripts\\python.exe")
@@ -125,7 +128,8 @@ try {
         "-r",
         "-O", $ObfDir,
         "start_backend.py",
-        "app"
+        "app",
+        "secret.py"
     )
     & $Py @PyarmorArgs
     if ($LASTEXITCODE -ne 0) { throw "PyArmor 加密失败" }
@@ -142,6 +146,7 @@ try {
         if (Test-Path $FrontendStatic) { $AddData += @("--add-data", "$FrontendStatic;app/static/frontend") }
         if (Test-Path $StorageDir) { $AddData += @("--add-data", "$StorageDir;storage") }
         if (Test-Path $DataDir) { $AddData += @("--add-data", "$DataDir;data") }
+        if (Test-Path $ConfigJson) { $AddData += @("--add-data", "$ConfigJson;config.json") }
 
         $CollectSubmodules = @(
             "uvicorn"
@@ -185,6 +190,7 @@ try {
             "app.main"
             "uvicorn.main"
             "uvicorn.__main__"
+            "secret"
         )
 
         $ForceCollectArgs = @()
@@ -222,6 +228,11 @@ if (-not (Test-Path $ProducedDir)) {
 
 Write-Host "[backend] 导出到 dist/backend ..."
 Copy-Item -Path (Join-Path $ProducedDir "*") -Destination $BackendOutDir -Recurse -Force
+
+# 将 config.json 放到可执行文件同级目录，便于读写/修改（运行时 secret.get_config 会优先读取此处）
+if (Test-Path $ConfigJson) {
+    Copy-Item -Path $ConfigJson -Destination (Join-Path $BackendOutDir "config.json") -Force
+}
 
 Write-Host ""
 Write-Host "后端构建完成（PyArmor + PyInstaller）：$BackendOutDir"

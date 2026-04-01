@@ -1,4 +1,4 @@
-﻿"""LLM 配置管理工具"""
+"""LLM 配置管理工具"""
 import logging
 from typing import Optional
 import aiosqlite

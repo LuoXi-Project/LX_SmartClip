@@ -7,6 +7,7 @@ from app.db.database import get_db_conn, DB_PATH
 from app.core.splitter import VideoSplitter
 from app.core.embedder import Embedder
 from app.core.vector_db.faiss_db import FaissVectorDB
+from app.core.license import ensure_license_valid, is_license_enforced
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +366,9 @@ async def process_video_ws(video_id: str, ws: WebSocket):
     客户端可在连接后发送: {"skip_steps": ["vlm", "embed"]}
     """
     await ws.accept()
+    if is_license_enforced() and not await ensure_license_valid():
+        await ws.close(code=1008, reason="LICENSE_REQUIRED")
+        return
     reporter = ProgressReporter(ws=ws)
 
     skip_steps = []

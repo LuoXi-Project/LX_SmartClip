@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
+_CONFIG_EXCLUDE_KEYS = frozenset({"license_card"})
+
 
 class ConfigUpdate(BaseModel):
     key: str
@@ -30,6 +32,7 @@ async def get_config():
                 "options": row["options"],
             }
             for row in rows
+            if row["key"] not in _CONFIG_EXCLUDE_KEYS
         }
     finally:
         await db.close()
@@ -47,6 +50,11 @@ async def update_config(body: ConfigUpdate):
         if row is None:
             raise HTTPException(
                 status_code=404, detail=f"Config key '{body.key}' not found"
+            )
+        if body.key in _CONFIG_EXCLUDE_KEYS:
+            raise HTTPException(
+                status_code=403,
+                detail="该配置项请使用 /api/license 接口管理",
             )
         # 执行更新
         await db.execute(

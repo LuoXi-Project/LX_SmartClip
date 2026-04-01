@@ -26,6 +26,8 @@ from app.api.copy_gen import router as copy_gen_router
 from app.api.subtitle import router as subtitle_router
 from app.api.auto_edit import router as auto_edit_router
 from app.api.bgm import router as bgm_router
+from app.api.license import router as license_router
+from app.middleware.license_middleware import LicenseMiddleware
 
 
 @asynccontextmanager
@@ -36,6 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LX SmartClip API", version="0.1.0", lifespan=lifespan)
 
+app.add_middleware(LicenseMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -46,6 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(license_router)
 app.include_router(config_router)
 app.include_router(videos_router)
 app.include_router(clips_router)

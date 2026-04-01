@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import './globals.css'
 import AIChatPanel from './_components/AIChatPanel'
+import { LicenseGate } from './_components/LicenseGate'
 import { ToastProvider } from '@/components/ui/toast-provider'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 
@@ -26,11 +27,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/tts" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">TTS 配音</Link>
             <Link href="/bgm" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">BGM 音乐库</Link>
             <Link href="/settings" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">设置</Link>
+            <Link href="/license" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">卡密</Link>
           </div>
         </nav>
         <ToastProvider>
           <ConfirmProvider>
-            <div className="pt-12">{children}</div>
+            <div className="pt-12">
+              <LicenseGate>{children}</LicenseGate>
+            </div>
             <AIChatPanel />
           </ConfirmProvider>
         </ToastProvider>

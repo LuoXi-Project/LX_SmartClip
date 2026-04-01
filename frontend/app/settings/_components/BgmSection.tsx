@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { bgmApi, type BgmTrack } from '@/lib/api'
 import Link from 'next/link'
 import { Music2, UploadCloud, Trash2, Save, RefreshCcw, ExternalLink } from 'lucide-react'
+import { BgmMiniPlayer } from './BgmMiniPlayer'
 
 const BGM_TAG_OPTIONS = [
   '搞笑', '轻快', '欢乐', '活泼', '治愈', '舒缓', '安静', '温柔',
@@ -320,9 +321,11 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
                           })}
                         </div>
                       </div>
-                      <audio controls src={t.url} className="w-full md:w-52 h-8 mt-1.5 md:mt-0">
-                        您的浏览器不支持 audio 播放。
-                      </audio>
+                      <BgmMiniPlayer
+                        src={t.url}
+                        downloadFilename={t.filename}
+                        className="w-full md:min-w-[min(100%,380px)] md:max-w-lg mt-1.5 md:mt-0"
+                      />
                     </div>
                     <p className="text-[10px] text-slate-500 break-all">
                       文件名：<span className="font-mono text-slate-400">{t.filename}</span>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Loader2, Settings2, AlertCircle, ChevronUp, Music2, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Loader2, Settings2, AlertCircle, ChevronUp } from 'lucide-react'
 import apiClient from '@/lib/api'
 import type { ConfigMap, ProviderPreset } from './_components/types'
 import { VLM_PROVIDERS, LLM_PROVIDERS, EMBEDDING_PROVIDERS } from './_components/constants'

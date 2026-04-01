@@ -1,0 +1,108 @@
+/* react-h5-audio-player 暗色主题，与 BGM 设置区 slate/indigo 一致 */
+
+.bgm-rhap-player.rhap_container {
+  background-color: rgb(2 6 23 / 0.55);
+  box-shadow: none;
+  border: 1px solid rgb(51 65 85 / 0.85);
+  border-radius: 0.75rem;
+  padding: 0.45rem 0.6rem;
+  width: 100%;
+}
+
+.bgm-rhap-player .rhap_header {
+  margin-bottom: 6px;
+}
+
+.bgm-rhap-player .rhap_stacked .rhap_controls-section {
+  margin-top: 6px;
+}
+
+.bgm-rhap-player .rhap_time {
+  color: rgb(148 163 184);
+  font-size: 12px;
+}
+
+.bgm-rhap-player .rhap_progress-container {
+  margin: 0 8px;
+  height: 18px;
+}
+
+.bgm-rhap-player .rhap_progress-bar {
+  background-color: rgb(51 65 85 / 0.65);
+  height: 5px;
+}
+
+.bgm-rhap-player .rhap_progress-bar-show-download {
+  background-color: rgb(30 41 59 / 0.45);
+}
+
+.bgm-rhap-player .rhap_download-progress {
+  background-color: rgb(71 85 105 / 0.35);
+}
+
+.bgm-rhap-player .rhap_progress-filled {
+  background-color: rgb(129 140 248);
+}
+
+.bgm-rhap-player .rhap_progress-indicator {
+  background-color: rgb(165 180 252);
+  box-shadow: 0 0 0 1px rgb(15 23 42 / 0.6);
+  width: 16px;
+  height: 16px;
+  top: -6px;
+  margin-left: -8px;
+}
+
+.bgm-rhap-player .rhap_additional-controls {
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.bgm-rhap-player .rhap_main-controls-button {
+  margin: 0 2px;
+  color: rgb(165 180 252);
+  font-size: 28px;
+  width: 30px;
+  height: 30px;
+}
+
+.bgm-rhap-player .rhap_play-pause-button {
+  color: rgb(129 140 248);
+  font-size: 36px;
+  width: 38px;
+  height: 38px;
+}
+
+.bgm-rhap-player .rhap_repeat-button {
+  color: rgb(148 163 184);
+  font-size: 22px;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+}
+
+.bgm-rhap-player .rhap_repeat-button:hover {
+  color: rgb(196 181 253);
+}
+
+.bgm-rhap-player .rhap_volume-button {
+  color: rgb(148 163 184);
+  font-size: 22px;
+  width: 26px;
+  height: 26px;
+}
+
+.bgm-rhap-player .rhap_volume-bar {
+  background-color: rgb(51 65 85 / 0.65);
+  height: 4px;
+}
+
+.bgm-rhap-player .rhap_volume-filled,
+.bgm-rhap-player .rhap_volume-indicator {
+  background-color: rgb(129 140 248);
+}
+
+.bgm-rhap-player .rhap_volume-container {
+  flex: 0 1 88px;
+}

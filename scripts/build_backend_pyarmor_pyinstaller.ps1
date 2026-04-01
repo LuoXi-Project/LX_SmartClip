@@ -49,6 +49,8 @@ $SpecDir = Join-Path $WorkDir "spec"
 $PyinstallerDistDir = Join-Path $WorkDir "pyinstaller_dist"
 $BackendOutDir = Join-Path $DistDir "backend"
 
+$AppName = "洛曦智剪"
+
 $SecretPy = Join-Path $BackendDir "secret.py"
 $ConfigJson = Join-Path $BackendDir "config.json"
 
@@ -203,7 +205,7 @@ try {
             "--noconfirm",
             "--clean",
             "--onedir",
-            "--name", "lx_smartclip_backend",
+            "--name", $AppName,
             "--distpath", $PyinstallerDistDir,
             "--workpath", $BuildDir,
             "--specpath", $SpecDir,
@@ -221,7 +223,7 @@ try {
     Pop-Location
 }
 
-$ProducedDir = Join-Path $PyinstallerDistDir "lx_smartclip_backend"
+$ProducedDir = Join-Path $PyinstallerDistDir $AppName
 if (-not (Test-Path $ProducedDir)) {
     throw "未找到 PyInstaller 产物目录: $ProducedDir"
 }
@@ -236,6 +238,6 @@ if (Test-Path $ConfigJson) {
 
 Write-Host ""
 Write-Host "后端构建完成（PyArmor + PyInstaller）：$BackendOutDir"
-Write-Host "可执行文件：$(Join-Path $BackendOutDir 'lx_smartclip_backend.exe')"
+Write-Host "可执行文件：$(Join-Path $BackendOutDir ($AppName + '.exe'))"
 Write-Host ""
 

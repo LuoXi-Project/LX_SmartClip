@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
-      <body>
+      <body className="min-h-screen flex flex-col">
         <nav className="fixed top-0 inset-x-0 z-50 border-b border-slate-800 bg-[#0d0f14]/90 backdrop-blur-md">
           <div className="max-w-6xl mx-auto px-6 h-12 flex items-center gap-6">
             <Link href="/" className="text-sm font-bold tracking-tight text-slate-100 hover:text-white transition-colors">
@@ -33,9 +33,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </nav>
         <ToastProvider>
           <ConfirmProvider>
-            <div className="pt-12">
+            <div className="pt-12 flex-1">
               <LicenseGate>{children}</LicenseGate>
             </div>
+            <footer className="border-t border-slate-800 bg-[#0d0f14]">
+              <div className="max-w-6xl mx-auto px-6 py-4 text-xs text-slate-400 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+                <div>© {new Date().getFullYear()} 洛曦</div>
+                <a
+                  href="http://luoxiai.dpdns.org/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  官网：luoxiai.dpdns.org
+                </a>
+              </div>
+            </footer>
             <AIChatPanel />
           </ConfirmProvider>
         </ToastProvider>

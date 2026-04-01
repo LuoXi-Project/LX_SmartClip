@@ -1,9 +1,6 @@
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+from app.utils.logging_utils import setup_logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +28,9 @@ from app.api.auto_edit import router as auto_edit_router
 from app.api.bgm import router as bgm_router
 from app.api.license import router as license_router
 from app.middleware.license_middleware import LicenseMiddleware
+
+
+setup_logging(level=logging.INFO)
 
 
 @asynccontextmanager

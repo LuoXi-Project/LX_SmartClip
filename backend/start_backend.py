@@ -38,7 +38,6 @@ def parse_args() -> argparse.Namespace:
     )
     return p.parse_args()
 
-
 def main() -> None:
     args = parse_args()
 
@@ -56,6 +55,11 @@ def main() -> None:
         Path(args.write_url).parent.mkdir(parents=True, exist_ok=True)
         Path(args.write_url).write_text(base_url, encoding="utf-8")
 
+    # Ensure app logs are colored too (before importing `app.main`).
+    from app.utils.logging_utils import build_uvicorn_log_config, setup_logging
+
+    setup_logging()
+
     import uvicorn
     # Import app directly so Nuitka can see the dependency graph.
     from app.main import app as asgi_app
@@ -66,6 +70,7 @@ def main() -> None:
         port=port,
         reload=bool(args.reload),
         log_level="info",
+        log_config=build_uvicorn_log_config(level="INFO"),
     )
 
 

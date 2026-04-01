@@ -15,6 +15,34 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 _BGM_DIR = os.path.join(_BACKEND_DIR, "storage", "bgm")
 _BGM_MANIFEST_PATH = os.path.join(_BGM_DIR, "bgm_manifest.json")
 _BGM_EXTS = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
+_WIN_INVALID = '<>:"/\\|?*'
+
+
+def _sanitize_bgm_stem(original_filename: str) -> str:
+    """从上传名得到安全的文件主名（不含扩展名），便于在素材目录中辨认。"""
+    base = os.path.basename(original_filename or "").strip()
+    stem = os.path.splitext(base)[0].strip() or "track"
+    for ch in _WIN_INVALID:
+        stem = stem.replace(ch, "_")
+    stem = stem.strip(". \t") or "track"
+    if len(stem) > 180:
+        stem = stem[:180].rstrip(". ")
+    return stem
+
+
+def _unique_storage_filename(stem: str, ext: str) -> str:
+    """在 storage/bgm 下生成不冲突的存储文件名（优先保留 stem + 原扩展名）。"""
+    candidate = f"{stem}{ext}"
+    dest = os.path.join(_BGM_DIR, candidate)
+    if not os.path.isfile(dest):
+        return candidate
+    n = 1
+    while True:
+        candidate = f"{stem} ({n}){ext}"
+        dest = os.path.join(_BGM_DIR, candidate)
+        if not os.path.isfile(dest):
+            return candidate
+        n += 1
 
 
 class BgmTrack(BaseModel):
@@ -146,6 +174,7 @@ async def list_tracks() -> List[BgmTrack]:
 @router.post("/upload", response_model=BgmTrack)
 async def upload_track(
     file: UploadFile = File(...),
+    client_filename: Optional[str] = Form(None),
     title: Optional[str] = Form(None),
     mood: Optional[str] = Form(None),
     bpm: Optional[float] = Form(None),
@@ -153,22 +182,28 @@ async def upload_track(
 ) -> BgmTrack:
     """上传新的 BGM 音频并写入 manifest。"""
     _ensure_dir()
-    ext = os.path.splitext(file.filename or "")[1].lower()
+    name_hint = (file.filename or client_filename or "").strip()
+    if not name_hint:
+        raise HTTPException(status_code=400, detail="无法识别文件名（请检查浏览器 multipart 是否正常）")
+    ext = os.path.splitext(name_hint)[1].lower()
     if ext not in _BGM_EXTS:
         raise HTTPException(status_code=400, detail="不支持的音频格式")
 
-    filename = f"{uuid.uuid4().hex}{ext}"
+    stem = _sanitize_bgm_stem(name_hint)
+    filename = _unique_storage_filename(stem, ext)
     dest = os.path.join(_BGM_DIR, filename)
     content = await file.read()
     with open(dest, "wb") as f:
         f.write(content)
 
     tracks = _build_track_list()
+    # 扫描结果会为刚写入的文件生成一条无 manifest 的临时行，避免与下面 append 重复
+    tracks = [t for t in tracks if t.filename != filename]
     new_id = uuid.uuid4().hex
     tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
     new_track = BgmTrack(
         id=new_id,
-        title=title or os.path.splitext(file.filename or filename)[0],
+        title=title or os.path.splitext(name_hint)[0],
         mood=mood or None,
         bpm=bpm,
         tags=tag_list,

@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { AxiosHeaders, type AxiosRequestHeaders } from 'axios'
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -356,18 +356,35 @@ export interface BgmUpdatePayload {
   tags?: string[]
 }
 
+/** FormData 上传：去掉默认的 application/json/手写 multipart，由浏览器自动带 boundary，否则服务端常拿不到原始 filename。 */
+function formDataPostConfig() {
+  return {
+    transformRequest: [
+      (data: unknown, headers: AxiosRequestHeaders) => {
+        if (data instanceof FormData) {
+          if (headers instanceof AxiosHeaders) {
+            headers.delete('Content-Type')
+          } else if (headers && typeof headers === 'object' && !Array.isArray(headers)) {
+            delete (headers as Record<string, unknown>)['Content-Type']
+          }
+        }
+        return data
+      },
+    ],
+  }
+}
+
 export const bgmApi = {
   list: () => apiClient.get<unknown, BgmTrack[]>('/api/bgm/tracks'),
   upload: (file: File, meta?: { title?: string; mood?: string; bpm?: number; tags?: string[] }) => {
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('client_filename', file.name || '')
     if (meta?.title) formData.append('title', meta.title)
     if (meta?.mood) formData.append('mood', meta.mood)
     if (typeof meta?.bpm === 'number') formData.append('bpm', String(meta.bpm))
     if (meta?.tags?.length) formData.append('tags', meta.tags.join(','))
-    return apiClient.post<unknown, BgmTrack>('/api/bgm/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+    return apiClient.post<unknown, BgmTrack>('/api/bgm/upload', formData, formDataPostConfig())
   },
   update: (id: string, payload: BgmUpdatePayload) =>
     apiClient.patch<unknown, BgmTrack>(`/api/bgm/tracks/${id}`, payload),

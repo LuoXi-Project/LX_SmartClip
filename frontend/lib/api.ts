@@ -1,7 +1,8 @@
 import axios, { AxiosHeaders, type AxiosRequestHeaders } from 'axios'
 
-// 同域：默认使用相对路径，由浏览器自动跟随当前协议/域名/端口
-export const API_BASE_URL = ''
+import { API_BASE_URL } from './runtime-config'
+
+export { API_BASE_URL }
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

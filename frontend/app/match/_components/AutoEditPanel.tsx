@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
+import { API_BASE_URL } from '@/lib/runtime-config'
 import { type AutoPlanStage } from './autoEditTypes'
-import { API_BASE, clipStreamUrl, fmt, videoStreamUrl } from './types'
+import { clipStreamUrl, fmt, videoStreamUrl } from './types'
 
 type AutoEditPanelProps = {
   autoPrompt: string
@@ -121,7 +122,7 @@ export function AutoEditPanel({
     }
     const ac = new AbortController()
     for (const cid of ids) {
-      void fetch(`${API_BASE}/api/videos/clips/${cid}`, { signal: ac.signal })
+      void fetch(`${API_BASE_URL}/api/videos/clips/${cid}`, { signal: ac.signal })
         .then(async (r) => {
           if (!r.ok) return
           const data = (await r.json()) as { video_id: string; start_time: number; end_time: number }

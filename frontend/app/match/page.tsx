@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertCircle, Loader2,
 } from 'lucide-react'
-import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditMode } from '@/lib/api'
+import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { PreviewModal } from './_components/ClipCard'
 import { ExportSidebar } from './_components/ExportSidebar'
@@ -18,7 +18,6 @@ import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 
 const VIDEO_PAGE_SIZE = 9
-const AUTO_EDIT_CACHE_KEY = 'lx-auto-edit-state-v1'
 
 function normalizeAutoPlanStage(stage?: string): AutoPlanStage {
   if (!stage) return 'planning'
@@ -50,6 +49,25 @@ export default function MatchPage() {
     setMatchSubtitleStyle,
     exportMode,
     setMatchExportMode,
+    matchMode: mode,
+    setMatchMode,
+    setMatchSegmentCounter,
+    autoPrompt,
+    setAutoPrompt,
+    autoMode,
+    setAutoMode,
+    autoTargetDuration,
+    setAutoTargetDuration,
+    autoNumPlans,
+    setAutoNumPlans,
+    autoPlans,
+    setAutoPlans,
+    autoRealizeDownloads,
+    setAutoRealizeDownloads,
+    autoExpandedPlanIds,
+    setAutoExpandedPlanIds,
+    autoPlanLogs,
+    setAutoPlanLogs,
   } = useMatchStore()
 
   const setSelectedVideoIds = (fn: string[] | ((prev: string[]) => string[])) =>
@@ -65,7 +83,6 @@ export default function MatchPage() {
   const [videos, setVideos] = useState<Video[]>([])
   const [videoSearch, setVideoSearch] = useState('')
   const [videoPage, setVideoPage] = useState(1)
-  const [counter, setCounter] = useState(0)
   const [previewClip, setPreviewClip] = useState<MatchClip | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegId, setPlayingSegId] = useState<string | null>(null)
@@ -77,21 +94,12 @@ export default function MatchPage() {
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
-  const [mode, setMode] = useState<'manual' | 'auto'>('manual')
 
-  // 自动成片 · 状态
-  const [autoPrompt, setAutoPrompt] = useState('')
-  const [autoMode, setAutoMode] = useState<AutoEditMode>('auto')
-  const [autoTargetDuration, setAutoTargetDuration] = useState<number | ''>(60)
-  const [autoNumPlans, setAutoNumPlans] = useState(3)
+  // 自动成片 · 仅会话态（不持久化）
   const [autoLoading, setAutoLoading] = useState(false)
   const [autoError, setAutoError] = useState('')
-  const [autoPlans, setAutoPlans] = useState<AutoEditPlanApi[]>([])
   const [autoRealizingId, setAutoRealizingId] = useState<string | null>(null)
   const [autoRealizeMsg, setAutoRealizeMsg] = useState('')
-  const [autoRealizeDownloads, setAutoRealizeDownloads] = useState<Record<string, { filename: string; url: string }>>({})
-  const [autoExpandedPlanIds, setAutoExpandedPlanIds] = useState<string[]>([])
-  const [autoPlanLogs, setAutoPlanLogs] = useState<string[]>([])
   const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null)
   const [autoPlanElapsedSec, setAutoPlanElapsedSec] = useState(0)
   const [autoPlanStage, setAutoPlanStage] = useState<AutoPlanStage>('idle')
@@ -103,37 +111,6 @@ export default function MatchPage() {
     planning: 70,
     done: 100,
     failed: 100,
-  }
-
-  function restoreAutoEditCache() {
-    try {
-      const raw = window.localStorage.getItem(AUTO_EDIT_CACHE_KEY)
-      if (!raw) return
-      const cached = JSON.parse(raw) as {
-        autoPrompt?: string
-        autoMode?: AutoEditMode
-        autoTargetDuration?: number | ''
-        autoNumPlans?: number
-        autoPlans?: AutoEditPlanApi[]
-        autoRealizeDownloads?: Record<string, { filename: string; url: string }>
-        autoExpandedPlanIds?: string[]
-        autoPlanLogs?: string[]
-      }
-      if (typeof cached.autoPrompt === 'string') setAutoPrompt(cached.autoPrompt)
-      if (cached.autoMode) setAutoMode(cached.autoMode)
-      if (typeof cached.autoTargetDuration === 'number' || cached.autoTargetDuration === '') {
-        setAutoTargetDuration(cached.autoTargetDuration)
-      }
-      if (typeof cached.autoNumPlans === 'number') setAutoNumPlans(cached.autoNumPlans)
-      if (Array.isArray(cached.autoPlans)) setAutoPlans(cached.autoPlans)
-      if (cached.autoRealizeDownloads && typeof cached.autoRealizeDownloads === 'object') {
-        setAutoRealizeDownloads(cached.autoRealizeDownloads)
-      }
-      if (Array.isArray(cached.autoExpandedPlanIds)) setAutoExpandedPlanIds(cached.autoExpandedPlanIds)
-      if (Array.isArray(cached.autoPlanLogs)) setAutoPlanLogs(cached.autoPlanLogs)
-    } catch {
-      // ignore invalid cache
-    }
   }
 
   function appendAutoPlanLog(message: string) {
@@ -149,46 +126,6 @@ export default function MatchPage() {
     }, 1000)
     return () => window.clearInterval(timer)
   }, [autoLoading, autoPlanStartedAt])
-
-  // 必须在 layout 阶段恢复：若放在 useEffect，紧随其后的持久化 effect 仍读到初始空状态，会覆盖 localStorage。
-  useLayoutEffect(() => {
-    restoreAutoEditCache()
-  }, [])
-
-  useLayoutEffect(() => {
-    if (mode !== 'auto') return
-    // 每次切回自动成片面板时重新恢复一次缓存，避免误切换后状态看起来“丢失”。
-    restoreAutoEditCache()
-  }, [mode])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        AUTO_EDIT_CACHE_KEY,
-        JSON.stringify({
-          autoPrompt,
-          autoMode,
-          autoTargetDuration,
-          autoNumPlans,
-          autoPlans,
-          autoRealizeDownloads,
-          autoExpandedPlanIds,
-          autoPlanLogs,
-        })
-      )
-    } catch {
-      // ignore storage errors
-    }
-  }, [
-    autoPrompt,
-    autoMode,
-    autoTargetDuration,
-    autoNumPlans,
-    autoPlans,
-    autoRealizeDownloads,
-    autoExpandedPlanIds,
-    autoPlanLogs,
-  ])
 
   useEffect(() => {
     apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
@@ -212,7 +149,9 @@ export default function MatchPage() {
     setMatchSegments(useMatchStore.getState().segments.map((s) => s.id === id ? { ...s, ...p } : s))
   }
   function addSegment(text = '') {
-    const id = `seg-${counter}`; setCounter((c) => c + 1)
+    const c = useMatchStore.getState().segmentCounter
+    const id = `seg-${c}`
+    setMatchSegmentCounter(c + 1)
     setMatchSegments([...useMatchStore.getState().segments, makeSeg(id, text)])
   }
   function removeSegment(id: string) { setMatchSegments(useMatchStore.getState().segments.filter((s) => s.id !== id)) }
@@ -223,12 +162,16 @@ export default function MatchPage() {
     if (parts.length <= 1) parts = globalQuery.split(/(?<=[。！？!?])\s*/).map((p) => p.trim()).filter(Boolean)
     if (parts.length <= 1) parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
     if (!parts.length) return
-    setCounter((c) => { setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
+    const c = useMatchStore.getState().segmentCounter
+    setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t)))
+    setMatchSegmentCounter(c + parts.length)
   }
   function handleAiApply(parts: string[]) {
     if (!parts.length) return
     setGlobalQuery(parts.join('\n\n'))
-    setCounter((c) => { setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t))); return c + parts.length })
+    const c = useMatchStore.getState().segmentCounter
+    setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t)))
+    setMatchSegmentCounter(c + parts.length)
   }
 
   async function matchSegment(id: string) {
@@ -561,7 +504,7 @@ export default function MatchPage() {
       />
       <div className="pr-64">
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-          <MatchPageHeader mode={mode} onModeChange={setMode} />
+          <MatchPageHeader mode={mode} onModeChange={setMatchMode} />
           {doneVideos.length === 0 && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />

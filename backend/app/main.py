@@ -74,7 +74,16 @@ if os.path.isdir(_storage_path):
     print(f"挂载路径:{_storage_path}")
     app.mount("/storage", StaticFiles(directory=_storage_path), name="storage")
 
-
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# 挂载前端静态导出目录（scripts/build_release.* 会将 frontend/out 拷贝到此处）
+# 注意：必须放在路由定义之后挂载，避免 mount("/", ...) 抢占诸如 "/health" 这类 API 路由。
+_frontend_dist_path = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "static", "frontend")
+)
+if os.path.isfile(os.path.join(_frontend_dist_path, "index.html")):
+    print(f"挂载前端静态资源: {_frontend_dist_path}")
+    app.mount("/", StaticFiles(directory=_frontend_dist_path, html=True), name="frontend")

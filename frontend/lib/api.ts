@@ -1,6 +1,7 @@
 import axios, { AxiosHeaders, type AxiosRequestHeaders } from 'axios'
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// 同域：默认使用相对路径，由浏览器自动跟随当前协议/域名/端口
+export const API_BASE_URL = ''
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -48,8 +49,9 @@ apiClient.interceptors.response.use(
 
 export default apiClient
 
-const WS_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
-  .replace(/^http/, 'ws')
+const WS_BASE_URL = typeof window !== 'undefined'
+  ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+  : 'ws://localhost:8000'
 
 export function createProcessWebSocket(
   videoId: string,

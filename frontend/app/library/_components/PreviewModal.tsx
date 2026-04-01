@@ -4,8 +4,6 @@ import { X, AlertTriangle } from 'lucide-react'
 import { useEffect } from 'react'
 import type { Video } from '@/lib/store'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
 interface PreviewModalProps {
   video: Video
   hasError: boolean
@@ -59,7 +57,7 @@ export function PreviewModal({ video, hasError, onClose, onError }: PreviewModal
           ) : (
             <video
               key={video.id}
-              src={`${API_BASE_URL}/api/videos/${video.id}/stream`}
+              src={`/api/videos/${video.id}/stream`}
               controls
               autoPlay
               className="w-full max-h-[75vh] object-contain"

@@ -24,3 +24,6 @@ backend/__pycache__/
 .DS_Store
 Thumbs.db
 backend/tmp/1.py
+frontend/app/library/_components/PreviewModal.tsx
+.gitignore
+backend/app/static/frontend/

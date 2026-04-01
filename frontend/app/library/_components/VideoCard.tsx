@@ -4,8 +4,6 @@ import { useState, useRef, useEffect } from 'react'
 import { Trash2, Play, Calendar, Film, Scissors, Pencil, Check, X } from 'lucide-react'
 import type { Video } from '@/lib/store'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   pending: { label: '待处理', cls: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30' },
   processing: { label: '处理中', cls: 'bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30' },
@@ -44,7 +42,7 @@ export function VideoCard({ video, onPreview, onDelete, onRename }: VideoCardPro
   }, [editing])
 
   const thumbnailUrl = !thumbError
-    ? `${API_BASE_URL}/api/videos/${video.id}/thumbnail`
+    ? `/api/videos/${video.id}/thumbnail`
     : null
 
   const formatDuration = (seconds: number | null) => {

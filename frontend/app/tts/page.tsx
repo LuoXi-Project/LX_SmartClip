@@ -7,8 +7,7 @@ import { ttsApi, apiClient, type TTSResponse, type VoiceInfo } from '@/lib/api'
 import type { ConfigMap } from '@/app/settings/_components/types'
 import { useTtsStore, type TtsHistoryItem } from '@/lib/store'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-function buildAudioUrl(f: string) { return `${API_BASE}/api/tts/audio/${f}` }
+function buildAudioUrl(f: string) { return `/api/tts/audio/${f}` }
 
 const RATE_PRESETS = [{label:'很慢',value:'-50%'},{label:'慢',value:'-20%'},{label:'正常',value:'+0%'},{label:'快',value:'+20%'},{label:'很快',value:'+50%'}]
 const VOLUME_PRESETS = [{label:'小',value:'-30%'},{label:'正常',value:'+0%'},{label:'大',value:'+20%'},{label:'最大',value:'+50%'}]

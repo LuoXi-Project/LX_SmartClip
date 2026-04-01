@@ -25,10 +25,12 @@ export interface SRTEntry {
   clip_id: string
 }
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-export const clipStreamUrl = (id: string) => `${API_BASE}/api/videos/clips/${id}/stream`
-export const videoStreamUrl = (id: string) => `${API_BASE}/api/videos/${id}/stream`
-export const audioSrc = (f: string) => `${API_BASE}/api/tts/audio/${f}`
+// 为了兼容现有组件导入：同域默认值（空字符串 => 使用相对路径）
+export const API_BASE = ''
+
+export const clipStreamUrl = (id: string) => `/api/videos/clips/${id}/stream`
+export const videoStreamUrl = (id: string) => `/api/videos/${id}/stream`
+export const audioSrc = (f: string) => `/api/tts/audio/${f}`
 
 export function fmt(s: number) {
   const m = Math.floor(s / 60)

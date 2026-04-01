@@ -80,7 +80,7 @@ export default function Home() {
             )}
 
             <p className="text-sm text-slate-400 mt-4">
-              API 地址: {process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}
+              API 地址: '同域（当前站点）'
             </p>
           </div>
         </div>

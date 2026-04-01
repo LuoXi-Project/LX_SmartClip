@@ -3,8 +3,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { X, Send, Trash2, Sparkles, ChevronDown, Copy, Check } from 'lucide-react'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
 interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -119,7 +117,8 @@ export default function AIChatPanel() {
     abortRef.current = ctrl
 
     try {
-      const res = await fetch(`${API_BASE}/api/chat/completions`, {
+      // 同域：自动跟随浏览器当前的协议/域名/端口
+      const res = await fetch(`/api/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history, stream: true }),

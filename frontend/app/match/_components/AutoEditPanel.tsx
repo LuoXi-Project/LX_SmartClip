@@ -59,6 +59,10 @@ export function AutoEditPanel({
   onRealizePlan,
 }: AutoEditPanelProps) {
   const [expandedPreviewPlanIds, setExpandedPreviewPlanIds] = useState<string[]>([])
+  const [detailPlan, setDetailPlan] = useState<{
+    plan: AutoEditPlanApi
+    index: number
+  } | null>(null)
   const [selectedPreview, setSelectedPreview] = useState<{
     planId: string
     planTitle: string
@@ -76,6 +80,15 @@ export function AutoEditPanel({
   const [clipMetaByClip, setClipMetaByClip] = useState<
     Record<string, { video_id: string; start_time: number; end_time: number }>
   >({})
+
+  useEffect(() => {
+    if (!detailPlan) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDetailPlan(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [detailPlan])
 
   const togglePreviewExpand = (planId: string) => {
     setExpandedPreviewPlanIds((prev) =>
@@ -516,6 +529,19 @@ export function AutoEditPanel({
                     <p>段落：{p.segments?.length ?? 0}</p>
                   </div>
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDetailPlan({ plan: p, index: idx })}
+                    className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
+                    title="查看本方案的字幕、音频模式、片段选择等详情"
+                  >
+                    字幕详情 / 更多信息
+                  </button>
+                  {p.segments?.some((s) => s.subtitle?.text?.trim()) && (
+                    <span className="text-[11px] text-emerald-300/80">含字幕</span>
+                  )}
+                </div>
                 {p.summary && (
                   <div className="space-y-1">
                     <p className={`text-xs text-slate-300 ${autoExpandedPlanIds.includes(p.plan_id) ? '' : 'line-clamp-3'}`}>{p.summary}</p>
@@ -632,6 +658,114 @@ export function AutoEditPanel({
             ))}
           </div>
         </section>
+      )}
+
+      {detailPlan && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="方案详情"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setDetailPlan(null)}
+            aria-label="关闭"
+          />
+          <div className="relative w-full max-w-4xl rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl overflow-hidden">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-100 truncate">
+                  {detailPlan.plan.title || `方案 ${detailPlan.index + 1}`} · 字幕详情 / 更多信息
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  plan_id: {detailPlan.plan.plan_id} · 段落：{detailPlan.plan.segments?.length ?? 0} · 模式：
+                  {detailPlan.plan.mode === 'auto'
+                    ? '自动'
+                    : detailPlan.plan.mode === 'voiceover'
+                      ? '配音剪辑'
+                      : '原声剪辑'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailPlan(null)}
+                className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-300 hover:bg-slate-950/70 flex-shrink-0"
+              >
+                关闭（Esc）
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto px-4 py-3 space-y-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+                <p className="text-[11px] text-slate-400">方案摘要</p>
+                <p className="text-xs text-slate-200 mt-1 whitespace-pre-wrap">
+                  {detailPlan.plan.summary?.trim() ? detailPlan.plan.summary : '（无）'}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+                <p className="text-[11px] text-slate-400">段落明细（字幕/音频/片段选择）</p>
+                <div className="mt-2 space-y-2">
+                  {(detailPlan.plan.segments ?? []).map((s) => {
+                    const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id || ''
+                    const cm = clipId ? clipMetaByClip[clipId] : undefined
+                    const abs0 = cm ? cm.start_time : s.start_time_sec
+                    const abs1 = cm ? cm.end_time : s.end_time_sec
+                    const subtitleText = s.subtitle?.text?.trim() || ''
+                    return (
+                      <div key={s.id} className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-slate-200">
+                            #{s.order} · {fmt(abs0)}–{fmt(abs1)}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                            <span>audio: {s.audio_mode}</span>
+                            <span>clip_id: {clipId || '-'}</span>
+                            {cm?.video_id && <span>video_id: {cm.video_id}</span>}
+                            {s.subtitle?.strategy && <span>subtitle: {s.subtitle.strategy}</span>}
+                            {s.subtitle?.source && <span>source: {s.subtitle.source}</span>}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-2">
+                            <p className="text-[11px] text-slate-400">字幕文本</p>
+                            <p className={`text-xs text-slate-200 mt-1 whitespace-pre-wrap ${subtitleText ? '' : 'text-slate-500'}`}>
+                              {subtitleText || '（无字幕/策略为 none）'}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-2">
+                            <p className="text-[11px] text-slate-400">候选片段</p>
+                            <div className="mt-1 text-[11px] text-slate-300 space-y-1">
+                              <p className="text-slate-400">
+                                selected_clip_ids：
+                                {(s.selected_clip_ids ?? []).length
+                                  ? (s.selected_clip_ids ?? []).join(', ')
+                                  : '（无）'}
+                              </p>
+                              <p className="text-slate-400">
+                                clip_group：{(s.clip_group ?? []).length ? '' : '（无）'}
+                              </p>
+                              {(s.clip_group ?? []).slice(0, 6).map((c) => (
+                                <p key={c.clip_id} className="truncate">
+                                  - {c.clip_id} · video_id: {c.video_id}
+                                  {typeof c.weight === 'number' ? ` · weight: ${c.weight}` : ''}
+                                </p>
+                              ))}
+                              {(s.clip_group ?? []).length > 6 && <p className="text-slate-500">… 其余 {(s.clip_group ?? []).length - 6} 条已省略</p>}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )

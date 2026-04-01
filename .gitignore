@@ -27,3 +27,5 @@ backend/tmp/1.py
 frontend/app/library/_components/PreviewModal.tsx
 .gitignore
 backend/app/static/frontend/
+backend/.runtime/backend_url.txt
+dist/

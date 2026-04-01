@@ -57,9 +57,11 @@ def main() -> None:
         Path(args.write_url).write_text(base_url, encoding="utf-8")
 
     import uvicorn
+    # Import app directly so Nuitka can see the dependency graph.
+    from app.main import app as asgi_app
 
     uvicorn.run(
-        "app.main:app",
+        asgi_app,
         host=host,
         port=port,
         reload=bool(args.reload),

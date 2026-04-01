@@ -382,13 +382,17 @@ async def create_auto_edit_plan_session(req: AutoEditPlanRequest) -> AutoEditPla
 @router.get("/plan/stream")
 async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
     _cleanup_expired_plan_sessions()
-    req = _PLAN_STREAM_SESSIONS.pop(session_id, None)
-    _PLAN_STREAM_CREATED_AT.pop(session_id, None)
+    # 注意：SSE(EventSource) 在网络抖动时会自动重连；如果这里立刻 pop 掉 session，
+    # 重连会直接 404，前端会误以为“转发/连接不正常”。
+    # 因此改为：流结束（或异常结束）后再清理 session。
+    req = _PLAN_STREAM_SESSIONS.get(session_id)
     if req is None:
         raise HTTPException(status_code=404, detail="规划会话不存在或已过期")
 
     async def event_generator():
         try:
+            # 发送一个轻量事件帮助部分代理/浏览器尽快 flush headers
+            yield ": ok\n\n"
             yield _build_sse_event("progress", {"stage": "init", "message": "开始读取模型配置"})
             await asyncio.sleep(0)
             try:
@@ -426,11 +430,19 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
         except Exception as e:
             logger.error("auto_edit stream 未知异常: %s", e)
             yield _build_sse_event("failed", {"message": "生成方案失败"})
+        finally:
+            _PLAN_STREAM_SESSIONS.pop(session_id, None)
+            _PLAN_STREAM_CREATED_AT.pop(session_id, None)
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # 让反向代理不要缓冲 SSE（即使你以后上了 Nginx/Caddy 也更稳）
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -443,6 +455,7 @@ class AutoEditRealizeRequest(BaseModel):
     plan: Plan
     project_name: Optional[str] = None
     include_subtitle: bool = True
+    style: Optional[SubtitleStyle] = None
 
 
 class AutoEditRealizeResponse(BaseModel):
@@ -1005,8 +1018,8 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
 
     project_name = req.project_name or f"auto_edit_{plan.plan_id}"
 
-    # 统一使用默认字幕样式，后续可根据前端传参自定义
-    style = SubtitleStyle()
+    # 字幕样式：优先使用前端传入，否则回退默认值
+    style = req.style or SubtitleStyle()
 
     # voiceover / auto -> 统一走配音管线（若某段未生成 TTS，会回落到 clip 时长）
     if plan.mode in ("auto", "voiceover"):

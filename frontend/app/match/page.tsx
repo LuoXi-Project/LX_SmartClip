@@ -477,6 +477,7 @@ export default function MatchPage() {
         plan,
         project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
         include_subtitle: subtitleEnabled,
+        style: subtitleStyle,
       })
       const downloadUrl = `${API_BASE_URL}${res.url}`
       setAutoRealizeDownloads((prev) => ({

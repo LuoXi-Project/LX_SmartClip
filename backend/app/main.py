@@ -27,6 +27,7 @@ from app.api.subtitle import router as subtitle_router
 from app.api.auto_edit import router as auto_edit_router
 from app.api.bgm import router as bgm_router
 from app.api.license import router as license_router
+from app.api.logs import router as logs_router
 from app.middleware.license_middleware import LicenseMiddleware
 
 
@@ -68,6 +69,7 @@ app.include_router(copy_gen_router)
 app.include_router(subtitle_router)
 app.include_router(auto_edit_router)
 app.include_router(bgm_router)
+app.include_router(logs_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

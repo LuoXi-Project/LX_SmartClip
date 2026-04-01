@@ -16,7 +16,7 @@ export interface TtsHistoryItem {
   filename: string
 }
 
-/** 与文案匹配页 localStorage 旧版自动成片键一致，仅用于一次性 migrate 合并 */
+/** 与智能剪辑页 localStorage 旧版自动成片键一致，仅用于一次性 migrate 合并 */
 export const LEGACY_AUTO_EDIT_CACHE_KEY = 'lx-auto-edit-state-v1'
 
 export interface MatchPageState {

@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from app.utils.paths import get_render_tmp_base_dir
+
 if TYPE_CHECKING:
     from app.api.subtitle import SubtitleStyle
 
@@ -272,7 +274,9 @@ def burn_to_mp4(
     """
     from fastapi import HTTPException
 
-    with tempfile.TemporaryDirectory() as tmp:
+    tmp_base_dir = get_render_tmp_base_dir()
+    with tempfile.TemporaryDirectory(dir=tmp_base_dir, prefix="burn_") as tmp:
+        logger.info("临时渲染目录: %s", tmp)
 
         # ------------------------------------------------------------------
         # 步骤 1：MoviePy 逐段处理音轨，导出临时片段

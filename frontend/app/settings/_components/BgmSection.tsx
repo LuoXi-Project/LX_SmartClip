@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { Music2, UploadCloud, Trash2, Save, RefreshCcw, ExternalLink } from 'lucide-react'
 import { BgmMiniPlayer } from './BgmMiniPlayer'
 import { useConfirm } from '@/hooks/use-confirm'
+import { useToast } from '@/components/ui/toast-provider'
 
 const BGM_TAG_OPTIONS = [
   '搞笑', '轻快', '欢乐', '活泼', '治愈', '舒缓', '安静', '温柔',
@@ -41,6 +42,7 @@ interface BgmSectionProps {
 
 export function BgmSection({ fullPage = false }: BgmSectionProps) {
   const confirm = useConfirm()
+  const toast = useToast()
   const [tracks, setTracks] = useState<BgmTrack[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -136,6 +138,7 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     try {
       const updated = await bgmApi.update(t.id, payload)
       setTracks((prev) => prev.map((x) => (x.id === t.id ? updated : x)))
+      toast.success('保存成功')
     } catch {
       setError('保存 BGM 元数据失败。')
     }

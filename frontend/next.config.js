@@ -12,6 +12,7 @@ const nextConfig = {
           // 保证使用相对路径时也能直接请求到 FastAPI。
           const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
           return [
+            { source: '/health', destination: `${api}/health` },
             { source: '/api/:path*', destination: `${api}/api/:path*` },
             { source: '/storage/:path*', destination: `${api}/storage/:path*` },
           ]

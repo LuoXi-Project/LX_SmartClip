@@ -71,7 +71,10 @@ export function AutoEditPanel({
   } | null>(null)
   const previewVideoRef = useRef<HTMLVideoElement | null>(null)
   const [previewVideoErr, setPreviewVideoErr] = useState(false)
-  const [resolvedVideoIdByClip, setResolvedVideoIdByClip] = useState<Record<string, string>>({})
+  /** 与后端 clips 表一致；成片 realize 按整段 clip 拼接，不裁方案里的时间窗 */
+  const [clipMetaByClip, setClipMetaByClip] = useState<
+    Record<string, { video_id: string; start_time: number; end_time: number }>
+  >({})
 
   const togglePreviewExpand = (planId: string) => {
     setExpandedPreviewPlanIds((prev) =>
@@ -79,11 +82,23 @@ export function AutoEditPanel({
     )
   }
 
-  /** 仅使用库中 clip→video 的关联；方案 JSON 里的 video_id 不得用于 /api/videos/{id}/stream，否则易 404 */
+  /** 仅使用库中 clip→video；方案 JSON 里的 video_id 不得用于 /stream */
   const resolvedVideoId = useMemo(() => {
     if (!selectedPreview?.clipId) return null
-    return resolvedVideoIdByClip[selectedPreview.clipId] ?? null
-  }, [resolvedVideoIdByClip, selectedPreview])
+    return clipMetaByClip[selectedPreview.clipId]?.video_id ?? null
+  }, [clipMetaByClip, selectedPreview])
+
+  /** 预览/成片对齐：原视频轴用库内绝对时间；片段文件轴为 [0, end−start] */
+  const previewTimeline = useMemo(() => {
+    if (!selectedPreview) return null
+    const meta = selectedPreview.clipId ? clipMetaByClip[selectedPreview.clipId] : undefined
+    const planStart = Number(selectedPreview.startSec) || 0
+    const planEnd = Number(selectedPreview.endSec) || planStart
+    const absStart = meta ? meta.start_time : planStart
+    const absEnd = meta ? meta.end_time : planEnd
+    const clipLocalEnd = Math.max(0, absEnd - absStart)
+    return { meta, planStart, planEnd, absStart, absEnd, clipLocalEnd }
+  }, [selectedPreview, clipMetaByClip])
 
   const previewSrc = useMemo(() => {
     if (!selectedPreview) return ''
@@ -96,35 +111,51 @@ export function AutoEditPanel({
   }, [resolvedVideoId, selectedPreview])
 
   useEffect(() => {
-    if (!selectedPreview?.clipId) return
-
-    const already = resolvedVideoIdByClip[selectedPreview.clipId]
-    if (already) return
-
+    if (!autoPlans.length) return
+    const ids = new Set<string>()
+    for (const p of autoPlans) {
+      for (const s of p.segments ?? []) {
+        const cid = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
+        if (cid) ids.add(cid)
+      }
+    }
     const ac = new AbortController()
-    void fetch(`${API_BASE}/api/videos/clips/${selectedPreview.clipId}`, { signal: ac.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status))
-        return (await r.json()) as { video_id: string }
-      })
-      .then((data) => {
-        if (data?.video_id) {
-          setResolvedVideoIdByClip((prev) => ({ ...prev, [selectedPreview.clipId]: data.video_id }))
-        }
-      })
-      .catch(() => {})
+    for (const cid of ids) {
+      void fetch(`${API_BASE}/api/videos/clips/${cid}`, { signal: ac.signal })
+        .then(async (r) => {
+          if (!r.ok) return
+          const data = (await r.json()) as { video_id: string; start_time: number; end_time: number }
+          if (!data?.video_id) return
+          setClipMetaByClip((prev) => {
+            if (prev[cid]) return prev
+            return {
+              ...prev,
+              [cid]: {
+                video_id: data.video_id,
+                start_time: Number(data.start_time),
+                end_time: Number(data.end_time),
+              },
+            }
+          })
+        })
+        .catch(() => {})
+    }
     return () => ac.abort()
-  }, [resolvedVideoIdByClip, selectedPreview])
+  }, [autoPlans])
 
   useEffect(() => {
     const video = previewVideoRef.current
     if (!video) return
     if (!selectedPreview) return
+    if (!previewTimeline) return
 
     setPreviewVideoErr(false)
 
     const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
-    const target = Math.max(0, selectedPreview.startSec || 0)
+    const target =
+      selectedPreview.source === 'video'
+        ? Math.max(0, previewTimeline.absStart)
+        : 0
 
     const trySeek = () => {
       try {
@@ -146,7 +177,7 @@ export function AutoEditPanel({
     }
     video.addEventListener('loadedmetadata', trySeek, { once: true })
     return () => video.removeEventListener('loadedmetadata', trySeek)
-  }, [selectedPreview, previewSrc])
+  }, [selectedPreview, previewSrc, previewTimeline])
 
   return (
     <>
@@ -333,16 +364,28 @@ export function AutoEditPanel({
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-slate-300">片段预览播放器</p>
-                {selectedPreview ? (
-                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                    {selectedPreview.planTitle} · #{selectedPreview.order}（{fmt(selectedPreview.startSec)} - {fmt(selectedPreview.endSec)}）
-                    <span className="ml-2 text-slate-600">
+                {selectedPreview && previewTimeline ? (
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    <span className="block truncate">
+                      {selectedPreview.planTitle} · #{selectedPreview.order} · 成片对应素材（库内时间）{' '}
+                      {fmt(previewTimeline.absStart)} – {fmt(previewTimeline.absEnd)}
+                      {!previewTimeline.meta && (
+                        <span className="text-slate-600">（库内元数据加载完成后会校正）</span>
+                      )}
+                    </span>
+                    {previewTimeline.meta &&
+                      (Math.abs(previewTimeline.planStart - previewTimeline.absStart) > 0.25 ||
+                        Math.abs(previewTimeline.planEnd - previewTimeline.absEnd) > 0.25) && (
+                      <span className="block text-slate-600 mt-0.5 truncate">
+                        方案里标注的 {fmt(previewTimeline.planStart)} – {fmt(previewTimeline.planEnd)}{' '}
+                        仅为规划时间窗；当前成片管线使用整段素材文件，与上面对齐。
+                      </span>
+                    )}
+                    <span className="block text-slate-600 mt-0.5 truncate">
                       {selectedPreview.source === 'video' ? (
-                        <>
-                          原视频预览 · video_id: {resolvedVideoId || '解析中…'}
-                        </>
+                        <>原视频预览 · video_id: {resolvedVideoId || '解析中…'}</>
                       ) : (
-                        <>片段预览 · clip_id: {selectedPreview.clipId || '-'}</>
+                        <>片段文件预览（0 – {fmt(previewTimeline.clipLocalEnd)}）· clip_id: {selectedPreview.clipId || '-'}</>
                       )}
                     </span>
                   </p>
@@ -391,8 +434,11 @@ export function AutoEditPanel({
                     type="button"
                     onClick={() => {
                       const v = previewVideoRef.current
-                      if (!v) return
-                      v.currentTime = Math.max(0, selectedPreview.startSec || 0)
+                      if (!v || !previewTimeline) return
+                      v.currentTime =
+                        selectedPreview.source === 'video'
+                          ? Math.max(0, previewTimeline.absStart)
+                          : 0
                       void v.play().catch(() => {})
                     }}
                     className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
@@ -403,8 +449,11 @@ export function AutoEditPanel({
                     type="button"
                     onClick={() => {
                       const v = previewVideoRef.current
-                      if (!v) return
-                      v.currentTime = Math.max(0, selectedPreview.endSec || 0)
+                      if (!v || !previewTimeline) return
+                      v.currentTime =
+                        selectedPreview.source === 'video'
+                          ? Math.max(0, previewTimeline.absEnd)
+                          : Math.max(0, previewTimeline.clipLocalEnd)
                       void v.play().catch(() => {})
                     }}
                     className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
@@ -504,6 +553,9 @@ export function AutoEditPanel({
                       const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
                       const videoId = s.clip_group?.[0]?.video_id || null
                       const planTitle = p.title || `方案 ${idx + 1}`
+                      const cm = clipId ? clipMetaByClip[clipId] : undefined
+                      const t0 = cm ? cm.start_time : s.start_time_sec
+                      const t1 = cm ? cm.end_time : s.end_time_sec
                       return (
                         <button
                           key={s.id}
@@ -517,7 +569,6 @@ export function AutoEditPanel({
                               order: s.order,
                               clipId,
                               videoId,
-                              // 默认优先按“原视频绝对时间”预览（如果后端给了 video_id）
                               source: videoId ? 'video' : 'clip',
                               startSec: s.start_time_sec,
                               endSec: s.end_time_sec,
@@ -525,9 +576,15 @@ export function AutoEditPanel({
                           }}
                           disabled={!clipId}
                           className="inline-flex items-center rounded-md border border-cyan-500/40 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900/50 disabled:text-slate-500"
-                          title={clipId ? '点击预览该片段对应视频' : '该片段缺少 clip_id，暂不可预览'}
+                          title={
+                            clipId
+                              ? cm
+                                ? `成片使用库内整段：${fmt(cm.start_time)}–${fmt(cm.end_time)}（方案标注 ${fmt(s.start_time_sec)}–${fmt(s.end_time_sec)} 可能不同）`
+                                : `加载库内时间中… 方案标注 ${fmt(s.start_time_sec)}–${fmt(s.end_time_sec)}`
+                              : '该片段缺少 clip_id，暂不可预览'
+                          }
                         >
-                          #{s.order}（{fmt(s.start_time_sec)}-{fmt(s.end_time_sec)}）
+                          #{s.order}（{fmt(t0)}-{fmt(t1)}）
                         </button>
                       )
                     })}

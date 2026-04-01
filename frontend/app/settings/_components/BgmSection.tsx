@@ -5,6 +5,7 @@ import { bgmApi, type BgmTrack } from '@/lib/api'
 import Link from 'next/link'
 import { Music2, UploadCloud, Trash2, Save, RefreshCcw, ExternalLink } from 'lucide-react'
 import { BgmMiniPlayer } from './BgmMiniPlayer'
+import { useConfirm } from '@/hooks/use-confirm'
 
 const BGM_TAG_OPTIONS = [
   '搞笑', '轻快', '欢乐', '活泼', '治愈', '舒缓', '安静', '温柔',
@@ -39,6 +40,7 @@ interface BgmSectionProps {
 }
 
 export function BgmSection({ fullPage = false }: BgmSectionProps) {
+  const confirm = useConfirm()
   const [tracks, setTracks] = useState<BgmTrack[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -140,7 +142,14 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
   }
 
   const onDelete = async (t: BgmTrack) => {
-    if (!window.confirm(`确定删除 BGM「${t.title}」吗？此操作不可恢复。`)) return
+    const ok = await confirm({
+      title: '确认删除',
+      description: `确定删除 BGM「${t.title}」吗？此操作不可恢复。`,
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       await bgmApi.delete(t.id)
       setTracks((prev) => prev.filter((x) => x.id !== t.id))

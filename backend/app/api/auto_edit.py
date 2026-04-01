@@ -53,7 +53,7 @@ class TimingHint(BaseModel):
 class SubtitlePlan(BaseModel):
     strategy: Literal["auto", "asr", "rewrite", "none"] = "auto"
     text: str
-    source: Literal["asr", "llm", "user"] = "llm"
+    source: Literal["asr", "llm", "vlm", "user"] = "llm"
     timing_hint: Optional[TimingHint] = None
 
 
@@ -225,7 +225,7 @@ SCHEMA_HINT = """
           "subtitle": {
             "strategy": "auto | asr | rewrite | none",
             "text": "本段对应的文案",
-            "source": "asr | llm | user",
+            "source": "asr | llm | vlm | user",
             "timing_hint": { "start": 0.0, "end": 3.2 }
           },
           "transition": {

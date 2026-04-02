@@ -53,6 +53,8 @@ $AppName = "lx_smartclip_backend"
 # PyInstaller 的 --name 会参与 build 子目录/产物目录命名；为避免 Unicode 路径在部分环境下异常，这里用英文内部名
 $PyinstallerName = "lx_smartclip_backend"
 
+$LogoIco = Join-Path $Root "frontend\logo.ico"
+
 $SecretPy = Join-Path $BackendDir "secret.py"
 $ConfigJson = Join-Path $BackendDir "config.json"
 
@@ -202,6 +204,14 @@ try {
         foreach ($p in $CollectSubmodules) { $ForceCollectArgs += @("--collect-submodules", $p) }
         foreach ($p in $CollectAll) { $ForceCollectArgs += @("--collect-all", $p) }
 
+        $IconArgs = @()
+        if (Test-Path $LogoIco) {
+            Write-Host "[backend] 使用 exe 图标: $LogoIco"
+            $IconArgs = @("--icon", $LogoIco)
+        } else {
+            Write-Host "[backend] 未找到 $LogoIco ，exe 使用默认图标"
+        }
+
         $PyinstallerArgs = @(
             "-m", "PyInstaller",
             "--noconfirm",
@@ -214,7 +224,7 @@ try {
             "--collect-submodules", "app",
             "--console",
             "start_backend.py"
-        ) + $ForceCollectArgs + $AddData
+        ) + $IconArgs + $ForceCollectArgs + $AddData
 
         & $Py @PyinstallerArgs
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller 打包失败" }

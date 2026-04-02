@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useAppStore } from '@/lib/store'
+import logoPng from '../logo.png'
 import apiClient from '@/lib/api'
 import { Activity, AlertCircle, CheckCircle } from 'lucide-react'
 
@@ -43,6 +44,17 @@ export default function Home() {
       <div className="container mx-auto px-4 py-16">
         {/* Header */}
         <div className="text-center mb-16">
+          <div className="flex justify-center mb-6">
+            <img
+              src={logoPng.src ?? logoPng}
+              alt="洛曦智剪"
+              width={256}
+              height={256}
+              fetchPriority="high"
+              decoding="async"
+              className="rounded-full shadow-md shadow-blue-950/40 ring-1 ring-slate-600/40 object-cover size-[128px]"
+            />
+          </div>
           <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
             洛曦智剪
           </h1>

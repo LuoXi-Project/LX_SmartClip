@@ -23,7 +23,7 @@ from pydantic import ValidationError
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.llm import LLMClient, LLMConfig
-from app.api.copy_gen import _build_video_context
+from app.api.copy_gen import _build_video_context_with_recall
 from app.models.subtitle import (
     SubtitleSegmentInput,
     SubtitleStyle,
@@ -52,6 +52,15 @@ _PLAN_STREAM_SESSIONS: Dict[str, AutoEditPlanRequest] = {}
 _PLAN_STREAM_CREATED_AT: Dict[str, float] = {}
 _PLAN_STREAM_EXPIRE_SEC = 10 * 60
 
+
+
+@dataclass
+class ClipCandidate:
+    id: str
+    video_id: str
+    start_time: float
+    end_time: float
+    duration: float
 
 def _cleanup_expired_plan_sessions() -> None:
     now = time.time()
@@ -204,7 +213,7 @@ async def _call_llm_for_plans(
         model=cfg["model"],
         temperature=cfg["temperature"],
         max_tokens=cfg["max_tokens"],
-        timeout=90,
+        timeout=3600,
     )
 
     messages = [
@@ -266,7 +275,11 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 default_temperature=0.7,
                 default_max_tokens=20480,
             )
-            context = await _build_video_context(db, req.video_ids)
+            context = await _build_video_context_with_recall(
+                db,
+                req.video_ids,
+                user_prompt=req.user_prompt,
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -319,7 +332,11 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         default_max_tokens=20480,
                     )
                     yield _build_sse_event("progress", {"stage": "context", "message": "正在构建素材上下文"})
-                    context = await _build_video_context(db, req.video_ids)
+                    context = await _build_video_context_with_recall(
+                        db,
+                        req.video_ids,
+                        user_prompt=req.user_prompt,
+                    )
             except ValueError as e:
                 yield _build_sse_event("failed", {"message": str(e)})
                 return
@@ -362,14 +379,6 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
 # ────────────────────────────────────────────────────────────
 
 
-@dataclass
-class ClipCandidate:
-    id: str
-    video_id: str
-    start_time: float
-    end_time: float
-    duration: float
-
 
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 _BURNED_VIDEOS_DIR = os.path.join(_BACKEND_DIR, "storage", "burned_videos")
@@ -385,7 +394,7 @@ def _run_ffmpeg(args: List[str], desc: str = "") -> None:
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=600,
+        timeout=3600,
     )
     if res.returncode != 0:
         raise RuntimeError(
@@ -409,7 +418,7 @@ def _probe_duration(path: str) -> float:
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=30,
+        timeout=600,
     )
     try:
         return float((probe.stdout.decode() or "").strip() or 0.0)

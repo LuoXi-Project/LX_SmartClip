@@ -233,9 +233,8 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
             total = 5.0
         seg_durs.append(total)
 
-    srt_entries = (
-        rule_timeline_equal_units(req.segments, seg_durs) if req.include_subtitle else []
-    )
+    max_chars = req.style.max_chars_per_line if req.style else 20
+    srt_entries = rule_timeline_equal_units(req.segments, seg_durs, max_chars=max_chars) if req.include_subtitle else []
 
     # 显式忽略 tts_filename，确保 burn_to_mp4 走“保留原声/拼接”的分支。
     segments_for_burn: List[SubtitleSegmentInput] = []

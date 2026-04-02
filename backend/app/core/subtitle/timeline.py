@@ -139,13 +139,16 @@ def split_text_units_by_sentence_and_newline(text: str) -> list[str]:
     return [u for u in units if u]
 
 
-def rule_timeline_equal_units(segments, durations: list[float]) -> list[dict]:
+def rule_timeline_equal_units(segments, durations: list[float], max_chars: int = 20) -> list[dict]:
     """
     将每段文本切分为多个“单位”，并把该段的总时长平均分配到各单位。
+
+    `max_chars` 用于对单位内容再做二次拆分，确保每条字幕文本尽量不超过该字符数。
     返回格式：[{start, end, text}, ...]
     """
     entries: list[dict] = []
     t = 0.0
+    max_chars = int(max_chars or 0)
 
     for seg, seg_dur in zip(segments, durations):
         dur = float(seg_dur or 0.0)
@@ -153,6 +156,18 @@ def rule_timeline_equal_units(segments, durations: list[float]) -> list[dict]:
             dur = 5.0
 
         units = split_text_units_by_sentence_and_newline(getattr(seg, "copy_text", "") or "")
+        if max_chars > 0 and units:
+            # 在“句子/换行单位”基础上按字符数继续拆分，保证字幕条数随长度约束增加。
+            expanded_units: list[str] = []
+            for u in units:
+                u = (u or "").strip()
+                if not u:
+                    continue
+                if len(u) <= max_chars:
+                    expanded_units.append(u)
+                else:
+                    expanded_units.extend([u[i : i + max_chars] for i in range(0, len(u), max_chars)])
+            units = expanded_units
         n = len(units)
         if n == 0:
             t += dur

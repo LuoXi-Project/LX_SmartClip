@@ -378,8 +378,6 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
 # Plan 实现：转换为字幕成片管线
 # ────────────────────────────────────────────────────────────
 
-
-
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 _BURNED_VIDEOS_DIR = os.path.join(_BACKEND_DIR, "storage", "burned_videos")
 _BGM_LIBRARY_DIR = os.path.join(_BACKEND_DIR, "storage", "bgm")

@@ -29,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/logs" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">日志</Link>
             <Link href="/settings" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">设置</Link>
             <Link href="/license" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">卡密</Link>
+            <Link href="/about" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">关于与支持</Link>
           </div>
         </nav>
         <ToastProvider>

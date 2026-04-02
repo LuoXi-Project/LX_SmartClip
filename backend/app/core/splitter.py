@@ -3,6 +3,8 @@ import subprocess
 from typing import Dict, List, Optional, Tuple
 import logging
 
+from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe_duration
+
 logger = logging.getLogger(__name__)
 
 class ClipInfo:
@@ -90,20 +92,11 @@ class VideoSplitter:
         Returns:
             视频时长（秒）
         """
-        cmd = [
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1:nokey=1",
-            video_path,
-        ]
-
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            duration = float(result.stdout.strip())
+            duration = probe_duration(video_path, on_error="raise")
             logger.info(f"视频时长: {duration} 秒")
             return duration
-        except (subprocess.CalledProcessError, ValueError) as e:
+        except Exception as e:
             logger.error(f"获取视频时长失败: {e}")
             raise RuntimeError(f"获取视频时长失败: {str(e)}")
 
@@ -532,19 +525,7 @@ class VideoSplitter:
         Returns:
             是否包含视频流
         """
-        cmd = [
-            "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=codec_type",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            clip_path,
-        ]
-        try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            return result.stdout.strip() == "video"
-        except subprocess.CalledProcessError:
-            return False
+        return _has_video_stream(clip_path)
 
     def extract_frames(self, clip_path: str, fps: float = 1.0, target_pixels: int = 0) -> List[str]:
         """

@@ -9,6 +9,7 @@ import tempfile
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from app.utils.paths import get_render_tmp_base_dir
+from app.utils.ffprobe_utils import probe_duration, probe_video_dimensions
 
 if TYPE_CHECKING:
     from app.models.subtitle import SubtitleStyle
@@ -144,30 +145,6 @@ def _run_ffmpeg(args: List[str], desc: str = "") -> None:
             f"cmd: {' '.join(cmd)}\n"
             f"stderr: {result.stderr.decode(errors='replace')[-2000:]}"
         )
-
-
-def _probe_duration(path: str) -> float:
-    """使用 ffprobe 获取媒体时长（秒）。"""
-    probe = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=600,
-    )
-    try:
-        return float(probe.stdout.decode().strip() or 0.0)
-    except Exception:
-        logger.warning("ffprobe 时长探测失败: %s", path)
-        return 0.0
 
 
 def _write_concat_list(paths: List[str], output_path: str) -> None:
@@ -307,8 +284,11 @@ def burn_to_mp4(
 
             if tts_path and os.path.isfile(tts_path):
                 # 有 TTS：先顺序使用候选 clip 组；若总时长不足，再按整组循环补齐。
-                audio_dur = _probe_duration(tts_path)
-                video_dur = sum(float(info.get("dur") or _probe_duration(info["path"]) or 0.0) for info in infos)
+                audio_dur = probe_duration(tts_path, log_on_failure=True)
+                video_dur = sum(
+                    float(info.get("dur") or probe_duration(info["path"], log_on_failure=True) or 0.0)
+                    for info in infos
+                )
                 if audio_dur <= 0:
                     raise HTTPException(400, f"TTS 音频无效: {seg.tts_filename}")
                 if video_dur <= 0:
@@ -370,25 +350,8 @@ def burn_to_mp4(
         # 步骤 2：生成 ASS 字幕文件
         #         需要视频尺寸，从第一个片段探测
         # ------------------------------------------------------------------
-        # 用 FFmpeg ffprobe 探测视频尺寸（避免再次用 MoviePy 加载）
-        probe = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=width,height",
-                "-of", "csv=p=0",
-                seg_paths[0],
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=600,
-        )
-        try:
-            w_str, h_str = probe.stdout.decode().strip().split(",")
-            video_size = (int(w_str), int(h_str))
-        except Exception:
-            video_size = (1920, 1080)  # 探测失败时的安全回退
-            logger.warning("ffprobe 探测视频尺寸失败，回退为 %s", video_size)
+        # 用 ffprobe 探测视频尺寸（避免再次用 MoviePy 加载）
+        video_size = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)
 
         ass_path = os.path.join(tmp, "subtitles.ass")
         ass_content = build_ass(srt_entries, style, video_size)

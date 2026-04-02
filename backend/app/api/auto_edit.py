@@ -43,6 +43,8 @@ from app.models.auto_edit import (
     SegmentPlan,
 )
 
+from app.utils.ffprobe_utils import probe_duration
+
 logger = logging.getLogger(__name__)
 
 
@@ -402,28 +404,6 @@ def _run_ffmpeg(args: List[str], desc: str = "") -> None:
         )
 
 
-def _probe_duration(path: str) -> float:
-    probe = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=600,
-    )
-    try:
-        return float((probe.stdout.decode() or "").strip() or 0.0)
-    except Exception:
-        return 0.0
-
-
 def _resolve_bgm_path(track_id: Optional[str]) -> Optional[str]:
     if not track_id:
         return None
@@ -635,7 +615,7 @@ def _mix_bgm_for_video(
     fade_in_sec: float,
     fade_out_sec: float,
 ) -> str:
-    video_dur = _probe_duration(video_path)
+    video_dur = probe_duration(video_path)
     if video_dur <= 0:
         raise RuntimeError("无法探测成片时长，跳过 BGM 混音")
 

@@ -1,10 +1,9 @@
-import logging
-from typing import Optional
+﻿import logging
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from app.models.chat import ChatRequest, ChatMessage
 
 from app.db.database import DB_PATH
 from app.core.llm import LLMConfig, LLMClient
@@ -12,16 +11,6 @@ from app.core.llm import LLMConfig, LLMClient
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-
-class ChatMessage(BaseModel):
-    role: str  # "user" | "assistant" | "system"
-    content: str
-
-
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
-    stream: Optional[bool] = True
 
 
 @router.post("/completions")

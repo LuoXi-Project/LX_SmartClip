@@ -6,8 +6,8 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel, Field
 
+from app.models.bgm import BgmTrack, BgmUpdatePayload
 
 router = APIRouter(prefix="/api/bgm", tags=["bgm"])
 
@@ -43,23 +43,6 @@ def _unique_storage_filename(stem: str, ext: str) -> str:
         if not os.path.isfile(dest):
             return candidate
         n += 1
-
-
-class BgmTrack(BaseModel):
-    id: str
-    title: str
-    mood: Optional[str] = None
-    bpm: Optional[float] = None
-    tags: List[str] = Field(default_factory=list)
-    filename: str
-    url: str
-
-
-class BgmUpdatePayload(BaseModel):
-    title: Optional[str] = None
-    mood: Optional[str] = None
-    bpm: Optional[float] = None
-    tags: Optional[List[str]] = None
 
 
 def _ensure_dir() -> None:

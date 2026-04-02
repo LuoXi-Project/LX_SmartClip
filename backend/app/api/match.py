@@ -5,7 +5,7 @@ import sqlite3
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from app.models.match import MatchRequest, MatchResponse, ClipResult
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
@@ -13,35 +13,6 @@ from app.db.database import DB_PATH
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["match"])
-
-
-class MatchRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="用户文案")
-    top_k: Optional[int] = Field(None, ge=1, le=50, description="向量初筛数量（可选）")
-    top_n: Optional[int] = Field(None, ge=1, le=20, description="最终推荐数量（可选）")
-    video_ids: Optional[List[str]] = Field(None, description="限定视频 ID 列表")
-
-
-class ClipResult(BaseModel):
-    clip_id: str
-    video_id: str
-    clip_path: str
-    start_time: float
-    end_time: float
-    duration: float
-    asr_text: Optional[str] = None
-    vlm_description: Optional[str] = None
-    thumbnail_url: Optional[str] = None
-    preview_url: Optional[str] = None
-    score: float
-    reason: str
-
-
-class MatchResponse(BaseModel):
-    query: str
-    top_n: int
-    recommended: List[ClipResult]
-    candidates: List[ClipResult]
 
 
 def _read_cfg(conn: sqlite3.Connection, key: str, default: str = "") -> str:

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from app.models.config import ConfigUpdate, ModelsRequest
 import httpx
 from app.db.database import get_db_conn
 import logging
@@ -9,11 +9,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/config", tags=["config"])
 
 _CONFIG_EXCLUDE_KEYS = frozenset({"license_card"})
-
-
-class ConfigUpdate(BaseModel):
-    key: str
-    value: str
 
 
 @router.get("")
@@ -65,11 +60,6 @@ async def update_config(body: ConfigUpdate):
         return {"key": body.key, "value": body.value}
     finally:
         await db.close()
-
-
-class ModelsRequest(BaseModel):
-    base_url: str
-    api_key: str
 
 
 @router.post("/models")

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from app.utils.paths import get_render_tmp_base_dir
 
 if TYPE_CHECKING:
-    from app.api.subtitle import SubtitleStyle
+    from app.models.subtitle import SubtitleStyle
 
 logger = logging.getLogger(__name__)
 

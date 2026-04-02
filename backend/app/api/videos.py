@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from app.models.videos import RenamePayload
 
 from app.db.database import get_db_conn
 
@@ -228,10 +228,6 @@ async def stream_video(video_id: str):
     }
     media_type = _mime_map.get(ext, "video/mp4")
     return FileResponse(file_path, media_type=media_type, filename=os.path.basename(file_path))
-
-
-class RenamePayload(BaseModel):
-    name: str
 
 
 @router.patch("/{video_id}")

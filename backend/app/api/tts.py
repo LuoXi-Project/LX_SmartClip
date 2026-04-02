@@ -6,7 +6,7 @@ from typing import Optional
 import aiosqlite
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from app.models.tts import SynthesizeRequest, SynthesizeResponse, VoiceInfo
 
 from app.core.tts.providers import (
     synthesize_custom_http,
@@ -26,31 +26,6 @@ TTS_AUDIO_DIR = os.path.abspath(
     os.path.join(os.path.dirname(DB_PATH), "tts_audio")
 )
 os.makedirs(TTS_AUDIO_DIR, exist_ok=True)
-
-
-# ──────────────────────────── 请求 / 响应模型 ──────────────────────────── #
-
-class SynthesizeRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=5000, description="待合成文本")
-    voice: Optional[str] = Field(None, description="语音角色（可选，不填用配置默认值）")
-    rate: Optional[str] = Field(None, description="语速，如 +0%/-20%（可选）")
-    volume: Optional[str] = Field(None, description="音量，如 +0%/+10%（可选）")
-
-
-class SynthesizeResponse(BaseModel):
-    filename: str
-    url: str
-    voice: str
-    rate: str
-    volume: str
-    text_length: int
-
-
-class VoiceInfo(BaseModel):
-    name: str
-    locale: str
-    gender: str
-    friendly_name: str
 
 
 # ──────────────────────────── 辅助函数 ──────────────────────────── #

@@ -1,13 +1,9 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from app.models.license import CardBody
 
 from app.core import license as license_core
 
 router = APIRouter(prefix="/api/license", tags=["license"])
-
-
-class CardBody(BaseModel):
-    card: str
 
 
 @router.get("/status")

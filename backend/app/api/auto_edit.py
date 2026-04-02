@@ -13,132 +13,40 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.llm import LLMClient, LLMConfig
 from app.api.copy_gen import _build_video_context
-from app.api.subtitle import (
+from app.models.subtitle import (
     SubtitleSegmentInput,
     SubtitleStyle,
     GenerateSRTRequest,
     BurnSubtitleRequest,
     ExportOriginalRequest,
-    execute_burn_subtitle,
-    execute_export_original,
 )
+from app.api.subtitle import execute_burn_subtitle, execute_export_original
 from app.api.tts import SynthesizeRequest, SynthesizeResponse, synthesize as tts_synthesize
+from app.models.auto_edit import (
+    AutoEditPlanRequest,
+    AutoEditPlanResponse,
+    AutoEditPlanSessionResponse,
+    AutoEditRealizeRequest,
+    AutoEditRealizeResponse,
+    Plan,
+    SegmentPlan,
+)
 
 logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/auto-edit", tags=["auto-edit"])
-
-
-class PlanKeepFlags(BaseModel):
-    clips: bool = False
-    subtitles: bool = False
-    transitions: bool = False
-    bgm: bool = False
-
-
-class TimingHint(BaseModel):
-    start: float
-    end: float
-
-
-class SubtitlePlan(BaseModel):
-    strategy: Literal["auto", "asr", "rewrite", "none"] = "auto"
-    text: str
-    source: Literal["asr", "llm", "vlm", "user"] = "llm"
-    timing_hint: Optional[TimingHint] = None
-
-
-class TransitionPlan(BaseModel):
-    type: Literal["hard_cut", "cross_dissolve", "fade_in", "fade_out"] = "hard_cut"
-    duration_sec: float = 0.3
-
-
-class ClipRef(BaseModel):
-    clip_id: str
-    video_id: str
-    weight: float = 1.0
-
-
-class SegmentPlan(BaseModel):
-    id: str
-    chapter_id: Optional[str] = None
-    order: int
-    clip_group: List[ClipRef]
-    selected_clip_ids: List[str]
-    start_time_sec: float
-    end_time_sec: float
-    audio_mode: Literal["original", "tts", "mute"] = "original"
-    subtitle: SubtitlePlan
-    transition: Optional[TransitionPlan] = None
-
-
-class BGMPlan(BaseModel):
-    enabled: bool = False
-    source: Literal["library", "user", "ai"] = "library"
-    track_id: Optional[str] = None
-    volume_db: float = -12.0
-    loop: bool = True
-    fade_in_sec: float = 0.8
-    fade_out_sec: float = 1.0
-
-
-class Constraints(BaseModel):
-    max_clip_per_segment: int = 3
-    match_strategy: Literal["asr+vlm", "asr_only", "vlm_only"] = "asr+vlm"
-    respect_user_video_order: bool = False
-
-
-class Plan(BaseModel):
-    plan_id: str
-    title: str
-    summary: str
-    mode: Literal["auto", "voiceover", "original"] = "auto"
-    target_duration_sec: Optional[float] = None
-    estimated_duration_sec: Optional[float] = None
-    chapters: Optional[List[dict]] = None
-    segments: List[SegmentPlan]
-    bgm: Optional[BGMPlan] = None
-    constraints: Optional[Constraints] = None
-    keep_flags: Optional[PlanKeepFlags] = None
-
-
-class AutoEditPlanRequest(BaseModel):
-    video_ids: List[str] = Field(..., description="选中视频 ID 列表")
-    user_prompt: str = Field(..., min_length=1, description="用户提示词/需求")
-    mode: Literal["auto", "voiceover", "original"] = "auto"
-    target_duration_sec: Optional[int] = Field(
-        None, ge=10, le=600, description="目标时长（秒）"
-    )
-    num_plans: int = Field(3, ge=1, le=5, description="候选方案数量")
-    allow_cross_video: bool = True
-    subtitle_policy: Literal["auto", "asr", "rewrite", "none"] = "auto"
-    transition_policy: Literal["auto", "hard_cut", "soft"] = "auto"
-    bgm_policy: Literal["auto", "none", "user", "ai"] = "auto"
-    plan_keep_flags: Optional[PlanKeepFlags] = None
-    prev_plan_id: Optional[str] = None
-    prev_plan: Optional[Plan] = None
-
-
-class AutoEditPlanResponse(BaseModel):
-    plans: List[Plan]
-
-
-class AutoEditPlanSessionResponse(BaseModel):
-    session_id: str
-    stream_url: str
-
 
 _PLAN_STREAM_SESSIONS: Dict[str, AutoEditPlanRequest] = {}
 _PLAN_STREAM_CREATED_AT: Dict[str, float] = {}
@@ -452,19 +360,6 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
 # ────────────────────────────────────────────────────────────
 # Plan 实现：转换为字幕成片管线
 # ────────────────────────────────────────────────────────────
-
-
-class AutoEditRealizeRequest(BaseModel):
-    plan: Plan
-    project_name: Optional[str] = None
-    include_subtitle: bool = True
-    style: Optional[SubtitleStyle] = None
-
-
-class AutoEditRealizeResponse(BaseModel):
-    mode: Literal["voiceover", "original"]
-    filename: str
-    url: str
 
 
 @dataclass

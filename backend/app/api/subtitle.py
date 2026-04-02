@@ -9,10 +9,11 @@ from typing import List, Optional
 from urllib.parse import quote
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.subtitle.srt import build_srt, parse_srt
 from app.core.subtitle.timeline import resolve_durations, rule_timeline, rule_timeline_equal_units
@@ -189,12 +190,12 @@ async def generate_srt(req: GenerateSRTRequest):
 
 
 # ---------------------------------------------------------------------------
-# Route: 烧录字幕
+# 烧录 / 原声导出 · 可执行体（供 HTTP 路由与 auto_edit 等内部调用）
 # ---------------------------------------------------------------------------
 
-@router.post("/burn")
-async def burn_subtitle(req: BurnSubtitleRequest):
-    """合并视频 + 替换TTS音轨 + 硬烧字幕，保存到静态目录，返回可访问的 URL。"""
+
+async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
+    """合并视频 + 替换 TTS 音轨 + 硬烧字幕；重 CPU/ffmpeg 走专用线程池。"""
     if not req.segments:
         raise HTTPException(400, "segments不能为空")
 
@@ -224,7 +225,8 @@ async def burn_subtitle(req: BurnSubtitleRequest):
     # 生成唯一的项目名，避免文件覆盖
     unique_project_name = f"{req.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
-    _, saved_path = burn_to_mp4(
+    _, saved_path = await run_heavy(
+        burn_to_mp4,
         segments=req.segments,
         srt_entries=srt_entries,
         clip_map=clip_map,
@@ -247,15 +249,9 @@ async def burn_subtitle(req: BurnSubtitleRequest):
     }
 
 
-# ---------------------------------------------------------------------------
-# Route: 原声导出（保留原音 + 可选字幕）
-# ---------------------------------------------------------------------------
-@router.post("/export_original", response_model=BurnSubtitleResponse)
-async def export_original(req: ExportOriginalRequest):
+async def execute_export_original(req: ExportOriginalRequest) -> dict:
     """
-    根据原始素材（不使用 TTS）拼接视频：
-    - 音频：保留原声，并对最终结果做归一化/限幅（可选）
-    - 字幕：可选；字幕内容取文案，时间轴按“句子/换行等分”映射到每段总时长
+    原声拼接导出（可选字幕）；ffmpeg 走专用线程池。
     """
     if not req.segments:
         raise HTTPException(400, "segments不能为空")
@@ -314,7 +310,8 @@ async def export_original(req: ExportOriginalRequest):
         )
 
     unique_project_name = f"{req.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    _, saved_path = burn_to_mp4(
+    _, saved_path = await run_heavy(
+        burn_to_mp4,
         segments=segments_for_burn,
         srt_entries=srt_entries,
         clip_map=clip_map,
@@ -336,6 +333,33 @@ async def export_original(req: ExportOriginalRequest):
         "filename": filename,
         "url": f"/storage/burned_videos/{filename}",
     }
+
+
+# ---------------------------------------------------------------------------
+# Route: 烧录字幕
+# ---------------------------------------------------------------------------
+
+@router.post("/burn")
+async def burn_subtitle(req: BurnSubtitleRequest, request: Request):
+    """合并视频 + 替换TTS音轨 + 硬烧字幕，保存到静态目录，返回可访问的 URL。"""
+    if await request.is_disconnected():
+        raise HTTPException(400, "客户端已断开连接")
+    return await execute_burn_subtitle(req)
+
+
+# ---------------------------------------------------------------------------
+# Route: 原声导出（保留原音 + 可选字幕）
+# ---------------------------------------------------------------------------
+@router.post("/export_original", response_model=BurnSubtitleResponse)
+async def export_original(req: ExportOriginalRequest, request: Request):
+    """
+    根据原始素材（不使用 TTS）拼接视频：
+    - 音频：保留原声，并对最终结果做归一化/限幅（可选）
+    - 字幕：可选；字幕内容取文案，时间轴按“句子/换行等分”映射到每段总时长
+    """
+    if await request.is_disconnected():
+        raise HTTPException(400, "客户端已断开连接")
+    return await execute_export_original(req)
 
 
 # ---------------------------------------------------------------------------

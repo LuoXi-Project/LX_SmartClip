@@ -16,10 +16,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Set, Tuple
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.llm import LLMClient, LLMConfig
 from app.api.copy_gen import _build_video_context
@@ -29,6 +30,8 @@ from app.api.subtitle import (
     GenerateSRTRequest,
     BurnSubtitleRequest,
     ExportOriginalRequest,
+    execute_burn_subtitle,
+    execute_export_original,
 )
 from app.api.tts import SynthesizeRequest, SynthesizeResponse, synthesize as tts_synthesize
 
@@ -954,7 +957,10 @@ async def _segments_from_plan(
 
 
 @router.post("/realize", response_model=AutoEditRealizeResponse)
-async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealizeResponse:
+async def realize_auto_edit_plan(
+    req: AutoEditRealizeRequest,
+    request: Request,
+) -> AutoEditRealizeResponse:
     """
     将一个 Plan 实际转为成片：
     - voiceover 模式：TTS + 字幕 + burn 管线
@@ -963,6 +969,8 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
     当前版本：
     - 忽略 Plan.keep_flags / BGM / transition，仅打通基础链路。
     """
+    if await request.is_disconnected():
+        raise HTTPException(status_code=400, detail="客户端已断开连接")
     plan = req.plan
     if not plan.segments:
         raise HTTPException(status_code=400, detail="Plan 中没有任何 segments")
@@ -1044,14 +1052,11 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
 
     # voiceover / auto -> 统一走配音管线（若某段未生成 TTS，会回落到 clip 时长）
     if plan.mode in ("auto", "voiceover"):
-        from app.api.subtitle import (
-            generate_srt as generate_srt_route,
-            burn_subtitle as burn_route,
-            export_original as export_original_route,
-        )
+        from app.api.subtitle import generate_srt as generate_srt_route
 
         if req.include_subtitle:
-            # 先生成 SRT 时间轴（用 TTS 时长优先）
+            if await request.is_disconnected():
+                raise HTTPException(status_code=400, detail="客户端已断开连接")
             srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True)
             srt_res = await generate_srt_route(srt_req)
             burn_req = BurnSubtitleRequest(
@@ -1060,8 +1065,10 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
                 style=style,
                 project_name=project_name,
             )
-            burn_res = await burn_route(burn_req)
+            burn_res = await execute_burn_subtitle(burn_req)
         else:
+            if await request.is_disconnected():
+                raise HTTPException(status_code=400, detail="客户端已断开连接")
             export_req = ExportOriginalRequest(
                 segments=seg_inputs,
                 style=style,
@@ -1069,21 +1076,20 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
                 include_subtitle=False,
                 normalize_audio=True,
             )
-            export_res = await export_original_route(export_req)
-            # export_original_route 在内部被 FastAPI 包装为 dict 响应，这里按 dict 处理
+            export_res = await execute_export_original(export_req)
             burn_res = {
                 "filename": export_res.get("filename"),
                 "url": export_res.get("url"),
             }
-        final_filename, final_url = _apply_bgm_postprocess_if_needed(
-            plan=plan,
-            filename=burn_res["filename"],
-            url=burn_res["url"],
+        if await request.is_disconnected():
+            raise HTTPException(status_code=400, detail="客户端已断开连接")
+        final_filename, final_url = await run_heavy(
+            _apply_bgm_postprocess_if_needed,
+            plan,
+            burn_res["filename"],
+            burn_res["url"],
         )
         return AutoEditRealizeResponse(mode="voiceover", filename=final_filename, url=final_url)
-
-    # original 模式：走原声导出
-    from app.api.subtitle import export_original as export_original_route
 
     export_req = ExportOriginalRequest(
         segments=seg_inputs,
@@ -1092,12 +1098,16 @@ async def realize_auto_edit_plan(req: AutoEditRealizeRequest) -> AutoEditRealize
         include_subtitle=req.include_subtitle,
         normalize_audio=True,
     )
-    res = await export_original_route(export_req)
-    # 这里同样按 dict 响应处理
-    final_filename, final_url = _apply_bgm_postprocess_if_needed(
-        plan=plan,
-        filename=res.get("filename"),
-        url=res.get("url"),
+    if await request.is_disconnected():
+        raise HTTPException(status_code=400, detail="客户端已断开连接")
+    res = await execute_export_original(export_req)
+    if await request.is_disconnected():
+        raise HTTPException(status_code=400, detail="客户端已断开连接")
+    final_filename, final_url = await run_heavy(
+        _apply_bgm_postprocess_if_needed,
+        plan,
+        res.get("filename") or "",
+        res.get("url") or "",
     )
     return AutoEditRealizeResponse(mode="original", filename=final_filename, url=final_url)
 

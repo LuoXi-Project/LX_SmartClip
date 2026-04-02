@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import os
 import sys
 from app.db.init_db import init_db
+from app.core.blocking_pool import init_blocking_pool, shutdown_blocking_pool
 from app.api.config import router as config_router
 from app.api.videos import router as videos_router
 from app.api.clips import router as clips_router
@@ -37,7 +38,11 @@ setup_logging(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    yield
+    await init_blocking_pool()
+    try:
+        yield
+    finally:
+        shutdown_blocking_pool()
 
 
 app = FastAPI(title="LX SmartClip API", version="0.1.0", lifespan=lifespan)

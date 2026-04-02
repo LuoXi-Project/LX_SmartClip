@@ -1,4 +1,4 @@
-export interface SubtitleStyle {
+﻿export interface SubtitleStyle {
   font_name: string
   font_size: number
   font_color: string
@@ -17,7 +17,7 @@ export interface SubtitleStyle {
 
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   font_name: 'Arial',
-  font_size: 24,
+  font_size: 64,
   font_color: '#FFFFFF',
   outline_color: '#000000',
   outline_width: 2,
@@ -28,7 +28,7 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   margin_v: 20,
   pos_x_pct: 50,
   pos_y_pct: 90,
-  background: false,
+  background: true,
   max_chars_per_line: 20,
 }
 

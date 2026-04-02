@@ -587,17 +587,16 @@ export default function MatchPage() {
               }}
             />
           )}
-          {/* 实验自动成片：与 exportMode/段落数无关，主区需保留字幕开关与样式（realize 烧录用） */}
-          {(mode === 'auto' || (exportMode !== 'zip' && segments.length > 0)) && (
-            <SubtitlePanel
-              style={subtitleStyle} onChange={setSubtitleStyle}
-              entries={mode === 'auto' ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
-              enabled={subtitleEnabled}
-              onToggle={setSubtitleEnabled}
-              timingSource={mode === 'auto' ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
-              previewVideoSize={previewVideoSize}
-            />
-          )}
+          {/* 主区字幕设置：自动/手动均始终展示，便于先调样式再选导出格式；zip 不烧录字幕但状态与后续切换成片仍共用 store */}
+          <SubtitlePanel
+            style={subtitleStyle}
+            onChange={setSubtitleStyle}
+            entries={mode === 'auto' ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
+            enabled={subtitleEnabled}
+            onToggle={setSubtitleEnabled}
+            timingSource={mode === 'auto' ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
+            previewVideoSize={previewVideoSize}
+          />
           {srtError && (
             <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">字幕错误：{srtError}</div>
           )}

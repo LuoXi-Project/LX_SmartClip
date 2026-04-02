@@ -36,6 +36,12 @@ export interface MatchPageState {
   autoMode: AutoEditMode
   autoTargetDuration: number | ''
   autoNumPlans: number
+  /** 成片导出时是否叠加 BGM 混音 */
+  autoBgmMixEnabled: boolean
+  /** 规划阶段传给后端的 bgm_policy，影响 LLM 方案中的 bgm 字段倾向 */
+  autoBgmPlanPolicy: 'auto' | 'none' | 'user' | 'ai'
+  /** 成片时曲目：空字符串表示自动选曲（库内/manifest/方案内 track） */
+  autoBgmTrackFilename: string
   autoPlans: AutoEditPlanApi[]
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
   autoExpandedPlanIds: string[]
@@ -54,6 +60,9 @@ export interface MatchPageState {
   setAutoMode: (m: AutoEditMode) => void
   setAutoTargetDuration: (v: number | '') => void
   setAutoNumPlans: (n: number) => void
+  setAutoBgmMixEnabled: (v: boolean) => void
+  setAutoBgmPlanPolicy: (p: 'auto' | 'none' | 'user' | 'ai') => void
+  setAutoBgmTrackFilename: (name: string) => void
   setAutoPlans: (plans: AutoEditPlanApi[]) => void
   setAutoRealizeDownloads: (
     fn:
@@ -64,6 +73,32 @@ export interface MatchPageState {
   setAutoPlanLogs: (fn: string[] | ((prev: string[]) => string[])) => void
   clearMatchState: () => void
 }
+
+/** 与 persist partialize 一致，仅含可序列化字段（不含 action） */
+export type MatchPersistedSlice = Pick<
+  MatchPageState,
+  | 'segments'
+  | 'globalQuery'
+  | 'selectedVideoIds'
+  | 'topK'
+  | 'topN'
+  | 'subtitleEnabled'
+  | 'subtitleStyle'
+  | 'exportMode'
+  | 'matchMode'
+  | 'segmentCounter'
+  | 'autoPrompt'
+  | 'autoMode'
+  | 'autoTargetDuration'
+  | 'autoNumPlans'
+  | 'autoBgmMixEnabled'
+  | 'autoBgmPlanPolicy'
+  | 'autoBgmTrackFilename'
+  | 'autoPlans'
+  | 'autoRealizeDownloads'
+  | 'autoExpandedPlanIds'
+  | 'autoPlanLogs'
+>
 
 export interface TtsPageState {
   ttsHistory: TtsHistoryItem[]
@@ -160,6 +195,9 @@ export const useMatchStore = create<MatchPageState>()(
       autoMode: 'auto' as AutoEditMode,
       autoTargetDuration: 60 as number | '',
       autoNumPlans: 3,
+      autoBgmMixEnabled: false,
+      autoBgmPlanPolicy: 'auto' as const,
+      autoBgmTrackFilename: '',
       autoPlans: [] as AutoEditPlanApi[],
       autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
       autoExpandedPlanIds: [] as string[],
@@ -181,6 +219,9 @@ export const useMatchStore = create<MatchPageState>()(
       setAutoMode: (autoMode) => set({ autoMode }),
       setAutoTargetDuration: (autoTargetDuration) => set({ autoTargetDuration }),
       setAutoNumPlans: (autoNumPlans) => set({ autoNumPlans }),
+      setAutoBgmMixEnabled: (autoBgmMixEnabled) => set({ autoBgmMixEnabled }),
+      setAutoBgmPlanPolicy: (autoBgmPlanPolicy) => set({ autoBgmPlanPolicy }),
+      setAutoBgmTrackFilename: (autoBgmTrackFilename) => set({ autoBgmTrackFilename }),
       setAutoPlans: (autoPlans) => set({ autoPlans }),
       setAutoRealizeDownloads: (fn) =>
         set((state) => ({
@@ -209,10 +250,40 @@ export const useMatchStore = create<MatchPageState>()(
     }),
     {
       name: 'lx-match-state',
-      version: 2,
-      migrate: (persistedState) => {
-        const p = (persistedState || {}) as Partial<MatchPageState>
-        const merged: Partial<MatchPageState> = {
+      version: 3,
+      /** 只持久化数据字段，避免把函数/未知键写进 localStorage */
+      partialize: (state): MatchPersistedSlice => ({
+        segments: state.segments,
+        globalQuery: state.globalQuery,
+        selectedVideoIds: state.selectedVideoIds,
+        topK: state.topK,
+        topN: state.topN,
+        subtitleEnabled: state.subtitleEnabled,
+        subtitleStyle: state.subtitleStyle,
+        exportMode: state.exportMode,
+        matchMode: state.matchMode,
+        segmentCounter: state.segmentCounter,
+        autoPrompt: state.autoPrompt,
+        autoMode: state.autoMode,
+        autoTargetDuration: state.autoTargetDuration,
+        autoNumPlans: state.autoNumPlans,
+        autoBgmMixEnabled: state.autoBgmMixEnabled,
+        autoBgmPlanPolicy: state.autoBgmPlanPolicy,
+        autoBgmTrackFilename: state.autoBgmTrackFilename,
+        autoPlans: state.autoPlans,
+        autoRealizeDownloads: state.autoRealizeDownloads,
+        autoExpandedPlanIds: state.autoExpandedPlanIds,
+        autoPlanLogs: state.autoPlanLogs,
+      }),
+      /** persisted 中若存在与 action 同名的脏键，会覆盖函数导致「xxx is not a function」 */
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState ?? {}),
+        ...Object.fromEntries(Object.entries(currentState).filter(([, v]) => typeof v === 'function')),
+      }),
+      migrate: (persistedState, _oldVersion): MatchPersistedSlice => {
+        const p = (persistedState || {}) as Partial<MatchPersistedSlice>
+        const merged: Partial<MatchPersistedSlice> = {
           matchMode: 'manual',
           segmentCounter: 0,
           autoPrompt: '',
@@ -227,13 +298,29 @@ export const useMatchStore = create<MatchPageState>()(
         }
         if (merged.matchMode !== 'manual' && merged.matchMode !== 'auto') merged.matchMode = 'manual'
         if (typeof merged.segmentCounter !== 'number' || merged.segmentCounter < 0) merged.segmentCounter = 0
+        if (!Array.isArray(merged.segments)) merged.segments = []
+        if (typeof merged.globalQuery !== 'string') merged.globalQuery = ''
+        if (!Array.isArray(merged.selectedVideoIds)) merged.selectedVideoIds = []
+        if (typeof merged.topK !== 'number') merged.topK = 12
+        if (typeof merged.topN !== 'number') merged.topN = 5
+        if (typeof merged.subtitleEnabled !== 'boolean') merged.subtitleEnabled = false
+        if (!merged.subtitleStyle || typeof merged.subtitleStyle !== 'object') merged.subtitleStyle = DEFAULT_SUBTITLE_STYLE
+        if (merged.exportMode !== 'zip' && merged.exportMode !== 'subtitle' && merged.exportMode !== 'original') {
+          merged.exportMode = 'zip'
+        }
         if (!Array.isArray(merged.autoPlans)) merged.autoPlans = []
         if (!merged.autoRealizeDownloads || typeof merged.autoRealizeDownloads !== 'object') {
           merged.autoRealizeDownloads = {}
         }
         if (!Array.isArray(merged.autoExpandedPlanIds)) merged.autoExpandedPlanIds = []
         if (!Array.isArray(merged.autoPlanLogs)) merged.autoPlanLogs = []
-        return mergeLegacyAutoEditCache(merged)
+        if (typeof merged.autoBgmMixEnabled !== 'boolean') merged.autoBgmMixEnabled = false
+        const pol = merged.autoBgmPlanPolicy
+        if (pol !== 'auto' && pol !== 'none' && pol !== 'user' && pol !== 'ai') {
+          merged.autoBgmPlanPolicy = 'auto'
+        }
+        if (typeof merged.autoBgmTrackFilename !== 'string') merged.autoBgmTrackFilename = ''
+        return mergeLegacyAutoEditCache(merged) as MatchPersistedSlice
       },
       onRehydrateStorage: () => (state) => {
         if (state) {
@@ -252,6 +339,12 @@ export const useMatchStore = create<MatchPageState>()(
           }
           if (!Array.isArray(state.autoExpandedPlanIds)) state.autoExpandedPlanIds = []
           if (!Array.isArray(state.autoPlanLogs)) state.autoPlanLogs = []
+          if (typeof state.autoBgmMixEnabled !== 'boolean') state.autoBgmMixEnabled = false
+          const pol = state.autoBgmPlanPolicy
+          if (pol !== 'auto' && pol !== 'none' && pol !== 'user' && pol !== 'ai') {
+            state.autoBgmPlanPolicy = 'auto'
+          }
+          if (typeof state.autoBgmTrackFilename !== 'string') state.autoBgmTrackFilename = ''
         }
       },
     }

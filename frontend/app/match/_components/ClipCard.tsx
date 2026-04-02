@@ -1,84 +1,9 @@
 import { CheckCircle2, Play, X } from 'lucide-react'
-import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { MatchClip } from '@/lib/api'
 import { clipStreamUrl, fmt } from './types'
 
-/** 截断时的匹配理由：悬浮即时展示完整内容（portal 避免横向滚动裁剪） */
-function MatchReasonPreview({ text }: { text: string }) {
-  const anchorRef = useRef<HTMLParagraphElement>(null)
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const cancelHide = () => {
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current)
-      hideTimerRef.current = null
-    }
-  }
-
-  const scheduleHide = () => {
-    cancelHide()
-    hideTimerRef.current = setTimeout(() => setPos(null), 140)
-  }
-
-  const tryOpen = () => {
-    cancelHide()
-    const el = anchorRef.current
-    if (!el) return
-    if (el.scrollHeight <= el.clientHeight + 1) return
-    const r = el.getBoundingClientRect()
-    setPos({
-      left: r.left + r.width / 2,
-      top: r.bottom + 8,
-    })
-  }
-
-  useEffect(() => {
-    if (!pos) return
-    const onDismiss = () => setPos(null)
-    window.addEventListener('scroll', onDismiss, true)
-    window.addEventListener('resize', onDismiss)
-    return () => {
-      window.removeEventListener('scroll', onDismiss, true)
-      window.removeEventListener('resize', onDismiss)
-    }
-  }, [pos])
-
-  useEffect(() => () => cancelHide(), [])
-
-  return (
-    <>
-      <p
-        ref={anchorRef}
-        onPointerEnter={tryOpen}
-        onPointerLeave={scheduleHide}
-        className="text-[10px] text-slate-400 leading-snug line-clamp-2 italic cursor-help"
-      >
-        {text}
-      </p>
-      {pos &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            role="tooltip"
-            className="fixed z-[200] w-[min(18rem,calc(100vw-1.5rem))] max-h-[min(16rem,42vh)] overflow-y-auto rounded-xl border border-slate-600/80 bg-[#141721]/98 px-3 py-2.5 text-[11px] leading-relaxed text-slate-200 shadow-2xl shadow-black/40 backdrop-blur-md whitespace-pre-wrap break-words outline-none ring-1 ring-indigo-500/15"
-            style={{
-              left: pos.left,
-              top: pos.top,
-              transform: 'translateX(-50%)',
-            }}
-            onPointerEnter={() => cancelHide()}
-            onPointerLeave={scheduleHide}
-          >
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-indigo-400/90 mb-1.5">选择理由</p>
-            <p className="text-slate-200/95 not-italic">{text}</p>
-          </div>,
-          document.body,
-        )}
-    </>
-  )
-}
+import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
 
 // ── ScoreBar ──────────────────────────────────────────────────────────────────
 export function ScoreBar({ score }: { score: number }) {
@@ -150,7 +75,14 @@ export function ClipCard({
         <p className="text-xs text-slate-200 font-medium truncate">{name}</p>
         <p className="text-[10px] text-slate-500">{fmt(clip.start_time)} – {fmt(clip.end_time)} · {clip.duration.toFixed(1)}s</p>
         <ScoreBar score={clip.score} />
-        {clip.reason && <MatchReasonPreview text={clip.reason} />}
+        {clip.reason && (
+          <HoverTruncatedTooltip
+            text={clip.reason}
+            tooltipTitle="选择理由"
+            clamp={2}
+            anchorClassName="text-[10px] text-slate-400 leading-snug italic cursor-help"
+          />
+        )}
       </div>
     </div>
   )

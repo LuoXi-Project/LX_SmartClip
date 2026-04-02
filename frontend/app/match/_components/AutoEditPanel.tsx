@@ -1,9 +1,11 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Sparkles } from 'lucide-react'
-import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
+import { Loader2, Music2, Sparkles } from 'lucide-react'
+import { bgmApi, type AutoEditMode, type AutoEditPlanApi, type BgmTrack } from '@/lib/api'
 import { API_BASE_URL } from '@/lib/runtime-config'
+import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
 import { type AutoPlanStage } from './autoEditTypes'
 import { clipStreamUrl, fmt, videoStreamUrl } from './types'
 
@@ -16,6 +18,12 @@ type AutoEditPanelProps = {
   onAutoTargetDurationChange: (value: number | '') => void
   autoNumPlans: number
   onAutoNumPlansChange: (value: number) => void
+  autoBgmMixEnabled: boolean
+  onAutoBgmMixEnabledChange: (value: boolean) => void
+  autoBgmPlanPolicy: 'auto' | 'none' | 'user' | 'ai'
+  onAutoBgmPlanPolicyChange: (value: 'auto' | 'none' | 'user' | 'ai') => void
+  autoBgmTrackFilename: string
+  onAutoBgmTrackFilenameChange: (value: string) => void
   autoLoading: boolean
   autoError: string
   autoPlans: AutoEditPlanApi[]
@@ -42,6 +50,12 @@ export function AutoEditPanel({
   onAutoTargetDurationChange,
   autoNumPlans,
   onAutoNumPlansChange,
+  autoBgmMixEnabled,
+  onAutoBgmMixEnabledChange,
+  autoBgmPlanPolicy,
+  onAutoBgmPlanPolicyChange,
+  autoBgmTrackFilename,
+  onAutoBgmTrackFilenameChange,
   autoLoading,
   autoError,
   autoPlans,
@@ -80,6 +94,29 @@ export function AutoEditPanel({
   const [clipMetaByClip, setClipMetaByClip] = useState<
     Record<string, { video_id: string; start_time: number; end_time: number }>
   >({})
+  const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
+  const [bgmListError, setBgmListError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void bgmApi
+      .list()
+      .then((list) => {
+        if (!cancelled) {
+          setBgmTracks(Array.isArray(list) ? list : [])
+          setBgmListError('')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBgmListError('无法加载 BGM 列表')
+          setBgmTracks([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!detailPlan) return
@@ -240,6 +277,74 @@ export function AutoEditPanel({
               <option value="voiceover">配音剪辑</option>
               <option value="original">原声剪辑</option>
             </select>
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <label className="text-xs text-slate-300 flex items-center gap-2">
+              <Music2 className="w-3.5 h-3.5 text-emerald-400/90" />
+              背景音乐（成片混音）
+            </label>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3 space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoBgmMixEnabled}
+                  onChange={(e) => onAutoBgmMixEnabledChange(e.target.checked)}
+                  className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                />
+                <span className="text-sm text-slate-200">导出成片时叠加背景音乐（FFmpeg 混音）</span>
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                开关与下方曲目仅作用于「一键成片」请求，会覆盖方案 JSON 中的 BGM 占位字段的实际混音行为。
+              </p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-slate-400">规划阶段 BGM 策略（写给模型）</span>
+                  <select
+                    value={autoBgmPlanPolicy}
+                    onChange={(e) =>
+                      onAutoBgmPlanPolicyChange(e.target.value as 'auto' | 'none' | 'user' | 'ai')
+                    }
+                    disabled={autoLoading}
+                    className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
+                  >
+                    <option value="auto">自动（由模型与曲库配合）</option>
+                    <option value="none">不要 BGM</option>
+                    <option value="user">用户指定取向</option>
+                    <option value="ai">AI 推荐曲目</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-slate-400">成片使用的曲目</span>
+                  <select
+                    value={autoBgmTrackFilename}
+                    onChange={(e) => onAutoBgmTrackFilenameChange(e.target.value)}
+                    disabled={!autoBgmMixEnabled}
+                    className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
+                  >
+                    <option value="">自动（方案推荐 / 曲库匹配）</option>
+                    {bgmTracks.map((t) => (
+                      <option key={t.id} value={t.filename}>
+                        {t.title || t.filename}
+                      </option>
+                    ))}
+                  </select>
+                  {bgmListError && <p className="text-[11px] text-amber-400/90">{bgmListError}</p>}
+                  {autoBgmMixEnabled && bgmTracks.length === 0 && !bgmListError && (
+                    <p className="text-[11px] text-slate-500">
+                      曲库暂无曲目时仍可勾选「自动」尝试扫描服务端目录；也可到{' '}
+                      <Link href="/settings" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                        设置 → BGM
+                      </Link>{' '}
+                      或{' '}
+                      <Link href="/bgm" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                        BGM 页
+                      </Link>{' '}
+                      上传音频。
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div className="space-y-2">
@@ -517,13 +622,29 @@ export function AutoEditPanel({
             {autoPlans.map((p, idx) => (
               <div key={p.plan_id || idx} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-100 truncate">{p.title || `方案 ${idx + 1}`}</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
+                    <div className="text-[11px] text-slate-500 mt-0.5">
                       模式：{p.mode === 'auto' ? '自动' : p.mode === 'voiceover' ? '配音剪辑' : '原声剪辑'}
-                    </p>
+                      {p.bgm != null && (
+                        <div className="block mt-0.5 text-slate-600">
+                          方案 BGM：
+                          {p.bgm.enabled ? (
+                            <HoverTruncatedTooltip
+                              as="span"
+                              clamp={1}
+                              text={`${(p.bgm.track_id && String(p.bgm.track_id).trim()) || '自动 / 曲库'}${p.bgm.source ? `（${p.bgm.source}）` : ''}`}
+                              tooltipTitle="方案 BGM"
+                              anchorClassName="inline-block max-w-[10rem] align-middle"
+                            />
+                          ) : (
+                            <span>未启用</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right text-[11px] text-slate-500 space-y-0.5">
+                  <div className="flex-shrink-0 text-right text-[11px] text-slate-500 space-y-0.5">
                     {p.target_duration_sec && <p>目标：{Math.round(p.target_duration_sec)}s</p>}
                     {p.estimated_duration_sec && <p>预估：{Math.round(p.estimated_duration_sec)}s</p>}
                     <p>段落：{p.segments?.length ?? 0}</p>

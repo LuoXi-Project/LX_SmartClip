@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   AlertCircle, Loader2,
 } from 'lucide-react'
-import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi } from '@/lib/api'
+import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditBgmPlanApi } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { PreviewModal } from './_components/ClipCard'
 import { ExportSidebar } from './_components/ExportSidebar'
@@ -60,6 +60,12 @@ export default function MatchPage() {
     setAutoTargetDuration,
     autoNumPlans,
     setAutoNumPlans,
+    autoBgmMixEnabled,
+    setAutoBgmMixEnabled,
+    autoBgmPlanPolicy,
+    setAutoBgmPlanPolicy,
+    autoBgmTrackFilename,
+    setAutoBgmTrackFilename,
     autoPlans,
     setAutoPlans,
     autoRealizeDownloads,
@@ -364,6 +370,46 @@ export default function MatchPage() {
     )
   }
 
+  function applyAutoBgmRealizeOptions(plan: AutoEditPlanApi): AutoEditPlanApi {
+    const pb = plan.bgm
+    const baseBgm = (): AutoEditBgmPlanApi => ({
+      enabled: false,
+      source: pb?.source ?? 'library',
+      track_id: pb?.track_id ?? null,
+      volume_db: pb?.volume_db ?? -12,
+      loop: pb?.loop ?? true,
+      fade_in_sec: pb?.fade_in_sec ?? 0.8,
+      fade_out_sec: pb?.fade_out_sec ?? 1.0,
+    })
+    if (!autoBgmMixEnabled) {
+      return { ...plan, bgm: { ...baseBgm(), enabled: false } }
+    }
+    const pick = (autoBgmTrackFilename || '').trim()
+    if (pick) {
+      return {
+        ...plan,
+        bgm: {
+          ...baseBgm(),
+          enabled: true,
+          source: 'user',
+          track_id: pick,
+        },
+      }
+    }
+    return {
+      ...plan,
+      bgm: {
+        enabled: true,
+        source: pb?.source ?? 'library',
+        track_id: pb?.track_id ?? null,
+        volume_db: pb?.volume_db ?? -12,
+        loop: pb?.loop ?? true,
+        fade_in_sec: pb?.fade_in_sec ?? 0.8,
+        fade_out_sec: pb?.fade_out_sec ?? 1.0,
+      },
+    }
+  }
+
   async function handleGenerateAutoPlans() {
     if (!autoPrompt.trim()) return
     if (selectedVideoIds.length === 0 && doneVideos.length === 0) return
@@ -386,7 +432,7 @@ export default function MatchPage() {
         allow_cross_video: true,
         subtitle_policy: subtitleEnabled ? 'auto' as const : 'none' as const,
         transition_policy: 'auto' as const,
-        bgm_policy: 'auto' as const,
+        bgm_policy: autoBgmPlanPolicy,
       }
       const session = await autoEditApi.createPlanSession(payload)
       setAutoPlanStage('connecting')
@@ -416,7 +462,8 @@ export default function MatchPage() {
           try {
             const data = JSON.parse((ev as MessageEvent).data || '{}') as { plans?: AutoEditPlanApi[] }
             const plans = data.plans || []
-            setAutoPlans(plans)
+            // 让候选卡片展示的 BGM 与「一键成片 realize」时一致
+            setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
             setAutoPlanStage('done')
             appendAutoPlanLog(`生成完成，返回 ${plans.length} 个方案`)
             finished = true
@@ -473,8 +520,9 @@ export default function MatchPage() {
     setAutoRealizeMsg('')
     setAutoRealizingId(plan.plan_id)
     try {
+      const planForRealize = applyAutoBgmRealizeOptions(plan)
       const res = await autoEditApi.realize({
-        plan,
+        plan: planForRealize,
         project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
         include_subtitle: subtitleEnabled,
         style: subtitleStyle,
@@ -536,6 +584,12 @@ export default function MatchPage() {
               onAutoTargetDurationChange={setAutoTargetDuration}
               autoNumPlans={autoNumPlans}
               onAutoNumPlansChange={setAutoNumPlans}
+              autoBgmMixEnabled={autoBgmMixEnabled}
+              onAutoBgmMixEnabledChange={setAutoBgmMixEnabled}
+              autoBgmPlanPolicy={autoBgmPlanPolicy}
+              onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
+              autoBgmTrackFilename={autoBgmTrackFilename}
+              onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
               autoLoading={autoLoading}
               autoError={autoError}
               autoPlans={autoPlans}

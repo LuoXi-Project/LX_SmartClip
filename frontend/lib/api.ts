@@ -329,6 +329,16 @@ export interface AutoEditSegmentPlanApi {
   }
 }
 
+export interface AutoEditBgmPlanApi {
+  enabled: boolean
+  source?: 'library' | 'user' | 'ai'
+  track_id?: string | null
+  volume_db?: number
+  loop?: boolean
+  fade_in_sec?: number
+  fade_out_sec?: number
+}
+
 export interface AutoEditPlanApi {
   plan_id: string
   title: string
@@ -337,6 +347,7 @@ export interface AutoEditPlanApi {
   target_duration_sec?: number | null
   estimated_duration_sec?: number | null
   segments: AutoEditSegmentPlanApi[]
+  bgm?: AutoEditBgmPlanApi | null
 }
 
 export interface AutoEditPlanResponseApi {

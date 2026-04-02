@@ -1,6 +1,6 @@
 import os
 import subprocess
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class ClipInfo:
 
 
 class VideoSplitter:
-    """视频切分器 - 支持镜头识别和固定时长切分"""
+    """视频切分器 - 支持镜头识别、固定时长与混合（镜头 + 超长强制切段）切分"""
 
     def __init__(self, storage_dir: str = None):
         if storage_dir is None:
@@ -273,6 +273,146 @@ class VideoSplitter:
         logger.info(f"固定时长切分完成: {len(clips)} 个片段")
         return clips
 
+    def _expand_long_scene_ranges(
+        self,
+        start_time: float,
+        end_time: float,
+        max_segment_sec: float,
+        chunk_sec: float,
+    ) -> List[Tuple[float, float]]:
+        """
+        若 (end_time - start_time) > max_segment_sec，则按 chunk_sec 步长拆成多段；否则单段。
+        """
+        dur = end_time - start_time
+        if dur <= max_segment_sec + 1e-6:
+            return [(start_time, end_time)]
+        if chunk_sec <= 0:
+            raise ValueError(f"强制切段步长必须大于 0: {chunk_sec}")
+        out: List[Tuple[float, float]] = []
+        t = start_time
+        while t < end_time - 1e-6:
+            seg_end = min(t + chunk_sec, end_time)
+            out.append((t, seg_end))
+            t = seg_end
+        return out
+
+    def _detect_scene_time_ranges(
+        self,
+        video_path: str,
+        threshold: float,
+        min_scene_len: int,
+    ) -> Tuple[List[Tuple[float, float]], bool]:
+        """
+        使用 PySceneDetect 得到镜头时间区间列表。
+
+        Returns:
+            (ranges, had_scene_cuts)
+            - ranges: List[(start_sec, end_sec)]
+            - had_scene_cuts: 是否检测到至少一处切镜（False 表示退化为整段视频）
+        """
+        try:
+            from scenedetect import open_video, SceneManager
+            from scenedetect.detectors import ContentDetector
+        except ImportError:
+            raise ImportError("请安装 scenedetect: pip install scenedetect[opencv]")
+
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"视频文件不存在: {video_path}")
+
+        threshold_value = float(threshold)
+        if 0.0 < threshold_value <= 1.0:
+            logger.warning(
+                f"检测到旧阈值范围 threshold={threshold_value}，自动使用推荐值 30.0 避免过碎切分"
+            )
+            threshold_value = 30.0
+
+        min_scene_len_value = max(1, int(min_scene_len))
+
+        video = open_video(video_path)
+        scene_manager = SceneManager()
+        scene_manager.add_detector(
+            ContentDetector(
+                threshold=threshold_value,
+                min_scene_len=min_scene_len_value,
+            )
+        )
+        scene_manager.detect_scenes(video, show_progress=True)
+        scenes = scene_manager.get_scene_list() or []
+
+        if not scenes:
+            total_duration = self.get_video_duration(video_path)
+            return [(0.0, total_duration)], False
+
+        ranges = [
+            (start_frame.get_seconds(), end_frame.get_seconds())
+            for start_frame, end_frame in scenes
+        ]
+        return ranges, True
+
+    def split_by_hybrid(
+        self,
+        video_path: str,
+        threshold: float = 30.0,
+        min_scene_len: int = 30,
+        max_segment_sec: float = 60.0,
+        chunk_sec: float = 10.0,
+        transcode_opts: Optional[Dict[str, str]] = None,
+    ) -> List[ClipInfo]:
+        """
+        混合切分：先做镜头识别；若某镜头时长超过 max_segment_sec，再按 chunk_sec 强制切段。
+
+        Args:
+            max_segment_sec: 单镜头允许的最长秒数，超过则拆分
+            chunk_sec: 超长镜头的切段步长（通常与「固定分割时长」一致）
+        """
+        if max_segment_sec <= 0:
+            raise ValueError(f"混合模式最大镜头时长必须大于 0: {max_segment_sec}")
+
+        video_has_stream = self.has_video_stream(video_path)
+        output_container = (transcode_opts or {}).get("clip_container", "mp4").strip() or "mp4"
+
+        logger.info(
+            f"混合切分: 视频={video_path}, threshold={threshold}, min_scene_len={min_scene_len}, "
+            f"max_segment_sec={max_segment_sec}, chunk_sec={chunk_sec}"
+        )
+
+        ranges, _had_cuts = self._detect_scene_time_ranges(
+            video_path, threshold, min_scene_len
+        )
+
+        expanded: List[Tuple[float, float]] = []
+        for st, en in ranges:
+            expanded.extend(self._expand_long_scene_ranges(st, en, max_segment_sec, chunk_sec))
+
+        clips: List[ClipInfo] = []
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+
+        for i, (start_time, end_time) in enumerate(expanded):
+            clip_duration = end_time - start_time
+            clip_filename = f"{video_name}_hybrid_{i:04d}.{output_container}"
+            clip_path = os.path.join(self.clips_dir, clip_filename)
+
+            cmd = ["ffmpeg", "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
+            cmd += self._build_transcode_args(
+                has_video_stream=video_has_stream,
+                output_container=output_container,
+                opts=transcode_opts,
+            )
+            cmd += ["-y", clip_path]
+
+            try:
+                logger.info(
+                    f"混合切分片段 {i+1}/{len(expanded)}: {start_time:.2f}s - {end_time:.2f}s"
+                )
+                subprocess.run(cmd, check=True, capture_output=True)
+                clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
+            except subprocess.CalledProcessError as e:
+                logger.error(f"混合切分失败: {e.stderr.decode()}")
+                raise RuntimeError(f"混合切分失败: {str(e)}")
+
+        logger.info(f"混合切分完成: {len(clips)} 个片段")
+        return clips
+
     def split_by_scene(
         self,
         video_path: str,
@@ -291,12 +431,6 @@ class VideoSplitter:
         Returns:
             片段信息列表
         """
-        try:
-            from scenedetect import open_video, SceneManager
-            from scenedetect.detectors import ContentDetector
-        except ImportError:
-            raise ImportError("请安装 scenedetect: pip install scenedetect[opencv]")
-
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
@@ -318,19 +452,11 @@ class VideoSplitter:
             f"镜头识别切分: 视频={video_path}, 阈值={threshold_value}, min_scene_len={min_scene_len_value}"
         )
 
-        # 检测场景
-        video = open_video(video_path)
-        scene_manager = SceneManager()
-        scene_manager.add_detector(
-            ContentDetector(
-                threshold=threshold_value,
-                min_scene_len=min_scene_len_value,
-            )
+        scenes, had_scene_cuts = self._detect_scene_time_ranges(
+            video_path, threshold_value, min_scene_len_value
         )
-        scene_manager.detect_scenes(video, show_progress=True)
-        scenes = scene_manager.get_scene_list() or []
 
-        if not scenes:
+        if not had_scene_cuts:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)
             video_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -357,10 +483,7 @@ class VideoSplitter:
         clips = []
         video_name = os.path.splitext(os.path.basename(video_path))[0]
 
-        for i, (start_frame, end_frame) in enumerate(scenes):
-            # 将帧数转换为秒
-            start_time = start_frame.get_seconds()
-            end_time = end_frame.get_seconds()
+        for i, (start_time, end_time) in enumerate(scenes):
             clip_duration = end_time - start_time
 
             # 生成片段文件路径

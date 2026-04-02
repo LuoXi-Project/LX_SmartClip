@@ -126,7 +126,9 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     try:
         split_mode      = await _read_config(db, "split_mode", "scene")
         scene_threshold = float(await _read_config(db, "scene_threshold", "0.4"))
+        scene_min_scene_len = int(await _read_config(db, "scene_min_scene_len", "30"))
         fixed_duration  = float(await _read_config(db, "fixed_duration", "10"))
+        hybrid_max_segment_sec = float(await _read_config(db, "hybrid_max_segment_sec", "60"))
         asr_provider    = await _read_config(db, "asr_provider", "whisper")
         asr_model       = await _read_config(db, "asr_model", "base")
         asr_base_url    = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
@@ -157,9 +159,23 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 clips = await loop.run_in_executor(
                     None, splitter.split_by_fixed, video_path, fixed_duration
                 )
+            elif split_mode == "hybrid":
+                clips = await loop.run_in_executor(
+                    None,
+                    lambda: splitter.split_by_hybrid(
+                        video_path,
+                        scene_threshold,
+                        scene_min_scene_len,
+                        hybrid_max_segment_sec,
+                        fixed_duration,
+                    ),
+                )
             else:
                 clips = await loop.run_in_executor(
-                    None, splitter.split_by_scene, video_path, scene_threshold
+                    None,
+                    lambda: splitter.split_by_scene(
+                        video_path, scene_threshold, scene_min_scene_len
+                    ),
                 )
             await _save_clips_to_db(video_id, clips)
             await reporter.send(

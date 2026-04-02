@@ -45,10 +45,11 @@ CREATE TABLE IF NOT EXISTS config (
 """
 
 DEFAULT_CONFIG = [
-    ("split_mode", "scene", "select", "分割模式", '["scene","fixed"]'),
+    ("split_mode", "scene", "select", "分割模式", '["scene","fixed","hybrid"]'),
     ("fixed_duration", "10", "number", "固定分割时长（秒）", None),
     ("scene_threshold", "0.4", "number", "场景检测阈值", None),
     ("scene_min_scene_len", "30", "number", "最小镜头长度（帧）", None),
+    ("hybrid_max_segment_sec", "60", "number", "混合模式单镜头最长（秒）", None),
     # 切分/转码输出参数（FFmpeg）
     ("clip_container", "mp4", "select", "切分输出格式（容器）", '["mp4","mov","mkv","webm"]'),
     ("clip_vcodec", "libx264", "select", "视频编码器", '["libx264","libx265","libvpx-vp9","copy"]'),
@@ -149,4 +150,9 @@ async def init_db():
                 "INSERT OR IGNORE INTO config (key, value, type, label, options) VALUES (?,?,?,?,?)",
                 (key, value, type_, label, options),
             )
+        # 兼容旧库：补全分割模式可选项与混合模式参数
+        await db.execute(
+            "UPDATE config SET options = ? WHERE key = 'split_mode'",
+            ('["scene","fixed","hybrid"]',),
+        )
         await db.commit()

@@ -3,7 +3,7 @@
 import { VIDEO_KEYS } from './constants'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save, Scissors, Clock, Info } from 'lucide-react'
+import { Save, Scissors, Clock, Layers, Info } from 'lucide-react'
 import type { ConfigMap } from './types'
 
 interface Props {
@@ -24,6 +24,12 @@ const SPLIT_MODES = [
     desc: '自动分析画面变化，在镜头切换处切分。适合剪辑素材，切分结果更贴近实际镜头边界。',
   },
   {
+    value: 'hybrid',
+    label: '混合模式',
+    icon: Layers,
+    desc: '先做镜头识别；若某镜头超过「单镜头最长」阈值，再按「固定分割时长」步长强制切段，避免单段过长。',
+  },
+  {
     value: 'fixed',
     label: '固定时长',
     icon: Clock,
@@ -32,9 +38,10 @@ const SPLIT_MODES = [
 ]
 
 const PARAM_HINTS: Record<string, string> = {
-  fixed_duration:      '仅在「固定时长」模式下生效，每段片段的秒数',
-  scene_threshold:     '仅在「镜头检测」模式下生效，值越小越灵敏（0.1 ~ 1.0）',
-  scene_min_scene_len: '仅在「镜头检测」模式下生效，用于抑制过碎切分；单位为帧（越大越不容易切碎）',
+  fixed_duration:      '「固定时长」模式：整段等分；「混合模式」下为超长镜头的强制切段步长（秒）',
+  scene_threshold:     '「镜头检测」与「混合模式」：画面变化灵敏度；值越小越敏感（推荐 27~35，旧版 0~1 会自动映射）',
+  scene_min_scene_len: '「镜头检测」与「混合模式」：抑制过碎切分；单位为帧（越大越不容易切碎）',
+  hybrid_max_segment_sec: '仅在「混合模式」下生效：单镜头超过该秒数时，按「固定分割时长」强制切段',
   frame_fps:           '每秒从片段中抽取的帧数，用于 VLM 画面描述',
   frame_target_pixels: '抽帧时将图像长边压制到此像素（如 512），0 表示不压制。配合 VLM 可显著降低 token 消耗',
   asr_model:           'Whisper 语音识别模型规格，越大精度越高但越慢',
@@ -86,7 +93,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
                 onSave={() => onSave('split_mode')}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {SPLIT_MODES.map((mode) => {
                 const Icon = mode.icon
                 const active = currentMode === mode.value

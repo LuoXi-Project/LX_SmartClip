@@ -49,9 +49,10 @@ async def split_video(video_id: str):
     """
     切分视频
 
-    支持两种模式：
+    支持三种模式：
     - scene: 镜头识别切分
     - fixed: 固定时长切分
+    - hybrid: 混合（镜头识别 + 超长镜头按固定步长强制切段）
     """
     db = await get_db_conn()
     try:
@@ -70,6 +71,9 @@ async def split_video(video_id: str):
         scene_threshold = float(await _get_config_value(db, "scene_threshold", "30.0"))
         scene_min_scene_len = int(await _get_config_value(db, "scene_min_scene_len", "30"))
         fixed_duration = float(await _get_config_value(db, "fixed_duration", "10"))
+        hybrid_max_segment_sec = float(
+            await _get_config_value(db, "hybrid_max_segment_sec", "60")
+        )
 
         # 切分输出转码参数（由前端设置）
         transcode_opts = {
@@ -97,6 +101,15 @@ async def split_video(video_id: str):
         elif split_mode == "fixed":
             clips = splitter.split_by_fixed(
                 video_path,
+                fixed_duration,
+                transcode_opts=transcode_opts,
+            )
+        elif split_mode == "hybrid":
+            clips = splitter.split_by_hybrid(
+                video_path,
+                scene_threshold,
+                scene_min_scene_len,
+                hybrid_max_segment_sec,
                 fixed_duration,
                 transcode_opts=transcode_opts,
             )

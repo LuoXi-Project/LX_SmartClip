@@ -35,6 +35,8 @@ def compile_timeline_to_plan(
     plan_id: str,
     title: str,
     summary: str,
+    video_title: Optional[str] = None,
+    video_description: Optional[str] = None,
     mode: str,
     allow_cross_video: bool,
 ) -> Plan:
@@ -96,6 +98,8 @@ def compile_timeline_to_plan(
         plan_id=plan_id,
         title=title,
         summary=summary,
+        video_title=video_title,
+        video_description=video_description,
         mode=mode,  # type: ignore[arg-type]
         target_duration_sec=target,
         estimated_duration_sec=est,

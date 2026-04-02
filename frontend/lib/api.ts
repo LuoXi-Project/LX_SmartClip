@@ -347,6 +347,9 @@ export interface AutoEditPlanApi {
   plan_id: string
   title: string
   summary: string
+  /** Timeline Engine 方案补充的“素材视频元信息”（兼容字段） */
+  video_title?: string | null
+  video_description?: string | null
   mode: AutoEditMode
   target_duration_sec?: number | null
   estimated_duration_sec?: number | null

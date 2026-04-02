@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.llm import LLMConfig
+from app.core.llm import LLMClient
 from app.core.auto_edit.plan_generation import call_llm_for_plans
 from app.core.auto_edit.segments import ClipCandidate, collect_plan_clip_ids, segments_from_plan
 from app.core.auto_edit_v2.plan_compile import (
@@ -71,6 +72,108 @@ def _build_sse_event(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+async def _load_video_names(db: aiosqlite.Connection, video_ids: list[str]) -> list[str]:
+    if not video_ids:
+        return []
+    placeholders = ",".join(["?"] * len(video_ids))
+    sql = f"SELECT id, name FROM videos WHERE id IN ({placeholders})"
+    async with db.execute(sql, video_ids) as cur:
+        rows = await cur.fetchall()
+    id_to_name = {str(r["id"]): str(r["name"] or "") for r in rows}
+    out: list[str] = []
+    for vid in video_ids:
+        name = (id_to_name.get(str(vid)) or "").strip()
+        if name:
+            out.append(name)
+    return out
+
+
+def _build_video_meta_for_plan(*, video_names: list[str], user_prompt: str) -> tuple[str | None, str | None]:
+    names = [n.strip() for n in (video_names or []) if n and n.strip()]
+    if not names:
+        return None, None
+    video_title = names[0] if len(names) == 1 else f"{len(names)}个视频合集"
+    up = (user_prompt or "").strip()
+    prefix = f"用户诉求：{up}；" if up else ""
+    materials = "、".join(names[:6]) + (" 等" if len(names) > 6 else "")
+    video_description = f"{prefix}素材：{materials}"
+    return video_title, video_description
+
+
+def _compose_plan_title(*, plan_index: int, video_title: str | None) -> str:
+    base = f"智能剪辑（Timeline Engine）#{plan_index}"
+    vt = (video_title or "").strip()
+    return f"{vt} · {base}" if vt else base
+
+
+def _compose_plan_summary(*, engine_summary: str, video_description: str | None) -> str:
+    vd = (video_description or "").strip()
+    if not vd:
+        return engine_summary
+    return f"{vd}\n{engine_summary}"
+
+
+async def _call_llm_for_final_video_meta(
+    *,
+    cfg: dict,
+    context: str,
+    user_prompt: str,
+    mode: str,
+    target_duration_sec: int | None,
+) -> tuple[str | None, str | None]:
+    """
+    生成“成片成品”的标题与描述（用于发布/项目命名），而不是素材文件名。
+    返回 (title, description)。失败返回 (None, None)。
+    """
+    try:
+        llm = LLMClient(
+            base_url=cfg["base_url"],
+            api_key=cfg["api_key"],
+            model=cfg["model"],
+            temperature=0.4,
+            max_tokens=256,
+            timeout=3600,
+        )
+        sys = (
+            "你是短视频剪辑成片的发布文案助手。\n"
+            "你将收到：素材内容摘要（台词/画面）、用户诉求、成片模式与目标时长。\n"
+            "任务：为“最终成片”生成一个标题(title)与一个基本描述(description)。\n"
+            "要求：\n"
+            "- title：15~30字，吸引人但不要夸张，不要包含文件名/ID/时间戳。\n"
+            "- description：1~3句，概括主题+亮点+结构/节奏，可提及风格；不要复述素材列表。\n"
+            "- 不要输出 Markdown，不要解释；只输出 JSON：{\"title\":\"...\",\"description\":\"...\"}\n"
+        )
+        user = (
+            f"【用户诉求】\n{(user_prompt or '').strip()}\n\n"
+            f"【成片模式】{mode}\n"
+            f"【目标时长】{target_duration_sec or ''}\n\n"
+            f"【素材内容摘要】\n{(context or '').strip()}\n"
+        )
+        raw = await llm.chat(
+            [
+                {"role": "system", "content": sys},
+                {"role": "user", "content": user},
+            ]
+        )
+        if not isinstance(raw, str) or not raw.strip():
+            return None, None
+        import re
+
+        cleaned = re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=re.IGNORECASE).strip()
+        s = cleaned.find("{")
+        e = cleaned.rfind("}")
+        if s != -1 and e != -1 and e > s:
+            cleaned = cleaned[s : e + 1]
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            return None, None
+        title = str(data.get("title") or "").strip() or None
+        desc = str(data.get("description") or "").strip() or None
+        return title, desc
+    except Exception:
+        return None, None
+
+
 @router.post("/plan", response_model=AutoEditPlanResponse)
 async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanResponse:
     """
@@ -96,6 +199,11 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 default_max_tokens=20480,
             )
             logger.info("auto_edit 启用新引擎：正在读取上下文")
+            video_names = await _load_video_names(db, req.video_ids)
+            video_title, video_description = _build_video_meta_for_plan(
+                video_names=video_names,
+                user_prompt=req.user_prompt,
+            )
             context = await _build_video_context_with_recall(
                 db,
                 req.video_ids,
@@ -142,6 +250,13 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
             if not timelines:
                 raise RuntimeError("timeline empty")
             logger.info("auto_edit 启用新引擎：正在编译时间轴为 Plan")
+            final_title, final_desc = await _call_llm_for_final_video_meta(
+                cfg=cfg,
+                context=context,
+                user_prompt=req.user_prompt,
+                mode=req.mode,
+                target_duration_sec=req.target_duration_sec,
+            )
             plans = []
             for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
                 plans.append(
@@ -149,8 +264,13 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                         timeline=tl,
                         dsl=dsl,
                         plan_id=uuid.uuid4().hex[:8],
-                        title=f"智能剪辑（Timeline Engine）#{i}",
-                        summary="由事件级时间轴编译生成（V1）",
+                        title=(final_title or _compose_plan_title(plan_index=i, video_title=video_title)),
+                        summary=(final_desc or _compose_plan_summary(
+                            engine_summary="由事件级时间轴编译生成（V1）",
+                            video_description=video_description,
+                        )),
+                        video_title=(final_title or video_title),
+                        video_description=(final_desc or video_description),
                         mode=req.mode,
                         allow_cross_video=req.allow_cross_video,
                     )
@@ -165,6 +285,13 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
             )
             timelines = [tl for tl in timelines if tl.items]
             if timelines:
+                final_title, final_desc = await _call_llm_for_final_video_meta(
+                    cfg=cfg,
+                    context=context,
+                    user_prompt=req.user_prompt,
+                    mode=req.mode,
+                    target_duration_sec=req.target_duration_sec,
+                )
                 plans = []
                 for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
                     plans.append(
@@ -172,8 +299,13 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                             timeline=tl,
                             dsl=dsl,
                             plan_id=uuid.uuid4().hex[:8],
-                            title=f"智能剪辑（Timeline Engine）#{i}",
-                            summary="由事件级时间轴编译生成（V0 回退）",
+                            title=(final_title or _compose_plan_title(plan_index=i, video_title=video_title)),
+                            summary=(final_desc or _compose_plan_summary(
+                                engine_summary="由事件级时间轴编译生成（V0 回退）",
+                                video_description=video_description,
+                            )),
+                            video_title=(final_title or video_title),
+                            video_description=(final_desc or video_description),
                             mode=req.mode,
                             allow_cross_video=req.allow_cross_video,
                         )
@@ -229,6 +361,11 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         default_max_tokens=20480,
                     )
                     yield _build_sse_event("progress", {"stage": "context", "message": "正在构建素材上下文"})
+                    video_names = await _load_video_names(db, req.video_ids)
+                    video_title, video_description = _build_video_meta_for_plan(
+                        video_names=video_names,
+                        user_prompt=req.user_prompt,
+                    )
                     context = await _build_video_context_with_recall(
                         db,
                         req.video_ids,
@@ -273,6 +410,13 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                     timelines = [tl for tl in timelines if tl.items]
                     if not timelines:
                         raise RuntimeError("timeline empty")
+                    final_title, final_desc = await _call_llm_for_final_video_meta(
+                        cfg=cfg,
+                        context=context,
+                        user_prompt=req.user_prompt,
+                        mode=req.mode,
+                        target_duration_sec=req.target_duration_sec,
+                    )
                     plans = []
                     for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
                         plans.append(
@@ -280,8 +424,13 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                                 timeline=tl,
                                 dsl=dsl,
                                 plan_id=uuid.uuid4().hex[:8],
-                                title=f"智能剪辑（Timeline Engine）#{i}",
-                                summary="由事件级时间轴编译生成（V1）",
+                                title=(final_title or _compose_plan_title(plan_index=i, video_title=video_title)),
+                                summary=(final_desc or _compose_plan_summary(
+                                    engine_summary="由事件级时间轴编译生成（V1）",
+                                    video_description=video_description,
+                                )),
+                                video_title=(final_title or video_title),
+                                video_description=(final_desc or video_description),
                                 mode=req.mode,
                                 allow_cross_video=req.allow_cross_video,
                             )
@@ -296,6 +445,13 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                     )
                     timelines = [tl for tl in timelines if tl.items]
                     if timelines:
+                        final_title, final_desc = await _call_llm_for_final_video_meta(
+                            cfg=cfg,
+                            context=context,
+                            user_prompt=req.user_prompt,
+                            mode=req.mode,
+                            target_duration_sec=req.target_duration_sec,
+                        )
                         plans = []
                         for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
                             plans.append(
@@ -303,8 +459,13 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                                     timeline=tl,
                                     dsl=dsl,
                                     plan_id=uuid.uuid4().hex[:8],
-                                    title=f"智能剪辑（Timeline Engine）#{i}",
-                                    summary="由事件级时间轴编译生成（V0 回退）",
+                                    title=(final_title or _compose_plan_title(plan_index=i, video_title=video_title)),
+                                    summary=(final_desc or _compose_plan_summary(
+                                        engine_summary="由事件级时间轴编译生成（V0 回退）",
+                                        video_description=video_description,
+                                    )),
+                                    video_title=(final_title or video_title),
+                                    video_description=(final_desc or video_description),
                                     mode=req.mode,
                                     allow_cross_video=req.allow_cross_video,
                                 )

@@ -91,6 +91,9 @@ class Plan(BaseModel):
     plan_id: str
     title: str
     summary: str
+    # Timeline Engine 方案补充的“素材视频元信息”（兼容字段：旧数据/旧前端可忽略）
+    video_title: Optional[str] = None
+    video_description: Optional[str] = None
     mode: Literal["auto", "voiceover", "original"] = "auto"
     target_duration_sec: Optional[float] = None
     estimated_duration_sec: Optional[float] = None

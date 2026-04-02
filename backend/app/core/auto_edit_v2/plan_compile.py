@@ -162,3 +162,62 @@ def build_v0_timeline_from_context(
     total_est = float(sum((it.duration_budget_sec or 0.0) for it in items))
     return FinalTimeline(items=items, total_duration_sec_est=total_est if total_est > 0 else None)
 
+
+def build_v0_timelines_from_context(
+    *,
+    context: str,
+    dsl: StrategyDSL,
+    mode: str,
+    num_plans: int,
+) -> List[FinalTimeline]:
+    """
+    V0：生成多个候选 timeline 的低成本方式（用于“新引擎失败后的回退”）：
+    - 从 context 抽取 clip_id 列表
+    - 通过“旋转起点 + 步进采样”生成 n 条不同的顺序
+    """
+    import re
+
+    n = int(num_plans or 1)
+    n = max(1, min(5, n))
+
+    clip_ids = re.findall(r"\[clip_id=([^\]]+)\]", context or "")
+    clip_ids = list(dict.fromkeys([c.strip() for c in clip_ids if c and c.strip()]))
+    if not clip_ids:
+        return [FinalTimeline(items=[], total_duration_sec_est=0.0)]
+
+    target = float(dsl.target_duration_sec or 0) if dsl.target_duration_sec else 0.0
+    per = None
+    if target and target > 0:
+        per = max(1.5, min(10.0, target / max(1, len(clip_ids))))
+
+    timelines: List[FinalTimeline] = []
+    m = len(clip_ids)
+    for i in range(n):
+        start = i % m
+        step = 1 + (i % 3)  # 1,2,3 循环，制造差异但不至于太跳
+        ordered = []
+        idx = start
+        seen = set()
+        for _ in range(m):
+            cid = clip_ids[idx]
+            if cid not in seen:
+                ordered.append(cid)
+                seen.add(cid)
+            idx = (idx + step) % m
+
+        items: List[TimelineItem] = []
+        for j, cid in enumerate(ordered, 1):
+            items.append(
+                TimelineItem(
+                    event_id=f"e_{i+1}_{j}",
+                    clip_id=cid,
+                    subtitle_text=dsl.goal if dsl.goal else "",
+                    audio_mode="tts" if mode in ("auto", "voiceover") else "original",
+                    duration_budget_sec=per,
+                )
+            )
+        total_est = float(sum((it.duration_budget_sec or 0.0) for it in items))
+        timelines.append(FinalTimeline(items=items, total_duration_sec_est=total_est if total_est > 0 else None))
+
+    return timelines
+

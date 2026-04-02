@@ -22,13 +22,13 @@ from app.core.auto_edit.plan_generation import call_llm_for_plans
 from app.core.auto_edit.segments import ClipCandidate, collect_plan_clip_ids, segments_from_plan
 from app.core.auto_edit_v2.plan_compile import (
     build_v0_dsl_from_request,
-    build_v0_timeline_from_context,
+    build_v0_timelines_from_context,
     compile_timeline_to_plan,
 )
 from app.core.auto_edit_v2.dsl_generation import call_llm_for_strategy_dsl
 from app.core.auto_edit_v2.events_generation import call_llm_for_events_all
 from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batches
-from app.core.auto_edit_v2.arrange import arrange_timeline
+from app.core.auto_edit_v2.arrange import arrange_timeline_variants
 from app.core.bgm.auto_bgm import apply_bgm_postprocess_if_needed
 from app.api.copy_gen import _build_video_context_with_recall
 from app.models.subtitle import (
@@ -130,38 +130,55 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
             logger.info("auto_edit 启用新引擎：正在分配事件池")
             pool = assign_tiers_and_rank(merged_events)
             logger.info("auto_edit 启用新引擎：正在编排事件池")
-            timeline = arrange_timeline(
+            timelines = arrange_timeline_variants(
                 pool=pool,
                 dsl=dsl,
                 mode=req.mode,
                 target_duration_sec=req.target_duration_sec,
+                num_plans=req.num_plans,
+                seed_hint=req.user_prompt,
             )
-            if not timeline.items:
+            timelines = [tl for tl in timelines if tl.items]
+            if not timelines:
                 raise RuntimeError("timeline empty")
             logger.info("auto_edit 启用新引擎：正在编译时间轴为 Plan")
-            plan = compile_timeline_to_plan(
-                timeline=timeline,
-                dsl=dsl,
-                plan_id=uuid.uuid4().hex[:8],
-                title="智能剪辑（Timeline Engine）",
-                summary="由事件级时间轴编译生成（V1）",
-                mode=req.mode,
-                allow_cross_video=req.allow_cross_video,
-            )
-            return AutoEditPlanResponse(plans=[plan])
-        except Exception:
-            timeline = build_v0_timeline_from_context(context=context, dsl=dsl, mode=req.mode)
-            if timeline.items:
-                plan = compile_timeline_to_plan(
-                    timeline=timeline,
-                    dsl=dsl,
-                    plan_id=uuid.uuid4().hex[:8],
-                    title="智能剪辑（Timeline Engine）",
-                    summary="由事件级时间轴编译生成（V0 回退）",
-                    mode=req.mode,
-                    allow_cross_video=req.allow_cross_video,
+            plans = []
+            for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                plans.append(
+                    compile_timeline_to_plan(
+                        timeline=tl,
+                        dsl=dsl,
+                        plan_id=uuid.uuid4().hex[:8],
+                        title=f"智能剪辑（Timeline Engine）#{i}",
+                        summary="由事件级时间轴编译生成（V1）",
+                        mode=req.mode,
+                        allow_cross_video=req.allow_cross_video,
+                    )
                 )
-                return AutoEditPlanResponse(plans=[plan])
+            return AutoEditPlanResponse(plans=plans)
+        except Exception:
+            timelines = build_v0_timelines_from_context(
+                context=context,
+                dsl=dsl,
+                mode=req.mode,
+                num_plans=req.num_plans,
+            )
+            timelines = [tl for tl in timelines if tl.items]
+            if timelines:
+                plans = []
+                for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                    plans.append(
+                        compile_timeline_to_plan(
+                            timeline=tl,
+                            dsl=dsl,
+                            plan_id=uuid.uuid4().hex[:8],
+                            title=f"智能剪辑（Timeline Engine）#{i}",
+                            summary="由事件级时间轴编译生成（V0 回退）",
+                            mode=req.mode,
+                            allow_cross_video=req.allow_cross_video,
+                        )
+                    )
+                return AutoEditPlanResponse(plans=plans)
 
             # 最终兜底：回退旧逻辑，避免新引擎缺信息直接失败
             return await call_llm_for_plans(cfg, context, req)
@@ -245,37 +262,54 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                     batches = await call_llm_for_events_all(cfg=cfg, context=context)
                     merged_events = merge_batches(batches)
                     pool = assign_tiers_and_rank(merged_events)
-                    timeline = arrange_timeline(
+                    timelines = arrange_timeline_variants(
                         pool=pool,
                         dsl=dsl,
                         mode=req.mode,
                         target_duration_sec=req.target_duration_sec,
+                        num_plans=req.num_plans,
+                        seed_hint=req.user_prompt,
                     )
-                    if not timeline.items:
+                    timelines = [tl for tl in timelines if tl.items]
+                    if not timelines:
                         raise RuntimeError("timeline empty")
-                    plan = compile_timeline_to_plan(
-                        timeline=timeline,
-                        dsl=dsl,
-                        plan_id=uuid.uuid4().hex[:8],
-                        title="智能剪辑（Timeline Engine）",
-                        summary="由事件级时间轴编译生成（V1）",
-                        mode=req.mode,
-                        allow_cross_video=req.allow_cross_video,
-                    )
-                    plan_res = AutoEditPlanResponse(plans=[plan])
-                except Exception:
-                    timeline = build_v0_timeline_from_context(context=context, dsl=dsl, mode=req.mode)
-                    if timeline.items:
-                        plan = compile_timeline_to_plan(
-                            timeline=timeline,
-                            dsl=dsl,
-                            plan_id=uuid.uuid4().hex[:8],
-                            title="智能剪辑（Timeline Engine）",
-                            summary="由事件级时间轴编译生成（V0 回退）",
-                            mode=req.mode,
-                            allow_cross_video=req.allow_cross_video,
+                    plans = []
+                    for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                        plans.append(
+                            compile_timeline_to_plan(
+                                timeline=tl,
+                                dsl=dsl,
+                                plan_id=uuid.uuid4().hex[:8],
+                                title=f"智能剪辑（Timeline Engine）#{i}",
+                                summary="由事件级时间轴编译生成（V1）",
+                                mode=req.mode,
+                                allow_cross_video=req.allow_cross_video,
+                            )
                         )
-                        plan_res = AutoEditPlanResponse(plans=[plan])
+                    plan_res = AutoEditPlanResponse(plans=plans)
+                except Exception:
+                    timelines = build_v0_timelines_from_context(
+                        context=context,
+                        dsl=dsl,
+                        mode=req.mode,
+                        num_plans=req.num_plans,
+                    )
+                    timelines = [tl for tl in timelines if tl.items]
+                    if timelines:
+                        plans = []
+                        for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                            plans.append(
+                                compile_timeline_to_plan(
+                                    timeline=tl,
+                                    dsl=dsl,
+                                    plan_id=uuid.uuid4().hex[:8],
+                                    title=f"智能剪辑（Timeline Engine）#{i}",
+                                    summary="由事件级时间轴编译生成（V0 回退）",
+                                    mode=req.mode,
+                                    allow_cross_video=req.allow_cross_video,
+                                )
+                            )
+                        plan_res = AutoEditPlanResponse(plans=plans)
                     else:
                         plan_res = await call_llm_for_plans(cfg, context, req)
             else:

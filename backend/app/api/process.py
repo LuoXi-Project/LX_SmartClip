@@ -292,8 +292,18 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                                 )
                             if not frame_paths:
                                 return
+                            frame_times_sec = splitter.frame_timestamps_in_clip(
+                                clip_path, len(frame_paths)
+                            )
                             description = await loop.run_in_executor(
-                                None, vlm_instance.generate_description, frame_paths, vlm_max_images, vlm_context_length
+                                None,
+                                lambda fp=frame_paths,
+                                ts=frame_times_sec: vlm_instance.generate_description(
+                                    fp,
+                                    ts,
+                                    vlm_max_images,
+                                    vlm_context_length,
+                                ),
                             )
                             await _update_clip_field(clip_id, "vlm_description", description)
                             processed_vlm += 1

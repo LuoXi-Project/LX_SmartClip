@@ -60,6 +60,26 @@ async def process_vlm(video_id: str):
         base_url = config["vlm_base_url"] or "https://api.openai.com/v1"
         model = config["vlm_model"] or "gpt-4o"
 
+        async def _read_cfg(key: str, default: str) -> str:
+            c = await db.execute(
+                "SELECT value FROM config WHERE key = ?", (key,)
+            )
+            r = await c.fetchone()
+            if r and r["value"] is not None and str(r["value"]).strip() != "":
+                return str(r["value"])
+            return default
+
+        fps_raw = await _read_cfg("frame_fps", "1")
+        px_raw = await _read_cfg("frame_target_pixels", "0")
+        try:
+            frame_fps = float(fps_raw)
+        except (TypeError, ValueError):
+            frame_fps = 1.0
+        try:
+            frame_target_pixels = int(float(px_raw))
+        except (TypeError, ValueError):
+            frame_target_pixels = 0
+
         # 获取 VLM 实例
         vlm_instance = get_vlm(base_url, model, config["vlm_api_key"])
 
@@ -91,16 +111,18 @@ async def process_vlm(video_id: str):
                 )
 
                 if not os.path.exists(frames_dir):
-                    # 如果帧不存在，先抽帧
-                    logger.info(f"帧不存在，正在抽帧...")
-                    frame_paths = splitter.extract_frames(clip_path, n_frames=3)
+                    # 如果帧不存在，按配置帧率抽帧（与全处理流水线一致）
+                    logger.info("帧不存在，正在抽帧...")
+                    frame_paths = splitter.extract_frames(
+                        clip_path, fps=frame_fps, target_pixels=frame_target_pixels
+                    )
                 else:
                     # 获取已有的帧
                     frame_paths = sorted(
                         [
                             os.path.join(frames_dir, f)
                             for f in os.listdir(frames_dir)
-                            if f.endswith((".jpg", ".png"))
+                            if f.lower().endswith((".jpg", ".png"))
                         ]
                     )
 
@@ -115,8 +137,13 @@ async def process_vlm(video_id: str):
                     )
                     continue
 
-                # 生成描述
-                description = vlm_instance.generate_description(frame_paths)
+                # 与 extract_frames 一致的片内时间轴；在 VLM 请求中注入 [t second]
+                frame_times_sec = splitter.frame_timestamps_in_clip(
+                    clip_path, len(frame_paths)
+                )
+                description = vlm_instance.generate_description(
+                    frame_paths, frame_times_sec
+                )
 
                 # 保存到数据库
                 await db.execute(

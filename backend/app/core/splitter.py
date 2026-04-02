@@ -107,6 +107,18 @@ class VideoSplitter:
             logger.error(f"获取视频时长失败: {e}")
             raise RuntimeError(f"获取视频时长失败: {str(e)}")
 
+    def frame_timestamps_in_clip(self, clip_path: str, frame_count: int) -> List[float]:
+        """
+        与 extract_frames 相同的片内采样时刻（秒）：第 i 帧对应 (i+1) * duration / (frame_count + 1)。
+
+        不与 fps 强绑定——只要帧数与 extract_frames 产出一致，时间轴即对齐。
+        """
+        if frame_count <= 0:
+            return []
+        duration = self.get_video_duration(clip_path)
+        interval = duration / (frame_count + 1)
+        return [(i + 1) * interval for i in range(frame_count)]
+
     def _build_transcode_args(
         self,
         *,

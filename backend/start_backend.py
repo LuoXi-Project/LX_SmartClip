@@ -1,5 +1,6 @@
 import argparse
 import os
+import logging
 import socket
 import sys
 from pathlib import Path
@@ -58,12 +59,12 @@ def main() -> None:
     # Ensure app logs are colored too (before importing `app.main`).
     from app.utils.logging_utils import build_uvicorn_log_config, setup_logging
 
-    setup_logging()
+    setup_logging(level=logging.INFO)
 
     # 自动打开浏览器
     import webbrowser
     webbrowser.open(base_url)
-    
+
     import uvicorn
     # Import app directly so Nuitka can see the dependency graph.
     from app.main import app as asgi_app

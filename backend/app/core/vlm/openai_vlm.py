@@ -2,7 +2,7 @@ import os
 import math
 import base64
 import logging
-from typing import List
+from typing import List, Optional, Tuple
 from app.core.vlm.base import IVLM
 from app.core.retry import retry_sync
 
@@ -162,12 +162,36 @@ class OpenAIVLM(IVLM):
         is_glm = 'glm' in self.model.lower()
         return total_glm if is_glm else total_openai
 
-    def generate_description(self, frame_paths: List[str], max_images: int = 0, context_length: int = 0) -> str:
+    @staticmethod
+    def _even_subsample_paths_times(
+        frame_paths: List[str],
+        frame_times_sec: Optional[List[float]],
+        k: int,
+    ) -> Tuple[List[str], Optional[List[float]]]:
+        """均匀下采样路径与时间戳，保持索引对齐。"""
+        if k <= 0 or len(frame_paths) <= k:
+            return frame_paths, frame_times_sec
+        step = len(frame_paths) / k
+        idxs = [int(i * step) for i in range(k)]
+        new_paths = [frame_paths[i] for i in idxs]
+        new_times = (
+            [frame_times_sec[i] for i in idxs] if frame_times_sec is not None else None
+        )
+        return new_paths, new_times
+
+    def generate_description(
+        self,
+        frame_paths: List[str],
+        frame_times_sec: Optional[List[float]] = None,
+        max_images: int = 0,
+        context_length: int = 0,
+    ) -> str:
         """
         根据图像帧生成描述
 
         Args:
             frame_paths: 图像文件路径列表
+            frame_times_sec: 与 frame_paths 等长的片内时刻（秒）；在每张图前注入 "[t second]" 文本
             max_images: 单次传入的最大图片数，0 表示不限制
             context_length: 模型上下文长度限制，0 表示不限制
 
@@ -177,10 +201,20 @@ class OpenAIVLM(IVLM):
         if not frame_paths:
             raise ValueError("必须提供至少一个图像文件")
 
+        times: Optional[List[float]] = (
+            list(frame_times_sec) if frame_times_sec is not None else None
+        )
+        if times is not None and len(times) != len(frame_paths):
+            logger.warning(
+                "frame_times_sec 长度与 frame_paths 不一致，将不注入时间戳"
+            )
+            times = None
+
         # 若设置了最大图片数，均匀采样以覆盖整个片段
         if max_images and max_images > 0 and len(frame_paths) > max_images:
-            step = len(frame_paths) / max_images
-            frame_paths = [frame_paths[int(i * step)] for i in range(max_images)]
+            frame_paths, times = self._even_subsample_paths_times(
+                frame_paths, times, max_images
+            )
             logger.info(f"按最大图片数限制采样: {len(frame_paths)} 张")
 
         logger.info(f"生成描述: {len(frame_paths)} 张图像")
@@ -208,8 +242,9 @@ class OpenAIVLM(IVLM):
                     # 留 500 tokens 给提示词和输出的余量
                     budget = max(1, (context_length - 500) // tpi)
                     if len(frame_paths) > budget:
-                        step = len(frame_paths) / budget
-                        frame_paths = [frame_paths[int(i * step)] for i in range(budget)]
+                        frame_paths, times = self._even_subsample_paths_times(
+                            frame_paths, times, budget
+                        )
                         logger.warning(
                             f"token 予算限制：{tpi} tokens/张 * N > {context_length}，"
                             f"自动裁剪到 {len(frame_paths)} 张"
@@ -219,19 +254,44 @@ class OpenAIVLM(IVLM):
 
         self.estimate_total_tokens(frame_paths)
 
-        # 构建图像内容
-        content = [
+        hint_ts = (
+            "每张图前的方括号内为该图在当前片段内的采样时刻（秒），请结合时间顺序理解动作变化。"
+            if times
+            else ""
+        )
+        intro = (
+            "请简洁地描述这些图像的内容，包括场景、人物、物体和动作。"
+            + (hint_ts + " " if hint_ts else "")
+            + "用中文回答，不超过 500 字。"
+        )
+
+        # 构建图像内容：文案 → [t second] → 图 → …
+        content: List[dict] = [
             {
                 "type": "text",
-                "text": "请简洁地描述这些图像的内容，包括场景、人物、物体和动作。用中文回答，不超过 200 字。",
+                "text": intro,
             }
         ]
 
-        # 添加图像
-        for frame_path in frame_paths:
+        if times is not None:
+            path_time_pairs = list(zip(frame_paths, times))
+        else:
+            path_time_pairs = [(p, None) for p in frame_paths]
+
+        for frame_path, tsec in path_time_pairs:
             if not os.path.exists(frame_path):
                 logger.warning(f"图像文件不存在: {frame_path}")
                 continue
+
+            if tsec is not None:
+                content.append(
+                    {
+                        "type": "text",
+                        "text": f"[{tsec:.1f} second]",
+                    }
+                )
+
+            logger.debug(f"frame_path: {frame_path}, tsec: {tsec}")
 
             # 读取图像并转换为 base64
             with open(frame_path, 'rb') as f:
@@ -271,10 +331,10 @@ class OpenAIVLM(IVLM):
             if not choices:
                 raise RuntimeError("VLM 返回无 choices（可能为空响应）")
             message = getattr(choices[0], "message", None)
-            content = getattr(message, "content", None) if message is not None else None
-            if not isinstance(content, str) or not content.strip():
+            text = getattr(message, "content", None) if message is not None else None
+            if not isinstance(text, str) or not text.strip():
                 raise RuntimeError("VLM 返回 content 为空或非字符串")
-            description = content.strip()
+            description = text.strip()
             logger.info(f"描述生成成功: {len(description)} 个字符")
             return description
 

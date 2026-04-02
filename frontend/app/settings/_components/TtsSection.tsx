@@ -4,6 +4,7 @@ import { TTS_PROVIDERS, TTS_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
+import { LabeledInputRow } from './LabeledInputRow'
 import { Save, Info } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
 
@@ -25,16 +26,28 @@ export function TtsSection({ config, edits, saving, saved, ttsProvider, onSet, o
   const groupDirty = TTS_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('tts_concurrency') || '3', 10) || 3)
 
-  const Row = ({ cfgKey, label, type = 'text', placeholder = '' }: { cfgKey: string; label: string; type?: string; placeholder?: string }) => (
-    <div className="space-y-1.5">
-      <label className="text-xs text-slate-400">{label}</label>
-      <div className="flex gap-2">
-        <input type={type} value={v(cfgKey)} onChange={(e) => onSet(cfgKey, e.target.value)}
-          className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-          placeholder={placeholder} />
-        <SaveBtn dirty={isDirty(cfgKey)} saving={!!saving[cfgKey]} saved={!!saved[cfgKey]} onSave={() => onSave(cfgKey)} />
-      </div>
-    </div>
+  const Row = ({
+    cfgKey,
+    label,
+    type = 'text',
+    placeholder = '',
+  }: {
+    cfgKey: string
+    label: string
+    type?: string
+    placeholder?: string
+  }) => (
+    <LabeledInputRow
+      label={label}
+      type={type as 'text' | 'password' | 'email' | 'number'}
+      value={v(cfgKey)}
+      placeholder={placeholder}
+      onChange={(val) => onSet(cfgKey, val)}
+      dirty={isDirty(cfgKey)}
+      saving={!!saving[cfgKey]}
+      saved={!!saved[cfgKey]}
+      onSave={() => onSave(cfgKey)}
+    />
   )
 
   const SelectRow = ({ cfgKey, label }: { cfgKey: string; label: string }) => {

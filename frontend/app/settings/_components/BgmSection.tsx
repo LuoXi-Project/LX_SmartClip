@@ -3,14 +3,15 @@
 import { useEffect, useState } from 'react'
 import { bgmApi, type BgmTrack } from '@/lib/api'
 import Link from 'next/link'
-import { Music2, UploadCloud, Trash2, Save, RefreshCcw, ExternalLink } from 'lucide-react'
-import { BgmMiniPlayer } from './BgmMiniPlayer'
+import { Music2, UploadCloud, RefreshCcw, ExternalLink } from 'lucide-react'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
+import { BgmUploadMetaPanel } from './BgmUploadMetaPanel'
+import { BgmTrackCard } from './BgmTrackCard'
 
 const BGM_TAG_OPTIONS = [
   '搞笑', '轻快', '欢乐', '活泼', '治愈', '舒缓', '安静', '温柔',
-  '燃', '震撼', '史诗', '热血', '科技', '未来感', '赛博', '情绪'
+  '燃', '震撼', '史诗', '热血', '科技', '未来感', '赛博', '情绪',
 ]
 
 const MOOD_OPTIONS = [
@@ -212,53 +213,13 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
           </div>
         )}
 
-        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
-          <p className="text-xs text-slate-400">上传时可直接配置元数据（可选）</p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <input
-              type="text"
-              value={uploadMeta.title}
-              onChange={(e) => setUploadMeta((p) => ({ ...p, title: e.target.value }))}
-              className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
-              placeholder="曲目标题（可选）"
-            />
-            <select
-              value={uploadMeta.mood}
-              onChange={(e) => setUploadMeta((p) => ({ ...p, mood: e.target.value }))}
-              className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
-            >
-              {MOOD_OPTIONS.map((opt) => (
-                <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-            <input
-              type="number"
-              value={uploadMeta.bpm}
-              onChange={(e) => setUploadMeta((p) => ({ ...p, bpm: e.target.value }))}
-              className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
-              placeholder="BPM（可选）"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {BGM_TAG_OPTIONS.map((tag) => {
-              const active = uploadMeta.tags.includes(tag)
-              return (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => toggleUploadTag(tag)}
-                  className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
-                    active
-                      ? 'border-indigo-500/60 bg-indigo-500/20 text-indigo-200'
-                      : 'border-slate-700 bg-slate-900/70 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {tag}
-                </button>
-              )
-            })}
-          </div>
-        </div>
+        <BgmUploadMetaPanel
+          uploadMeta={uploadMeta}
+          onUploadMetaChange={setUploadMeta}
+          onToggleTag={toggleUploadTag}
+          moodOptions={MOOD_OPTIONS}
+          tagOptions={BGM_TAG_OPTIONS}
+        />
 
         {loading && (
           <p className="text-xs text-slate-400">加载 BGM 列表中...</p>
@@ -272,98 +233,19 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
 
         {!loading && tracks.length > 0 && (
           <div className="space-y-3">
-            {tracks.map((t) => {
-              return (
-                <div
-                  key={t.id}
-                  className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 flex flex-col md:flex-row md:items-center md:gap-4 gap-3"
-                >
-                  <div className="flex-1 space-y-1.5">
-                    <div className="flex flex-col md:flex-row md:items-center md:gap-3 gap-1.5">
-                      <input
-                        type="text"
-                        defaultValue={t.title}
-                        onChange={(e) => onFieldChange(t.id, 'title', e.target.value)}
-                        className="flex-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
-                        placeholder="曲目标题"
-                      />
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">情绪</span>
-                        <select
-                          defaultValue={t.mood || ''}
-                          onChange={(e) => onFieldChange(t.id, 'mood', e.target.value)}
-                          className="w-36 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
-                        >
-                          {MOOD_OPTIONS.map((opt) => (
-                            <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">BPM</span>
-                        <input
-                          type="number"
-                          defaultValue={t.bpm ?? ''}
-                          onChange={(e) => onFieldChange(t.id, 'bpm', e.target.value)}
-                          className="w-20 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
-                          placeholder="120"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-col md:flex-row md:items-center md:gap-3 gap-1.5">
-                      <div className="flex-1 space-y-1">
-                        <span className="text-[10px] text-slate-500">标签（中文多选）</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {BGM_TAG_OPTIONS.map((tag) => {
-                            const selected = (editing[t.id]?.tags ?? t.tags).includes(tag)
-                            return (
-                              <button
-                                key={tag}
-                                type="button"
-                                onClick={() => toggleTrackTag(t.id, t.tags, tag)}
-                                className={`px-2 py-0.5 rounded-full text-[11px] border transition-colors ${
-                                  selected
-                                    ? 'border-indigo-500/60 bg-indigo-500/20 text-indigo-200'
-                                    : 'border-slate-700 bg-slate-900/70 text-slate-400 hover:text-slate-200'
-                                }`}
-                              >
-                                {tag}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      <BgmMiniPlayer
-                        src={t.url}
-                        downloadFilename={t.filename}
-                        className="w-full md:min-w-[min(100%,380px)] md:max-w-lg mt-1.5 md:mt-0"
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-500 break-all">
-                      文件名：<span className="font-mono text-slate-400">{t.filename}</span>
-                    </p>
-                  </div>
-                  <div className="flex flex-row md:flex-col items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onSave(t)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      保存
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(t)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/60 bg-red-500/10 text-red-200 text-xs hover:bg-red-500/20 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      删除
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+            {tracks.map((t) => (
+              <BgmTrackCard
+                key={t.id}
+                track={t}
+                editingState={editing[t.id]}
+                moodOptions={MOOD_OPTIONS}
+                tagOptions={BGM_TAG_OPTIONS}
+                onFieldChange={onFieldChange}
+                onToggleTrackTag={toggleTrackTag}
+                onSave={onSave}
+                onDelete={onDelete}
+              />
+            ))}
           </div>
         )}
       </div>

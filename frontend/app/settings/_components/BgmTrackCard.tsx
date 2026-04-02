@@ -1,0 +1,136 @@
+'use client'
+
+import { Save, Trash2 } from 'lucide-react'
+import type { BgmTrack } from '@/lib/api'
+import { BgmMiniPlayer } from './BgmMiniPlayer'
+
+type TrackEditState = {
+  title?: string
+  mood?: string
+  bpm?: number
+  tags?: string[]
+}
+
+interface Props {
+  track: BgmTrack
+  editingState?: TrackEditState
+  moodOptions: Array<{ value: string; label: string }>
+  tagOptions: string[]
+  onFieldChange: (id: string, key: 'title' | 'mood' | 'bpm', value: string) => void
+  onToggleTrackTag: (id: string, currentTags: string[], tag: string) => void
+  onSave: (t: BgmTrack) => void
+  onDelete: (t: BgmTrack) => void
+}
+
+export function BgmTrackCard({
+  track,
+  editingState,
+  moodOptions,
+  tagOptions,
+  onFieldChange,
+  onToggleTrackTag,
+  onSave,
+  onDelete,
+}: Props) {
+  const t = track
+  const selectedTags = editingState?.tags ?? t.tags
+
+  return (
+    <div
+      className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 flex flex-col md:flex-row md:items-center md:gap-4 gap-3"
+    >
+      <div className="flex-1 space-y-1.5">
+        <div className="flex flex-col md:flex-row md:items-center md:gap-3 gap-1.5">
+          <input
+            type="text"
+            defaultValue={t.title}
+            onChange={(e) => onFieldChange(t.id, 'title', e.target.value)}
+            className="flex-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
+            placeholder="曲目标题"
+          />
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500">情绪</span>
+            <select
+              defaultValue={t.mood || ''}
+              onChange={(e) => onFieldChange(t.id, 'mood', e.target.value)}
+              className="w-36 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
+            >
+              {moodOptions.map((opt) => (
+                <option key={opt.value || 'none'} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500">BPM</span>
+            <input
+              type="number"
+              defaultValue={t.bpm ?? ''}
+              onChange={(e) => onFieldChange(t.id, 'bpm', e.target.value)}
+              className="w-20 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
+              placeholder="120"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col md:flex-row md:items-center md:gap-3 gap-1.5">
+          <div className="flex-1 space-y-1">
+            <span className="text-[10px] text-slate-500">标签（中文多选）</span>
+            <div className="flex flex-wrap gap-1.5">
+              {tagOptions.map((tag) => {
+                const selected = selectedTags.includes(tag)
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => onToggleTrackTag(t.id, t.tags, tag)}
+                    className={`px-2 py-0.5 rounded-full text-[11px] border transition-colors ${
+                      selected
+                        ? 'border-indigo-500/60 bg-indigo-500/20 text-indigo-200'
+                        : 'border-slate-700 bg-slate-900/70 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <BgmMiniPlayer
+            src={t.url}
+            downloadFilename={t.filename}
+            className="w-full md:min-w-[min(100%,380px)] md:max-w-lg mt-1.5 md:mt-0"
+          />
+        </div>
+
+        <p className="text-[10px] text-slate-500 break-all">
+          文件名：<span className="font-mono text-slate-400">{t.filename}</span>
+        </p>
+      </div>
+
+      <div className="flex flex-row md:flex-col items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onSave(t)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
+        >
+          <Save className="w-3.5 h-3.5" />
+          保存
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(t)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/60 bg-red-500/10 text-red-200 text-xs hover:bg-red-500/20 transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          删除
+        </button>
+      </div>
+    </div>
+  )
+}
+

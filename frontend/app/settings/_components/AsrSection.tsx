@@ -3,9 +3,11 @@
 import { ASR_PROVIDERS, ASR_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info, Eye, EyeOff } from 'lucide-react'
+import { Save, Info } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
-import { useState } from 'react'
+import { ApiSecretField } from './ApiSecretField'
+import { ApiTextField } from './ApiTextField'
+import { ConfigField } from './ConfigField'
 
 interface Props {
   config: ConfigMap
@@ -25,55 +27,15 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
   const groupDirty = ASR_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('asr_concurrency') || '1', 10) || 1)
 
-  const Row = ({ cfgKey, label, type = 'text', placeholder = '' }: { cfgKey: string; label: string; type?: string; placeholder?: string }) => {
-    const [showPassword, setShowPassword] = useState(false)
-    const isPassword = type === 'password'
-
-    return (
-      <div className="space-y-1.5">
-        <label className="text-xs text-slate-400">{label}</label>
-        <div className="flex gap-2">
-          <div className={isPassword ? 'flex-1 relative' : 'flex-1'}>
-            <input
-              type={isPassword ? (showPassword ? 'text' : 'password') : type}
-              value={v(cfgKey)}
-              onChange={(e) => onSet(cfgKey, e.target.value)}
-              className={`w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono ${
-                isPassword ? 'pr-10' : ''
-              }`}
-              placeholder={placeholder}
-            />
-            {isPassword && (
-              <button
-                type="button"
-                onClick={() => setShowPassword((s) => !s)}
-                className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
-                aria-label={showPassword ? '隐藏明文密钥' : '显示明文密钥'}
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            )}
-          </div>
-          <SaveBtn dirty={isDirty(cfgKey)} saving={!!saving[cfgKey]} saved={!!saved[cfgKey]} onSave={() => onSave(cfgKey)} />
-        </div>
-      </div>
-    )
-  }
-
   const SelectRow = ({ cfgKey, label }: { cfgKey: string; label: string }) => {
     if (!config[cfgKey]) return null
-    const opts: string[] = JSON.parse(config[cfgKey].options ?? '[]')
     return (
       <div className="space-y-1.5">
         <label className="text-xs text-slate-400">{label}</label>
         <div className="flex gap-2">
-          <select
-            value={v(cfgKey)}
-            onChange={(e) => onSet(cfgKey, e.target.value)}
-            className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors text-slate-200 cursor-pointer"
-          >
-            {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <div className="flex-1">
+            <ConfigField cfgKey={cfgKey} item={config[cfgKey]} value={v(cfgKey)} onChange={(val) => onSet(cfgKey, val)} />
+          </div>
           <SaveBtn dirty={isDirty(cfgKey)} saving={!!saving[cfgKey]} saved={!!saved[cfgKey]} onSave={() => onSave(cfgKey)} />
         </div>
       </div>
@@ -118,9 +80,36 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
             <div className="rounded-lg bg-green-500/5 border border-green-500/20 px-4 py-2.5 text-xs text-green-300">
               OpenAI Whisper API — 支持 OpenAI 官方及任何兼容 <code className="text-green-200 bg-slate-800 px-1 rounded">/audio/transcriptions</code> 接口的服务
             </div>
-            <Row cfgKey="asr_base_url" label="API 地址" placeholder="https://api.openai.com/v1" />
-            <Row cfgKey="asr_api_key" label="API 密钥" type="password" placeholder="••••••••" />
-            <Row cfgKey="asr_openai_model" label="模型名称" placeholder="whisper-1" />
+            <ApiTextField
+              label="API 地址"
+              value={v('asr_base_url')}
+              onChange={(val) => onSet('asr_base_url', val)}
+              placeholder="https://api.openai.com/v1"
+              dirty={isDirty('asr_base_url')}
+              saving={!!saving['asr_base_url']}
+              saved={!!saved['asr_base_url']}
+              onSave={() => onSave('asr_base_url')}
+            />
+            <ApiSecretField
+              label="API 密钥"
+              value={v('asr_api_key')}
+              onChange={(val) => onSet('asr_api_key', val)}
+              placeholder="••••••••"
+              dirty={isDirty('asr_api_key')}
+              saving={!!saving['asr_api_key']}
+              saved={!!saved['asr_api_key']}
+              onSave={() => onSave('asr_api_key')}
+            />
+            <ApiTextField
+              label="模型名称"
+              value={v('asr_openai_model')}
+              onChange={(val) => onSet('asr_openai_model', val)}
+              placeholder="whisper-1"
+              dirty={isDirty('asr_openai_model')}
+              saving={!!saving['asr_openai_model']}
+              saved={!!saved['asr_openai_model']}
+              onSave={() => onSave('asr_openai_model')}
+            />
           </>
         )}
 

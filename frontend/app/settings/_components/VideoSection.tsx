@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react'
 import { VIDEO_KEYS } from './constants'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save, Scissors, Clock, Layers, Info, ChevronDown } from 'lucide-react'
+import { Save, Scissors, Clock, Layers, Info } from 'lucide-react'
 import type { ConfigMap } from './types'
+import { SettingsDetails } from './SettingsDetails'
 
 interface Props {
   config: ConfigMap
@@ -166,65 +167,37 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
 
         {/* scene/hybrid advanced */}
         {SCENE_HYBRID_ADV_KEYS.some((k) => config[k]) && (
-          <details
-            className="group rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden"
+          <SettingsDetails
+            title="镜头检测/混合模式高级参数"
+            hint={currentMode === 'scene' || currentMode === 'hybrid' ? '当前模式相关' : '不常用，保持默认即可'}
             open={sceneHybridAdvOpen}
-            onToggle={(e) => {
-              setSceneHybridAdvOpen((e.currentTarget as HTMLDetailsElement).open)
-            }}
+            onOpenChange={setSceneHybridAdvOpen}
           >
-            <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-4 py-3 flex items-center justify-between bg-slate-900/20 hover:bg-slate-900/30">
-              <span className="text-sm font-medium text-slate-200">镜头检测/混合模式高级参数</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">
-                  {currentMode === 'scene' || currentMode === 'hybrid' ? '当前模式相关' : '不常用，保持默认即可'}
-                </span>
-                <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
-              </div>
-            </summary>
-            <div className="px-4 pb-4 pt-1 space-y-5">
-              {renderFields(SCENE_HYBRID_ADV_KEYS)}
-            </div>
-          </details>
+            {renderFields(SCENE_HYBRID_ADV_KEYS)}
+          </SettingsDetails>
         )}
 
         {/* frame extraction for VLM */}
         {FRAME_KEYS.some((k) => config[k]) && (
-          <details
-            className="group rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden"
+          <SettingsDetails
+            title="帧提取（VLM 画面描述）"
+            hint="专业参数，通常无需改"
             open={frameExtractionOpen}
-            onToggle={(e) => {
-              setFrameExtractionOpen((e.currentTarget as HTMLDetailsElement).open)
-            }}
+            onOpenChange={setFrameExtractionOpen}
           >
-            <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-4 py-3 flex items-center justify-between bg-slate-900/20 hover:bg-slate-900/30">
-              <span className="text-sm font-medium text-slate-200">帧提取（VLM 画面描述）</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">专业参数，通常无需改</span>
-                <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
-              </div>
-            </summary>
-            <div className="px-4 pb-4 pt-1 space-y-5">
-              {renderFields(FRAME_KEYS)}
-            </div>
-          </details>
+            {renderFields(FRAME_KEYS)}
+          </SettingsDetails>
         )}
 
         {/* output encoding */}
         {renderFields(CLIP_BASIC_KEYS)}
         {CLIP_ADV_KEYS.some((k) => config[k]) && (
-          <details className="group rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden">
-            <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-4 py-3 flex items-center justify-between bg-slate-900/20 hover:bg-slate-900/30">
-              <span className="text-sm font-medium text-slate-200">输出编码高级参数</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">兼容性/体积/速度可调</span>
-                <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
-              </div>
-            </summary>
-            <div className="px-4 pb-4 pt-1 space-y-5">
-              {renderFields(CLIP_ADV_KEYS)}
-            </div>
-          </details>
+          <SettingsDetails
+            title="输出编码高级参数"
+            hint="兼容性/体积/速度可调"
+          >
+            {renderFields(CLIP_ADV_KEYS)}
+          </SettingsDetails>
         )}
 
       </div>

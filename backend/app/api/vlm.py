@@ -129,9 +129,9 @@ async def process_vlm(video_id: str):
                         "clip_id": clip_id,
                         "status": "success",
                         "description_length": len(description),
-                        "description": description[:100]
+                        "description": description[:500]
                         + "..."
-                        if len(description) > 100
+                        if len(description) > 500
                         else description,
                     }
                 )

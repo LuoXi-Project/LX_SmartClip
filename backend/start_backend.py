@@ -60,6 +60,10 @@ def main() -> None:
 
     setup_logging()
 
+    # 自动打开浏览器
+    import webbrowser
+    webbrowser.open(base_url)
+    
     import uvicorn
     # Import app directly so Nuitka can see the dependency graph.
     from app.main import app as asgi_app

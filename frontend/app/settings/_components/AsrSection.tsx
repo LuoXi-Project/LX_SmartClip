@@ -3,8 +3,9 @@
 import { ASR_PROVIDERS, ASR_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info } from 'lucide-react'
+import { Save, Info, Eye, EyeOff } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
+import { useState } from 'react'
 
 interface Props {
   config: ConfigMap
@@ -24,21 +25,40 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
   const groupDirty = ASR_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('asr_concurrency') || '1', 10) || 1)
 
-  const Row = ({ cfgKey, label, type = 'text', placeholder = '' }: { cfgKey: string; label: string; type?: string; placeholder?: string }) => (
-    <div className="space-y-1.5">
-      <label className="text-xs text-slate-400">{label}</label>
-      <div className="flex gap-2">
-        <input
-          type={type}
-          value={v(cfgKey)}
-          onChange={(e) => onSet(cfgKey, e.target.value)}
-          className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-          placeholder={placeholder}
-        />
-        <SaveBtn dirty={isDirty(cfgKey)} saving={!!saving[cfgKey]} saved={!!saved[cfgKey]} onSave={() => onSave(cfgKey)} />
+  const Row = ({ cfgKey, label, type = 'text', placeholder = '' }: { cfgKey: string; label: string; type?: string; placeholder?: string }) => {
+    const [showPassword, setShowPassword] = useState(false)
+    const isPassword = type === 'password'
+
+    return (
+      <div className="space-y-1.5">
+        <label className="text-xs text-slate-400">{label}</label>
+        <div className="flex gap-2">
+          <div className={isPassword ? 'flex-1 relative' : 'flex-1'}>
+            <input
+              type={isPassword ? (showPassword ? 'text' : 'password') : type}
+              value={v(cfgKey)}
+              onChange={(e) => onSet(cfgKey, e.target.value)}
+              className={`w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono ${
+                isPassword ? 'pr-10' : ''
+              }`}
+              placeholder={placeholder}
+            />
+            {isPassword && (
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
+                aria-label={showPassword ? '隐藏明文密钥' : '显示明文密钥'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            )}
+          </div>
+          <SaveBtn dirty={isDirty(cfgKey)} saving={!!saving[cfgKey]} saved={!!saved[cfgKey]} onSave={() => onSave(cfgKey)} />
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   const SelectRow = ({ cfgKey, label }: { cfgKey: string; label: string }) => {
     if (!config[cfgKey]) return null

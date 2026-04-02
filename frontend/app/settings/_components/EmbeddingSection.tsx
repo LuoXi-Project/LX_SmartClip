@@ -1,10 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import { EMBEDDING_PROVIDERS, EMB_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { ModelPicker } from './ModelPicker'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info } from 'lucide-react'
+import { Save, Info, Eye, EyeOff } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
 
 interface Props {
@@ -24,6 +25,7 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = EMB_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('embedding_concurrency') || '3', 10) || 3)
+  const [showEmbeddingApiKey, setShowEmbeddingApiKey] = useState(false)
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -58,9 +60,23 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
           <div className="space-y-1.5">
             <label className="text-xs text-slate-400">API 密钥</label>
             <div className="flex gap-2">
-              <input type="password" value={v('embedding_api_key')} onChange={(e) => onSet('embedding_api_key', e.target.value)}
-                className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                placeholder="••••••••" />
+              <div className="flex-1 relative">
+                <input
+                  type={showEmbeddingApiKey ? 'text' : 'password'}
+                  value={v('embedding_api_key')}
+                  onChange={(e) => onSet('embedding_api_key', e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 pr-10 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowEmbeddingApiKey((s) => !s)}
+                  className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
+                  aria-label={showEmbeddingApiKey ? '隐藏明文密钥' : '显示明文密钥'}
+                >
+                  {showEmbeddingApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
               <SaveBtn dirty={isDirty('embedding_api_key')} saving={!!saving['embedding_api_key']} saved={!!saved['embedding_api_key']} onSave={() => onSave('embedding_api_key')} />
             </div>
           </div>

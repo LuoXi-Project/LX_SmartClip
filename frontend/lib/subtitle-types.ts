@@ -17,7 +17,7 @@
 
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   font_name: 'Arial',
-  font_size: 64,
+  font_size: 56,
   font_color: '#FFFFFF',
   outline_color: '#000000',
   outline_width: 2,

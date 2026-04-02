@@ -14,11 +14,14 @@ interface LogItem {
   message: string
 }
 
+type LogSource = 'memory' | 'file' | 'both'
+
 interface LogsResponse {
   items: LogItem[]
   limit: number
   q: string | null
   level: string | null
+  source?: LogSource
 }
 
 function levelPill(level: string) {
@@ -33,6 +36,7 @@ export default function LogsPage() {
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [limit, setLimit] = useState(300)
+  const [source, setSource] = useState<LogSource>('both')
   const [level, setLevel] = useState<LogLevel | ''>('')
 
   const [items, setItems] = useState<LogItem[]>([])
@@ -58,6 +62,7 @@ export default function LogsPage() {
         q: debouncedQ.trim() || undefined,
         limit,
         level: level || undefined,
+        source,
       }
       const res = await apiClient.get<unknown, LogsResponse>('/api/logs', { params })
       setItems(res.items || [])
@@ -73,7 +78,7 @@ export default function LogsPage() {
   useEffect(() => {
     fetchLogs()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQ, limit, level])
+  }, [debouncedQ, limit, level, source])
 
   const filteredCountText = useMemo(() => {
     const q2 = debouncedQ.trim()
@@ -81,8 +86,11 @@ export default function LogsPage() {
     if (q2) parts.push(`关键字「${q2}」`)
     if (level) parts.push(`级别 ${level}`)
     parts.push(`最新 ${limit} 条`)
+    if (source === 'memory') parts.push('来源：内存')
+    else if (source === 'file') parts.push('来源：落盘文件')
+    else parts.push('来源：内存+文件')
     return parts.join(' · ')
-  }, [debouncedQ, limit, level])
+  }, [debouncedQ, limit, level, source])
 
   const plainText = useMemo(() => {
     return (items || [])
@@ -134,7 +142,7 @@ export default function LogsPage() {
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
         <section className="rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_160px_180px_160px] gap-3 items-end">
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_160px_200px_180px_160px] gap-3 items-end">
             <div>
               <label className="block text-xs text-slate-500 mb-1.5">检索</label>
               <div className="relative">
@@ -161,6 +169,19 @@ export default function LogsPage() {
             </div>
 
             <div>
+              <label className="block text-xs text-slate-500 mb-1.5">来源</label>
+              <select
+                value={source}
+                onChange={(e) => setSource(e.target.value as LogSource)}
+                className="w-full px-3 py-2.5 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 outline-none focus:border-indigo-500 transition-colors"
+              >
+                <option value="both">内存 + 落盘（推荐）</option>
+                <option value="memory">仅当前进程内存</option>
+                <option value="file">仅 app.log 文件</option>
+              </select>
+            </div>
+
+            <div>
               <label className="block text-xs text-slate-500 mb-1.5">级别</label>
               <select
                 value={level}
@@ -183,7 +204,7 @@ export default function LogsPage() {
           </div>
 
           <p className="text-[11px] text-slate-600 mt-3">
-            提示：日志来自后端进程内缓冲区；重启后端后会清空。
+            提示：默认合并「进程内缓冲」与「storage/logs/app.log」落盘日志；仅内存模式在重启后会变少，与文件条数不一致是正常现象。
           </p>
 
           {error && (

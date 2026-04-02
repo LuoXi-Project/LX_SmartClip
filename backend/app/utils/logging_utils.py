@@ -4,10 +4,29 @@ import datetime as _dt
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import threading
 from collections import deque
 from typing import Any
+
+# 与 RotatingFileHandler 使用的 Formatter 一致（见 _build_file_handler）
+_LOG_LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[([^\]]+)\] ([^:]+): (.*)$"
+)
+# uvicorn dictConfig 里 file 可能共用带 ANSI 的 color formatter，剥离后形如：时间 | LEVEL | logger | message
+_UVICORN_FILE_LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| *(\w+) *\| *([^|]+?) \| (.*)$"
+)
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+try:
+    from zoneinfo import ZoneInfo
+
+    _TZ_BEIJING: _dt.tzinfo = ZoneInfo("Asia/Shanghai")
+except Exception:
+    # Windows 等环境缺少 IANA 数据时，用固定 UTC+8（中国不实行 DST）
+    _TZ_BEIJING = _dt.timezone(_dt.timedelta(hours=8))
 
 
 class MemoryLogHandler(logging.Handler):
@@ -26,7 +45,7 @@ class MemoryLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            created = _dt.datetime.fromtimestamp(record.created, tz=_dt.timezone.utc).isoformat()
+            created = _dt.datetime.fromtimestamp(record.created, tz=_TZ_BEIJING).isoformat()
             item = {
                 "ts": created,
                 "level": record.levelname,
@@ -82,6 +101,16 @@ def get_memory_log_handler() -> MemoryLogHandler:
     return _MEMORY_HANDLER
 
 
+def memory_handler_for_dictconfig(*_args: Any, **_kwargs: Any) -> MemoryLogHandler:
+    """
+    供 logging.config.dictConfig 使用。
+
+    uvicorn 的 logger 默认 propagate=False，若在此单独实例化 MemoryLogHandler，
+    会与 get_memory_log_handler() 的单例脱节，导致 /api/logs 只能看到少量根 logger 日志。
+    """
+    return get_memory_log_handler()
+
+
 def _resolve_log_dir() -> str:
     """
     日志落盘目录：
@@ -116,6 +145,134 @@ def _resolve_log_dir() -> str:
 
     # 极端兜底：当前目录
     return os.getcwd()
+
+
+def _sorted_app_log_paths(log_dir: str) -> list[str]:
+    """RotatingFileHandler：.4 最旧 … .1 较新，app.log 为当前写入文件。按时间顺序从旧到新读取。"""
+    try:
+        names = [
+            n
+            for n in os.listdir(log_dir)
+            if n == "app.log" or (n.startswith("app.log.") and len(n) > 8 and n[8:].isdigit())
+        ]
+    except OSError:
+        return []
+
+    def sort_key(n: str) -> int:
+        if n == "app.log":
+            return 0
+        return int(n[8:])
+
+    names.sort(key=sort_key, reverse=True)
+    return [os.path.join(log_dir, n) for n in names]
+
+
+def _parse_app_log_lines(lines: list[str]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
+    for raw in lines:
+        line = _ANSI_ESCAPE_RE.sub("", raw).rstrip("\r\n")
+        if not line:
+            if cur is not None:
+                cur["message"] += "\n"
+            continue
+        m = _LOG_LINE_RE.match(line)
+        if not m:
+            m = _UVICORN_FILE_LINE_RE.match(line)
+        if m:
+            ts_raw, level, logger, message = m.group(1), m.group(2), m.group(3), m.group(4)
+            try:
+                naive = _dt.datetime.strptime(ts_raw, "%Y-%m-%d %H:%M:%S")
+                ts = naive.replace(tzinfo=_TZ_BEIJING).isoformat()
+            except ValueError:
+                ts = ts_raw
+            cur = {"ts": ts, "level": level.strip(), "logger": logger.strip(), "message": message.strip()}
+            out.append(cur)
+        elif cur is not None:
+            cur["message"] += "\n" + line
+        else:
+            out.append({"ts": "", "level": "INFO", "logger": "", "message": line})
+            cur = None
+    return out
+
+
+def query_file_logs(
+    *,
+    q: str | None = None,
+    limit: int = 200,
+    level: str | None = None,
+    max_scan_lines: int = 80_000,
+) -> list[dict[str, Any]]:
+    """
+    从 storage/logs/app.log（及轮转备份）解析最近若干行，格式与内存日志接口一致。
+    文件中的 asctime 按本地写入习惯视为北京时间（与落盘 Formatter 一致）。
+    """
+    q_norm = (q or "").strip().lower()
+    lvl = (level or "").strip().upper()
+    try:
+        lim = int(limit)
+    except Exception:
+        lim = 200
+    if lim <= 0:
+        lim = 200
+    if lim > 5000:
+        lim = 5000
+
+    try:
+        cap = int(max_scan_lines)
+    except Exception:
+        cap = 80_000
+    if cap < 1000:
+        cap = 1000
+    if cap > 500_000:
+        cap = 500_000
+
+    log_dir = _resolve_log_dir()
+    paths = _sorted_app_log_paths(log_dir)
+    if not paths:
+        return []
+
+    buf: deque[str] = deque(maxlen=cap)
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    buf.append(line.rstrip("\r\n"))
+        except OSError:
+            continue
+
+    records = _parse_app_log_lines(list(buf))
+
+    # ISO 时间字符串可字典序比较；空 ts 视为最旧，排在末尾
+    records.sort(key=lambda it: it.get("ts") or "", reverse=True)
+
+    out: list[dict[str, Any]] = []
+    for it in records:
+        if lvl and (it.get("level") or "").upper() != lvl:
+            continue
+        if q_norm:
+            hay = f"{it.get('ts','')} {it.get('level','')} {it.get('logger','')} {it.get('message','')}".lower()
+            if q_norm not in hay:
+                continue
+        out.append(dict(it))
+        if len(out) >= lim:
+            break
+    return out
+
+
+def merge_log_items(a: list[dict[str, Any]], b: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str, str]] = set()
+    merged = sorted(a + b, key=lambda x: (x.get("ts") or ""), reverse=True)
+    out: list[dict[str, Any]] = []
+    for it in merged:
+        k = (it.get("ts") or "", it.get("level") or "", it.get("logger") or "", it.get("message") or "")
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _build_file_handler(level: int) -> logging.Handler:
@@ -264,8 +421,8 @@ def build_uvicorn_log_config(level: str = "INFO") -> dict[str, Any]:
         "handlers": {
             "default": {"class": "logging.StreamHandler", "formatter": "default", "stream": "ext://sys.stderr"},
             "access": {"class": "logging.StreamHandler", "formatter": "access", "stream": "ext://sys.stdout"},
-            # 进程内 ring buffer：供前端读取排障
-            "memory": {"class": "app.utils.logging_utils.MemoryLogHandler", "level": "DEBUG"},
+            # 进程内 ring buffer：与 get_memory_log_handler() 同一实例，避免 uvicorn 与业务日志分仓
+            "memory": {"()": "app.utils.logging_utils.memory_handler_for_dictconfig", "level": "DEBUG"},
             "file": {
                 "class": "logging.handlers.RotatingFileHandler",
                 "formatter": "default",

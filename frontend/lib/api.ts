@@ -325,6 +325,8 @@ export interface AutoEditSegmentPlanApi {
   selected_clip_ids?: string[]
   start_time_sec: number
   end_time_sec: number
+  /** 用户手动覆盖该段在成片中的时长（秒）。用于“更可控”的段落时长/字幕节奏。 */
+  override_duration_sec?: number | null
   audio_mode: 'original' | 'tts' | 'mute'
   subtitle?: {
     strategy: 'auto' | 'asr' | 'rewrite' | 'none'

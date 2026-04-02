@@ -66,6 +66,8 @@ class SegmentPlan(BaseModel):
     selected_clip_ids: List[str]
     start_time_sec: float
     end_time_sec: float
+    # 前端可编辑：覆盖该段的成片时长（秒），用于更可控的节奏/字幕时长
+    override_duration_sec: Optional[float] = None
     audio_mode: Literal["original", "tts", "mute"] = "original"
     subtitle: SubtitlePlan
     transition: Optional[TransitionPlan] = None

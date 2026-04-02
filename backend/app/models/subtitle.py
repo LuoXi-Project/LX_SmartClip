@@ -12,6 +12,9 @@ class SubtitleSegmentInput(BaseModel):
     clip_id: str
     clip_ids: Optional[List[str]] = None
     tts_filename: Optional[str] = None
+    # 可控时长：当用户在前端手动调整段落时长时使用（单位秒）。
+    # 注：对 TTS 段落如强制缩短会截断音频；对非 TTS 段落会裁剪视频输出以对齐字幕时间轴。
+    duration_sec: Optional[float] = None
 
 
 class SubtitleStyle(BaseModel):

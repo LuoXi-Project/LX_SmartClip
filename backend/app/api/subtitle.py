@@ -224,6 +224,14 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     # 每段（segments 内每个 seg 对应的“段落”）总时长 = 该段选中 clip 组时长之和
     seg_durs: List[float] = []
     for seg in req.segments:
+        manual_dur = getattr(seg, "duration_sec", None)
+        try:
+            manual_dur_v = float(manual_dur) if manual_dur is not None else None
+        except Exception:
+            manual_dur_v = None
+        if manual_dur_v is not None and manual_dur_v > 0:
+            seg_durs.append(manual_dur_v)
+            continue
         raw_ids = list(getattr(seg, "clip_ids", None) or [])
         if not raw_ids and getattr(seg, "clip_id", None):
             raw_ids = [seg.clip_id]

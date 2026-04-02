@@ -85,6 +85,10 @@ export function AutoEditPanel({
     plan: AutoEditPlanApi
     index: number
   } | null>(null)
+  /** 用户对候选方案的本地可编辑覆盖（不会影响重新生成的 plans） */
+  const [customPlanById, setCustomPlanById] = useState<Record<string, AutoEditPlanApi>>({})
+  const [detailEditMode, setDetailEditMode] = useState(false)
+  const [detailDraft, setDetailDraft] = useState<AutoEditPlanApi | null>(null)
   const [selectedPreview, setSelectedPreview] = useState<{
     planId: string
     planTitle: string
@@ -134,6 +138,18 @@ export function AutoEditPanel({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [detailPlan])
+
+  useEffect(() => {
+    if (!detailPlan) {
+      setDetailEditMode(false)
+      setDetailDraft(null)
+      return
+    }
+    const pid = detailPlan.plan.plan_id
+    const base = customPlanById[pid] ?? detailPlan.plan
+    setDetailDraft(base)
+    setDetailEditMode(false)
+  }, [customPlanById, detailPlan])
 
   const togglePreviewExpand = (planId: string) => {
     setExpandedPreviewPlanIds((prev) =>
@@ -667,6 +683,11 @@ export function AutoEditPanel({
                     <p className="text-sm font-semibold text-slate-100 truncate">{p.title || `方案 ${idx + 1}`}</p>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       模式：{p.mode === 'auto' ? '自动' : p.mode === 'voiceover' ? '配音剪辑' : '原声剪辑'}
+                      {(customPlanById[p.plan_id] != null) && (
+                        <span className="ml-2 inline-flex items-center rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200">
+                          已自定义
+                        </span>
+                      )}
                       {p.bgm != null && (
                         <div className="block mt-0.5 text-slate-600">
                           方案 BGM：
@@ -698,7 +719,7 @@ export function AutoEditPanel({
                     className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
                     title="查看本方案的字幕、音频模式、片段选择等详情"
                   >
-                    字幕详情 / 更多信息
+                    字幕详情 / 可编辑
                   </button>
                   {p.segments?.some((s) => s.subtitle?.text?.trim()) && (
                     <span className="text-[11px] text-emerald-300/80">含字幕</span>
@@ -790,7 +811,7 @@ export function AutoEditPanel({
                 </div>
                 <div className="pt-1 space-y-1">
                   <button
-                    onClick={() => onRealizePlan(p, idx)}
+                    onClick={() => onRealizePlan(customPlanById[p.plan_id] ?? p, idx)}
                     disabled={autoRealizingId !== null}
                     className="w-full inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-500/50 bg-emerald-500/10 text-[11px] text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 transition-colors"
                   >
@@ -860,17 +881,69 @@ export function AutoEditPanel({
             </div>
 
             <div className="max-h-[70vh] overflow-y-auto px-4 py-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] text-slate-500">
+                  在这里的修改会覆盖当前方案，并在点击“一键成片”时生效（只影响本次候选方案，不影响重新生成）。
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDetailEditMode((v) => !v)}
+                    className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
+                      detailEditMode
+                        ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-200'
+                        : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:bg-slate-950/70'
+                    }`}
+                  >
+                    {detailEditMode ? '退出编辑' : '进入编辑'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!detailDraft}
+                    onClick={() => {
+                      if (!detailDraft) return
+                      setCustomPlanById((prev) => ({ ...prev, [detailDraft.plan_id]: detailDraft }))
+                      setDetailEditMode(false)
+                    }}
+                    className="text-[11px] rounded-lg border border-emerald-500/60 bg-emerald-500/15 px-2 py-1 text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                    title="保存后将用于一键成片提交"
+                  >
+                    保存修改
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!detailDraft}
+                    onClick={() => {
+                      if (!detailDraft) return
+                      setCustomPlanById((prev) => {
+                        const next = { ...prev }
+                        delete next[detailDraft.plan_id]
+                        return next
+                      })
+                      setDetailDraft(detailPlan.plan)
+                      setDetailEditMode(false)
+                    }}
+                    className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-300 hover:bg-slate-950/70 disabled:opacity-50"
+                    title="清除该方案的自定义覆盖"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+              </div>
+
               <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
                 <p className="text-[11px] text-slate-400">方案摘要</p>
                 <p className="text-xs text-slate-200 mt-1 whitespace-pre-wrap">
-                  {detailPlan.plan.summary?.trim() ? detailPlan.plan.summary : '（无）'}
+                  {(detailDraft?.summary ?? detailPlan.plan.summary)?.trim()
+                    ? (detailDraft?.summary ?? detailPlan.plan.summary)
+                    : '（无）'}
                 </p>
               </div>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
                 <p className="text-[11px] text-slate-400">段落明细（字幕/音频/片段选择）</p>
                 <div className="mt-2 space-y-2">
-                  {(detailPlan.plan.segments ?? []).map((s) => {
+                  {((detailDraft?.segments ?? detailPlan.plan.segments) ?? []).map((s, segIdx) => {
                     const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id || ''
                     const cm = clipId ? clipMetaByClip[clipId] : undefined
                     const abs0 = cm ? cm.start_time : s.start_time_sec
@@ -888,18 +961,45 @@ export function AutoEditPanel({
                             {cm?.video_id && <span>video_id: {cm.video_id}</span>}
                             {s.subtitle?.strategy && <span>subtitle: {s.subtitle.strategy}</span>}
                             {s.subtitle?.source && <span>source: {s.subtitle.source}</span>}
+                            {typeof s.override_duration_sec === 'number' && s.override_duration_sec > 0 && (
+                              <span className="text-cyan-300/90">override: {Math.round(s.override_duration_sec * 10) / 10}s</span>
+                            )}
                           </div>
                         </div>
 
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
                           <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-2">
                             <p className="text-[11px] text-slate-400">字幕文本</p>
-                            <p className={`text-xs text-slate-200 mt-1 whitespace-pre-wrap ${subtitleText ? '' : 'text-slate-500'}`}>
-                              {subtitleText || '（无字幕/策略为 none）'}
-                            </p>
+                            {detailEditMode ? (
+                              <textarea
+                                value={subtitleText}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setDetailDraft((prev) => {
+                                    if (!prev) return prev
+                                    const segs = [...(prev.segments ?? [])]
+                                    const cur = { ...segs[segIdx] }
+                                    cur.subtitle = {
+                                      strategy: cur.subtitle?.strategy ?? 'auto',
+                                      text: v,
+                                      source: 'user',
+                                    }
+                                    segs[segIdx] = cur
+                                    return { ...prev, segments: segs }
+                                  })
+                                }}
+                                rows={3}
+                                className="mt-1 w-full rounded-md bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs text-slate-200 outline-none focus:border-cyan-400 resize-y"
+                                placeholder="输入该段字幕（将覆盖原字幕；TTS 段也会用于配音文本）"
+                              />
+                            ) : (
+                              <p className={`text-xs text-slate-200 mt-1 whitespace-pre-wrap ${subtitleText ? '' : 'text-slate-500'}`}>
+                                {subtitleText || '（无字幕/策略为 none）'}
+                              </p>
+                            )}
                           </div>
                           <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-2">
-                            <p className="text-[11px] text-slate-400">候选片段</p>
+                            <p className="text-[11px] text-slate-400">片段 / 时间轴 / 可控时长</p>
                             <div className="mt-1 text-[11px] text-slate-300 space-y-1">
                               <p className="text-slate-400">
                                 selected_clip_ids：
@@ -907,6 +1007,70 @@ export function AutoEditPanel({
                                   ? (s.selected_clip_ids ?? []).join(', ')
                                   : '（无）'}
                               </p>
+                              {detailEditMode && (
+                                <div className="grid grid-cols-3 gap-2 pt-1">
+                                  <label className="col-span-1 text-[10px] text-slate-500">
+                                    start_sec
+                                    <input
+                                      type="number"
+                                      step={0.1}
+                                      value={Number.isFinite(s.start_time_sec) ? s.start_time_sec : 0}
+                                      onChange={(e) => {
+                                        const nv = Number(e.target.value)
+                                        setDetailDraft((prev) => {
+                                          if (!prev) return prev
+                                          const segs = [...(prev.segments ?? [])]
+                                          const cur = { ...segs[segIdx], start_time_sec: Number.isFinite(nv) ? nv : segs[segIdx].start_time_sec }
+                                          segs[segIdx] = cur
+                                          return { ...prev, segments: segs }
+                                        })
+                                      }}
+                                      className="mt-1 w-full rounded-md bg-slate-950/60 border border-slate-700 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-400"
+                                    />
+                                  </label>
+                                  <label className="col-span-1 text-[10px] text-slate-500">
+                                    end_sec
+                                    <input
+                                      type="number"
+                                      step={0.1}
+                                      value={Number.isFinite(s.end_time_sec) ? s.end_time_sec : 0}
+                                      onChange={(e) => {
+                                        const nv = Number(e.target.value)
+                                        setDetailDraft((prev) => {
+                                          if (!prev) return prev
+                                          const segs = [...(prev.segments ?? [])]
+                                          const cur = { ...segs[segIdx], end_time_sec: Number.isFinite(nv) ? nv : segs[segIdx].end_time_sec }
+                                          segs[segIdx] = cur
+                                          return { ...prev, segments: segs }
+                                        })
+                                      }}
+                                      className="mt-1 w-full rounded-md bg-slate-950/60 border border-slate-700 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-400"
+                                    />
+                                  </label>
+                                  <label className="col-span-1 text-[10px] text-slate-500">
+                                    段落时长(s)
+                                    <input
+                                      type="number"
+                                      step={0.1}
+                                      value={typeof s.override_duration_sec === 'number' ? s.override_duration_sec : ''}
+                                      onChange={(e) => {
+                                        const raw = e.target.value
+                                        const nv = raw === '' ? null : Number(raw)
+                                        setDetailDraft((prev) => {
+                                          if (!prev) return prev
+                                          const segs = [...(prev.segments ?? [])]
+                                          const cur = { ...segs[segIdx], override_duration_sec: raw === '' ? null : (Number.isFinite(nv as number) ? (nv as number) : null) }
+                                          segs[segIdx] = cur
+                                          return { ...prev, segments: segs }
+                                        })
+                                      }}
+                                      className="mt-1 w-full rounded-md bg-slate-950/60 border border-slate-700 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-400"
+                                      placeholder="留空=自动"
+                                      title="原声段会裁剪该段画面以对齐字幕；TTS 段若缩短会截断音频"
+                                    />
+                                  </label>
+                                </div>
+                              )}
                               <p className="text-slate-400">
                                 clip_group：{(s.clip_group ?? []).length ? '' : '（无）'}
                               </p>
@@ -917,6 +1081,48 @@ export function AutoEditPanel({
                                 </p>
                               ))}
                               {(s.clip_group ?? []).length > 6 && <p className="text-slate-500">… 其余 {(s.clip_group ?? []).length - 6} 条已省略</p>}
+                              {detailEditMode && (
+                                <div className="pt-1 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setDetailDraft((prev) => {
+                                        if (!prev) return prev
+                                        const segs = [...(prev.segments ?? [])]
+                                        const cur = { ...segs[segIdx], selected_clip_ids: [], clip_group: segs[segIdx].clip_group ?? [] }
+                                        segs[segIdx] = cur
+                                        return { ...prev, segments: segs }
+                                      })
+                                    }}
+                                    className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
+                                    title="清空 selected_clip_ids，让后端按时间窗/候选池自动回退选片（更贴合你改的 start/end）"
+                                  >
+                                    按时间窗回退选片
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!clipId) return
+                                      setSelectedPreview({
+                                        planId: detailPlan.plan.plan_id,
+                                        planTitle: detailPlan.plan.title || `方案 ${detailPlan.index + 1}`,
+                                        segmentId: s.id,
+                                        order: s.order,
+                                        clipId,
+                                        videoId: cm?.video_id ?? null,
+                                        source: (cm?.video_id ?? null) ? 'video' : 'clip',
+                                        startSec: s.start_time_sec,
+                                        endSec: s.end_time_sec,
+                                      })
+                                    }}
+                                    className="text-[11px] rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-60"
+                                    disabled={!clipId}
+                                    title="把该段送到上方预览播放器，方便边改边对齐"
+                                  >
+                                    片段预览
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

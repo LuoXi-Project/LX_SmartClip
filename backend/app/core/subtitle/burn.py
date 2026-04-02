@@ -281,10 +281,21 @@ def burn_to_mp4(
             )
 
             seg_out = os.path.join(tmp, f"seg_{i:03d}.mp4")
+            # 用户可控段落时长（秒）：用于裁剪该段输出，让字幕时间轴与画面严格对齐
+            desired_dur = None
+            try:
+                desired_dur = float(getattr(seg, "duration_sec", None)) if getattr(seg, "duration_sec", None) is not None else None
+            except Exception:
+                desired_dur = None
+            if desired_dur is not None and desired_dur <= 0:
+                desired_dur = None
 
             if tts_path and os.path.isfile(tts_path):
                 # 有 TTS：先顺序使用候选 clip 组；若总时长不足，再按整组循环补齐。
                 audio_dur = probe_duration(tts_path, log_on_failure=True)
+                if desired_dur is not None and desired_dur > 0:
+                    # 缩短 TTS：会截断音频与字幕；放长则没有意义（仍按实际 TTS 裁切）
+                    audio_dur = min(audio_dur, desired_dur) if audio_dur > 0 else desired_dur
                 video_dur = sum(
                     float(info.get("dur") or probe_duration(info["path"], log_on_failure=True) or 0.0)
                     for info in infos
@@ -328,21 +339,52 @@ def burn_to_mp4(
                     loop_count,
                 )
             else:
+                # 无 TTS：允许按 desired_dur 裁剪该段（需要重编码以保证裁剪准确）
+                source_total_dur = sum(float(info.get("dur") or 0.0) for info in infos) or None
+                trim_dur = None
+                if desired_dur is not None and desired_dur > 0:
+                    trim_dur = desired_dur
+                    if source_total_dur is not None and source_total_dur > 0:
+                        trim_dur = min(trim_dur, source_total_dur)
+
                 if len(infos) == 1:
-                    # 无 TTS 且单 clip：直接复制，最快。
-                    _run_ffmpeg(
-                        ["-i", infos[0]["path"], "-c", "copy", seg_out],
-                        desc=f"copy seg {i+1}",
-                    )
+                    if trim_dur is None:
+                        # 无裁剪：直接复制，最快
+                        _run_ffmpeg(
+                            ["-i", infos[0]["path"], "-c", "copy", seg_out],
+                            desc=f"copy seg {i+1}",
+                        )
+                    else:
+                        seg_codec_args = _build_render_codec_args(render_opts)
+                        seg_filter_parts = _build_extra_video_filters(render_opts)
+                        seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
+                        _run_ffmpeg(
+                            ["-i", infos[0]["path"], "-t", f"{trim_dur:.3f}", *seg_vf_args, *seg_codec_args, "-movflags", "+faststart", seg_out],
+                            desc=f"trim seg {i+1}",
+                        )
                 else:
-                    # 无 TTS 且多 clip：先拼接一遍 clip 组，不做循环。
                     concat_list_path = os.path.join(tmp, f"seg_{i:03d}_concat.txt")
                     _write_concat_list([info["path"] for info in infos], concat_list_path)
-                    _run_ffmpeg(
-                        ["-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", seg_out],
-                        desc=f"concat seg {i+1}",
-                    )
-                logger.info("seg %d (copy/concat) -> %s (clips=%d)", i + 1, seg_out, len(clip_ids))
+                    if trim_dur is None:
+                        _run_ffmpeg(
+                            ["-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", seg_out],
+                            desc=f"concat seg {i+1}",
+                        )
+                    else:
+                        seg_codec_args = _build_render_codec_args(render_opts)
+                        seg_filter_parts = _build_extra_video_filters(render_opts)
+                        seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
+                        _run_ffmpeg(
+                            ["-f", "concat", "-safe", "0", "-i", concat_list_path, "-t", f"{trim_dur:.3f}", *seg_vf_args, *seg_codec_args, "-movflags", "+faststart", seg_out],
+                            desc=f"concat+trim seg {i+1}",
+                        )
+                logger.info(
+                    "seg %d (no-tts) -> %s (clips=%d, desired_dur=%s)",
+                    i + 1,
+                    seg_out,
+                    len(clip_ids),
+                    f'{desired_dur:.3f}' if desired_dur else "-",
+                )
 
             seg_paths.append(seg_out)
 

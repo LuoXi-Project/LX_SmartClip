@@ -44,6 +44,15 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
     durs = []
     srcs = []
     for seg in segments:
+        manual = getattr(seg, "duration_sec", None)
+        try:
+            manual_v = float(manual) if manual is not None else None
+        except Exception:
+            manual_v = None
+        if manual_v is not None and manual_v > 0:
+            durs.append(manual_v)
+            srcs.append("manual")
+            continue
         if use_tts and seg.tts_filename:
             p = os.path.join(tts_audio_dir, os.path.basename(seg.tts_filename))
             d = audio_duration(p)

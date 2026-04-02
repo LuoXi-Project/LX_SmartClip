@@ -147,6 +147,7 @@ async def segments_from_plan(
                 clip_id=primary_clip,
                 clip_ids=selected_valid or group_valid or [primary_clip],
                 tts_filename=tts_filename,
+                duration_sec=float(seg.override_duration_sec) if seg.override_duration_sec else None,
             )
         )
 

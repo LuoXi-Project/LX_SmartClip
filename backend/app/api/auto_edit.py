@@ -84,7 +84,7 @@ SYSTEM_PROMPT = """你是一位专业的视频剪辑规划师。
 - JSON 顶层结构为 {"plans": [Plan, ...]}，其中 Plan 结构严格遵循下面 schema。
 - 所有时间单位均为秒（float）。
 - 请确保 segments 能首尾相接，整体时长尽量接近 target_duration_sec。
-- 当某些片段缺少 ASR 时，你必须主要依赖 VLM 画面描述进行语义匹配与剪辑（必要时在 constraints.match_strategy 选择 vlm_only）。
+- 当某些片段缺少 ASR 时，你必须主要依赖 VLM 画面描述进行语义匹配与剪辑（必要时在 constraints.match_strategy 选择 vlm）。
 - 如果信息不足，可以适度补全文案，但要与已有 ASR/VLM 内容风格一致。
 """
 
@@ -137,7 +137,7 @@ SCHEMA_HINT = """
           "subtitle": {
             "strategy": "auto | asr | rewrite | none",
             "text": "本段对应的文案",
-            "source": "asr | llm | vlm | user",
+            "source": "asr | asr+vlm | llm | vlm | user",
             "timing_hint": { "start": 0.0, "end": 3.2 }
           },
           "transition": {
@@ -157,7 +157,7 @@ SCHEMA_HINT = """
       },
       "constraints": {
         "max_clip_per_segment": 3,
-        "match_strategy": "asr+vlm | asr_only | vlm_only",
+        "match_strategy": "asr+vlm | asr | vlm",
         "respect_user_video_order": false
       },
       "keep_flags": {

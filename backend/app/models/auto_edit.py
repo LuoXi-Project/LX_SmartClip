@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.models.subtitle import (
     SubtitleStyle,
 )
@@ -26,6 +26,25 @@ class SubtitlePlan(BaseModel):
     text: str
     source: Literal["asr", "llm", "vlm", "user"] = "llm"
     timing_hint: Optional[TimingHint] = None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _normalize_subtitle_source(cls, v: object) -> object:
+        """
+        LLM 可能会把来源写成组合（例如 `asr+vlm`）。
+        下游当前只使用 `subtitle.text`，因此这里做归一化以通过 Plan 校验。
+        """
+        if not isinstance(v, str):
+            return v
+        v = v.strip()
+        if not v:
+            return v
+
+        # 典型问题：`asr+vlm` 不在 SubtitlePlan.source 的枚举范围内
+        # 归一化策略：优先取最左侧 token（asr / llm / vlm / user）
+        if "+" in v:
+            return v.split("+", 1)[0].strip()
+        return v
 
 
 class TransitionPlan(BaseModel):
@@ -64,7 +83,7 @@ class BGMPlan(BaseModel):
 
 class Constraints(BaseModel):
     max_clip_per_segment: int = 3
-    match_strategy: Literal["asr+vlm", "asr_only", "vlm_only"] = "asr+vlm"
+    match_strategy: Literal["asr+vlm", "asr", "vlm"] = "asr+vlm"
     respect_user_video_order: bool = False
 
 

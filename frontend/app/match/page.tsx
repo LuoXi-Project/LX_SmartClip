@@ -16,6 +16,7 @@ import { ManualMatchPanel } from './_components/ManualMatchPanel'
 import { AutoEditPanel } from './_components/AutoEditPanel'
 import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
+import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
 const VIDEO_PAGE_SIZE = 9
 
@@ -104,6 +105,7 @@ export default function MatchPage() {
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
+  const [resultOpen, setResultOpen] = useState(false)
 
   // 自动成片 · 仅会话态（不持久化）
   const [autoLoading, setAutoLoading] = useState(false)
@@ -559,7 +561,7 @@ export default function MatchPage() {
       />
       <div className="pr-64">
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-          <MatchPageHeader mode={mode} onModeChange={setMatchMode} />
+          <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
           {doneVideos.length === 0 && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />
@@ -691,6 +693,13 @@ export default function MatchPage() {
         </div>
       </div>
       {previewClip && <PreviewModal clip={previewClip} onClose={() => setPreviewClip(null)} />}
+      <VideoResultDrawer
+        open={resultOpen}
+        onClose={() => setResultOpen(false)}
+        videoId={selectedVideoIds.length === 1 ? selectedVideoIds[0] : ''}
+        videoOptions={doneVideos.map((v) => ({ id: v.id, name: v.name }))}
+        title="视频处理结果（ASR / VLM / 预览 / 可编辑）"
+      />
     </main>
   )
 }

@@ -1,9 +1,10 @@
-﻿'use client'
+'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import apiClient, { createProcessWebSocket, type ProcessMessage, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
 const STEPS = [
   { key: 'split',          label: '视频切分',       desc: '按镜头或固定时长切分视频' },
@@ -47,6 +48,7 @@ export default function ProcessPage() {
   const [steps, setSteps] = useState<Record<StepKey, SS>>(blank)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [resultOpen, setResultOpen] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -213,6 +215,13 @@ export default function ProcessPage() {
           </button>
           {running && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
           {selVideo && !running && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
+          <button
+            onClick={() => setResultOpen(true)}
+            disabled={!selId}
+            className="ml-auto px-4 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 text-sm rounded-lg transition-colors"
+          >
+            查看处理结果/纠错
+          </button>
         </section>
 
         {(running || done) && (
@@ -264,12 +273,20 @@ export default function ProcessPage() {
             <CheckCircle2 className="w-8 h-8 text-emerald-400 shrink-0" />
             <div>
               <p className="font-semibold text-emerald-300">处理完成！</p>
-              <p className="text-sm text-slate-400 mt-0.5">视频已完成全部处理步骤，现在可以进行文案匹配。</p>
+              <p className="text-sm text-slate-400 mt-0.5">视频已完成全部处理步骤，现在可以进行智能剪辑。</p>
             </div>
           </section>
         )}
         <div ref={endRef} />
       </div>
+
+      <VideoResultDrawer
+        open={resultOpen}
+        onClose={() => setResultOpen(false)}
+        videoId={selId}
+        videoOptions={videos.map((v) => ({ id: v.id, name: v.name }))}
+        title="素材处理结果（ASR / VLM / 预览 / 可编辑）"
+      />
     </main>
   )
 }

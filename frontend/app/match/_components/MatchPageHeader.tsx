@@ -1,14 +1,15 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowLeft, Sparkles } from 'lucide-react'
+import { ArrowLeft, Sparkles, ListVideo } from 'lucide-react'
 
 type MatchPageHeaderProps = {
   mode: 'manual' | 'auto'
   onModeChange: (mode: 'manual' | 'auto') => void
+  onOpenVideoResult?: () => void
 }
 
-export function MatchPageHeader({ mode, onModeChange }: MatchPageHeaderProps) {
+export function MatchPageHeader({ mode, onModeChange, onOpenVideoResult }: MatchPageHeaderProps) {
   return (
     <div className="flex items-center gap-3">
       <Link href="/" className="flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
@@ -40,6 +41,15 @@ export function MatchPageHeader({ mode, onModeChange }: MatchPageHeaderProps) {
           </button>
         </div>
       </div>
+      {!!onOpenVideoResult && (
+        <button
+          onClick={onOpenVideoResult}
+          className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/30 hover:border-slate-600 text-sm text-slate-200 transition-colors"
+        >
+          <ListVideo className="w-4 h-4 text-indigo-300" />
+          查看处理结果
+        </button>
+      )}
     </div>
   )
 }

@@ -102,6 +102,23 @@ export const matchApi = {
   run: (payload: MatchRequest) => apiClient.post<unknown, MatchResponse>('/api/match', payload),
 }
 
+export interface ClipResult {
+  id: string
+  clip_path: string
+  start_time: number
+  end_time: number
+  duration: number
+  asr_text: string | null
+  vlm_description: string | null
+}
+
+export const clipsApi = {
+  listByVideo: (videoId: string) =>
+    apiClient.get<unknown, ClipResult[]>(`/api/videos/${videoId}/clips`),
+  update: (clipId: string, payload: { asr_text?: string | null; vlm_description?: string | null }) =>
+    apiClient.patch<unknown, { ok: boolean; clip_id: string }>(`/api/videos/clips/${clipId}`, payload),
+}
+
 export const exportApi = {
   downloadProject: (payload: ExportRequest) =>
     apiClient.post('/api/export/project', payload, { responseType: 'blob' }),

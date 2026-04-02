@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from app.db.database import get_db_conn
 from app.core.splitter import VideoSplitter
+from app.models.clips import ClipUpdatePayload
 import logging
 
 logger = logging.getLogger(__name__)
@@ -305,5 +306,36 @@ async def get_clip_meta(clip_id: str):
             "end_time": float(row["end_time"]),
             "duration": float(row["duration"]),
         }
+    finally:
+        await db.close()
+
+
+@router.patch("/clips/{clip_id}")
+async def update_clip_result(clip_id: str, payload: ClipUpdatePayload):
+    """更新 clip 的 ASR / VLM 结果（用于人工纠错）"""
+    if payload.asr_text is None and payload.vlm_description is None:
+        raise HTTPException(status_code=400, detail="至少提供一个字段：asr_text 或 vlm_description")
+
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute("SELECT id FROM clips WHERE id = ?", (clip_id,))
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"片段 '{clip_id}' 不存在")
+
+        sets: list[str] = []
+        params: list = []
+        if payload.asr_text is not None:
+            sets.append("asr_text = ?")
+            params.append(payload.asr_text)
+        if payload.vlm_description is not None:
+            sets.append("vlm_description = ?")
+            params.append(payload.vlm_description)
+
+        params.append(clip_id)
+        await db.execute(f"UPDATE clips SET {', '.join(sets)} WHERE id = ?", tuple(params))
+        await db.commit()
+
+        return {"ok": True, "clip_id": clip_id}
     finally:
         await db.close()

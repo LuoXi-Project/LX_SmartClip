@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
 import { LLM_KEYS, LLM_PROVIDERS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
-import { ModelPicker } from './ModelPicker'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info, Eye, EyeOff } from 'lucide-react'
+import { Save, Info } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
+import { ApiSecretField } from './ApiSecretField'
+import { ApiTextField } from './ApiTextField'
+import { ModelField } from './ModelField'
 
 interface Props {
   config: ConfigMap
@@ -26,7 +27,6 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
   const groupDirty = LLM_KEYS.some((k) => isDirty(k) && config[k])
 
   const concurrency = Math.max(1, parseInt(v('llm_concurrency') || '1', 10) || 1)
-  const [showLlmApiKey, setShowLlmApiKey] = useState(false)
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -48,57 +48,47 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
 
       <div className="px-6 py-5 space-y-5">
         {config.llm_base_url && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 地址</label>
-            <div className="flex gap-2">
-              <input type="text" value={v('llm_base_url')} onChange={(e) => onSet('llm_base_url', e.target.value)}
-                className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                placeholder="https://api.openai.com/v1" />
-              <SaveBtn dirty={isDirty('llm_base_url')} saving={!!saving['llm_base_url']} saved={!!saved['llm_base_url']} onSave={() => onSave('llm_base_url')} />
-            </div>
-            <p className="text-xs text-slate-500">LLM 服务的 API 基础地址，支持 OpenAI 兼容 API</p>
-          </div>
+          <ApiTextField
+            label="API 地址"
+            value={v('llm_base_url')}
+            onChange={(val) => onSet('llm_base_url', val)}
+            placeholder="https://api.openai.com/v1"
+            dirty={isDirty('llm_base_url')}
+            saving={!!saving['llm_base_url']}
+            saved={!!saved['llm_base_url']}
+            onSave={() => onSave('llm_base_url')}
+            description="LLM 服务的 API 基础地址，支持 OpenAI 兼容 API"
+          />
         )}
 
         {config.llm_api_key && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 密钥</label>
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <input
-                  type={showLlmApiKey ? 'text' : 'password'}
-                  value={v('llm_api_key')}
-                  onChange={(e) => onSet('llm_api_key', e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 pr-10 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                  placeholder="********"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowLlmApiKey((s) => !s)}
-                  className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
-                  aria-label={showLlmApiKey ? '隐藏明文密钥' : '显示明文密钥'}
-                >
-                  {showLlmApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <SaveBtn dirty={isDirty('llm_api_key')} saving={!!saving['llm_api_key']} saved={!!saved['llm_api_key']} onSave={() => onSave('llm_api_key')} />
-            </div>
-            <p className="text-xs text-slate-500">用于认证 LLM API 请求的密钥</p>
-          </div>
+          <ApiSecretField
+            label="API 密钥"
+            value={v('llm_api_key')}
+            onChange={(val) => onSet('llm_api_key', val)}
+            placeholder="********"
+            dirty={isDirty('llm_api_key')}
+            saving={!!saving['llm_api_key']}
+            saved={!!saved['llm_api_key']}
+            onSave={() => onSave('llm_api_key')}
+            description="用于认证 LLM API 请求的密钥"
+          />
         )}
 
         {config.llm_model && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">LLM 模型</label>
-            <div className="flex gap-2 items-start">
-              <div className="flex-1">
-                <ModelPicker value={v('llm_model')} onChange={(val) => onSet('llm_model', val)}
-                  baseUrl={v('llm_base_url')} apiKey={v('llm_api_key')} placeholder="gpt-4o-mini" />
-              </div>
-              <SaveBtn dirty={isDirty('llm_model')} saving={!!saving['llm_model']} saved={!!saved['llm_model']} onSave={() => onSave('llm_model')} />
-            </div>
-            <p className="text-xs text-slate-500">用于文本生成的模型名称，如 gpt-4o-mini、claude-3-haiku 等</p>
-          </div>
+          <ModelField
+            label="LLM 模型"
+            value={v('llm_model')}
+            onChange={(val) => onSet('llm_model', val)}
+            baseUrl={v('llm_base_url')}
+            apiKey={v('llm_api_key')}
+            placeholder="gpt-4o-mini"
+            dirty={isDirty('llm_model')}
+            saving={!!saving['llm_model']}
+            saved={!!saved['llm_model']}
+            onSave={() => onSave('llm_model')}
+            description="用于文本生成的模型名称，如 gpt-4o-mini、claude-3-haiku 等"
+          />
         )}
 
         <div className="border-t border-slate-800/70" />

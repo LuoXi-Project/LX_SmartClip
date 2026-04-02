@@ -3,10 +3,12 @@
 import { useMemo, useState } from 'react'
 import { VLM_PROVIDERS, VLM_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
-import { ModelPicker } from './ModelPicker'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info, AlertTriangle, Eye, EyeOff } from 'lucide-react'
+import { Save, Info, AlertTriangle } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
+import { ApiSecretField } from './ApiSecretField'
+import { ApiTextField } from './ApiTextField'
+import { ModelField } from './ModelField'
 
 const TOKENS_PROMPT_OVERHEAD = 300
 
@@ -75,7 +77,6 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
   const preset = RESOLUTION_PRESETS[resPresetIdx]
   const isQwenStyle = ['siliconflow', 'zhipuai'].includes(vlmProvider)
   const isGlmStyle = vlmProvider === 'zhipuai' || v('vlm_model').toLowerCase().includes('glm')
-  const [showVlmApiKey, setShowVlmApiKey] = useState(false)
 
   const tokensPerImage = useMemo(
     () => isGlmStyle ? calcGlmTokens(preset.w, preset.h) : isQwenStyle ? calcQwenTokens(preset.w, preset.h) : calcOpenAITokens(preset.w, preset.h),
@@ -118,54 +119,44 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
 
       <div className="px-6 py-5 space-y-5">
         {config.vlm_base_url && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 地址</label>
-            <div className="flex gap-2">
-              <input type="text" value={v('vlm_base_url')} onChange={(e) => onSet('vlm_base_url', e.target.value)}
-                className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                placeholder="https://api.openai.com/v1" />
-              <SaveBtn dirty={isDirty('vlm_base_url')} saving={!!saving['vlm_base_url']} saved={!!saved['vlm_base_url']} onSave={() => onSave('vlm_base_url')} />
-            </div>
-          </div>
+          <ApiTextField
+            label="API 地址"
+            value={v('vlm_base_url')}
+            onChange={(val) => onSet('vlm_base_url', val)}
+            placeholder="https://api.openai.com/v1"
+            dirty={isDirty('vlm_base_url')}
+            saving={!!saving['vlm_base_url']}
+            saved={!!saved['vlm_base_url']}
+            onSave={() => onSave('vlm_base_url')}
+          />
         )}
 
         {config.vlm_api_key && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 密钥</label>
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <input
-                  type={showVlmApiKey ? 'text' : 'password'}
-                  value={v('vlm_api_key')}
-                  onChange={(e) => onSet('vlm_api_key', e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 pr-10 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowVlmApiKey((s) => !s)}
-                  className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
-                  aria-label={showVlmApiKey ? '隐藏明文密钥' : '显示明文密钥'}
-                >
-                  {showVlmApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <SaveBtn dirty={isDirty('vlm_api_key')} saving={!!saving['vlm_api_key']} saved={!!saved['vlm_api_key']} onSave={() => onSave('vlm_api_key')} />
-            </div>
-          </div>
+          <ApiSecretField
+            label="API 密钥"
+            value={v('vlm_api_key')}
+            onChange={(val) => onSet('vlm_api_key', val)}
+            placeholder="••••••••"
+            dirty={isDirty('vlm_api_key')}
+            saving={!!saving['vlm_api_key']}
+            saved={!!saved['vlm_api_key']}
+            onSave={() => onSave('vlm_api_key')}
+          />
         )}
 
         {config.vlm_model && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">VLM 模型</label>
-            <div className="flex gap-2 items-start">
-              <div className="flex-1">
-                <ModelPicker value={v('vlm_model')} onChange={(val) => onSet('vlm_model', val)}
-                  baseUrl={v('vlm_base_url')} apiKey={v('vlm_api_key')} placeholder="gpt-4o" />
-              </div>
-              <SaveBtn dirty={isDirty('vlm_model')} saving={!!saving['vlm_model']} saved={!!saved['vlm_model']} onSave={() => onSave('vlm_model')} />
-            </div>
-          </div>
+          <ModelField
+            label="VLM 模型"
+            value={v('vlm_model')}
+            onChange={(val) => onSet('vlm_model', val)}
+            baseUrl={v('vlm_base_url')}
+            apiKey={v('vlm_api_key')}
+            placeholder="gpt-4o"
+            dirty={isDirty('vlm_model')}
+            saving={!!saving['vlm_model']}
+            saved={!!saved['vlm_model']}
+            onSave={() => onSave('vlm_model')}
+          />
         )}
         <div className="border-t border-slate-800/70" />
         <p className="text-xs font-medium text-slate-500 -mt-1">图像分析参数</p>

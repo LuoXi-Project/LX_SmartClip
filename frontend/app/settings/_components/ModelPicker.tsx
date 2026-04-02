@@ -23,16 +23,63 @@ export function ModelPicker({ value, onChange, baseUrl, apiKey, placeholder }: P
   const anchorRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
+  // Cache models per (baseUrl, apiKey) to reduce repeated requests.
+  const cacheRef = useRef<Map<string, string[]>>(new Map())
+  // Abort in-flight request to prevent old results overwriting new ones.
+  const abortRef = useRef<AbortController | null>(null)
+  // Monotonic request id to fully guard against race conditions.
+  const requestIdRef = useRef(0)
+
   const handleFetch = useCallback(async () => {
-    if (!baseUrl || !apiKey) { setFetchError('请先填写 API 地址和密钥'); return }
-    setFetching(true); setFetchError('')
+    const safeBaseUrl = baseUrl?.trim() ?? ''
+    const safeApiKey = apiKey?.trim() ?? ''
+    if (!safeBaseUrl || !safeApiKey) { setFetchError('请先填写 API 地址和密钥'); return }
+
+    const cacheKey = `${safeBaseUrl}::${safeApiKey}`
+    const cached = cacheRef.current.get(cacheKey)
+    if (cached) {
+      setModels(cached)
+      setFetchError('')
+      setOpen(true)
+      setFilter('')
+      return
+    }
+
+    const requestId = ++requestIdRef.current
+    setFetching(true)
+    setFetchError('')
+    setOpen(false)
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
-      const list = await fetchModels(baseUrl, apiKey)
-      if (list.length === 0) { setFetchError('未获取到模型列表') }
-      else { setModels(list); setOpen(true); setFilter('') }
+      const list = await fetchModels(safeBaseUrl, safeApiKey, { signal: controller.signal })
+      if (requestId !== requestIdRef.current) return
+
+      if (list.length === 0) {
+        setFetchError('未获取到模型列表')
+        setModels([])
+        setOpen(false)
+      } else {
+        cacheRef.current.set(cacheKey, list)
+        setModels(list)
+        setOpen(true)
+        setFilter('')
+      }
     } catch (e: unknown) {
+      if (requestId !== requestIdRef.current) return
+
+      // Ignore abort errors silently; they are expected when user retries quickly.
+      if (e instanceof Error && (e.name === 'AbortError' || e.message.toLowerCase().includes('aborted'))) {
+        return
+      }
+
       setFetchError(`获取失败: ${e instanceof Error ? e.message : String(e)}`)
-    } finally { setFetching(false) }
+      setModels([])
+      setOpen(false)
+    } finally {
+      if (requestId === requestIdRef.current) setFetching(false)
+    }
   }, [baseUrl, apiKey])
 
   // Recalculate dropdown position whenever it opens
@@ -75,9 +122,8 @@ export function ModelPicker({ value, onChange, baseUrl, apiKey, placeholder }: P
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
 
-  const filtered = filter
-    ? models.filter((m) => m.toLowerCase().includes(filter.toLowerCase()))
-    : models
+  const f = filter.trim().toLowerCase()
+  const filtered = f ? models.filter((m) => m.toLowerCase().includes(f)) : models
 
   const dropdown = open && models.length > 0 ? (
     <div

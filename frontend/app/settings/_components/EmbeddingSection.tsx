@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
 import { EMBEDDING_PROVIDERS, EMB_KEYS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
-import { ModelPicker } from './ModelPicker'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info, Eye, EyeOff } from 'lucide-react'
+import { Save, Info } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
+import { ApiSecretField } from './ApiSecretField'
+import { ApiTextField } from './ApiTextField'
+import { ModelField } from './ModelField'
 
 interface Props {
   config: ConfigMap
@@ -25,7 +26,6 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = EMB_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('embedding_concurrency') || '3', 10) || 3)
-  const [showEmbeddingApiKey, setShowEmbeddingApiKey] = useState(false)
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -46,52 +46,42 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
       </div>
       <div className="px-6 py-5 space-y-5">
         {config.embedding_base_url && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 地址</label>
-            <div className="flex gap-2">
-              <input type="text" value={v('embedding_base_url')} onChange={(e) => onSet('embedding_base_url', e.target.value)}
-                className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                placeholder="https://api.openai.com/v1" />
-              <SaveBtn dirty={isDirty('embedding_base_url')} saving={!!saving['embedding_base_url']} saved={!!saved['embedding_base_url']} onSave={() => onSave('embedding_base_url')} />
-            </div>
-          </div>
+          <ApiTextField
+            label="API 地址"
+            value={v('embedding_base_url')}
+            onChange={(val) => onSet('embedding_base_url', val)}
+            placeholder="https://api.openai.com/v1"
+            dirty={isDirty('embedding_base_url')}
+            saving={!!saving['embedding_base_url']}
+            saved={!!saved['embedding_base_url']}
+            onSave={() => onSave('embedding_base_url')}
+          />
         )}
         {config.embedding_api_key && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">API 密钥</label>
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <input
-                  type={showEmbeddingApiKey ? 'text' : 'password'}
-                  value={v('embedding_api_key')}
-                  onChange={(e) => onSet('embedding_api_key', e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 pr-10 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowEmbeddingApiKey((s) => !s)}
-                  className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
-                  aria-label={showEmbeddingApiKey ? '隐藏明文密钥' : '显示明文密钥'}
-                >
-                  {showEmbeddingApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <SaveBtn dirty={isDirty('embedding_api_key')} saving={!!saving['embedding_api_key']} saved={!!saved['embedding_api_key']} onSave={() => onSave('embedding_api_key')} />
-            </div>
-          </div>
+          <ApiSecretField
+            label="API 密钥"
+            value={v('embedding_api_key')}
+            onChange={(val) => onSet('embedding_api_key', val)}
+            placeholder="••••••••"
+            dirty={isDirty('embedding_api_key')}
+            saving={!!saving['embedding_api_key']}
+            saved={!!saved['embedding_api_key']}
+            onSave={() => onSave('embedding_api_key')}
+          />
         )}
         {config.embedding_model && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-slate-400">Embedding 模型</label>
-            <div className="flex gap-2 items-start">
-              <div className="flex-1">
-                <ModelPicker value={v('embedding_model')} onChange={(val) => onSet('embedding_model', val)}
-                  baseUrl={v('embedding_base_url')} apiKey={v('embedding_api_key')} placeholder="text-embedding-3-small" />
-              </div>
-              <SaveBtn dirty={isDirty('embedding_model')} saving={!!saving['embedding_model']} saved={!!saved['embedding_model']} onSave={() => onSave('embedding_model')} />
-            </div>
-          </div>
+          <ModelField
+            label="Embedding 模型"
+            value={v('embedding_model')}
+            onChange={(val) => onSet('embedding_model', val)}
+            baseUrl={v('embedding_base_url')}
+            apiKey={v('embedding_api_key')}
+            placeholder="text-embedding-3-small"
+            dirty={isDirty('embedding_model')}
+            saving={!!saving['embedding_model']}
+            saved={!!saved['embedding_model']}
+            onSave={() => onSave('embedding_model')}
+          />
         )}
         <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
           {(['vector_dimension', 'top_k', 'match_top_k', 'match_top_n'] as const).filter((k) => config[k]).map((key) => (

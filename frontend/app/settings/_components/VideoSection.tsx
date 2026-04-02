@@ -1,9 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+
 import { VIDEO_KEYS } from './constants'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save, Scissors, Clock, Layers, Info } from 'lucide-react'
+import { Save, Scissors, Clock, Layers, Info, ChevronDown } from 'lucide-react'
 import type { ConfigMap } from './types'
 
 interface Props {
@@ -63,6 +65,38 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = VIDEO_KEYS.some((k) => isDirty(k) && config[k])
   const currentMode = v('split_mode') || 'scene'
+  const [sceneHybridAdvOpen, setSceneHybridAdvOpen] = useState(currentMode === 'scene' || currentMode === 'hybrid')
+  const [frameExtractionOpen, setFrameExtractionOpen] = useState(true)
+
+  useEffect(() => {
+    setSceneHybridAdvOpen(currentMode === 'scene' || currentMode === 'hybrid')
+  }, [currentMode])
+
+  const renderField = (key: string) => (
+    <div key={key} className="space-y-1.5">
+      <label className="text-xs text-slate-400">{config[key].label || key}</label>
+      {PARAM_HINTS[key] && (
+        <div className="flex items-start gap-1.5 text-xs text-slate-500 mb-1">
+          <Info className="w-3 h-3 mt-0.5 shrink-0 text-slate-600" />
+          <span>{PARAM_HINTS[key]}</span>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <ConfigField cfgKey={key} item={config[key]} value={v(key)} onChange={(val) => onSet(key, val)} />
+        </div>
+        <SaveBtn dirty={isDirty(key)} saving={!!saving[key]} saved={!!saved[key]} onSave={() => onSave(key)} />
+      </div>
+    </div>
+  )
+
+  const renderFields = (keys: string[]) => keys.filter((k) => k !== 'split_mode' && config[k]).map(renderField)
+
+  const FIXED_KEYS = ['fixed_duration']
+  const SCENE_HYBRID_ADV_KEYS = ['scene_threshold', 'scene_min_scene_len', 'hybrid_max_segment_sec']
+  const FRAME_KEYS = ['frame_fps', 'frame_target_pixels']
+  const CLIP_BASIC_KEYS = ['clip_container']
+  const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -127,24 +161,71 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
           </div>
         )}
 
-        {/* remaining VIDEO_KEYS except split_mode */}
-        {VIDEO_KEYS.filter((k) => k !== 'split_mode' && config[k]).map((key) => (
-          <div key={key} className="space-y-1.5">
-            <label className="text-xs text-slate-400">{config[key].label || key}</label>
-            {PARAM_HINTS[key] && (
-              <div className="flex items-start gap-1.5 text-xs text-slate-500 mb-1">
-                <Info className="w-3 h-3 mt-0.5 shrink-0 text-slate-600" />
-                <span>{PARAM_HINTS[key]}</span>
+        {/* split strategy basic */}
+        {renderFields(FIXED_KEYS)}
+
+        {/* scene/hybrid advanced */}
+        {SCENE_HYBRID_ADV_KEYS.some((k) => config[k]) && (
+          <details
+            className="group rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden"
+            open={sceneHybridAdvOpen}
+            onToggle={(e) => {
+              setSceneHybridAdvOpen((e.currentTarget as HTMLDetailsElement).open)
+            }}
+          >
+            <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-4 py-3 flex items-center justify-between bg-slate-900/20 hover:bg-slate-900/30">
+              <span className="text-sm font-medium text-slate-200">镜头检测/混合模式高级参数</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">
+                  {currentMode === 'scene' || currentMode === 'hybrid' ? '当前模式相关' : '不常用，保持默认即可'}
+                </span>
+                <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
               </div>
-            )}
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <ConfigField cfgKey={key} item={config[key]} value={v(key)} onChange={(val) => onSet(key, val)} />
-              </div>
-              <SaveBtn dirty={isDirty(key)} saving={!!saving[key]} saved={!!saved[key]} onSave={() => onSave(key)} />
+            </summary>
+            <div className="px-4 pb-4 pt-1 space-y-5">
+              {renderFields(SCENE_HYBRID_ADV_KEYS)}
             </div>
-          </div>
-        ))}
+          </details>
+        )}
+
+        {/* frame extraction for VLM */}
+        {FRAME_KEYS.some((k) => config[k]) && (
+          <details
+            className="group rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden"
+            open={frameExtractionOpen}
+            onToggle={(e) => {
+              setFrameExtractionOpen((e.currentTarget as HTMLDetailsElement).open)
+            }}
+          >
+            <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-4 py-3 flex items-center justify-between bg-slate-900/20 hover:bg-slate-900/30">
+              <span className="text-sm font-medium text-slate-200">帧提取（VLM 画面描述）</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">专业参数，通常无需改</span>
+                <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
+              </div>
+            </summary>
+            <div className="px-4 pb-4 pt-1 space-y-5">
+              {renderFields(FRAME_KEYS)}
+            </div>
+          </details>
+        )}
+
+        {/* output encoding */}
+        {renderFields(CLIP_BASIC_KEYS)}
+        {CLIP_ADV_KEYS.some((k) => config[k]) && (
+          <details className="group rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden">
+            <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-4 py-3 flex items-center justify-between bg-slate-900/20 hover:bg-slate-900/30">
+              <span className="text-sm font-medium text-slate-200">输出编码高级参数</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">兼容性/体积/速度可调</span>
+                <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
+              </div>
+            </summary>
+            <div className="px-4 pb-4 pt-1 space-y-5">
+              {renderFields(CLIP_ADV_KEYS)}
+            </div>
+          </details>
+        )}
 
       </div>
     </section>

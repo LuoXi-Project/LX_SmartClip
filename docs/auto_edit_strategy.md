@@ -14,6 +14,157 @@
   - 输出：成片文件（当前主要通过“字幕/导出”既有接口实现），并可选做 **BGM 混音后处理**
   - 特点：当前实现偏“最小可用”，对转场、keep_flags 等只做占位或忽略
 
+## 升级方向（低侵入）：三层架构，编译回现有 Plan
+
+目标：在不破坏现有 `/api/auto-edit/realize`（字幕/拼接/BGM）链路的前提下，引入可扩展的“事件级时间轴”与“分批评分/汇总/编排”，让剪辑质量可控、可解释、可迭代。
+
+核心原则：
+
+- **渲染链路不动**：最终仍输出当前 `Plan`（`Plan.segments`），复用 Phase 2 的落地实现。
+- **新增中间层，不强塞进 Plan**：事件（event/beat/role/tier）、分批输出、批间汇总等先落在“内部中间产物”里；必要时以 `meta` 形式挂载到 Plan（未来逐步升级 Plan schema）。
+- **受控输出 + 规则校验**：LLM 只做“提名/局部理解/润色”，全局约束（时长、合法 clip_id、Tier 配额、多样性）由编排器/编译器兜底。
+
+### 升级版逻辑流程（建议）
+
+【1】用户输入（Prompt）
+        ↓
+【2】LLM → 生成 Strategy DSL（受控、短、可编译）
+        ↓
+【3】Strategy Compiler（编译）→ 评分权重 + 硬约束 + 编排模板 + batch 参数
+        ↓
+【4】LLM 分批处理素材（事件提名/局部评分）
+        - 每批输出 `ClipEventsBatch` JSON
+        - 局部评分 + role/beat 标记
+        - **保留所有事件到事件池**（不等于都入成片）
+        ↓
+【5】批间汇总（规则为主）
+        - 合并/去重/归一化（clip_id、时间窗、文本签名）
+        - 全局重打分（可选）
+        - 全局排序/分层（Tier1/2/3）
+        ↓
+【6】智能编排（规则优先 + LLM 辅助）
+        - 预算：target_duration_sec、节奏模板（hook→context→highlight→cta）
+        - 约束：多样性、重复惩罚、保留用户顺序等
+        - 输出 `FinalTimeline`（事件级、有序、有预算）
+        ↓
+【7】Timeline Compiler（编译）→ 输出最终 `Plan`（兼容现有 Phase 2）
+        ↓
+【8】视频生成（复用现有 realize/burn/export）
+
+### 中间产物（内部结构）定义（最小闭环）
+
+说明：这些结构用于 Phase 1.5（介于“生成 Plan”与“落地 Plan”之间）。第一版建议仅用于后端内部或调试输出；未来可作为 API 返回的“可解释层”。
+
+#### `Strategy DSL`（受控、可编译）
+
+- 目的：把“用户想要的风格/节奏/偏好”变成可执行配置，避免 LLM 直接生成长 Plan 导致不可控。
+- 产物：一份短 JSON（字段固定、枚举为主），可被编译器转为 score/模板/配额。
+
+示例（建议）：
+
+```json
+{
+  "dsl_version": "1",
+  "goal": "把素材剪成节奏快的产品亮点短视频",
+  "mode_hint": "voiceover",
+  "target_duration_sec": 60,
+  "style": {
+    "pace": "fast",
+    "tone": "energetic",
+    "structure": ["hook", "context", "highlight", "cta"]
+  },
+  "preferences": {
+    "prefer_asr": true,
+    "prefer_vlm_when_no_asr": true,
+    "avoid_repetition": true
+  },
+  "constraints": {
+    "respect_user_video_order": false,
+    "max_events_per_clip": 6,
+    "tier_budget_ratio": {"tier1": 0.7, "tier2": 0.25, "tier3": 0.05}
+  }
+}
+```
+
+#### `ClipEvent`（事件：可落地为 Segment 的最小单位）
+
+约束：`clip_id` 必须来自上下文（仍沿用“原样拷贝 clip_id，禁止幻觉”）。
+
+建议字段：
+
+- `event_id`：稳定 ID（推荐由 `clip_id + time_range + text_signature` 派生，便于去重与回放）
+- `clip_id`
+- `time_range`：`{ "start_sec": 12.3, "end_sec": 16.8 }`（可为空；为空时编排阶段按预算估时）
+- `text`：用于字幕/旁白的文案（可为空，但进入成片的事件建议必须有）
+- `source`：`asr | vlm | asr+vlm | llm`
+- `role`：`hook | context | highlight | cta | broll | transition`
+- `beat`：`setup | turn | payoff | montage | explain | demo`
+- `scores`：`{ "local_score": 0.0-1.0, "relevance": 0-1, "clarity": 0-1, "emotion": 0-1 }`（维度可裁剪）
+- `tags`：关键词/实体/场景（用于多样性与重复惩罚）
+- `evidence`（可选）：引用 ASR/VLM 原文片段，便于 debug/可解释
+
+#### `ClipEventsBatch`（分批输出）
+
+```json
+{
+  "batch_id": "b_001",
+  "events": [
+    {
+      "event_id": "e_xxx",
+      "clip_id": "CLIP_123",
+      "time_range": {"start_sec": 3.2, "end_sec": 6.8},
+      "text": "核心亮点一句话",
+      "source": "asr",
+      "role": "highlight",
+      "beat": "payoff",
+      "scores": {"local_score": 0.86, "relevance": 0.9, "clarity": 0.8},
+      "tags": ["功能A", "对比", "快"]
+    }
+  ]
+}
+```
+
+#### `MergedEventPool`（批间汇总后的事件池）
+
+- `events[]`：全量事件（保留所有事件到池里）
+- `tier`：对每个 event 打 `1|2|3`（Tier1 进入成片概率最高）
+- `global_score`/`global_rank`：全局排序依据（由 compiler 权重计算或规则合成）
+
+#### `FinalTimeline`（最终事件级编排结果）
+
+第一版建议只输出能被编译为 `Plan.segments` 的最小字段：
+
+- `items[]`：顺序列表
+- 每项包含：`event_id/clip_id/subtitle_text/audio_mode/duration_budget_sec`
+
+### Timeline → Plan 编译规则（确保兼容现有 Phase 2）
+
+编译目标：生成 **当前可落地** 的 `Plan.segments`（`SegmentPlan`），并尽量贴合未来扩展。
+
+- **1 个 timeline item → 1 个 `SegmentPlan`**
+- `SegmentPlan.selected_clip_ids`：第一版建议只放 1 个主 `clip_id`（避免落地阶段目前“只取第一个主片段”导致浪费）
+- `SegmentPlan.clip_group`：可填入同一事件的备选片段（权重=global_score），用于无效 clip 的兜底
+- `SegmentPlan.subtitle.text`：使用 `subtitle_text`
+- `SegmentPlan.audio_mode`：来自 timeline item（`tts/original/mute`）
+- `SegmentPlan.start_time_sec/end_time_sec`：
+  - 若事件有 `time_range`，可投影到 segment 的时间窗（用于 Phase 2 的 fallback 选段）
+  - 若无 `time_range`，可按累计预算拼接出“首尾相接”的时间窗（当前主要用于兜底选段，而非真实裁切）
+- `Plan.constraints / keep_flags / bgm`：仍按现有字段填充（BGM 后处理可复用）
+
+### 为未来修改 Plan 做准备（兼容策略）
+
+未来大概率需要把“事件级信息”提升为 Plan 的一等公民。建议从一开始就约定：
+
+- **版本号**：给 Strategy DSL / EventPool / Timeline 都带 `*_version`；未来 Plan 也可引入 `plan_version`（不破坏旧字段的情况下扩展）。
+- **向后兼容**：当新增字段时，优先做到：
+  - 旧客户端只用 `Plan.segments` 仍可正常成片
+  - 新客户端可读取 `meta`（若启用）展示“为何选这段/为何是 Tier1”
+- **可回放**：把一次生成的关键中间产物（DSL、每批 events、汇总池、最终 timeline）作为日志或可选持久化对象，便于线上排障与 A/B。
+- **分阶段迁移**：
+  - V0：中间产物仅内部使用，最终输出 Plan（本策略）
+  - V1：API 可选返回 `explain`（事件池/tiers/排序理由）
+  - V2：Plan schema 内建事件层（例如 `events` 或 `timeline` 字段），落地阶段逐步消费事件级信息（如真实裁切、转场渲染、多 clip 拼接）
+
 ## 关键数据结构（Plan Schema 的意图）
 
 ### `Plan`
@@ -38,6 +189,11 @@
 - **`transition`**：占位（当前落地阶段不做真实转场渲染）。
 
 ## Phase 1：Plan 规划（LLM 生成）策略
+
+说明（当前实现 vs 升级路径）：
+
+- **当前实现（V 当前）**：LLM 一次性直接生成 `Plan`（见 `call_llm_for_plans`），后端主要做 JSON 清洗与 Pydantic 强校验。
+- **升级路径（低侵入）**：可逐步替换为“Strategy DSL → 分批事件池 → Tier 汇总 → FinalTimeline → 编译回 Plan”的方式生成 `Plan.segments`，从而增强可控性与可解释性；同时 **Phase 2 落地链路保持不变**（最终仍消费 `Plan`）。
 
 对应接口：
 

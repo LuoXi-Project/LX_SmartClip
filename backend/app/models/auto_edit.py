@@ -116,6 +116,16 @@ class AutoEditPlanRequest(BaseModel):
     plan_keep_flags: Optional[PlanKeepFlags] = None
     prev_plan_id: Optional[str] = None
     prev_plan: Optional[Plan] = None
+    # 低侵入升级开关：默认 False，保持旧行为（LLM 直接生成 Plan）
+    use_timeline_engine: bool = Field(
+        False,
+        description="是否启用“事件级时间轴”新引擎（DSL→Events→Timeline→Plan），默认关闭",
+    )
+    # 可解释性输出：第一版仅用于调试（API 暂不保证返回该字段）
+    explain: bool = Field(
+        False,
+        description="是否生成可解释中间产物（events/tiers/timeline）用于调试与回放，默认关闭",
+    )
 
 
 class AutoEditPlanResponse(BaseModel):

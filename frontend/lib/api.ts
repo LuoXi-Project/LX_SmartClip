@@ -307,6 +307,10 @@ export interface AutoEditPlanRequestApi {
   plan_keep_flags?: PlanKeepFlagsApi
   prev_plan_id?: string | null
   prev_plan?: unknown
+  /** 低侵入升级：启用事件级时间轴引擎 */
+  use_timeline_engine?: boolean
+  /** 调试：生成可解释中间产物（后端可能仅用于日志/落盘） */
+  explain?: boolean
 }
 
 export interface AutoEditSegmentPlanApi {

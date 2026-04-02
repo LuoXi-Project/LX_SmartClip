@@ -42,6 +42,10 @@ export interface MatchPageState {
   autoBgmPlanPolicy: 'auto' | 'none' | 'user' | 'ai'
   /** 成片时曲目：空字符串表示自动选曲（库内/manifest/方案内 track） */
   autoBgmTrackFilename: string
+  /** 低侵入升级：是否启用事件级时间轴新引擎 */
+  autoUseTimelineEngine: boolean
+  /** 调试开关：生成可解释中间产物 */
+  autoExplain: boolean
   autoPlans: AutoEditPlanApi[]
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
   autoExpandedPlanIds: string[]
@@ -63,6 +67,8 @@ export interface MatchPageState {
   setAutoBgmMixEnabled: (v: boolean) => void
   setAutoBgmPlanPolicy: (p: 'auto' | 'none' | 'user' | 'ai') => void
   setAutoBgmTrackFilename: (name: string) => void
+  setAutoUseTimelineEngine: (v: boolean) => void
+  setAutoExplain: (v: boolean) => void
   setAutoPlans: (plans: AutoEditPlanApi[]) => void
   setAutoRealizeDownloads: (
     fn:
@@ -94,6 +100,8 @@ export type MatchPersistedSlice = Pick<
   | 'autoBgmMixEnabled'
   | 'autoBgmPlanPolicy'
   | 'autoBgmTrackFilename'
+  | 'autoUseTimelineEngine'
+  | 'autoExplain'
   | 'autoPlans'
   | 'autoRealizeDownloads'
   | 'autoExpandedPlanIds'
@@ -198,6 +206,8 @@ export const useMatchStore = create<MatchPageState>()(
       autoBgmMixEnabled: false,
       autoBgmPlanPolicy: 'auto' as const,
       autoBgmTrackFilename: '',
+      autoUseTimelineEngine: false,
+      autoExplain: false,
       autoPlans: [] as AutoEditPlanApi[],
       autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
       autoExpandedPlanIds: [] as string[],
@@ -222,6 +232,8 @@ export const useMatchStore = create<MatchPageState>()(
       setAutoBgmMixEnabled: (autoBgmMixEnabled) => set({ autoBgmMixEnabled }),
       setAutoBgmPlanPolicy: (autoBgmPlanPolicy) => set({ autoBgmPlanPolicy }),
       setAutoBgmTrackFilename: (autoBgmTrackFilename) => set({ autoBgmTrackFilename }),
+      setAutoUseTimelineEngine: (autoUseTimelineEngine) => set({ autoUseTimelineEngine }),
+      setAutoExplain: (autoExplain) => set({ autoExplain }),
       setAutoPlans: (autoPlans) => set({ autoPlans }),
       setAutoRealizeDownloads: (fn) =>
         set((state) => ({
@@ -270,6 +282,8 @@ export const useMatchStore = create<MatchPageState>()(
         autoBgmMixEnabled: state.autoBgmMixEnabled,
         autoBgmPlanPolicy: state.autoBgmPlanPolicy,
         autoBgmTrackFilename: state.autoBgmTrackFilename,
+        autoUseTimelineEngine: state.autoUseTimelineEngine,
+        autoExplain: state.autoExplain,
         autoPlans: state.autoPlans,
         autoRealizeDownloads: state.autoRealizeDownloads,
         autoExpandedPlanIds: state.autoExpandedPlanIds,
@@ -290,6 +304,8 @@ export const useMatchStore = create<MatchPageState>()(
           autoMode: 'auto',
           autoTargetDuration: 60,
           autoNumPlans: 3,
+          autoUseTimelineEngine: false,
+          autoExplain: false,
           autoPlans: [],
           autoRealizeDownloads: {},
           autoExpandedPlanIds: [],
@@ -320,6 +336,8 @@ export const useMatchStore = create<MatchPageState>()(
           merged.autoBgmPlanPolicy = 'auto'
         }
         if (typeof merged.autoBgmTrackFilename !== 'string') merged.autoBgmTrackFilename = ''
+        if (typeof merged.autoUseTimelineEngine !== 'boolean') merged.autoUseTimelineEngine = false
+        if (typeof merged.autoExplain !== 'boolean') merged.autoExplain = false
         return mergeLegacyAutoEditCache(merged) as MatchPersistedSlice
       },
       onRehydrateStorage: () => (state) => {
@@ -345,6 +363,8 @@ export const useMatchStore = create<MatchPageState>()(
             state.autoBgmPlanPolicy = 'auto'
           }
           if (typeof state.autoBgmTrackFilename !== 'string') state.autoBgmTrackFilename = ''
+          if (typeof state.autoUseTimelineEngine !== 'boolean') state.autoUseTimelineEngine = false
+          if (typeof state.autoExplain !== 'boolean') state.autoExplain = false
         }
       },
     }

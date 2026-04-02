@@ -66,6 +66,10 @@ export default function MatchPage() {
     setAutoBgmPlanPolicy,
     autoBgmTrackFilename,
     setAutoBgmTrackFilename,
+    autoUseTimelineEngine,
+    setAutoUseTimelineEngine,
+    autoExplain,
+    setAutoExplain,
     autoPlans,
     setAutoPlans,
     autoRealizeDownloads,
@@ -433,6 +437,8 @@ export default function MatchPage() {
         subtitle_policy: subtitleEnabled ? 'auto' as const : 'none' as const,
         transition_policy: 'auto' as const,
         bgm_policy: autoBgmPlanPolicy,
+        use_timeline_engine: autoUseTimelineEngine,
+        explain: autoUseTimelineEngine ? autoExplain : false,
       }
       const session = await autoEditApi.createPlanSession(payload)
       setAutoPlanStage('connecting')
@@ -590,6 +596,10 @@ export default function MatchPage() {
               onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
               autoBgmTrackFilename={autoBgmTrackFilename}
               onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+              autoUseTimelineEngine={autoUseTimelineEngine}
+              onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+              autoExplain={autoExplain}
+              onAutoExplainChange={setAutoExplain}
               autoLoading={autoLoading}
               autoError={autoError}
               autoPlans={autoPlans}

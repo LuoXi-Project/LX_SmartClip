@@ -24,6 +24,10 @@ type AutoEditPanelProps = {
   onAutoBgmPlanPolicyChange: (value: 'auto' | 'none' | 'user' | 'ai') => void
   autoBgmTrackFilename: string
   onAutoBgmTrackFilenameChange: (value: string) => void
+  autoUseTimelineEngine: boolean
+  onAutoUseTimelineEngineChange: (value: boolean) => void
+  autoExplain: boolean
+  onAutoExplainChange: (value: boolean) => void
   autoLoading: boolean
   autoError: string
   autoPlans: AutoEditPlanApi[]
@@ -56,6 +60,10 @@ export function AutoEditPanel({
   onAutoBgmPlanPolicyChange,
   autoBgmTrackFilename,
   onAutoBgmTrackFilenameChange,
+  autoUseTimelineEngine,
+  onAutoUseTimelineEngineChange,
+  autoExplain,
+  onAutoExplainChange,
   autoLoading,
   autoError,
   autoPlans,
@@ -344,6 +352,39 @@ export function AutoEditPanel({
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <label className="text-xs text-slate-300 flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400/90" />
+              新引擎（事件级时间轴）
+            </label>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoUseTimelineEngine}
+                  onChange={(e) => onAutoUseTimelineEngineChange(e.target.checked)}
+                  disabled={autoLoading}
+                  className="rounded border-slate-600 bg-slate-900 text-cyan-500 focus:ring-cyan-500/40 disabled:opacity-50"
+                />
+                <span className="text-sm text-slate-200">
+                  启用 Timeline Engine（DSL→事件池→Tier→编排→编译回 Plan）
+                </span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoExplain}
+                  onChange={(e) => onAutoExplainChange(e.target.checked)}
+                  disabled={autoLoading || !autoUseTimelineEngine}
+                  className="rounded border-slate-600 bg-slate-900 text-cyan-500 focus:ring-cyan-500/40 disabled:opacity-50"
+                />
+                <span className="text-[12px] text-slate-300">Explain 调试（生成可解释中间产物）</span>
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                默认关闭不影响现有方案生成；开启后后端会优先走新引擎，失败会自动回退旧逻辑。
+              </p>
             </div>
           </div>
         </div>

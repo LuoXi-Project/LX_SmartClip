@@ -136,7 +136,7 @@ def _run_ffmpeg(args: List[str], desc: str = "") -> None:
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=600,
+        timeout=3600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -161,7 +161,7 @@ def _probe_duration(path: str) -> float:
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=30,
+        timeout=600,
     )
     try:
         return float(probe.stdout.decode().strip() or 0.0)
@@ -381,7 +381,7 @@ def burn_to_mp4(
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=30,
+            timeout=600,
         )
         try:
             w_str, h_str = probe.stdout.decode().strip().split(",")

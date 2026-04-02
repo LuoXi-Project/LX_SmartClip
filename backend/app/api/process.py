@@ -399,7 +399,7 @@ async def process_video_ws(video_id: str, ws: WebSocket):
 
     skip_steps = []
     try:
-        data = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+        data = await asyncio.wait_for(ws.receive_json(), timeout=60.0)
         skip_steps = data.get("skip_steps", [])
     except (asyncio.TimeoutError, Exception):
         pass

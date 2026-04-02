@@ -48,7 +48,7 @@ def generate_thumbnail(video_path: str, video_id: str) -> str | None:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=30,
+                timeout=300,
             )
             if result.returncode == 0 and os.path.exists(out_path):
                 return out_path

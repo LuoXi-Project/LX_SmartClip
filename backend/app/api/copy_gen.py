@@ -362,7 +362,7 @@ async def generate_copy(req: CopyGenRequest):
         async def _sse():
             try:
                 from openai import AsyncOpenAI
-                client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=90)
+                client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=3600)
                 stream = await client.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -397,7 +397,7 @@ async def generate_copy(req: CopyGenRequest):
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                timeout=90,
+                timeout=3600,
             )
             content = await llm.chat(messages)
             return {"copy": content}

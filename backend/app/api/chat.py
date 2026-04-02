@@ -43,7 +43,7 @@ async def chat_completions(req: ChatRequest):
                 client = AsyncOpenAI(
                     api_key=cfg["api_key"],
                     base_url=cfg["base_url"],
-                    timeout=60.0,
+                    timeout=600.0,
                 )
                 stream = await client.chat.completions.create(
                     model=cfg["model"],

@@ -1,10 +1,31 @@
 import os
 import logging
-from typing import Optional
 from app.core.asr.base import IASR
+from app.core.asr.types import ASRSegment, ASRTranscript
 from app.core.retry import retry_sync
 
 logger = logging.getLogger(__name__)
+
+
+def _segments_from_whisper_result(result: dict) -> tuple[ASRSegment, ...]:
+    raw = result.get("segments") or []
+    out: list[ASRSegment] = []
+    for seg in raw:
+        try:
+            t = (seg.get("text") or "").strip()
+            if not t:
+                continue
+            out.append(
+                ASRSegment(
+                    start=float(seg["start"]),
+                    end=float(seg["end"]),
+                    text=t,
+                )
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            logger.debug("跳过异常 segment 项: %s", e)
+            continue
+    return tuple(out)
 
 
 class WhisperASR(IASR):
@@ -31,15 +52,9 @@ class WhisperASR(IASR):
         self.model = whisper.load_model(model_size, device=device)
         logger.info("Whisper 模型加载成功")
 
-    def transcribe(self, audio_path: str) -> str:
+    def transcribe_detailed(self, audio_path: str) -> ASRTranscript:
         """
-        转写音频文件为文本
-
-        Args:
-            audio_path: 音频文件路径
-
-        Returns:
-            转写后的文本
+        转写音频，返回全文与 segment 级时间轴（相对本音频文件）。
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"音频文件不存在: {audio_path}")
@@ -47,13 +62,18 @@ class WhisperASR(IASR):
         logger.info(f"开始转写音频: {audio_path}")
 
         def _call_whisper():
-            result = self.model.transcribe(audio_path, language="zh")
-            return result["text"].strip()
+            return self.model.transcribe(audio_path, language="zh")
 
         try:
-            text = retry_sync(_call_whisper)
-            logger.info(f"音频转写成功: {len(text)} 个字符")
-            return text
+            result = retry_sync(_call_whisper)
+            text = (result.get("text") or "").strip()
+            segments = _segments_from_whisper_result(result)
+            logger.info(
+                "音频转写成功: %d 字, %d 个时间片段",
+                len(text),
+                len(segments),
+            )
+            return ASRTranscript(text=text, segments=segments)
         except Exception as e:
             logger.error(f"音频转写失败: {e}")
             raise RuntimeError(f"音频转写失败: {str(e)}")

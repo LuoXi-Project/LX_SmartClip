@@ -2,6 +2,7 @@ import os
 import logging
 import httpx
 from app.core.asr.base import IASR
+from app.core.asr.types import ASRSegment, ASRTranscript
 from app.core.retry import retry_sync
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,42 @@ def _calc_timeout(audio_path: str) -> float:
     timeout = _BASE_TIMEOUT + size_mb * _SECONDS_PER_MB
     logger.debug("ASR 超时设置: %.1f 秒 (文件 %.2f MB)", timeout, size_mb)
     return timeout
+
+
+def _segments_from_openai_verbose(resp) -> tuple[ASRSegment, ...]:
+    """从 OpenAI verbose_json 响应解析 segments。"""
+    raw = getattr(resp, "segments", None)
+    if not raw:
+        return ()
+    out: list[ASRSegment] = []
+    for seg in raw:
+        try:
+            if hasattr(seg, "start") and hasattr(seg, "end"):
+                t = (getattr(seg, "text", None) or "").strip()
+                if not t:
+                    continue
+                out.append(
+                    ASRSegment(
+                        start=float(seg.start),
+                        end=float(seg.end),
+                        text=t,
+                    )
+                )
+            elif isinstance(seg, dict):
+                t = (seg.get("text") or "").strip()
+                if not t:
+                    continue
+                out.append(
+                    ASRSegment(
+                        start=float(seg["start"]),
+                        end=float(seg["end"]),
+                        text=t,
+                    )
+                )
+        except (KeyError, TypeError, ValueError) as e:
+            logger.debug("跳过异常 segment 项: %s", e)
+            continue
+    return tuple(out)
 
 
 class OpenAIASR(IASR):
@@ -48,15 +85,9 @@ class OpenAIASR(IASR):
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=None)
         logger.info("初始化 OpenAI ASR: base_url=%s, model=%s", base_url, model)
 
-    def transcribe(self, audio_path: str) -> str:
+    def transcribe_detailed(self, audio_path: str) -> ASRTranscript:
         """
-        通过 OpenAI Whisper API 转写音频文件，超时时长根据文件大小自动计算。
-
-        Args:
-            audio_path: 音频文件路径
-
-        Returns:
-            转写后的文本
+        通过 OpenAI Whisper API 转写；使用 verbose_json 获取时间轴片段。
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"音频文件不存在: {audio_path}")
@@ -64,7 +95,21 @@ class OpenAIASR(IASR):
         timeout = _calc_timeout(audio_path)
         logger.info("开始 OpenAI ASR 转写: %s (超时 %.0fs)", audio_path, timeout)
 
-        def _call_api():
+        def _call_verbose():
+            # 与 OpenAPI 一致：verbose_json + segment 粒度才会返回完整 segments 时间轴
+            with open(audio_path, "rb") as f:
+                result = self.client.audio.transcriptions.create(
+                    model=self.model,
+                    file=f,
+                    language=self.language,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"],
+                    timeout=httpx.Timeout(timeout, connect=10),
+                )
+                logger.info("OpenAI ASR 转写结果: %r", result)
+                return result
+
+        def _call_plain():
             with open(audio_path, "rb") as f:
                 return self.client.audio.transcriptions.create(
                     model=self.model,
@@ -74,10 +119,22 @@ class OpenAIASR(IASR):
                 )
 
         try:
-            response = retry_sync(_call_api)
-            text = response.text.strip()
-            logger.info("OpenAI ASR 转写成功: %d 个字符", len(text))
-            return text
+            try:
+                response = retry_sync(_call_verbose)
+            except Exception as e:
+                logger.warning(
+                    "verbose_json 转写失败（部分兼容网关不支持时间轴），回退纯文本: %s",
+                    e,
+                )
+                response = retry_sync(_call_plain)
+            text = (getattr(response, "text", None) or "").strip()
+            segments = _segments_from_openai_verbose(response)
+            logger.info(
+                "OpenAI ASR 转写成功: %d 字, %d 个时间片段",
+                len(text),
+                len(segments),
+            )
+            return ASRTranscript(text=text, segments=segments)
         except Exception as e:
             logger.error("OpenAI ASR 转写失败: %s", e)
             raise RuntimeError(f"OpenAI ASR 转写失败: {e}")

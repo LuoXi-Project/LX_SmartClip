@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Sequence, Set
 import aiosqlite
 
 from app.core.llm import LLMClient
+from app.core.llm.prompts.voiceover_semantic import CHUNK_SYSTEM_PROMPT, FINAL_SYSTEM_PROMPT
 from app.core.llm.response_utils import extract_json_object, is_llm_unauthorized_error
 from app.core.auto_edit.voiceover_quick_cut import (
     _clip_has_asr,
@@ -252,25 +253,6 @@ def _parse_keep_json(raw: str, valid_ids: Set[str]) -> Set[str]:
             out.add(x)
     return out
 
-
-CHUNK_SYSTEM_PROMPT = (
-    "你是口播视频剪辑助手。根据【用户诉求】从【本批句子】中选出应保留的句子。"
-    "每条句子格式：sid\\t开始秒\\t结束秒\\t文本。sid 必须原样出现在输出中。\n"
-    "要求：\n"
-    "- 只输出一个 JSON 对象，不要 Markdown，不要解释。格式：{\"keep\":[\"s_000001\",...]}\n"
-    "- keep 数组中的 sid 必须全部来自本批列表，禁止编造 id。\n"
-    "- 保留最符合【用户诉求】的句子集合；保留多少由用户诉求决定。\n"
-    "- 保持语义连贯，避免断裂；如用户要求更完整/更长，可适当保留更多句子。\n"
-)
-
-FINAL_SYSTEM_PROMPT = (
-    "你是口播视频剪辑助手。你已经看到前面各批次的候选句子（sid）。"
-    "现在需要从【所有候选句子】中选出最终要保留的句子，并让整段剪辑更连贯、更符合【用户诉求】。"
-    "每条句子格式：sid\\t开始秒\\t结束秒\\t文本。sid 必须原样出现在输出中。\n"
-    "要求：\n"
-    "- 只输出一个 JSON 对象，不要 Markdown，不要解释。格式：{\"keep\":[\"s_000001\",...]}\n"
-    "- keep 数组中的 sid 必须全部来自本批列表，禁止编造 id。\n"
-)
 
 
 async def _llm_keep_for_chunk(

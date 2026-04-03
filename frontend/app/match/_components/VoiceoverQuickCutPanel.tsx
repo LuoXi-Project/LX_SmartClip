@@ -46,6 +46,9 @@ export function VoiceoverQuickCutPanel({
     return doneVideos.filter((v) => set.has(v.id))
   }, [doneVideos, selectedVideoIds])
 
+  const selectedCount = selectedVideoIds.length
+  const selectedDoneCount = selectedVideos.length
+
   async function handleGenerate() {
     setInfo(null)
     const videoIds = selectedVideos.map((v) => v.id)
@@ -87,10 +90,12 @@ export function VoiceoverQuickCutPanel({
         <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 space-y-2">
           <p className="text-[11px] text-slate-500 flex items-center gap-2">
             <Video className="w-3.5 h-3.5" />
-            当前选中视频 · {selectedVideos.length} 个
+            当前选中视频 · {selectedCount} 个
           </p>
-          {selectedVideos.length === 0 ? (
-            <p className="text-xs text-amber-400/90">未选择视频，或所选项尚未出现在已完成列表中。</p>
+          {selectedCount === 0 ? (
+            <p className="text-xs text-amber-400/90">未选择视频。</p>
+          ) : selectedDoneCount === 0 ? (
+            <p className="text-xs text-amber-400/90">你已选择 {selectedCount} 个，但它们尚未出现在已完成列表中。</p>
           ) : (
             <ul className="text-xs text-slate-400 space-y-1 max-h-28 overflow-y-auto">
               {selectedVideos.map((v) => (

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMatchStore } from '@/lib/store'
 import { autoEditApi } from '@/lib/api'
 import { LayoutTemplate } from 'lucide-react'
@@ -15,6 +15,8 @@ export function TemplateClipPanel(props: AutoEditPanelProps) {
   const setPreset = useMatchStore((s) => s.setTemplatePreset)
   const autoTemplateEnabled = useMatchStore((s) => s.autoTemplateEnabled)
   const setAutoTemplateEnabled = useMatchStore((s) => s.setAutoTemplateEnabled)
+  // 避免模板列表异步加载时“回退到第一个模板”覆盖用户刚选的模板
+  const userSelectedRef = useRef(false)
 
   const [templates, setTemplates] = useState<Array<{ id: string; label: string }>>([])
   const [templatesLoading, setTemplatesLoading] = useState(true)
@@ -31,7 +33,10 @@ export function TemplateClipPanel(props: AutoEditPanelProps) {
         if (!mounted) return
         const next = res || []
         setTemplates(next)
-        if (next.length > 0 && !next.some((t) => t.id === preset)) setPreset(next[0].id)
+        if (!userSelectedRef.current && next.length > 0) {
+          const curPreset = useMatchStore.getState().templatePreset
+          if (!next.some((t) => t.id === curPreset)) setPreset(next[0].id)
+        }
       })
       .catch((e: unknown) => {
         if (!mounted) return
@@ -89,7 +94,10 @@ export function TemplateClipPanel(props: AutoEditPanelProps) {
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setPreset(t.id)}
+                onClick={() => {
+                  userSelectedRef.current = true
+                  setPreset(t.id)
+                }}
                 className={`px-3 py-1.5 rounded-xl border text-xs transition-colors ${
                   preset === t.id
                     ? 'border-amber-500/70 bg-amber-500/15 text-amber-200'

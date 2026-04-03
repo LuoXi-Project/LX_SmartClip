@@ -6,7 +6,7 @@ import { type Segment } from './types'
 import { CopyGeneratorPanel } from './CopyGeneratorPanel'
 import { SegmentRow } from './SegmentRow'
 
-type ManualMatchPanelProps = {
+export type ManualMatchPanelProps = {
   topK: number
   topN: number
   onTopKChange: (value: number) => void

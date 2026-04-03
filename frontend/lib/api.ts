@@ -385,11 +385,21 @@ export interface AutoEditPlanSessionResponseApi {
   stream_url: string
 }
 
+export type VoiceoverQuickCutStrategyApi = 'asr_fast' | 'standard' | 'semantic'
+
+export interface VoiceoverQuickCutRequestApi {
+  video_ids: string[]
+  strategy: VoiceoverQuickCutStrategyApi
+  user_prompt?: string
+}
+
 export const autoEditApi = {
   plan: (payload: AutoEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/plan', payload),
   createPlanSession: (payload: AutoEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanSessionResponseApi>('/api/auto-edit/plan/session', payload),
+  voiceoverQuickCut: (payload: VoiceoverQuickCutRequestApi) =>
+    apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/voiceover-quick-cut', payload),
   realize: (payload: { plan: AutoEditPlanApi; project_name?: string; include_subtitle?: boolean; style?: import('./subtitle-types').SubtitleStyle }) =>
     apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
 }

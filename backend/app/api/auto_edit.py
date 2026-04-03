@@ -45,6 +45,11 @@ from app.models.auto_edit import (
     AutoEditPlanSessionResponse,
     AutoEditRealizeRequest,
     AutoEditRealizeResponse,
+    VoiceoverQuickCutRequest,
+)
+from app.core.auto_edit.voiceover_quick_cut import (
+    build_plan_from_clip_groups,
+    load_clip_groups_by_videos,
 )
 
 logger = logging.getLogger(__name__)
@@ -318,6 +323,58 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
     return await call_llm_for_plans(cfg, context, req)
 
 
+@router.post("/voiceover-quick-cut", response_model=AutoEditPlanResponse)
+async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPlanResponse:
+    """
+    口播快剪（ASR 驱动）：按 clips 表片段级 asr_text 筛选素材，生成单份原声 Plan，可走 /realize 导出。
+    """
+    if not req.video_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一个视频")
+    if req.strategy == "semantic":
+        raise HTTPException(
+            status_code=400,
+            detail="智能快剪（语义筛选）尚未接入后端；当前为片段级 ASR，请使用极速或标准快剪。",
+        )
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            placeholders = ",".join(["?"] * len(req.video_ids))
+            async with db.execute(
+                f"SELECT id FROM videos WHERE id IN ({placeholders})",
+                list(req.video_ids),
+            ) as cur:
+                found_ids = {str(r["id"]) for r in await cur.fetchall()}
+            missing = [vid for vid in req.video_ids if vid not in found_ids]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"以下视频不存在或已删除：{', '.join(missing[:8])}",
+                )
+
+            video_names = await _load_video_names(db, req.video_ids)
+            groups = await load_clip_groups_by_videos(db, req.video_ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("voiceover_quick_cut 读库失败: %s", e)
+        raise HTTPException(status_code=500, detail="读取视频片段失败")
+
+    hint = video_names[0] if len(video_names) == 1 else (f"{len(req.video_ids)} 个视频" if req.video_ids else None)
+    plan = build_plan_from_clip_groups(
+        clip_groups=groups,
+        strategy=req.strategy,
+        video_title_hint=hint,
+    )
+    if not plan.segments:
+        raise HTTPException(
+            status_code=400,
+            detail="没有可保留的片段：请确认已对选中视频跑过 ASR，且至少一个 clip 含有识别文本（极速模式）；"
+            "标准模式会额外保留夹在两句 ASR 之间的短间隙片段。",
+        )
+    return AutoEditPlanResponse(plans=[plan])
+
+
 @router.post("/plan/session", response_model=AutoEditPlanSessionResponse)
 async def create_auto_edit_plan_session(req: AutoEditPlanRequest) -> AutoEditPlanSessionResponse:
     if not req.video_ids:
@@ -502,8 +559,6 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
     )
 
 
- 
- 
 @router.post("/realize", response_model=AutoEditRealizeResponse)
 async def realize_auto_edit_plan(
     req: AutoEditRealizeRequest,

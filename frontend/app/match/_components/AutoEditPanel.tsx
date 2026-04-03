@@ -9,7 +9,7 @@ import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
 import { type AutoPlanStage } from './autoEditTypes'
 import { clipStreamUrl, fmt, videoStreamUrl } from './types'
 
-type AutoEditPanelProps = {
+export type AutoEditPanelProps = {
   autoPrompt: string
   onAutoPromptChange: (value: string) => void
   autoMode: AutoEditMode
@@ -43,6 +43,8 @@ type AutoEditPanelProps = {
   subtitleEnabled: boolean
   onGeneratePlans: () => void
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
+  /** 口播快剪：隐藏 LLM 规划区，仅保留 BGM 与方案卡片（方案由上方快剪面板生成） */
+  hideLlmPlannerUi?: boolean
 }
 
 export function AutoEditPanel({
@@ -79,6 +81,7 @@ export function AutoEditPanel({
   subtitleEnabled,
   onGeneratePlans,
   onRealizePlan,
+  hideLlmPlannerUi = false,
 }: AutoEditPanelProps) {
   const [expandedPreviewPlanIds, setExpandedPreviewPlanIds] = useState<string[]>([])
   const [detailPlan, setDetailPlan] = useState<{
@@ -259,8 +262,89 @@ export function AutoEditPanel({
       <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 space-y-4">
         <p className="text-xs font-semibold text-emerald-300 uppercase tracking-widest flex items-center gap-2">
           <Sparkles className="w-4 h-4" />
-          自动一键成片 · 方案规划
+          {hideLlmPlannerUi ? '口播快剪 · 成片导出' : '自动一键成片 · 方案规划'}
         </p>
+        {hideLlmPlannerUi && (
+          <>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              剪辑方案由上方「生成快剪方案」得到；此处配置背景音乐混音，并在下方微调片段时间轴后一键成片。
+            </p>
+            {autoError && (
+              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                {autoError}
+              </div>
+            )}
+            <div className="space-y-2">
+              <label className="text-xs text-slate-300 flex items-center gap-2">
+                <Music2 className="w-3.5 h-3.5 text-emerald-400/90" />
+                背景音乐（成片混音）
+              </label>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3 space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={autoBgmMixEnabled}
+                    onChange={(e) => onAutoBgmMixEnabledChange(e.target.checked)}
+                    className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                  />
+                  <span className="text-sm text-slate-200">导出成片时叠加背景音乐（FFmpeg 混音）</span>
+                </label>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  开关与曲目作用于「一键成片」请求，会覆盖方案中的 BGM 占位字段。
+                </p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] text-slate-400">规划阶段 BGM 策略（占位）</span>
+                    <select
+                      value={autoBgmPlanPolicy}
+                      onChange={(e) =>
+                        onAutoBgmPlanPolicyChange(e.target.value as 'auto' | 'none' | 'user' | 'ai')
+                      }
+                      className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
+                    >
+                      <option value="auto">自动（由模型与曲库配合）</option>
+                      <option value="none">不要 BGM</option>
+                      <option value="user">用户指定取向</option>
+                      <option value="ai">AI 推荐曲目</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] text-slate-400">成片使用的曲目</span>
+                    <select
+                      value={autoBgmTrackFilename}
+                      onChange={(e) => onAutoBgmTrackFilenameChange(e.target.value)}
+                      disabled={!autoBgmMixEnabled}
+                      className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
+                    >
+                      <option value="">自动（方案推荐 / 曲库匹配）</option>
+                      {bgmTracks.map((t) => (
+                        <option key={t.id} value={t.filename}>
+                          {t.title || t.filename}
+                        </option>
+                      ))}
+                    </select>
+                    {bgmListError && <p className="text-[11px] text-amber-400/90">{bgmListError}</p>}
+                    {autoBgmMixEnabled && bgmTracks.length === 0 && !bgmListError && (
+                      <p className="text-[11px] text-slate-500">
+                        曲库暂无曲目时可到{' '}
+                        <Link href="/settings" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                          设置 → BGM
+                        </Link>{' '}
+                        或{' '}
+                        <Link href="/bgm" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                          BGM 页
+                        </Link>{' '}
+                        上传音频。
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+        {!hideLlmPlannerUi && (
+          <>
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="text-xs text-slate-300 flex items-center justify-between">
@@ -530,6 +614,8 @@ export function AutoEditPanel({
               )}
             </div>
           </div>
+        )}
+          </>
         )}
       </section>
 

@@ -133,6 +133,17 @@ class AutoEditPlanRequest(BaseModel):
     )
 
 
+class VoiceoverQuickCutRequest(BaseModel):
+    """口播快剪：基于 clips.asr_text 生成原声 Plan（片段级，无句子级时间戳）。"""
+
+    video_ids: List[str] = Field(..., description="选中视频 ID，顺序即成片片段顺序")
+    strategy: Literal["asr_fast", "standard", "semantic"] = Field(
+        "asr_fast",
+        description="asr_fast=仅保留有 ASR 的片段；standard=补间短间隙；semantic=预留（需句子级/LLM）",
+    )
+    user_prompt: Optional[str] = Field(None, description="预留：智能快剪提示词")
+
+
 class AutoEditPlanResponse(BaseModel):
     plans: List[Plan]
 

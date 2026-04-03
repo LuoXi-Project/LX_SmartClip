@@ -9,11 +9,14 @@ import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { PreviewModal } from './_components/ClipCard'
 import { ExportSidebar } from './_components/ExportSidebar'
-import { SubtitlePanel } from './_components/SubtitlePanel'
 import { MatchPageHeader } from './_components/MatchPageHeader'
 import { VideoScopeSelector } from './_components/VideoScopeSelector'
 import { ManualMatchPanel } from './_components/ManualMatchPanel'
 import { AutoEditPanel } from './_components/AutoEditPanel'
+import { VoiceoverQuickCutPanel, type VoiceoverQuickCutStrategy } from './_components/VoiceoverQuickCutPanel'
+import { TemplateClipPanel } from './_components/TemplateClipPanel'
+import { MatchSubtitleWorkspace } from './_components/MatchSubtitleWorkspace'
+import { isAutoLikeMode } from './_components/matchModeTypes'
 import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
@@ -524,6 +527,34 @@ export default function MatchPage() {
     }
   }
 
+  async function handleVoiceoverQuickCut(payload: {
+    videoIds: string[]
+    strategy: VoiceoverQuickCutStrategy
+    userPrompt?: string
+  }) {
+    setAutoError('')
+    try {
+      const res = await autoEditApi.voiceoverQuickCut({
+        video_ids: payload.videoIds,
+        strategy: payload.strategy,
+        user_prompt: payload.userPrompt,
+      })
+      const plans = res.plans || []
+      setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
+    } catch (e: unknown) {
+      const raw = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      let msg: string
+      if (typeof raw === 'string') {
+        msg = raw
+      } else if (raw && typeof raw === 'object' && 'message' in (raw as object)) {
+        msg = String((raw as { message: unknown }).message)
+      } else {
+        msg = (e as Error)?.message || '快剪方案生成失败'
+      }
+      setAutoError(msg)
+    }
+  }
+
   async function handleAutoRealizePlan(plan: AutoEditPlanApi, index: number) {
     setAutoRealizeMsg('')
     setAutoRealizingId(plan.plan_id)
@@ -618,6 +649,86 @@ export default function MatchPage() {
               onGeneratePlans={handleGenerateAutoPlans}
               onRealizePlan={handleAutoRealizePlan}
             />
+          ) : mode === 'template' ? (
+            <TemplateClipPanel
+              autoPrompt={autoPrompt}
+              onAutoPromptChange={setAutoPrompt}
+              autoMode={autoMode}
+              onAutoModeChange={setAutoMode}
+              autoTargetDuration={autoTargetDuration}
+              onAutoTargetDurationChange={setAutoTargetDuration}
+              autoNumPlans={autoNumPlans}
+              onAutoNumPlansChange={setAutoNumPlans}
+              autoBgmMixEnabled={autoBgmMixEnabled}
+              onAutoBgmMixEnabledChange={setAutoBgmMixEnabled}
+              autoBgmPlanPolicy={autoBgmPlanPolicy}
+              onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
+              autoBgmTrackFilename={autoBgmTrackFilename}
+              onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+              autoUseTimelineEngine={autoUseTimelineEngine}
+              onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+              autoExplain={autoExplain}
+              onAutoExplainChange={setAutoExplain}
+              autoLoading={autoLoading}
+              autoError={autoError}
+              autoPlans={autoPlans}
+              autoExpandedPlanIds={autoExpandedPlanIds}
+              onTogglePlanExpand={toggleAutoExpandedPlan}
+              autoRealizingId={autoRealizingId}
+              autoRealizeMsg={autoRealizeMsg}
+              autoRealizeDownloads={autoRealizeDownloads}
+              autoPlanLogs={autoPlanLogs}
+              autoPlanElapsedSec={autoPlanElapsedSec}
+              autoPlanStage={autoPlanStage}
+              autoPlanStagePercent={autoPlanStagePercent}
+              subtitleEnabled={subtitleEnabled}
+              onGeneratePlans={handleGenerateAutoPlans}
+              onRealizePlan={handleAutoRealizePlan}
+            />
+          ) : mode === 'voiceover' ? (
+            <>
+              <VoiceoverQuickCutPanel
+                selectedVideoIds={selectedVideoIds}
+                doneVideos={doneVideos}
+                onGenerate={handleVoiceoverQuickCut}
+              />
+              <AutoEditPanel
+                hideLlmPlannerUi
+                autoPrompt={autoPrompt}
+                onAutoPromptChange={setAutoPrompt}
+                autoMode={autoMode}
+                onAutoModeChange={setAutoMode}
+                autoTargetDuration={autoTargetDuration}
+                onAutoTargetDurationChange={setAutoTargetDuration}
+                autoNumPlans={autoNumPlans}
+                onAutoNumPlansChange={setAutoNumPlans}
+                autoBgmMixEnabled={autoBgmMixEnabled}
+                onAutoBgmMixEnabledChange={setAutoBgmMixEnabled}
+                autoBgmPlanPolicy={autoBgmPlanPolicy}
+                onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
+                autoBgmTrackFilename={autoBgmTrackFilename}
+                onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+                autoUseTimelineEngine={autoUseTimelineEngine}
+                onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+                autoExplain={autoExplain}
+                onAutoExplainChange={setAutoExplain}
+                autoLoading={autoLoading}
+                autoError={autoError}
+                autoPlans={autoPlans}
+                autoExpandedPlanIds={autoExpandedPlanIds}
+                onTogglePlanExpand={toggleAutoExpandedPlan}
+                autoRealizingId={autoRealizingId}
+                autoRealizeMsg={autoRealizeMsg}
+                autoRealizeDownloads={autoRealizeDownloads}
+                autoPlanLogs={autoPlanLogs}
+                autoPlanElapsedSec={autoPlanElapsedSec}
+                autoPlanStage={autoPlanStage}
+                autoPlanStagePercent={autoPlanStagePercent}
+                subtitleEnabled={subtitleEnabled}
+                onGeneratePlans={() => {}}
+                onRealizePlan={handleAutoRealizePlan}
+              />
+            </>
           ) : (
             <ManualMatchPanel
               topK={topK}
@@ -653,43 +764,50 @@ export default function MatchPage() {
               }}
             />
           )}
-          {/* 主区字幕设置：自动/手动均始终展示，便于先调样式再选导出格式；zip 不烧录字幕但状态与后续切换成片仍共用 store */}
-          <SubtitlePanel
+          {/* 各模式共用：字幕样式手调 + 时间轴预览（条目由导出/成片流程生成） */}
+          <MatchSubtitleWorkspace
             style={subtitleStyle}
-            onChange={setSubtitleStyle}
-            entries={mode === 'auto' ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
-            enabled={subtitleEnabled}
-            onToggle={setSubtitleEnabled}
-            timingSource={mode === 'auto' ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
+            onStyleChange={setSubtitleStyle}
+            entries={isAutoLikeMode(mode) ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
+            subtitleEnabled={subtitleEnabled}
+            onSubtitleEnabledChange={setSubtitleEnabled}
+            timingSource={isAutoLikeMode(mode) ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
             previewVideoSize={previewVideoSize}
-          />
-          {srtError && (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">字幕错误：{srtError}</div>
-          )}
-          {exportMode === 'subtitle' && readySegs.length > 0 && (
-            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-400 space-y-1">
-              <p className="font-semibold">💬 一键成片流程</p>
-              <ol className="list-decimal list-inside space-y-0.5 text-cyan-500/80">
-                <li>读取已合成 TTS 音频的实际时长（ffprobe）</li>
-                <li>LLM 自动生成精确字幕时间轴</li>
-                <li>ffmpeg 合并视频 + 替换音轨 + ASS 字幕硬烧</li>
-                <li>输出带字幕完整 MP4</li>
-              </ol>
-              {generatingSrt && <p className="flex items-center gap-2 text-amber-400 mt-1"><Loader2 className="w-3 h-3 animate-spin" />正在生成字幕时间轴...</p>}
-            </div>
-          )}
+            srtError={srtError}
+            footer={
+              <>
+                {exportMode === 'subtitle' && readySegs.length > 0 && (
+                  <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-400 space-y-1">
+                    <p className="font-semibold">💬 一键成片流程</p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-cyan-500/80">
+                      <li>读取已合成 TTS 音频的实际时长（ffprobe）</li>
+                      <li>LLM 自动生成精确字幕时间轴</li>
+                      <li>ffmpeg 合并视频 + 替换音轨 + ASS 字幕硬烧</li>
+                      <li>输出带字幕完整 MP4</li>
+                    </ol>
+                    {generatingSrt && (
+                      <p className="flex items-center gap-2 text-amber-400 mt-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        正在生成字幕时间轴...
+                      </p>
+                    )}
+                  </div>
+                )}
 
-          {exportMode === 'original' && readySegs.length > 0 && (
-            <div className="rounded-xl border border-slate-500/20 bg-slate-500/5 px-4 py-3 text-xs text-slate-200 space-y-1">
-              <p className="font-semibold">🔇 原声成片流程</p>
-              <ol className="list-decimal list-inside space-y-0.5 text-slate-300/80">
-                <li>按当前段落的选中 clip 组计算总时长</li>
-                <li>跳过 TTS，直接保留原声拼接视频</li>
-                <li>对最终音频做归一化/限幅（减少音量突变）</li>
-                <li>{subtitleEnabled ? '按句子/换行等分生成字幕并硬烧' : '不生成字幕文件（仅拼接原声）'}</li>
-              </ol>
-            </div>
-          )}
+                {exportMode === 'original' && readySegs.length > 0 && (
+                  <div className="rounded-xl border border-slate-500/20 bg-slate-500/5 px-4 py-3 text-xs text-slate-200 space-y-1">
+                    <p className="font-semibold">🔇 原声成片流程</p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-slate-300/80">
+                      <li>按当前段落的选中 clip 组计算总时长</li>
+                      <li>跳过 TTS，直接保留原声拼接视频</li>
+                      <li>对最终音频做归一化/限幅（减少音量突变）</li>
+                      <li>{subtitleEnabled ? '按句子/换行等分生成字幕并硬烧' : '不生成字幕文件（仅拼接原声）'}</li>
+                    </ol>
+                  </div>
+                )}
+              </>
+            }
+          />
         </div>
       </div>
       {previewClip && <PreviewModal clip={previewClip} onClose={() => setPreviewClip(null)} />}

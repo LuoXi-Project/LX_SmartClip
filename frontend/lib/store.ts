@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AutoEditPlanApi, AutoEditMode, Video } from './api'
 import type { Segment } from '@/app/match/_components/types'
+import type { MatchWorkspaceMode } from '@/app/match/_components/matchModeTypes'
+import { normalizeMatchWorkspaceMode } from '@/app/match/_components/matchModeTypes'
 import type { ExportMode, SubtitleStyle } from '@/lib/subtitle-types'
 import { DEFAULT_SUBTITLE_STYLE } from '@/lib/subtitle-types'
 
@@ -28,8 +30,8 @@ export interface MatchPageState {
   subtitleEnabled: boolean
   subtitleStyle: SubtitleStyle
   exportMode: ExportMode
-  /** 手动匹配 / 自动一键成片 */
-  matchMode: 'manual' | 'auto'
+  /** 工作区：手动 / 口播快剪 v3 / 自动成片实验 / 模板剪辑 v4 */
+  matchMode: MatchWorkspaceMode
   /** 段落 id 递增，与 segments 一并持久化，避免返回页面后 id 冲突 */
   segmentCounter: number
   autoPrompt: string
@@ -58,7 +60,7 @@ export interface MatchPageState {
   setMatchSubtitleEnabled: (v: boolean) => void
   setMatchSubtitleStyle: (s: SubtitleStyle) => void
   setMatchExportMode: (m: ExportMode) => void
-  setMatchMode: (mode: 'manual' | 'auto') => void
+  setMatchMode: (mode: MatchWorkspaceMode) => void
   setMatchSegmentCounter: (n: number | ((prev: number) => number)) => void
   setAutoPrompt: (v: string) => void
   setAutoMode: (m: AutoEditMode) => void
@@ -262,7 +264,7 @@ export const useMatchStore = create<MatchPageState>()(
     }),
     {
       name: 'lx-match-state',
-      version: 3,
+      version: 4,
       /** 只持久化数据字段，避免把函数/未知键写进 localStorage */
       partialize: (state): MatchPersistedSlice => ({
         segments: state.segments,
@@ -312,7 +314,7 @@ export const useMatchStore = create<MatchPageState>()(
           autoPlanLogs: [],
           ...p,
         }
-        if (merged.matchMode !== 'manual' && merged.matchMode !== 'auto') merged.matchMode = 'manual'
+        merged.matchMode = normalizeMatchWorkspaceMode(merged.matchMode)
         if (typeof merged.segmentCounter !== 'number' || merged.segmentCounter < 0) merged.segmentCounter = 0
         if (!Array.isArray(merged.segments)) merged.segments = []
         if (typeof merged.globalQuery !== 'string') merged.globalQuery = ''
@@ -349,7 +351,7 @@ export const useMatchStore = create<MatchPageState>()(
             ttsError: '',
             matchError: '',
           }))
-          if (state.matchMode !== 'manual' && state.matchMode !== 'auto') state.matchMode = 'manual'
+          state.matchMode = normalizeMatchWorkspaceMode(state.matchMode)
           if (typeof state.segmentCounter !== 'number' || state.segmentCounter < 0) state.segmentCounter = 0
           if (!Array.isArray(state.autoPlans)) state.autoPlans = []
           if (!state.autoRealizeDownloads || typeof state.autoRealizeDownloads !== 'object') {

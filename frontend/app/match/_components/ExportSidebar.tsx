@@ -1,5 +1,7 @@
 import { Subtitles, Loader2 } from 'lucide-react'
 import type { ExportMode, Segment } from './types'
+import type { MatchWorkspaceMode } from './matchModeTypes'
+import { isAutoLikeMode, isManualLikeMode } from './matchModeTypes'
 
 export function ExportSidebar({
   segments,
@@ -12,7 +14,7 @@ export function ExportSidebar({
   onToggleSubtitle,
   srtReady,
   generatingSrt,
-  /** 自动一键成片（实验）：隐藏手动匹配进度条、导出格式与底部手动导出 */
+  /** 方案驱动模式（自动 / 模板 / 口播快剪）：隐藏段落进度与底部导出，成片在主区方案卡片 */
   matchMode = 'manual',
 }: {
   segments: Segment[]
@@ -25,7 +27,7 @@ export function ExportSidebar({
   onToggleSubtitle: (v: boolean) => void
   srtReady: boolean
   generatingSrt: boolean
-  matchMode?: 'manual' | 'auto'
+  matchMode?: MatchWorkspaceMode
 }) {
   const readySegs  = segments.filter((s) => s.clips.length > 0)
   const matchedCount = readySegs.length
@@ -50,8 +52,8 @@ export function ExportSidebar({
         <p className="text-xs font-semibold text-slate-300 uppercase tracking-widest">导出成片</p>
       </div>
 
-      {/* progress — 手动匹配专用；实验模式进度在主工作区 */}
-      {matchMode === 'manual' && (
+      {/* progress — 仅手动匹配（段落级） */}
+      {isManualLikeMode(matchMode) && (
         <div className="px-5 py-4 space-y-3 border-b border-slate-800">
           <StatRow label="总段落"  value={totalCount} total={totalCount} color="slate"  />
           <StatRow label="已匹配"  value={matchedCount}  total={totalCount} color="indigo" />
@@ -59,8 +61,8 @@ export function ExportSidebar({
         </div>
       )}
 
-      {/* mode toggle — 手动匹配专用；实验自动成片走主面板 realize，不展示此项 */}
-      {matchMode === 'manual' && (
+      {/* mode toggle — 仅手动匹配 */}
+      {isManualLikeMode(matchMode) && (
         <div className="px-5 py-4 space-y-2 border-b border-slate-800">
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-3">导出格式</p>
           {(Object.entries(modeLabel) as [ExportMode, typeof modeLabel[ExportMode]][]).map(([mode, cfg]) => (
@@ -81,8 +83,8 @@ export function ExportSidebar({
         </div>
       )}
 
-      {/* 添加字幕：实验模式在主内容区「字幕设置」；此处仅服务手动匹配（zip 时隐藏） */}
-      {matchMode === 'manual' && exportMode !== 'zip' && (
+      {/* 添加字幕：方案模式在主内容区；此处仅服务手动匹配（zip 时隐藏） */}
+      {isManualLikeMode(matchMode) && exportMode !== 'zip' && (
         <div className="px-5 py-3 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -114,9 +116,9 @@ export function ExportSidebar({
 
       {/* export button */}
       <div className="px-5 py-5 space-y-3">
-        {matchMode === 'auto' ? (
+        {isAutoLikeMode(matchMode) ? (
           <p className="text-[11px] text-slate-500 leading-snug text-center">
-            实验模式请在主工作区方案卡片中点击「一键成片」导出成片。
+            自动 / 模板 / 口播快剪：在主工作区生成并微调方案后，于方案卡片使用「一键成片」导出（口播快剪接口接入后与此一致）。
           </p>
         ) : (
           <>

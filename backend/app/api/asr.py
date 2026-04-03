@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+import json
 import asyncio
+from fastapi import APIRouter, HTTPException
 from app.db.database import get_db_conn
 from app.core.asr.whisper_asr import WhisperASR
 from app.core.asr.openai_asr import OpenAIASR
@@ -111,11 +112,15 @@ async def process_asr(video_id: str):
                 logger.info("处理片段 %d/%d: %s", idx + 1, len(clips), clip_id)
                 async with sem:
                     audio_path = await asyncio.to_thread(splitter.extract_audio, clip_path)
-                    asr_text = await asyncio.to_thread(asr_instance.transcribe, audio_path)
+                    tr = await asyncio.to_thread(asr_instance.transcribe_detailed, audio_path)
+                    asr_text = tr.text
+                    seg_list = tr.segments_as_dicts()
                 return {
                     "clip_id": clip_id,
                     "status": "success",
                     "asr_text": asr_text,
+                    "asr_segments": seg_list,
+                    "segment_count": len(seg_list),
                     "text_length": len(asr_text),
                     "text": asr_text[:100] + "..." if len(asr_text) > 100 else asr_text,
                 }
@@ -128,9 +133,13 @@ async def process_asr(video_id: str):
         # 写库：串行更新，避免并发写同一连接
         for r in results:
             if r.get("status") == "success":
+                segs = r.get("asr_segments") or []
+                seg_json = (
+                    json.dumps(segs, ensure_ascii=False) if segs else None
+                )
                 await db.execute(
-                    "UPDATE clips SET asr_text = ? WHERE id = ?",
-                    (r.get("asr_text", ""), r["clip_id"]),
+                    "UPDATE clips SET asr_text = ?, asr_segments = ? WHERE id = ?",
+                    (r.get("asr_text", ""), seg_json, r["clip_id"]),
                 )
         await db.commit()
 

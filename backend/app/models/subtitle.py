@@ -12,6 +12,9 @@ class SubtitleSegmentInput(BaseModel):
     clip_id: str
     clip_ids: Optional[List[str]] = None
     tts_filename: Optional[str] = None
+    # 用于“原声导出”精确裁剪：表示从该 clip 内部的起点（秒）开始截取。
+    # 仅建议在当前实现支持的场景使用（例如 quick-cut 单 clip）。
+    clip_start_sec: Optional[float] = None
     # 可控时长：当用户在前端手动调整段落时长时使用（单位秒）。
     # 注：对 TTS 段落如强制缩短会截断音频；对非 TTS 段落会裁剪视频输出以对齐字幕时间轴。
     duration_sec: Optional[float] = None

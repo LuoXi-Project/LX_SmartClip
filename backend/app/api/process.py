@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -85,6 +86,19 @@ async def _update_clip_field(clip_id: str, field: str, value: str):
     db = await get_db_conn()
     try:
         await db.execute(f"UPDATE clips SET {field} = ? WHERE id = ?", (value, clip_id))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _update_clip_asr(clip_id: str, asr_text: str, asr_segments_json: str | None):
+    """同时写入全文与时间轴 JSON（asr_segments 为 None 时写入 SQL NULL）。"""
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            "UPDATE clips SET asr_text = ?, asr_segments = ? WHERE id = ?",
+            (asr_text, asr_segments_json, clip_id),
+        )
         await db.commit()
     finally:
         await db.close()
@@ -235,10 +249,15 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                     audio_path = await loop.run_in_executor(
                         None, splitter.extract_audio, clip_path, True
                     )
-                    text = await loop.run_in_executor(
-                        None, asr_instance.transcribe, audio_path
+                    tr = await loop.run_in_executor(
+                        None, asr_instance.transcribe_detailed, audio_path
                     )
-                    await _update_clip_field(clip_id, "asr_text", text)
+                    seg_json = (
+                        json.dumps(tr.segments_as_dicts(), ensure_ascii=False)
+                        if tr.segments
+                        else None
+                    )
+                    await _update_clip_asr(clip_id, tr.text, seg_json)
                     processed_asr += 1
                     await reporter.send(
                         "asr", "running",

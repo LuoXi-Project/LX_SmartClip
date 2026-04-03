@@ -102,6 +102,9 @@ export const matchApi = {
   run: (payload: MatchRequest) => apiClient.post<unknown, MatchResponse>('/api/match', payload),
 }
 
+/** ASR 时间轴片段 JSON（存库为字符串，解析后为 list） */
+export type AsrSegmentJson = { start: number; end: number; text: string }
+
 export interface ClipResult {
   id: string
   clip_path: string
@@ -109,13 +112,18 @@ export interface ClipResult {
   end_time: number
   duration: number
   asr_text: string | null
+  /** JSON 字符串：AsrSegmentJson[]，时间相对片段内音频 */
+  asr_segments: string | null
   vlm_description: string | null
 }
 
 export const clipsApi = {
   listByVideo: (videoId: string) =>
     apiClient.get<unknown, ClipResult[]>(`/api/videos/${videoId}/clips`),
-  update: (clipId: string, payload: { asr_text?: string | null; vlm_description?: string | null }) =>
+  update: (
+    clipId: string,
+    payload: { asr_text?: string | null; asr_segments?: string | null; vlm_description?: string | null },
+  ) =>
     apiClient.patch<unknown, { ok: boolean; clip_id: string }>(`/api/videos/clips/${clipId}`, payload),
 }
 

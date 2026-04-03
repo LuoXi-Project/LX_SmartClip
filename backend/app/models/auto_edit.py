@@ -68,6 +68,9 @@ class SegmentPlan(BaseModel):
     end_time_sec: float
     # 前端可编辑：覆盖该段的成片时长（秒），用于更可控的节奏/字幕时长
     override_duration_sec: Optional[float] = None
+    # 原声导出增强：当为单个 clip 的“内部片段”时，用于 ffmpeg -ss 截取。
+    # 默认 None：保持旧行为（只按 duration_sec 截取，不偏移）。
+    clip_start_offset_sec: Optional[float] = None
     audio_mode: Literal["original", "tts", "mute"] = "original"
     subtitle: SubtitlePlan
     transition: Optional[TransitionPlan] = None
@@ -134,7 +137,7 @@ class AutoEditPlanRequest(BaseModel):
 
 
 class VoiceoverQuickCutRequest(BaseModel):
-    """口播快剪：基于 clips.asr_text 生成原声 Plan（片段级，无句子级时间戳）。"""
+    """口播快剪：基于 clips.asr_text 生成原声 Plan（当前成片仍为片段级；句级时间见 clips.asr_segments）。"""
 
     video_ids: List[str] = Field(..., description="选中视频 ID，顺序即成片片段顺序")
     strategy: Literal["asr_fast", "standard", "semantic"] = Field(

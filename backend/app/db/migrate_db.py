@@ -38,6 +38,13 @@ async def migrate():
         except Exception:
             pass  # 列已存在，忽略
 
+        try:
+            await db.execute("ALTER TABLE clips ADD COLUMN asr_segments TEXT")
+            await db.commit()
+            print("  [迁移] clips 表新增 asr_segments 列（ASR 时间轴 JSON）")
+        except Exception:
+            pass
+
         added = 0
         updated = 0
 

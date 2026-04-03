@@ -252,6 +252,9 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
                 copy_text=seg.copy_text,
                 clip_id=seg.clip_id,
                 clip_ids=seg.clip_ids,
+                # 原声导出时也需要把用户/规划阶段的时长与裁剪偏移传给 burn_to_mp4
+                duration_sec=getattr(seg, "duration_sec", None),
+                clip_start_sec=getattr(seg, "clip_start_sec", None),
                 tts_filename=None,
             )
         )

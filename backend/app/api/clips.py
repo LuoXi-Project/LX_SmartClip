@@ -229,7 +229,7 @@ async def get_clips(video_id: str):
     db = await get_db_conn()
     try:
         cursor = await db.execute(
-            "SELECT id, clip_path, start_time, end_time, duration, asr_text, vlm_description FROM clips WHERE video_id = ? ORDER BY start_time",
+            "SELECT id, clip_path, start_time, end_time, duration, asr_text, asr_segments, vlm_description FROM clips WHERE video_id = ? ORDER BY start_time",
             (video_id,),
         )
         clips = await cursor.fetchall()
@@ -242,6 +242,7 @@ async def get_clips(video_id: str):
                 "end_time": clip["end_time"],
                 "duration": clip["duration"],
                 "asr_text": clip["asr_text"],
+                "asr_segments": clip["asr_segments"],
                 "vlm_description": clip["vlm_description"],
             }
             for clip in clips
@@ -313,8 +314,15 @@ async def get_clip_meta(clip_id: str):
 @router.patch("/clips/{clip_id}")
 async def update_clip_result(clip_id: str, payload: ClipUpdatePayload):
     """更新 clip 的 ASR / VLM 结果（用于人工纠错）"""
-    if payload.asr_text is None and payload.vlm_description is None:
-        raise HTTPException(status_code=400, detail="至少提供一个字段：asr_text 或 vlm_description")
+    if (
+        payload.asr_text is None
+        and payload.asr_segments is None
+        and payload.vlm_description is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="至少提供一个字段：asr_text、asr_segments 或 vlm_description",
+        )
 
     db = await get_db_conn()
     try:
@@ -328,6 +336,9 @@ async def update_clip_result(clip_id: str, payload: ClipUpdatePayload):
         if payload.asr_text is not None:
             sets.append("asr_text = ?")
             params.append(payload.asr_text)
+        if payload.asr_segments is not None:
+            sets.append("asr_segments = ?")
+            params.append(payload.asr_segments)
         if payload.vlm_description is not None:
             sets.append("vlm_description = ?")
             params.append(payload.vlm_description)

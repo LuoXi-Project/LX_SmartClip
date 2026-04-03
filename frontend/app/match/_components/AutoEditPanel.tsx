@@ -172,8 +172,11 @@ export function AutoEditPanel({
     const meta = selectedPreview.clipId ? clipMetaByClip[selectedPreview.clipId] : undefined
     const planStart = Number(selectedPreview.startSec) || 0
     const planEnd = Number(selectedPreview.endSec) || planStart
-    const absStart = meta ? meta.start_time : planStart
-    const absEnd = meta ? meta.end_time : planEnd
+    // 旧逻辑会优先用整段 clip 元数据作为“播放轴”，这对句子级 quick-cut 不成立；
+    // 当方案标注的 start/end 明显偏离整段边界时，改用方案的句子级时间轴。
+    const eps = 0.05
+    const absStart = meta && Math.abs(planStart - meta.start_time) < eps ? meta.start_time : planStart
+    const absEnd = meta && Math.abs(planEnd - meta.end_time) < eps ? meta.end_time : planEnd
     const clipLocalEnd = Math.max(0, absEnd - absStart)
     return { meta, planStart, planEnd, absStart, absEnd, clipLocalEnd }
   }, [selectedPreview, clipMetaByClip])
@@ -850,8 +853,9 @@ export function AutoEditPanel({
                       const videoId = s.clip_group?.[0]?.video_id || null
                       const planTitle = p.title || `方案 ${idx + 1}`
                       const cm = clipId ? clipMetaByClip[clipId] : undefined
-                      const t0 = cm ? cm.start_time : s.start_time_sec
-                      const t1 = cm ? cm.end_time : s.end_time_sec
+                      // 展示句子级 quick-cut 的 start/end（若方案与整段一致，数值本身也会相同）
+                      const t0 = s.start_time_sec
+                      const t1 = s.end_time_sec
                       return (
                         <button
                           key={s.id}
@@ -1032,8 +1036,10 @@ export function AutoEditPanel({
                   {((detailDraft?.segments ?? detailPlan.plan.segments) ?? []).map((s, segIdx) => {
                     const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id || ''
                     const cm = clipId ? clipMetaByClip[clipId] : undefined
-                    const abs0 = cm ? cm.start_time : s.start_time_sec
-                    const abs1 = cm ? cm.end_time : s.end_time_sec
+                    // 字幕详情需要显示“方案标注”的句子级绝对时间；
+                    // 否则 quick-cut（同一 clip 多句）会把每句都显示成整段 clip 的时间轴。
+                    const abs0 = s.start_time_sec
+                    const abs1 = s.end_time_sec
                     const subtitleText = s.subtitle?.text?.trim() || ''
                     return (
                       <div key={s.id} className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">

@@ -358,10 +358,46 @@ def burn_to_mp4(
                         seg_codec_args = _build_render_codec_args(render_opts)
                         seg_filter_parts = _build_extra_video_filters(render_opts)
                         seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
-                        _run_ffmpeg(
-                            ["-i", infos[0]["path"], "-t", f"{trim_dur:.3f}", *seg_vf_args, *seg_codec_args, "-movflags", "+faststart", seg_out],
-                            desc=f"trim seg {i+1}",
-                        )
+                        clip_start = getattr(seg, "clip_start_sec", None)
+                        clip_start_v = None
+                        try:
+                            clip_start_v = float(clip_start) if clip_start is not None else None
+                        except Exception:
+                            clip_start_v = None
+
+                        # 支持按句子区间裁剪（-ss + -t）
+                        if clip_start_v is not None and clip_start_v > 0:
+                            _run_ffmpeg(
+                                [
+                                    "-ss",
+                                    f"{clip_start_v:.3f}",
+                                    "-i",
+                                    infos[0]["path"],
+                                    "-t",
+                                    f"{trim_dur:.3f}",
+                                    *seg_vf_args,
+                                    *seg_codec_args,
+                                    "-movflags",
+                                    "+faststart",
+                                    seg_out,
+                                ],
+                                desc=f"trim seg {i+1} (with clip_start)",
+                            )
+                        else:
+                            _run_ffmpeg(
+                                [
+                                    "-i",
+                                    infos[0]["path"],
+                                    "-t",
+                                    f"{trim_dur:.3f}",
+                                    *seg_vf_args,
+                                    *seg_codec_args,
+                                    "-movflags",
+                                    "+faststart",
+                                    seg_out,
+                                ],
+                                desc=f"trim seg {i+1}",
+                            )
                 else:
                     concat_list_path = os.path.join(tmp, f"seg_{i:03d}_concat.txt")
                     _write_concat_list([info["path"] for info in infos], concat_list_path)

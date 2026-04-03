@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS clips (
     end_time REAL,
     duration REAL,
     asr_text TEXT,
+    asr_segments TEXT,
     vlm_description TEXT,
     tags TEXT,
     FOREIGN KEY (video_id) REFERENCES videos(id)

@@ -148,7 +148,19 @@ export default function MatchPage() {
       .catch(console.error)
   }, [])
 
-  const doneVideos = videos.filter((v) => v.status === 'done' && v.total_clips > 0)
+  const doneVideos = useMemo(
+    () => videos.filter((v) => v.status === 'done' && v.total_clips > 0),
+    [videos]
+  )
+
+  useEffect(() => {
+    const valid = new Set(doneVideos.map((v) => v.id))
+    const prev = useMatchStore.getState().selectedVideoIds
+    const next = prev.filter((id) => valid.has(id))
+    if (next.length !== prev.length) {
+      setMatchSelectedVideoIds(next)
+    }
+  }, [doneVideos, setMatchSelectedVideoIds])
   const filteredDoneVideos = useMemo(() => {
     const q = videoSearch.trim().toLowerCase()
     return q ? doneVideos.filter((v) => v.name.toLowerCase().includes(q)) : doneVideos

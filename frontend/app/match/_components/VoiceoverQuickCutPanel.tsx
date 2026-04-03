@@ -53,7 +53,8 @@ export function VoiceoverQuickCutPanel({
 
   async function handleGenerate() {
     setInfo(null)
-    if (selectedVideoIds.length === 0) {
+    const videoIds = selectedVideos.map((v) => v.id)
+    if (videoIds.length === 0) {
       setInfo('请先在上方勾选至少一个已处理完成的视频。')
       return
     }
@@ -68,7 +69,7 @@ export function VoiceoverQuickCutPanel({
     if (onGenerate) {
       setGenerating(true)
       try {
-        await onGenerate({ videoIds: selectedVideoIds, strategy, userPrompt })
+        await onGenerate({ videoIds, strategy, userPrompt })
       } finally {
         setGenerating(false)
       }
@@ -95,7 +96,7 @@ export function VoiceoverQuickCutPanel({
         <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 space-y-2">
           <p className="text-[11px] text-slate-500 flex items-center gap-2">
             <Video className="w-3.5 h-3.5" />
-            当前选中视频 · {selectedVideoIds.length} 个
+            当前选中视频 · {selectedVideos.length} 个
           </p>
           {selectedVideos.length === 0 ? (
             <p className="text-xs text-amber-400/90">未选择视频，或所选项尚未出现在已完成列表中。</p>

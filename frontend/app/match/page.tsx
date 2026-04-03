@@ -545,6 +545,7 @@ export default function MatchPage() {
     userPrompt?: string
   }) {
     setAutoError('')
+    setAutoLoading(true)
     try {
       const res = await autoEditApi.voiceoverQuickCut({
         video_ids: payload.videoIds,
@@ -564,6 +565,8 @@ export default function MatchPage() {
         msg = (e as Error)?.message || '快剪方案生成失败'
       }
       setAutoError(msg)
+    } finally {
+      setAutoLoading(false)
     }
   }
 

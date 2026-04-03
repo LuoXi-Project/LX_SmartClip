@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core.llm import LLMClient
+from app.core.llm.response_utils import extract_json_object
 from app.models.auto_edit_timeline import ClipEventsBatch
 
 logger = logging.getLogger(__name__)
@@ -46,24 +47,6 @@ _EVENTS_SCHEMA_HINT = """
   ]
 }
 """
-
-
-def _extract_json(raw: str) -> str:
-    import re
-
-    raw = re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=re.IGNORECASE).strip()
-    if "```" in raw:
-        parts = raw.split("```")
-        if len(parts) > 1:
-            candidate = parts[1]
-            if candidate.lstrip().startswith("json"):
-                candidate = candidate.split("\n", 1)[1] if "\n" in candidate else ""
-            raw = candidate.strip() or raw
-    s = raw.find("{")
-    e = raw.rfind("}")
-    if s != -1 and e != -1 and e > s:
-        return raw[s : e + 1]
-    return raw
 
 
 def split_context_into_batches(context: str, *, max_clips_per_batch: int = 25) -> List[str]:
@@ -129,7 +112,7 @@ async def call_llm_for_events_batch(
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=502, detail="LLM 返回 events 为空")
 
-    cleaned = _extract_json(raw)
+    cleaned = extract_json_object(raw)
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:

@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { Clapperboard, MessageSquare, Mic2, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
 
-export type VoiceoverQuickCutStrategy = 'asr_fast' | 'standard' | 'semantic'
+export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic'
 
 type VoiceoverQuickCutPanelProps = {
   selectedVideoIds: string[]
@@ -20,11 +20,6 @@ const STRATEGY_OPTIONS = [
     id: 'asr_fast' as const,
     label: '极速快剪',
     desc: '有 ASR 字幕保留，无 ASR 段删除，速度优先',
-  },
-  {
-    id: 'standard' as const,
-    label: '标准快剪',
-    desc: 'ASR + 音频能量，补漏句、保留笑声/音乐等',
   },
   {
     id: 'semantic' as const,
@@ -75,11 +70,7 @@ export function VoiceoverQuickCutPanel({
       }
       return
     }
-    setInfo(
-      strategy === 'semantic'
-        ? '口播快剪后端接口尚未接入。接入后将把提示词与 ASR 片段交给 LLM，在规则约束下筛选/排序片段并生成可编辑时间轴。'
-        : '口播快剪后端接口尚未接入。接入后将根据所选视频 ASR/能量 直接生成可编辑时间轴。'
-    )
+    setInfo('请从父页面传入 onGenerate，以调用口播快剪接口。')
   }
 
   return (

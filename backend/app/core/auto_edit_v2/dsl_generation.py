@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core.llm import LLMClient
+from app.core.llm.response_utils import extract_json_object
 from app.models.auto_edit_timeline import StrategyDSL
 
 logger = logging.getLogger(__name__)
@@ -35,24 +36,6 @@ _DSL_SCHEMA_HINT = """
   "constraints": {"respect_user_video_order": false, "max_events_per_clip": 6, "tier_budget_ratio": {"tier1":0.7,"tier2":0.25,"tier3":0.05}}
 }
 """
-
-
-def _extract_json(raw: str) -> str:
-    import re
-
-    raw = re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=re.IGNORECASE).strip()
-    if "```" in raw:
-        parts = raw.split("```")
-        if len(parts) > 1:
-            candidate = parts[1]
-            if candidate.lstrip().startswith("json"):
-                candidate = candidate.split("\n", 1)[1] if "\n" in candidate else ""
-            raw = candidate.strip() or raw
-    s = raw.find("{")
-    e = raw.rfind("}")
-    if s != -1 and e != -1 and e > s:
-        return raw[s : e + 1]
-    return raw
 
 
 async def call_llm_for_strategy_dsl(
@@ -86,7 +69,7 @@ async def call_llm_for_strategy_dsl(
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=502, detail="LLM 返回 DSL 为空")
 
-    cleaned = _extract_json(raw)
+    cleaned = extract_json_object(raw)
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:

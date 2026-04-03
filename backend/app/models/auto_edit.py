@@ -142,9 +142,9 @@ class VoiceoverQuickCutRequest(BaseModel):
     video_ids: List[str] = Field(..., description="选中视频 ID，顺序即成片片段顺序")
     strategy: Literal["asr_fast", "standard", "semantic"] = Field(
         "asr_fast",
-        description="asr_fast=仅保留有 ASR 的片段；standard=补间短间隙；semantic=预留（需句子级/LLM）",
+        description="asr_fast=仅保留有 ASR 的片段；standard≈asr_fast；semantic=LLM 分块筛选句子",
     )
-    user_prompt: Optional[str] = Field(None, description="预留：智能快剪提示词")
+    user_prompt: Optional[str] = Field(None, description="智能快剪必填：剪辑诉求，用于 LLM 筛选句子")
 
 
 class AutoEditPlanResponse(BaseModel):

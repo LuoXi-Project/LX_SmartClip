@@ -51,6 +51,7 @@ from app.core.auto_edit.voiceover_quick_cut import (
     build_plan_from_clip_groups,
     load_clip_groups_by_videos,
 )
+from app.core.auto_edit.voiceover_semantic import build_semantic_voiceover_plan
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ async def _call_llm_for_final_video_meta(
             api_key=cfg["api_key"],
             model=cfg["model"],
             temperature=0.4,
-            max_tokens=256,
+            max_tokens=20480,
             timeout=3600,
         )
         sys = (
@@ -331,10 +332,9 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
     if not req.video_ids:
         raise HTTPException(status_code=400, detail="请至少选择一个视频")
     if req.strategy == "semantic":
-        raise HTTPException(
-            status_code=400,
-            detail="智能快剪（语义筛选）尚未接入后端；当前为片段级 ASR，请使用极速或标准快剪。",
-        )
+        up = (req.user_prompt or "").strip()
+        if not up:
+            raise HTTPException(status_code=400, detail="智能快剪需要填写提示词")
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -354,6 +354,19 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
 
             video_names = await _load_video_names(db, req.video_ids)
             groups = await load_clip_groups_by_videos(db, req.video_ids)
+            llm_cfg: dict | None = None
+            if req.strategy == "semantic":
+                try:
+                    llm_cfg = await LLMConfig.get_llm_params_with_defaults(db)
+                    # 语义快剪分块需要“上下文输入 tokens”预算
+                    llm_cfg["context_tokens"] = int(
+                        await LLMConfig.read_config(db, "llm_max_context_tokens", "128000")
+                    )
+                except ValueError as ve:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"智能快剪需要可用的 LLM 配置：{ve}",
+                    ) from ve
     except HTTPException:
         raise
     except Exception as e:
@@ -361,16 +374,30 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
         raise HTTPException(status_code=500, detail="读取视频片段失败")
 
     hint = video_names[0] if len(video_names) == 1 else (f"{len(req.video_ids)} 个视频" if req.video_ids else None)
-    plan = build_plan_from_clip_groups(
-        clip_groups=groups,
-        strategy=req.strategy,
-        video_title_hint=hint,
-    )
+    if req.strategy == "semantic":
+        if not llm_cfg:
+            raise HTTPException(status_code=500, detail="内部错误：缺少 LLM 配置")
+        try:
+            plan = await build_semantic_voiceover_plan(
+                clip_groups=groups,
+                user_prompt=(req.user_prompt or "").strip(),
+                cfg=llm_cfg,
+                video_title_hint=hint,
+                video_ids_order=list(req.video_ids),
+            )
+        except RuntimeError as e:
+            # 把 LLM 鉴权/调用失败等关键异常透传到前端展示
+            raise HTTPException(status_code=502, detail=str(e)) from e
+    else:
+        plan = build_plan_from_clip_groups(
+            clip_groups=groups,
+            strategy=req.strategy,
+            video_title_hint=hint,
+        )
     if not plan.segments:
         raise HTTPException(
             status_code=400,
-            detail="没有可保留的片段：请确认已对选中视频跑过 ASR，且至少一个 clip 含有识别文本（极速模式）；"
-            "标准模式会额外保留夹在两句 ASR 之间的短间隙片段。",
+            detail="没有可保留的片段：请确认已对选中视频跑过 ASR，且至少一个 clip 含有识别文本",
         )
     return AutoEditPlanResponse(plans=[plan])
 

@@ -3,11 +3,11 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Music2, Sparkles } from 'lucide-react'
-import { bgmApi, type AutoEditMode, type AutoEditPlanApi, type BgmTrack } from '@/lib/api'
-import { API_BASE_URL } from '@/lib/runtime-config'
-import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
-import { type AutoPlanStage } from './autoEditTypes'
 import { clipStreamUrl, fmt, videoStreamUrl } from './types'
+import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
+import { useAutoEditBgmTracks, useAutoEditClipMetaByPlans } from './autoEditPanelHooks'
+import type { AutoPlanStage, PreviewTimeline, SelectedPreviewState } from './autoEditTypes'
+import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
 
 export type AutoEditPanelProps = {
   autoPrompt: string
@@ -92,46 +92,12 @@ export function AutoEditPanel({
   const [customPlanById, setCustomPlanById] = useState<Record<string, AutoEditPlanApi>>({})
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [detailDraft, setDetailDraft] = useState<AutoEditPlanApi | null>(null)
-  const [selectedPreview, setSelectedPreview] = useState<{
-    planId: string
-    planTitle: string
-    segmentId: string
-    order: number
-    clipId: string
-    videoId: string | null
-    source: 'video' | 'clip'
-    startSec: number
-    endSec: number
-  } | null>(null)
+  const [selectedPreview, setSelectedPreview] = useState<SelectedPreviewState | null>(null)
   const previewVideoRef = useRef<HTMLVideoElement | null>(null)
   const [previewVideoErr, setPreviewVideoErr] = useState(false)
   /** 与后端 clips 表一致；成片 realize 按整段 clip 拼接，不裁方案里的时间窗 */
-  const [clipMetaByClip, setClipMetaByClip] = useState<
-    Record<string, { video_id: string; start_time: number; end_time: number }>
-  >({})
-  const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
-  const [bgmListError, setBgmListError] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    void bgmApi
-      .list()
-      .then((list) => {
-        if (!cancelled) {
-          setBgmTracks(Array.isArray(list) ? list : [])
-          setBgmListError('')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBgmListError('无法加载 BGM 列表')
-          setBgmTracks([])
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const clipMetaByClip = useAutoEditClipMetaByPlans(autoPlans)
+  const { bgmTracks, bgmListError } = useAutoEditBgmTracks()
 
   useEffect(() => {
     if (!detailPlan) return
@@ -167,7 +133,7 @@ export function AutoEditPanel({
   }, [clipMetaByClip, selectedPreview])
 
   /** 预览/成片对齐：原视频轴用库内绝对时间；片段文件轴为 [0, end−start] */
-  const previewTimeline = useMemo(() => {
+  const previewTimeline = useMemo<PreviewTimeline | null>(() => {
     if (!selectedPreview) return null
     const meta = selectedPreview.clipId ? clipMetaByClip[selectedPreview.clipId] : undefined
     const planStart = Number(selectedPreview.startSec) || 0
@@ -190,39 +156,6 @@ export function AutoEditPanel({
     if (!selectedPreview.clipId) return ''
     return clipStreamUrl(selectedPreview.clipId)
   }, [resolvedVideoId, selectedPreview])
-
-  useEffect(() => {
-    if (!autoPlans.length) return
-    const ids = new Set<string>()
-    for (const p of autoPlans) {
-      for (const s of p.segments ?? []) {
-        const cid = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
-        if (cid) ids.add(cid)
-      }
-    }
-    const ac = new AbortController()
-    for (const cid of ids) {
-      void fetch(`${API_BASE_URL}/api/videos/clips/${cid}`, { signal: ac.signal })
-        .then(async (r) => {
-          if (!r.ok) return
-          const data = (await r.json()) as { video_id: string; start_time: number; end_time: number }
-          if (!data?.video_id) return
-          setClipMetaByClip((prev) => {
-            if (prev[cid]) return prev
-            return {
-              ...prev,
-              [cid]: {
-                video_id: data.video_id,
-                start_time: Number(data.start_time),
-                end_time: Number(data.end_time),
-              },
-            }
-          })
-        })
-        .catch(() => {})
-    }
-    return () => ac.abort()
-  }, [autoPlans])
 
   useEffect(() => {
     const video = previewVideoRef.current

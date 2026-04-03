@@ -292,7 +292,9 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
 }
 
 function _fmt(s: number) {
-  const m = Math.floor(s / 60)
-  const sec = (s % 60).toFixed(1)
-  return `${m}:${sec.padStart(4, '0')}`
+  const totalMs = Math.max(0, Math.round((Number.isFinite(s) ? s : 0) * 1000))
+  const m = Math.floor(totalMs / 60000)
+  const sec = Math.floor((totalMs % 60000) / 1000)
+  const ms = totalMs % 1000
+  return `${m}:${sec.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
 }

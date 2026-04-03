@@ -34,7 +34,9 @@ export const videoStreamUrl = (id: string) => `${API_BASE_URL}/api/videos/${id}/
 export const audioSrc = (f: string) => `${API_BASE_URL}/api/tts/audio/${f}`
 
 export function fmt(s: number) {
-  const m = Math.floor(s / 60)
-  const sec = Math.floor(s % 60)
-  return `${m}:${sec.toString().padStart(2, '0')}`
+  const totalMs = Math.max(0, Math.round((Number.isFinite(s) ? s : 0) * 1000))
+  const m = Math.floor(totalMs / 60000)
+  const sec = Math.floor((totalMs % 60000) / 1000)
+  const ms = totalMs % 1000
+  return `${m}:${sec.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
 }

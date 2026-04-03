@@ -796,8 +796,8 @@ export function AutoEditPanel({
                     </div>
                   </div>
                   <div className="flex-shrink-0 text-right text-[11px] text-slate-500 space-y-0.5">
-                    {p.target_duration_sec && <p>目标：{Math.round(p.target_duration_sec)}s</p>}
-                    {p.estimated_duration_sec && <p>预估：{Math.round(p.estimated_duration_sec)}s</p>}
+                    {p.target_duration_sec && <p>目标：{p.target_duration_sec.toFixed(3)}s</p>}
+                    {p.estimated_duration_sec && <p>预估：{p.estimated_duration_sec.toFixed(3)}s</p>}
                     <p>段落：{p.segments?.length ?? 0}</p>
                   </div>
                 </div>
@@ -1048,13 +1048,13 @@ export function AutoEditPanel({
                             #{s.order} · {fmt(abs0)}–{fmt(abs1)}
                           </p>
                           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                            <span>audio: {s.audio_mode}</span>
-                            <span>clip_id: {clipId || '-'}</span>
-                            {cm?.video_id && <span>video_id: {cm.video_id}</span>}
-                            {s.subtitle?.strategy && <span>subtitle: {s.subtitle.strategy}</span>}
-                            {s.subtitle?.source && <span>source: {s.subtitle.source}</span>}
+                            <span>音频模式: {s.audio_mode}</span>
+                            <span>片段ID: {clipId || '-'}</span>
+                            {cm?.video_id && <span>视频ID: {cm.video_id}</span>}
+                            {s.subtitle?.strategy && <span>字幕: {s.subtitle.strategy}</span>}
+                            {s.subtitle?.source && <span>来源: {s.subtitle.source}</span>}
                             {typeof s.override_duration_sec === 'number' && s.override_duration_sec > 0 && (
-                              <span className="text-cyan-300/90">override: {Math.round(s.override_duration_sec * 10) / 10}s</span>
+                              <span className="text-cyan-300/90">覆盖时长: {s.override_duration_sec.toFixed(3)}s</span>
                             )}
                           </div>
                         </div>
@@ -1105,7 +1105,7 @@ export function AutoEditPanel({
                                     start_sec
                                     <input
                                       type="number"
-                                      step={0.1}
+                                      step={0.001}
                                       value={Number.isFinite(s.start_time_sec) ? s.start_time_sec : 0}
                                       onChange={(e) => {
                                         const nv = Number(e.target.value)
@@ -1124,7 +1124,7 @@ export function AutoEditPanel({
                                     end_sec
                                     <input
                                       type="number"
-                                      step={0.1}
+                                      step={0.001}
                                       value={Number.isFinite(s.end_time_sec) ? s.end_time_sec : 0}
                                       onChange={(e) => {
                                         const nv = Number(e.target.value)
@@ -1143,7 +1143,7 @@ export function AutoEditPanel({
                                     段落时长(s)
                                     <input
                                       type="number"
-                                      step={0.1}
+                                      step={0.001}
                                       value={typeof s.override_duration_sec === 'number' ? s.override_duration_sec : ''}
                                       onChange={(e) => {
                                         const raw = e.target.value

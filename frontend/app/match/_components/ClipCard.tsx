@@ -73,7 +73,7 @@ export function ClipCard({
       </div>
       <div className="px-3 py-2.5 space-y-1.5">
         <p className="text-xs text-slate-200 font-medium truncate">{name}</p>
-        <p className="text-[10px] text-slate-500">{fmt(clip.start_time)} – {fmt(clip.end_time)} · {clip.duration.toFixed(1)}s</p>
+        <p className="text-[10px] text-slate-500">{fmt(clip.start_time)} – {fmt(clip.end_time)} · {clip.duration.toFixed(3)}s</p>
         <ScoreBar score={clip.score} />
         {clip.reason && (
           <HoverTruncatedTooltip

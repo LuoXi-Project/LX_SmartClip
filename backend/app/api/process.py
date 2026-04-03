@@ -15,6 +15,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["process"])
 splitter = VideoSplitter()
 
+# 用户停止：不能继承 Exception，否则会被流水线里大量 except Exception 吞掉
+class ProcessCancelled(BaseException):
+    pass
+
+
+_cancel_events: dict[str, asyncio.Event] = {}
+
+
+def _cancel_event_for(video_id: str) -> asyncio.Event:
+    ev = _cancel_events.get(video_id)
+    if ev is None:
+        ev = asyncio.Event()
+        _cancel_events[video_id] = ev
+    return ev
+
+
+def request_process_cancel(video_id: str) -> None:
+    _cancel_event_for(video_id).set()
+
+
+async def _check_cancel(video_id: str) -> None:
+    if _cancel_event_for(video_id).is_set():
+        raise ProcessCancelled()
+
 STEP_LABELS = {
     "split":          "视频切分",
     "extract_frames": "图帧提取",
@@ -132,6 +156,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     if not video:
         raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
+    _cancel_event_for(video_id).clear()
     video_path = video["file_path"]
     await _set_video_status(video_id, "processing")
 
@@ -165,6 +190,8 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
     loop = asyncio.get_event_loop()
 
+    await _check_cancel(video_id)
+
     # STEP 1: 视频切分
     if "split" not in skip_steps:
         await reporter.send("split", "running", f"开始切分视频（模式：{split_mode})")
@@ -191,6 +218,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                         video_path, scene_threshold, scene_min_scene_len
                     ),
                 )
+            await _check_cancel(video_id)
             await _save_clips_to_db(video_id, clips)
             await reporter.send(
                 "split", "done", f"切分完成，共 {len(clips)} 个片段",
@@ -214,6 +242,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         await reporter.send("extract_frames", "running", f"开始为 {len(clips_rows)} 个片段抽帧（{frame_fps} 帧/秒）")
         frame_errors = 0
         for clip in clips_rows:
+            await _check_cancel(video_id)
             try:
                 await loop.run_in_executor(None, splitter.extract_frames, clip["clip_path"], frame_fps, frame_target_pixels)
             except Exception as e:
@@ -243,6 +272,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 asr_instance = await loop.run_in_executor(None, WhisperASR, asr_model)
             processed_asr = 0
             for i, clip in enumerate(clips_rows):
+                await _check_cancel(video_id)
                 clip_id   = clip["id"]
                 clip_path = clip["clip_path"]
                 try:
@@ -296,6 +326,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                     clip_id   = clip["id"]
                     clip_path = clip["clip_path"]
                     async with sem:
+                        await _check_cancel(video_id)
                         try:
                             clip_name  = os.path.splitext(os.path.basename(clip_path))[0]
                             frames_dir = os.path.join(splitter.frames_dir, clip_name)
@@ -359,6 +390,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 clips_rows = await _get_clips(video_id)
                 processed_emb = 0
                 for i, clip in enumerate(clips_rows):
+                    await _check_cancel(video_id)
                     clip_id  = clip["id"]
                     text     = ((clip["asr_text"] or "") + " " + (clip["vlm_description"] or "")).strip()
                     if not text:
@@ -388,6 +420,17 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     await reporter.send("done", "done", "全部处理完成！")
 
 
+# HTTP 接口：POST /api/videos/{id}/process-cancel
+@router.post("/{video_id}/process-cancel")
+async def process_video_cancel(video_id: str):
+    """请求停止当前素材处理（与 WebSocket 断线配合使用）。"""
+    video = await _get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+    request_process_cancel(video_id)
+    return {"ok": True, "video_id": video_id}
+
+
 # HTTP 接口：POST /api/videos/{id}/process
 @router.post("/{video_id}/process")
 async def process_video_http(video_id: str):
@@ -398,6 +441,10 @@ async def process_video_http(video_id: str):
         return {"video_id": video_id, "status": "done", "message": "处理完成"}
     except HTTPException:
         raise
+    except ProcessCancelled:
+        await _set_video_status(video_id, "pending")
+        await reporter.send("done", "done", "处理已停止", {"cancelled": True})
+        return {"video_id": video_id, "status": "cancelled", "message": "处理已停止"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
@@ -423,15 +470,31 @@ async def process_video_ws(video_id: str, ws: WebSocket):
     except (asyncio.TimeoutError, Exception):
         pass
 
+    async def _drain_ws_until_disconnect():
+        try:
+            while True:
+                await ws.receive()
+        except WebSocketDisconnect:
+            request_process_cancel(video_id)
+
+    drain_task = asyncio.create_task(_drain_ws_until_disconnect())
     try:
         await _run_pipeline(video_id, reporter, skip_steps=skip_steps)
     except WebSocketDisconnect:
         logger.info("WebSocket 断开: video_id=%s", video_id)
+    except ProcessCancelled:
+        await _set_video_status(video_id, "pending")
+        await reporter.send("done", "done", "处理已停止", {"cancelled": True})
     except HTTPException as e:
         await reporter.send("error", "error", e.detail)
     except Exception as e:
         await reporter.send("error", "error", f"处理异常: {str(e)}")
     finally:
+        drain_task.cancel()
+        try:
+            await drain_task
+        except asyncio.CancelledError:
+            pass
         try:
             await ws.close()
         except Exception:

@@ -41,7 +41,7 @@ export function VoiceoverQuickCutPanel({
   doneVideos,
   onGenerate,
 }: VoiceoverQuickCutPanelProps) {
-  const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('standard')
+  const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('asr_fast')
   const [semanticUserPrompt, setSemanticUserPrompt] = useState('')
   const [generating, setGenerating] = useState(false)
   const [info, setInfo] = useState<string | null>(null)

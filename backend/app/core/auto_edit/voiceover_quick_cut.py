@@ -40,6 +40,32 @@ def _parse_asr_segments(asr_segments_json: str | None) -> list[dict[str, Any]]:
     return out
 
 
+def _merge_contiguous_asr_rows(
+    rows: list[tuple[float, float, str]],
+    eps_sec: float = 0.08,
+) -> list[tuple[float, float, str]]:
+    """
+    同一 clip 内、按时间排序的句子行：若相邻行首尾相接（允许微小间隙/浮点误差），
+    合并为一条，成片时只做一次 -ss/-t。
+    """
+    if not rows:
+        return []
+    out: list[tuple[float, float, str]] = []
+    cs, ce, ct = rows[0]
+    for ns, ne, nt in rows[1:]:
+        gap = ns - ce
+        if -0.05 <= gap <= eps_sec:
+            t1 = ct.strip()
+            t2 = nt.strip()
+            ct = "\n".join(x for x in (t1, t2) if x)
+            ce = max(ce, ne)
+        else:
+            out.append((cs, ce, ct))
+            cs, ce, ct = ns, ne, nt
+    out.append((cs, ce, ct))
+    return out
+
+
 def _is_meaningful_text(text: str | None) -> bool:
     if not text:
         return False
@@ -134,7 +160,8 @@ def build_plan_from_clip_groups(
                 order += 1
                 continue
 
-            for idx, seg in enumerate(seg_items):
+            raw_rows: list[tuple[float, float, str]] = []
+            for seg in seg_items:
                 try:
                     st_rel = float(seg.get("start") or 0.0)
                     et_rel = float(seg.get("end") or st_rel)
@@ -145,7 +172,13 @@ def build_plan_from_clip_groups(
                 text = str(seg.get("text") or "").strip()
                 if not _is_meaningful_text(text):
                     continue
+                dur = et_rel - st_rel
+                if dur <= 0:
+                    continue
+                raw_rows.append((st_rel, et_rel, text))
 
+            raw_rows.sort(key=lambda r: r[0])
+            for idx, (st_rel, et_rel, text) in enumerate(_merge_contiguous_asr_rows(raw_rows)):
                 dur = et_rel - st_rel
                 if dur <= 0:
                     continue

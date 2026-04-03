@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import apiClient, { createProcessWebSocket, type ProcessMessage, type Video } from '@/lib/api'
+import apiClient, { createProcessWebSocket, videosApi, type ProcessMessage, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
@@ -95,12 +95,17 @@ export default function ProcessPage() {
         applyMsg(msg)
         if (msg.step === 'done') {
           setRunning(false)
-          setDone(true)
-          setSteps((p) => {
-            const n = { ...p }
-            STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
-            return n
-          })
+          const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
+          if (cancelled) {
+            setDone(false)
+          } else {
+            setDone(true)
+            setSteps((p) => {
+              const n = { ...p }
+              STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
+              return n
+            })
+          }
         }
         if (msg.step === 'error') setRunning(false)
       } catch { /* noop */ }
@@ -109,7 +114,12 @@ export default function ProcessPage() {
     ws.onclose = () => setRunning(false)
   }
 
-  const handleStop = () => { wsRef.current?.close(); setRunning(false) }
+  const handleStop = () => {
+    if (!selId) return
+    void videosApi.processCancel(selId).catch(() => {})
+    wsRef.current?.close()
+    setRunning(false)
+  }
   const selVideo = videos.find((v) => v.id === selId)
   const pct = Math.round(STEPS.filter((s) => ['done', 'skip'].includes(steps[s.key].status)).length / STEPS.length * 100)
 

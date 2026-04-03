@@ -60,9 +60,9 @@ export function createProcessWebSocket(
 ): WebSocket {
   const ws = new WebSocket(`${WS_BASE_URL}/api/videos/${videoId}/process-ws`)
   ws.addEventListener('open', () => {
-    if (skipSteps.length > 0) {
-      ws.send(JSON.stringify({ skip_steps: skipSteps }))
-    }
+    // 后端会等待首条 JSON（包含 skip_steps）后再进入处理流程。
+    // 即便为空数组，也必须主动发送，避免“开始后无响应，断开后才开始”。
+    ws.send(JSON.stringify({ skip_steps: skipSteps }))
   })
   return ws
 }
@@ -96,6 +96,8 @@ export const videosApi = {
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
   rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),
+  processCancel: (id: string) =>
+    apiClient.post<unknown, { ok: boolean; video_id: string }>(`/api/videos/${id}/process-cancel`),
 }
 
 export const matchApi = {

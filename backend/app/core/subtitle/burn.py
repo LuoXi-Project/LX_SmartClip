@@ -365,14 +365,14 @@ def burn_to_mp4(
                         except Exception:
                             clip_start_v = None
 
-                        # 支持按句子区间裁剪（-ss + -t）
+                        # 支持按句子区间裁剪（精确优先：-ss 放在 -i 之后）
                         if clip_start_v is not None and clip_start_v > 0:
                             _run_ffmpeg(
                                 [
-                                    "-ss",
-                                    f"{clip_start_v:.3f}",
                                     "-i",
                                     infos[0]["path"],
+                                    "-ss",
+                                    f"{clip_start_v:.3f}",
                                     "-t",
                                     f"{trim_dur:.3f}",
                                     *seg_vf_args,

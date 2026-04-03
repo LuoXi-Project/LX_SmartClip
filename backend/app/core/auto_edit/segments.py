@@ -14,6 +14,9 @@ from app.models.subtitle import SubtitleSegmentInput
 
 logger = logging.getLogger(__name__)
 
+# 同一 clip 内相邻段「首尾相接」判定容差（秒）：ASR 浮点 / 关键帧对齐
+_CONTIGUOUS_EPS_SEC = 0.1
+
 
 @dataclass
 class ClipCandidate:
@@ -22,6 +25,69 @@ class ClipCandidate:
     start_time: float
     end_time: float
     duration: float
+
+
+def merge_contiguous_subtitle_segments(
+    segments: List[SubtitleSegmentInput],
+    eps_sec: float = _CONTIGUOUS_EPS_SEC,
+) -> List[SubtitleSegmentInput]:
+    """
+    将时间轴上连续、且同一主 clip 的相邻段合并为一段，减少重复 -ss/-t / concat 次数。
+
+    条件：相同 clip_id 与 clip_ids、均无独立 TTS 文件、均有正数 duration_sec，
+    且下一段 clip 内起点 ≈ 上一段起点 + 时长（容差 eps_sec）。
+    """
+    if len(segments) <= 1:
+        return segments
+
+    def _norm_ids(seg: SubtitleSegmentInput) -> Tuple[str, ...]:
+        ids = list(seg.clip_ids or [])
+        if not ids and seg.clip_id:
+            ids = [seg.clip_id]
+        return tuple(dict.fromkeys(ids))
+
+    def _can_merge(a: SubtitleSegmentInput, b: SubtitleSegmentInput) -> bool:
+        if a.clip_id != b.clip_id:
+            return False
+        if _norm_ids(a) != _norm_ids(b):
+            return False
+        if getattr(a, "tts_filename", None) or getattr(b, "tts_filename", None):
+            return False
+        da = a.duration_sec
+        db = b.duration_sec
+        if da is None or db is None or float(da) <= 0 or float(db) <= 0:
+            return False
+        sa = float(a.clip_start_sec or 0.0)
+        sb = float(b.clip_start_sec or 0.0)
+        expected = sa + float(da)
+        gap = sb - expected
+        return abs(gap) <= eps_sec
+
+    def _merge_two(a: SubtitleSegmentInput, b: SubtitleSegmentInput) -> SubtitleSegmentInput:
+        ta = (a.copy_text or "").strip()
+        tb = (b.copy_text or "").strip()
+        merged_text = "\n".join(x for x in (ta, tb) if x)
+        da = float(a.duration_sec or 0.0)
+        db = float(b.duration_sec or 0.0)
+        return SubtitleSegmentInput(
+            copy_text=merged_text,
+            clip_id=a.clip_id,
+            clip_ids=a.clip_ids,
+            tts_filename=None,
+            clip_start_sec=a.clip_start_sec,
+            duration_sec=da + db,
+        )
+
+    out: List[SubtitleSegmentInput] = []
+    cur = segments[0]
+    for nxt in segments[1:]:
+        if _can_merge(cur, nxt):
+            cur = _merge_two(cur, nxt)
+        else:
+            out.append(cur)
+            cur = nxt
+    out.append(cur)
+    return out
 
 
 def collect_plan_clip_ids(plan: Plan) -> List[str]:
@@ -152,5 +218,5 @@ async def segments_from_plan(
             )
         )
 
-    return seg_inputs
+    return merge_contiguous_subtitle_segments(seg_inputs)
 

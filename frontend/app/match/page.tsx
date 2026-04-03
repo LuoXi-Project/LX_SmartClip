@@ -20,6 +20,7 @@ import { isAutoLikeMode } from './_components/matchModeTypes'
 import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
+import { useToast } from '@/components/ui/toast-provider'
 
 const VIDEO_PAGE_SIZE = 9
 
@@ -83,6 +84,8 @@ export default function MatchPage() {
     autoPlanLogs,
     setAutoPlanLogs,
   } = useMatchStore()
+
+  const toast = useToast()
 
   const setSelectedVideoIds = (fn: string[] | ((prev: string[]) => string[])) =>
     setMatchSelectedVideoIds(typeof fn === 'function' ? fn(useMatchStore.getState().selectedVideoIds) : fn)
@@ -554,6 +557,7 @@ export default function MatchPage() {
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
+      toast.success(plans.length ? `快剪方案已生成（${plans.length} 个）` : '快剪方案已生成')
     } catch (e: unknown) {
       const raw = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
       let msg: string

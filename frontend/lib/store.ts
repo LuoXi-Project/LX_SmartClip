@@ -33,7 +33,7 @@ export interface MatchPageState {
   /** 工作区：手动 / 口播快剪 / 自动成片实验 / 模板剪辑 */
   matchMode: MatchWorkspaceMode
   /** 模板剪辑预设 */
-  templatePreset: 'ecommerce' | 'marketing' | 'tech_review'
+  templatePreset: string
   /** 自动一键成片页面内：是否启用模板剪辑(v4) */
   autoTemplateEnabled: boolean
   /** 段落 id 递增，与 segments 一并持久化，避免返回页面后 id 冲突 */
@@ -65,7 +65,7 @@ export interface MatchPageState {
   setMatchSubtitleStyle: (s: SubtitleStyle) => void
   setMatchExportMode: (m: ExportMode) => void
   setMatchMode: (mode: MatchWorkspaceMode) => void
-  setTemplatePreset: (p: 'ecommerce' | 'marketing' | 'tech_review') => void
+  setTemplatePreset: (p: string) => void
   setAutoTemplateEnabled: (v: boolean) => void
   setMatchSegmentCounter: (n: number | ((prev: number) => number)) => void
   setAutoPrompt: (v: string) => void
@@ -208,7 +208,7 @@ export const useMatchStore = create<MatchPageState>()(
       subtitleStyle: DEFAULT_SUBTITLE_STYLE,
       exportMode: 'zip' as ExportMode,
       matchMode: 'manual' as const,
-      templatePreset: 'ecommerce' as const,
+      templatePreset: 'ecommerce',
       autoTemplateEnabled: false,
       segmentCounter: 0,
       autoPrompt: '',
@@ -333,11 +333,7 @@ export const useMatchStore = create<MatchPageState>()(
           ...p,
         }
         merged.matchMode = normalizeMatchWorkspaceMode(merged.matchMode)
-        if (
-          merged.templatePreset !== 'ecommerce' &&
-          merged.templatePreset !== 'marketing' &&
-          merged.templatePreset !== 'tech_review'
-        ) {
+        if (typeof merged.templatePreset !== 'string' || !merged.templatePreset.trim()) {
           merged.templatePreset = 'ecommerce'
         }
         if (typeof merged.autoTemplateEnabled !== 'boolean') merged.autoTemplateEnabled = false
@@ -378,11 +374,7 @@ export const useMatchStore = create<MatchPageState>()(
             matchError: '',
           }))
           state.matchMode = normalizeMatchWorkspaceMode(state.matchMode)
-          if (
-            state.templatePreset !== 'ecommerce' &&
-            state.templatePreset !== 'marketing' &&
-            state.templatePreset !== 'tech_review'
-          ) {
+          if (typeof state.templatePreset !== 'string' || !state.templatePreset.trim()) {
             state.templatePreset = 'ecommerce'
           }
           if (typeof state.autoTemplateEnabled !== 'boolean') state.autoTemplateEnabled = false

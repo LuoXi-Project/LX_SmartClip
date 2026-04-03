@@ -326,7 +326,7 @@ export interface AutoEditPlanRequestApi {
   user_prompt: string
   mode?: AutoEditMode
   /** 模板剪辑预设：仅在 match 页 mode=template 时使用 */
-  template_preset?: 'ecommerce' | 'marketing' | 'tech_review'
+  template_preset?: string
   target_duration_sec?: number
   num_plans?: number
   allow_cross_video?: boolean
@@ -406,6 +406,8 @@ export interface VoiceoverQuickCutRequestApi {
 }
 
 export const autoEditApi = {
+  templates: () =>
+    apiClient.get<unknown, Array<{ id: string; label: string }>>('/api/auto-edit/templates'),
   plan: (payload: AutoEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/plan', payload),
   createPlanSession: (payload: AutoEditPlanRequestApi) =>

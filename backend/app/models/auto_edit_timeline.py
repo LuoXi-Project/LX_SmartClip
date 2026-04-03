@@ -44,7 +44,7 @@ class StrategyDSL(BaseModel):
     goal: str
     mode_hint: Optional[Literal["auto", "voiceover", "original"]] = None
     # 模板剪辑预设（当不为 None 时，编排器按 slot role 顺序强制取事件）
-    template_preset: Optional[Literal["ecommerce", "marketing", "tech_review"]] = None
+    template_preset: Optional[str] = None
     target_duration_sec: Optional[int] = Field(None, ge=10, le=600)
     style: StrategyStyle = Field(default_factory=StrategyStyle)
     preferences: StrategyPreferences = Field(default_factory=StrategyPreferences)

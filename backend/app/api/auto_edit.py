@@ -26,6 +26,7 @@ from app.core.auto_edit_v2.plan_compile import (
     build_v0_timelines_from_context,
     compile_timeline_to_plan,
 )
+from app.core.auto_edit_v2.template_config import list_templates, normalize_template_preset
 from app.core.auto_edit_v2.dsl_generation import call_llm_for_strategy_dsl
 from app.core.auto_edit_v2.events_generation import call_llm_for_events_all
 from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batches
@@ -61,6 +62,15 @@ router = APIRouter(prefix="/api/auto-edit", tags=["auto-edit"])
 _PLAN_STREAM_SESSIONS: Dict[str, AutoEditPlanRequest] = {}
 _PLAN_STREAM_CREATED_AT: Dict[str, float] = {}
 _PLAN_STREAM_EXPIRE_SEC = 10 * 60
+
+
+@router.get("/templates")
+async def list_auto_edit_templates() -> List[Dict[str, str]]:
+    """
+    模板列表：单一来源来自 template_config 注册表。
+    用于前端渲染模板按钮，避免新增模板需要改多处硬编码枚举。
+    """
+    return list_templates()
 
 def _cleanup_expired_plan_sessions() -> None:
     now = time.time()
@@ -223,16 +233,17 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
 
     # 低侵入升级：启用新引擎时，先走“规则 timeline → 编译回 Plan”（V0 骨架），保持 response_model 不变
     if getattr(req, "use_timeline_engine", False):
+        template_preset = normalize_template_preset(getattr(req, "template_preset", None))
         # V1：优先走 DSL(LLM) → Events(LLM 分批) → Merge/Tier → Arrange → Compile
         # 失败则回退 V0（规则 timeline），再失败回退旧逻辑（LLM 直出 Plan）
         try:
-            if getattr(req, "template_preset", None):
+            if template_preset:
                 logger.info("auto_edit 启用新引擎：模板预设存在，使用 V0 DSL(结构强制)")
                 dsl = build_v0_dsl_from_request(
                     req.user_prompt,
                     req.mode,
                     req.target_duration_sec,
-                    template_preset=req.template_preset,
+                    template_preset=template_preset,
                 )
             else:
                 logger.info("auto_edit 启用新引擎：正在生成 DSL")
@@ -244,7 +255,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 )
         except Exception:
             dsl = build_v0_dsl_from_request(
-                req.user_prompt, req.mode, req.target_duration_sec, template_preset=getattr(req, "template_preset", None)
+                req.user_prompt, req.mode, req.target_duration_sec, template_preset=template_preset
             )
 
         try:
@@ -252,7 +263,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
             batches = await call_llm_for_events_all(
                 cfg=cfg,
                 context=context,
-                template_preset=getattr(req, "template_preset", None),
+                template_preset=template_preset,
             )
             logger.info("auto_edit 启用新引擎：正在合并事件池")
             merged_events = merge_batches(batches)
@@ -480,17 +491,18 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
 
             yield _build_sse_event("progress", {"stage": "llm", "message": "LLM 正在生成候选方案"})
             if getattr(req, "use_timeline_engine", False):
+                template_preset = normalize_template_preset(getattr(req, "template_preset", None))
                 yield _build_sse_event(
                     "progress",
                     {"stage": "timeline", "message": "新引擎：正在生成 DSL/事件池/时间轴并编译为 Plan"},
                 )
                 try:
-                    if getattr(req, "template_preset", None):
+                    if template_preset:
                         dsl = build_v0_dsl_from_request(
                             req.user_prompt,
                             req.mode,
                             req.target_duration_sec,
-                            template_preset=req.template_preset,
+                            template_preset=template_preset,
                         )
                     else:
                         dsl = await call_llm_for_strategy_dsl(
@@ -504,14 +516,14 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         req.user_prompt,
                         req.mode,
                         req.target_duration_sec,
-                        template_preset=getattr(req, "template_preset", None),
+                        template_preset=template_preset,
                     )
 
                 try:
                     batches = await call_llm_for_events_all(
                         cfg=cfg,
                         context=context,
-                        template_preset=getattr(req, "template_preset", None),
+                        template_preset=template_preset,
                     )
                     merged_events = merge_batches(batches)
                     pool = assign_tiers_and_rank(merged_events)

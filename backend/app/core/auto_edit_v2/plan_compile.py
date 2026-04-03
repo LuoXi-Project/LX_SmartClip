@@ -14,6 +14,7 @@ from app.models.auto_edit import (
     TransitionPlan,
 )
 from app.models.auto_edit_timeline import FinalTimeline, StrategyDSL, TimelineItem
+from app.core.auto_edit_v2.template_config import get_template_style_hint, normalize_template_preset
 
 
 def _clamp_float(v: Optional[float], default: float, min_v: float, max_v: float) -> float:
@@ -111,11 +112,27 @@ def compile_timeline_to_plan(
     )
 
 
-def build_v0_dsl_from_request(user_prompt: str, mode: str, target_duration_sec: Optional[int]) -> StrategyDSL:
+def build_v0_dsl_from_request(
+    user_prompt: str,
+    mode: str,
+    target_duration_sec: Optional[int],
+    template_preset: Optional[str] = None,
+) -> StrategyDSL:
     """
     V0：不调用 LLM 生成 DSL，直接用请求生成一个可用的 StrategyDSL。
     目的：先跑通“新引擎的骨架 + 编译回 Plan”。
     """
+    preset = normalize_template_preset(template_preset)
+    if preset:
+        style_hint = get_template_style_hint(preset)
+        return StrategyDSL(
+            goal=user_prompt.strip() if user_prompt else "auto_edit",
+            mode_hint=mode,  # type: ignore[arg-type]
+            target_duration_sec=target_duration_sec,
+            style=style_hint,  # type: ignore[arg-type]
+            template_preset=preset,
+        )
+
     return StrategyDSL(
         goal=user_prompt.strip() if user_prompt else "auto_edit",
         mode_hint=mode,  # type: ignore[arg-type]

@@ -325,6 +325,8 @@ export interface AutoEditPlanRequestApi {
   video_ids: string[]
   user_prompt: string
   mode?: AutoEditMode
+  /** 模板剪辑预设：仅在 match 页 mode=template 时使用 */
+  template_preset?: 'ecommerce' | 'marketing' | 'tech_review'
   target_duration_sec?: number
   num_plans?: number
   allow_cross_video?: boolean

@@ -226,19 +226,34 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
         # V1：优先走 DSL(LLM) → Events(LLM 分批) → Merge/Tier → Arrange → Compile
         # 失败则回退 V0（规则 timeline），再失败回退旧逻辑（LLM 直出 Plan）
         try:
-            logger.info("auto_edit 启用新引擎：正在生成 DSL")
-            dsl = await call_llm_for_strategy_dsl(
-                cfg=cfg,
-                user_prompt=req.user_prompt,
-                mode_hint=req.mode,
-                target_duration_sec=req.target_duration_sec,
-            )
+            if getattr(req, "template_preset", None):
+                logger.info("auto_edit 启用新引擎：模板预设存在，使用 V0 DSL(结构强制)")
+                dsl = build_v0_dsl_from_request(
+                    req.user_prompt,
+                    req.mode,
+                    req.target_duration_sec,
+                    template_preset=req.template_preset,
+                )
+            else:
+                logger.info("auto_edit 启用新引擎：正在生成 DSL")
+                dsl = await call_llm_for_strategy_dsl(
+                    cfg=cfg,
+                    user_prompt=req.user_prompt,
+                    mode_hint=req.mode,
+                    target_duration_sec=req.target_duration_sec,
+                )
         except Exception:
-            dsl = build_v0_dsl_from_request(req.user_prompt, req.mode, req.target_duration_sec)
+            dsl = build_v0_dsl_from_request(
+                req.user_prompt, req.mode, req.target_duration_sec, template_preset=getattr(req, "template_preset", None)
+            )
 
         try:
             logger.info("auto_edit 启用新引擎：正在生成事件池")
-            batches = await call_llm_for_events_all(cfg=cfg, context=context)
+            batches = await call_llm_for_events_all(
+                cfg=cfg,
+                context=context,
+                template_preset=getattr(req, "template_preset", None),
+            )
             logger.info("auto_edit 启用新引擎：正在合并事件池")
             merged_events = merge_batches(batches)
             logger.info("auto_edit 启用新引擎：正在分配事件池")
@@ -470,17 +485,34 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                     {"stage": "timeline", "message": "新引擎：正在生成 DSL/事件池/时间轴并编译为 Plan"},
                 )
                 try:
-                    dsl = await call_llm_for_strategy_dsl(
-                        cfg=cfg,
-                        user_prompt=req.user_prompt,
-                        mode_hint=req.mode,
-                        target_duration_sec=req.target_duration_sec,
-                    )
+                    if getattr(req, "template_preset", None):
+                        dsl = build_v0_dsl_from_request(
+                            req.user_prompt,
+                            req.mode,
+                            req.target_duration_sec,
+                            template_preset=req.template_preset,
+                        )
+                    else:
+                        dsl = await call_llm_for_strategy_dsl(
+                            cfg=cfg,
+                            user_prompt=req.user_prompt,
+                            mode_hint=req.mode,
+                            target_duration_sec=req.target_duration_sec,
+                        )
                 except Exception:
-                    dsl = build_v0_dsl_from_request(req.user_prompt, req.mode, req.target_duration_sec)
+                    dsl = build_v0_dsl_from_request(
+                        req.user_prompt,
+                        req.mode,
+                        req.target_duration_sec,
+                        template_preset=getattr(req, "template_preset", None),
+                    )
 
                 try:
-                    batches = await call_llm_for_events_all(cfg=cfg, context=context)
+                    batches = await call_llm_for_events_all(
+                        cfg=cfg,
+                        context=context,
+                        template_preset=getattr(req, "template_preset", None),
+                    )
                     merged_events = merge_batches(batches)
                     pool = assign_tiers_and_rank(merged_events)
                     timelines = arrange_timeline_variants(

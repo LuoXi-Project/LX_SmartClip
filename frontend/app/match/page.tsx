@@ -55,6 +55,9 @@ export default function MatchPage() {
     exportMode,
     setMatchExportMode,
     matchMode: mode,
+    autoTemplateEnabled,
+    setAutoTemplateEnabled,
+    templatePreset,
     setMatchMode,
     setMatchSegmentCounter,
     autoPrompt,
@@ -150,6 +153,14 @@ export default function MatchPage() {
       .then((d) => { if (Array.isArray(d)) setVideos(d); else setVideos((d as { items: Video[] })?.items || []) })
       .catch(console.error)
   }, [])
+
+  // 兼容旧的 matchMode=template：一旦进入模板模式，默认打开模板开关
+  useEffect(() => {
+    if (mode === 'template') {
+      setAutoTemplateEnabled(true)
+      setMatchMode('auto')
+    }
+  }, [mode, setAutoTemplateEnabled, setMatchMode])
 
   const doneVideos = useMemo(
     () => videos.filter((v) => v.status === 'done' && v.total_clips > 0),
@@ -451,6 +462,7 @@ export default function MatchPage() {
         video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id),
         user_prompt: autoPrompt.trim(),
         mode: autoMode,
+        template_preset: mode === 'template' || autoTemplateEnabled ? templatePreset : undefined,
         target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
         num_plans: autoNumPlans,
         allow_cross_video: true,
@@ -632,43 +644,7 @@ export default function MatchPage() {
             onNextPage={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
           />
 
-          {mode === 'auto' ? (
-            <AutoEditPanel
-              autoPrompt={autoPrompt}
-              onAutoPromptChange={setAutoPrompt}
-              autoMode={autoMode}
-              onAutoModeChange={setAutoMode}
-              autoTargetDuration={autoTargetDuration}
-              onAutoTargetDurationChange={setAutoTargetDuration}
-              autoNumPlans={autoNumPlans}
-              onAutoNumPlansChange={setAutoNumPlans}
-              autoBgmMixEnabled={autoBgmMixEnabled}
-              onAutoBgmMixEnabledChange={setAutoBgmMixEnabled}
-              autoBgmPlanPolicy={autoBgmPlanPolicy}
-              onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
-              autoBgmTrackFilename={autoBgmTrackFilename}
-              onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
-              autoUseTimelineEngine={autoUseTimelineEngine}
-              onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
-              autoExplain={autoExplain}
-              onAutoExplainChange={setAutoExplain}
-              autoLoading={autoLoading}
-              autoError={autoError}
-              autoPlans={autoPlans}
-              autoExpandedPlanIds={autoExpandedPlanIds}
-              onTogglePlanExpand={toggleAutoExpandedPlan}
-              autoRealizingId={autoRealizingId}
-              autoRealizeMsg={autoRealizeMsg}
-              autoRealizeDownloads={autoRealizeDownloads}
-              autoPlanLogs={autoPlanLogs}
-              autoPlanElapsedSec={autoPlanElapsedSec}
-              autoPlanStage={autoPlanStage}
-              autoPlanStagePercent={autoPlanStagePercent}
-              subtitleEnabled={subtitleEnabled}
-              onGeneratePlans={handleGenerateAutoPlans}
-              onRealizePlan={handleAutoRealizePlan}
-            />
-          ) : mode === 'template' ? (
+          {mode === 'auto' || mode === 'template' ? (
             <TemplateClipPanel
               autoPrompt={autoPrompt}
               onAutoPromptChange={setAutoPrompt}

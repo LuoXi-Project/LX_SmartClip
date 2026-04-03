@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Sparkles, ListVideo, Mic2, LayoutTemplate } from 'lucide-react'
+import { ArrowLeft, Sparkles, ListVideo, Mic2 } from 'lucide-react'
 import type { MatchWorkspaceMode } from './matchModeTypes'
 
 type MatchPageHeaderProps = {
@@ -44,22 +44,16 @@ export function MatchPageHeader({ mode, onModeChange, onOpenVideoResult }: Match
           <div className="flex flex-wrap gap-1">
             {tab('manual', '手动匹配', null, 'bg-indigo-600 text-white')}
             {tab(
-              'voiceover',
-              '口播快剪 v3',
-              <Mic2 className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
-              'bg-violet-600 text-white'
-            )}
-            {tab(
               'auto',
               '自动一键成片（实验）',
               null,
               'bg-emerald-500 text-slate-900'
             )}
             {tab(
-              'template',
-              '模板剪辑 v4',
-              <LayoutTemplate className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
-              'bg-amber-600 text-white'
+              'voiceover',
+              '口播快剪',
+              <Mic2 className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
+              'bg-violet-600 text-white'
             )}
           </div>
         </div>

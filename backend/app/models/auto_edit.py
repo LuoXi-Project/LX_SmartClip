@@ -113,6 +113,10 @@ class AutoEditPlanRequest(BaseModel):
     video_ids: List[str] = Field(..., description="选中视频 ID 列表")
     user_prompt: str = Field(..., min_length=1, description="用户提示词/需求")
     mode: Literal["auto", "voiceover", "original"] = "auto"
+    template_preset: Optional[str] = Field(
+        None,
+        description="模板剪辑预设ID（matchMode=template 时使用），例如 ecommerce/marketing/tech_review",
+    )
     target_duration_sec: Optional[int] = Field(
         None, ge=10, le=600, description="目标时长（秒）"
     )

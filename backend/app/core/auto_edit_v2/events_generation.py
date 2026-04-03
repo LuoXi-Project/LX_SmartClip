@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.core.llm import LLMClient
 from app.core.llm.response_utils import extract_json_object
+from app.core.auto_edit_v2.template_config import get_template_slots, normalize_template_preset
 from app.models.auto_edit_timeline import ClipEventsBatch
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,27 @@ _EVENTS_SCHEMA_HINT = """
   ]
 }
 """
+
+
+def _build_template_sys_append(template_preset: str | None) -> str:
+    preset = normalize_template_preset(template_preset)
+    if not preset:
+        return ""
+
+    slots = get_template_slots(preset)
+    # 仅让 LLM 用最贴近“slot->role”的输出；编排器会按 dsl.style.structure 顺序强制挑选。
+    lines = []
+    for s in slots:
+        lines.append(f"- slot={s['name']} -> role={s['role']}：{s['description']}")
+
+    joined = "\n".join(lines)
+    return (
+        "\n\n模板槽位要求（用于 role 归类；必须遵守）：\n"
+        f"{joined}\n"
+        "\n硬性要求：\n"
+        "- events[*].role 只允许从上述 slot 对应的 role 中选择（不要输出其他 role）。\n"
+        "- beat 可以辅助表达“setup/turn/payoff”等节拍，但 role 才是强约束。\n"
+    )
 
 
 def split_context_into_batches(context: str, *, max_clips_per_batch: int = 25) -> List[str]:
@@ -91,8 +113,10 @@ async def call_llm_for_events_batch(
     cfg: dict[str, Any],
     batch_id: str,
     batch_context: str,
+    template_preset: str | None = None,
 ) -> ClipEventsBatch:
     logger.info("auto_edit 启用新引擎：正在生成事件池（批次）")
+    sys_prompt = _EVENTS_SYS_PROMPT + _build_template_sys_append(template_preset)
     llm = LLMClient(
         base_url=cfg["base_url"],
         api_key=cfg["api_key"],
@@ -102,7 +126,7 @@ async def call_llm_for_events_batch(
         timeout=3600,
     )
     messages = [
-        {"role": "system", "content": _EVENTS_SYS_PROMPT},
+        {"role": "system", "content": sys_prompt},
         {
             "role": "user",
             "content": f"batch_id={batch_id}\n\n【素材】\n{batch_context}\n\n{_EVENTS_SCHEMA_HINT}",
@@ -142,6 +166,7 @@ async def call_llm_for_events_all(
     context: str,
     max_clips_per_batch: int = 25,
     max_batches: int = 12,
+    template_preset: str | None = None,
 ) -> List[ClipEventsBatch]:
     logger.info("auto_edit 启用新引擎：正在分割上下文为批次")
     batches = split_context_into_batches(context, max_clips_per_batch=max_clips_per_batch)
@@ -152,6 +177,13 @@ async def call_llm_for_events_all(
     out: List[ClipEventsBatch] = []
     for i, bctx in enumerate(batches, 1):
         bid = f"b_{i:03d}"
-        out.append(await call_llm_for_events_batch(cfg=cfg, batch_id=bid, batch_context=bctx))
+        out.append(
+            await call_llm_for_events_batch(
+                cfg=cfg,
+                batch_id=bid,
+                batch_context=bctx,
+                template_preset=template_preset,
+            )
+        )
     return out
 

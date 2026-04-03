@@ -30,8 +30,12 @@ export interface MatchPageState {
   subtitleEnabled: boolean
   subtitleStyle: SubtitleStyle
   exportMode: ExportMode
-  /** 工作区：手动 / 口播快剪 v3 / 自动成片实验 / 模板剪辑 v4 */
+  /** 工作区：手动 / 口播快剪 / 自动成片实验 / 模板剪辑 */
   matchMode: MatchWorkspaceMode
+  /** 模板剪辑预设 */
+  templatePreset: 'ecommerce' | 'marketing' | 'tech_review'
+  /** 自动一键成片页面内：是否启用模板剪辑(v4) */
+  autoTemplateEnabled: boolean
   /** 段落 id 递增，与 segments 一并持久化，避免返回页面后 id 冲突 */
   segmentCounter: number
   autoPrompt: string
@@ -61,6 +65,8 @@ export interface MatchPageState {
   setMatchSubtitleStyle: (s: SubtitleStyle) => void
   setMatchExportMode: (m: ExportMode) => void
   setMatchMode: (mode: MatchWorkspaceMode) => void
+  setTemplatePreset: (p: 'ecommerce' | 'marketing' | 'tech_review') => void
+  setAutoTemplateEnabled: (v: boolean) => void
   setMatchSegmentCounter: (n: number | ((prev: number) => number)) => void
   setAutoPrompt: (v: string) => void
   setAutoMode: (m: AutoEditMode) => void
@@ -94,6 +100,8 @@ export type MatchPersistedSlice = Pick<
   | 'subtitleStyle'
   | 'exportMode'
   | 'matchMode'
+  | 'templatePreset'
+  | 'autoTemplateEnabled'
   | 'segmentCounter'
   | 'autoPrompt'
   | 'autoMode'
@@ -200,6 +208,8 @@ export const useMatchStore = create<MatchPageState>()(
       subtitleStyle: DEFAULT_SUBTITLE_STYLE,
       exportMode: 'zip' as ExportMode,
       matchMode: 'manual' as const,
+      templatePreset: 'ecommerce' as const,
+      autoTemplateEnabled: false,
       segmentCounter: 0,
       autoPrompt: '',
       autoMode: 'auto' as AutoEditMode,
@@ -223,6 +233,8 @@ export const useMatchStore = create<MatchPageState>()(
       setMatchSubtitleStyle: (subtitleStyle) => set({ subtitleStyle }),
       setMatchExportMode: (exportMode) => set({ exportMode }),
       setMatchMode: (matchMode) => set({ matchMode }),
+      setTemplatePreset: (templatePreset) => set({ templatePreset }),
+      setAutoTemplateEnabled: (autoTemplateEnabled) => set({ autoTemplateEnabled }),
       setMatchSegmentCounter: (n) =>
         set((state) => ({
           segmentCounter: typeof n === 'function' ? n(state.segmentCounter) : n,
@@ -259,6 +271,8 @@ export const useMatchStore = create<MatchPageState>()(
           subtitleEnabled: false,
           subtitleStyle: DEFAULT_SUBTITLE_STYLE,
           exportMode: 'zip',
+          templatePreset: 'ecommerce',
+          autoTemplateEnabled: false,
           segmentCounter: 0,
         }),
     }),
@@ -276,6 +290,8 @@ export const useMatchStore = create<MatchPageState>()(
         subtitleStyle: state.subtitleStyle,
         exportMode: state.exportMode,
         matchMode: state.matchMode,
+        templatePreset: state.templatePreset,
+        autoTemplateEnabled: state.autoTemplateEnabled,
         segmentCounter: state.segmentCounter,
         autoPrompt: state.autoPrompt,
         autoMode: state.autoMode,
@@ -301,6 +317,8 @@ export const useMatchStore = create<MatchPageState>()(
         const p = (persistedState || {}) as Partial<MatchPersistedSlice>
         const merged: Partial<MatchPersistedSlice> = {
           matchMode: 'manual',
+          templatePreset: 'ecommerce',
+          autoTemplateEnabled: false,
           segmentCounter: 0,
           autoPrompt: '',
           autoMode: 'auto',
@@ -315,6 +333,14 @@ export const useMatchStore = create<MatchPageState>()(
           ...p,
         }
         merged.matchMode = normalizeMatchWorkspaceMode(merged.matchMode)
+        if (
+          merged.templatePreset !== 'ecommerce' &&
+          merged.templatePreset !== 'marketing' &&
+          merged.templatePreset !== 'tech_review'
+        ) {
+          merged.templatePreset = 'ecommerce'
+        }
+        if (typeof merged.autoTemplateEnabled !== 'boolean') merged.autoTemplateEnabled = false
         if (typeof merged.segmentCounter !== 'number' || merged.segmentCounter < 0) merged.segmentCounter = 0
         if (!Array.isArray(merged.segments)) merged.segments = []
         if (typeof merged.globalQuery !== 'string') merged.globalQuery = ''
@@ -352,6 +378,14 @@ export const useMatchStore = create<MatchPageState>()(
             matchError: '',
           }))
           state.matchMode = normalizeMatchWorkspaceMode(state.matchMode)
+          if (
+            state.templatePreset !== 'ecommerce' &&
+            state.templatePreset !== 'marketing' &&
+            state.templatePreset !== 'tech_review'
+          ) {
+            state.templatePreset = 'ecommerce'
+          }
+          if (typeof state.autoTemplateEnabled !== 'boolean') state.autoTemplateEnabled = false
           if (typeof state.segmentCounter !== 'number' || state.segmentCounter < 0) state.segmentCounter = 0
           if (!Array.isArray(state.autoPlans)) state.autoPlans = []
           if (!state.autoRealizeDownloads || typeof state.autoRealizeDownloads !== 'object') {

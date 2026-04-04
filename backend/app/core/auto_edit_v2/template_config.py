@@ -37,11 +37,11 @@ TEMPLATES: Dict[TemplatePresetId, TemplateDefSpec] = {
         "pace": "fast",
         "tone": "energetic",
         "slots": [
-            {"name": "hook", "role": "hook", "description": "强情绪开场：抛观点/制造悬念/反差"},
-            {"name": "problem", "role": "context", "description": "指出问题：为什么会翻车/误解在哪里"},
-            {"name": "solution", "role": "highlight", "description": "解决方案：给出方法/话术框架/替代策略"},
-            {"name": "proof", "role": "highlight", "description": "证据与对照：前后效果/示例片段/反转"},
-            {"name": "cta", "role": "cta", "description": "收束并引导：关注/收藏/评论互动"},
+            {"name": "hook", "role": "hook", "description": "开场一句抓眼球的成品句（观点/悬念/反差），不要写「强情绪开场」等说明"},
+            {"name": "problem", "role": "context", "description": "点出问题的一句成品句（翻车点/误解），不要写「指出问题」等编导语"},
+            {"name": "solution", "role": "highlight", "description": "给出办法的一句成品句（可教一句话技巧），不要写「话术框架」类元描述"},
+            {"name": "proof", "role": "highlight", "description": "加强说服的一句成品句（对比/反转/例子），不要写「证据与对照」等标题"},
+            {"name": "cta", "role": "cta", "description": "结尾互动/转化的一句成品句（关注、私信、领福利的具体说法），禁止「收束并引导观众」类任务说明"},
         ],
     },
     "tech_review": {

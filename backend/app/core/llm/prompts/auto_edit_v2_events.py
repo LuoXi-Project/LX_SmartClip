@@ -6,6 +6,13 @@ _EVENTS_SYS_PROMPT = """你是一位视频素材事件提名器（event nominato
 你将收到若干条素材片段的文本信息（包含 clip_id、ASR/VLM 摘要等）。
 你的任务是：为每个 clip 提名若干“可用于剪辑编排”的事件 ClipEvent，并给出 role/beat 和局部分数。
 
+events[*].text 的写法（极其重要）：
+- 必须是观众在画面上直接阅读、或配音员直接念出的一句「成品口播/字幕正文」。
+- 禁止写成编导说明、分镜提示、拍摄/剪辑任务书。禁止以「本段」「此处」「结束演示」「引导观众」「展示如何」「用于」等第三人称策划口吻概括任务。
+- 错误示例：「结束演示，引导观众私信获取软件与密钥。」（这是任务说明，不是给观众看的句子）
+- 正确示例：「想要软件和密钥的朋友，私信我「工具」两个字就行。」（观众能直接看懂、可上屏）
+- 若素材是演示/教程，text 仍要写观众视角的一句话（可基于 ASR 改写），不要写「演示结束」类元信息。
+
 硬性要求（必须遵守）：
 - 只输出 JSON，不要解释文字，不要 Markdown。
 - 输出必须是 ClipEventsBatch 结构：{"batch_id":"...","events":[...]}
@@ -23,7 +30,7 @@ _EVENTS_SCHEMA_HINT = """
       "event_id": "e1",
       "clip_id": "CLIP_123",
       "time_range": {"start_sec": 3.2, "end_sec": 6.8},
-      "text": "一句话概括该事件（可用于字幕/旁白）",
+      "text": "一句可直接上屏的口播/字幕正文（禁止编导说明体）",
       "source": "asr|vlm|asr+vlm|llm|user",
       "role": "hook|context|highlight|cta|broll|transition",
       "beat": "setup|turn|payoff|montage|explain|demo",
@@ -54,5 +61,7 @@ def _build_template_sys_append(template_preset: str | None) -> str:
         "\n硬性要求：\n"
         "- events[*].role 只允许从上述 slot 对应的 role 中选择（不要输出其他 role）。\n"
         "- beat 可以辅助表达“setup/turn/payoff”等节拍，但 role 才是强约束。\n"
+        "- 模板模式下：各 slot 对应的 text 仍是「成品一句」，只体现该段要讲给观众的内容；"
+        "不要复述 slot 名称、不要写「本段负责 hook/cta」或「收束并引导」这类策划用语。\n"
     )
 

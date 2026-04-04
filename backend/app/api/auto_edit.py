@@ -129,6 +129,24 @@ def _compose_plan_summary(*, engine_summary: str, video_description: str | None)
     return f"{vd}\n{engine_summary}"
 
 
+def _http_exception_for_llm_upstream(exc: BaseException) -> HTTPException | None:
+    """
+    OpenAI 兼容客户端在上游返回 401/403/5xx 或网络异常时会抛出这些类型。
+    此类错误不应被新引擎的「V0 时间轴回退」吞掉，否则前端会误以为方案生成成功。
+    """
+    try:
+        from openai import APIConnectionError, APIStatusError, AuthenticationError
+    except ImportError:
+        return None
+    if isinstance(exc, AuthenticationError):
+        return HTTPException(status_code=502, detail=f"LLM 鉴权失败：{exc}")
+    if isinstance(exc, APIStatusError):
+        return HTTPException(status_code=502, detail=f"LLM 接口错误：{exc}")
+    if isinstance(exc, APIConnectionError):
+        return HTTPException(status_code=502, detail=f"LLM 网络异常：{exc}")
+    return None
+
+
 async def _call_llm_for_final_video_meta(
     *,
     cfg: dict,
@@ -308,7 +326,13 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                     )
                 )
             return AutoEditPlanResponse(plans=plans)
-        except Exception:
+        except HTTPException:
+            raise
+        except Exception as e:
+            he = _http_exception_for_llm_upstream(e)
+            if he is not None:
+                raise he
+            logger.warning("auto_edit 新引擎 V1 失败，回退 V0 规则时间轴: %s", e)
             timelines = build_v0_timelines_from_context(
                 context=context,
                 dsl=dsl,
@@ -564,7 +588,20 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                             )
                         )
                     plan_res = AutoEditPlanResponse(plans=plans)
-                except Exception:
+                except HTTPException as e:
+                    msg = e.detail if isinstance(e.detail, str) else "生成方案失败"
+                    yield _build_sse_event("failed", {"message": msg})
+                    return
+                except Exception as e:
+                    he = _http_exception_for_llm_upstream(e)
+                    if he is not None:
+                        d = he.detail
+                        yield _build_sse_event(
+                            "failed",
+                            {"message": d if isinstance(d, str) else "LLM 调用失败"},
+                        )
+                        return
+                    logger.warning("auto_edit SSE 新引擎 V1 失败，回退 V0 规则时间轴: %s", e)
                     timelines = build_v0_timelines_from_context(
                         context=context,
                         dsl=dsl,

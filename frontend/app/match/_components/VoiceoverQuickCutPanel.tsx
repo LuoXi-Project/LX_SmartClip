@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Clapperboard, MessageSquare, Mic2, Scissors, Sparkles, Video } from 'lucide-react'
+import { MessageSquare, Mic2, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
 
 export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic'
@@ -29,7 +29,7 @@ const STRATEGY_OPTIONS = [
 ]
 
 /**
- * v3 口播快剪：不经过「文案匹配」。流程为选视频 → 选模式 → 生成剪辑方案 → 微调时间轴 → 成片导出（导出侧与自动/模板一致，走方案 realize）。
+ * v3 口播快剪：不经过「文案匹配」。流程为选视频 → 选模式 → 生成剪辑方案；时间轴微调与成片导出在下方 AutoEditPanel（与自动/模板一致）。
  */
 export function VoiceoverQuickCutPanel({
   selectedVideoIds,
@@ -168,19 +168,6 @@ export function VoiceoverQuickCutPanel({
             {info}
           </div>
         )}
-      </section>
-
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/35 p-5 space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-          <Clapperboard className="w-4 h-4 text-slate-500" />
-          方案微调
-        </p>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          后端返回剪辑计划后，将在此展示片段时间轴（与「自动一键成片」方案详情类似的顺序与起止时间编辑），确认后使用右侧说明的成片导出流程。
-        </p>
-        <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 px-4 py-10 text-center text-xs text-slate-600">
-          暂无方案 · 点击「生成快剪方案」后在此展示可编辑时间轴
-        </div>
       </section>
     </div>
   )

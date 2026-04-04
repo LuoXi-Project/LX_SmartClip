@@ -11,6 +11,7 @@ from json_repair import repair_json
 
 from app.core.llm import LLMClient
 from app.core.llm.prompts.subtitle_timeline import _LLM_SYS_PROMPT
+from app.utils.ffprobe_utils import probe_duration
 
 if TYPE_CHECKING:
     pass
@@ -36,10 +37,24 @@ def audio_duration(path: str) -> float:
 # 时长解析
 # ---------------------------------------------------------------------------
 
+def _tts_file_duration(path: str) -> float:
+    """与 burn_to_mp4 一致：优先 ffprobe，失败再 MoviePy。"""
+    d = probe_duration(path, log_on_failure=True)
+    if d > 0:
+        return d
+    d = audio_duration(path)
+    if d > 0:
+        logger.warning("字幕时长[TTS] ffprobe 无效，回退 MoviePy: %s=%.3f秒", path, d)
+    return d
+
+
 def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tts: bool):
     """
-    按优先级确定每个片段时长。
-    优先使用 TTS 音频时长，回退至 clip 时长。
+    按优先级确定每个片段时长（须与 `burn_to_mp4` 实际输出的段落时长一致）。
+
+    - 有 TTS 时：用 ffprobe 测长（与烧录相同），不用 MoviePy 单独值，避免与成片差几百毫秒。
+    - 同时存在 `duration_sec` 与 TTS 时：取 min(TTS, manual)，与烧录里 `-t`/截断逻辑一致。
+    - 无 TTS：manual 或 clip 时长。
     返回 (durations: list[float], source: str)
     """
     durs = []
@@ -50,18 +65,29 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
             manual_v = float(manual) if manual is not None else None
         except Exception:
             manual_v = None
-        if manual_v is not None and manual_v > 0:
-            durs.append(manual_v)
-            srcs.append("manual")
-            continue
-        if use_tts and seg.tts_filename:
+        if manual_v is not None and manual_v <= 0:
+            manual_v = None
+
+        tts_d = None
+        if use_tts and getattr(seg, "tts_filename", None):
             p = os.path.join(tts_audio_dir, os.path.basename(seg.tts_filename))
-            d = audio_duration(p)
-            if d > 0:
-                durs.append(d)
-                srcs.append("tts")
-                logger.info("字幕时长[TTS] %s=%.3f秒", seg.tts_filename, d)
-                continue
+            tts_d = _tts_file_duration(p)
+
+        if manual_v is not None:
+            if tts_d is not None and tts_d > 0:
+                durs.append(min(tts_d, manual_v))
+                srcs.append("tts_manual_min")
+            else:
+                durs.append(manual_v)
+                srcs.append("manual")
+            continue
+
+        if tts_d is not None and tts_d > 0:
+            durs.append(tts_d)
+            srcs.append("tts")
+            logger.info("字幕时长[TTS] %s=%.3f秒", seg.tts_filename, tts_d)
+            continue
+
         durs.append(clip_durations.get(seg.clip_id, 5.0))
         srcs.append("clip")
     source = srcs[0] if len(set(srcs)) == 1 else "mixed"
@@ -74,22 +100,29 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
 
 def rule_timeline(segments, durations: list[float], max_chars: int = 20) -> list:
     """
-    基于规则将文案按字数均匀拆分到时间轴中。
+    基于规则将文案拆分到时间轴：优先整句/换行，过长再在句内标点处断行，无标点则按字数强切；时长按条数均分。
     返回 [{clip_id, start, end, text}, ...]
     """
     entries = []
     t = 0.0
+    mc = int(max_chars or 0)
     for seg, dur in zip(segments, durations):
         text = seg.copy_text.strip()
         if not text:
             t += dur
             continue
-        chunks = [text[i: i + max_chars] for i in range(0, len(text), max_chars)]
-        cd = dur / len(chunks)
+        units = split_text_units_by_sentence_and_newline(text)
+        chunks = _expand_units_with_char_limit(units, mc) if mc > 0 else [u.strip() for u in units if u.strip()]
+        if not chunks:
+            t += dur
+            continue
+        nchunk = len(chunks)
+        cd = dur / nchunk
         ss = t
         for ci, chunk in enumerate(chunks):
             cs = ss + ci * cd
-            ce = min(cs + max(cd - 0.05, 0.3), ss + dur - 0.05)
+            # 与 rule_timeline_equal_units 一致：条与条首尾相接，铺满整段 TTS/段落时长（避免旧逻辑每条缩短 0.05s 造成与配音脱节）
+            ce = ss + dur if ci == nchunk - 1 else ss + (ci + 1) * cd
             entries.append(
                 {"clip_id": seg.clip_id, "start": round(cs, 3), "end": round(ce, 3), "text": chunk}
             )
@@ -149,11 +182,89 @@ def split_text_units_by_sentence_and_newline(text: str) -> list[str]:
     return [u for u in units if u]
 
 
+# 句内可读断点：逗号、顿号、分号、冒号等（句末。！？已在上面拆过）
+_INTRA_CLAUSE_BREAK_CHARS = frozenset("，、；;：")
+
+
+def _is_dot_clause_break(s: str, i: int) -> bool:
+    """英文句点作断点，但排除小数点。"""
+    if s[i] != ".":
+        return False
+    if i > 0 and i + 1 < len(s) and s[i - 1].isdigit() and s[i + 1].isdigit():
+        return False
+    return True
+
+
+def split_long_text_at_punctuation(text: str, max_chars: int) -> list[str]:
+    """
+    在单条字幕字数上限内切分：优先在句内标点处断行，其次英文单词边界（空格），最后强切。
+
+    与「先整句、再短句、再无标点硬切」配合使用：调用方应先按句子/换行拆好，再对本函数处理超长片段。
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    mc = int(max_chars or 0)
+    if mc <= 0 or len(text) <= mc:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+
+    while remaining:
+        if len(remaining) <= mc:
+            chunks.append(remaining.strip())
+            break
+
+        window = remaining[:mc]
+        cut = -1
+
+        for i in range(len(window) - 1, -1, -1):
+            ch = window[i]
+            if ch in _INTRA_CLAUSE_BREAK_CHARS or ch in ",!?！？…":
+                cut = i + 1
+                break
+            if _is_dot_clause_break(remaining, i):
+                cut = i + 1
+                break
+
+        if cut <= 0:
+            sp = window.rfind(" ")
+            if sp >= max(mc // 3, 1):
+                cut = sp + 1
+
+        if cut <= 0:
+            cut = mc
+
+        piece = remaining[:cut]
+        remaining = remaining[cut:].lstrip()
+        piece = piece.rstrip()
+        if piece:
+            chunks.append(piece)
+        elif not remaining:
+            break
+
+    return [c for c in chunks if c]
+
+
+def _expand_units_with_char_limit(units: list[str], max_chars: int) -> list[str]:
+    """句子级单位 → 按字数上限再拆（标点优先、最后强切）。"""
+    if not units or max_chars <= 0:
+        return [u.strip() for u in units if (u or "").strip()]
+    out: list[str] = []
+    for u in units:
+        u = (u or "").strip()
+        if not u:
+            continue
+        out.extend(split_long_text_at_punctuation(u, max_chars))
+    return out
+
+
 def rule_timeline_equal_units(segments, durations: list[float], max_chars: int = 20) -> list[dict]:
     """
     将每段文本切分为多个“单位”，并把该段的总时长平均分配到各单位。
 
-    `max_chars` 用于对单位内容再做二次拆分，确保每条字幕文本尽量不超过该字符数。
+    先按换行与句末标点拆句，再在超长句上按句内标点优先、最后强切以满足 `max_chars`。
     返回格式：[{start, end, text}, ...]
     """
     entries: list[dict] = []
@@ -167,17 +278,9 @@ def rule_timeline_equal_units(segments, durations: list[float], max_chars: int =
 
         units = split_text_units_by_sentence_and_newline(getattr(seg, "copy_text", "") or "")
         if max_chars > 0 and units:
-            # 在“句子/换行单位”基础上按字符数继续拆分，保证字幕条数随长度约束增加。
-            expanded_units: list[str] = []
-            for u in units:
-                u = (u or "").strip()
-                if not u:
-                    continue
-                if len(u) <= max_chars:
-                    expanded_units.append(u)
-                else:
-                    expanded_units.extend([u[i : i + max_chars] for i in range(0, len(u), max_chars)])
-            units = expanded_units
+            units = _expand_units_with_char_limit(units, max_chars)
+        elif units:
+            units = [u.strip() for u in units if (u or "").strip()]
         n = len(units)
         if n == 0:
             t += dur

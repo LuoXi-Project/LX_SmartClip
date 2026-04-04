@@ -56,6 +56,18 @@ TEMPLATES: Dict[TemplatePresetId, TemplateDefSpec] = {
             {"name": "cta", "role": "cta", "description": "结论号召：建议入手/等待/关注后续"},
         ],
     },
+    "knowledge": {
+        "label": "知识科普",
+        "pace": "medium",
+        "tone": "neutral",
+        "slots": [
+            {"name": "hook", "role": "hook", "description": "强开头：结论先行/反常识/痛点，把观众留在前 3 秒"},
+            {"name": "problem", "role": "context", "description": "为什么要听：背景、常见误区、这件事和观众的关系"},
+            {"name": "solution", "role": "highlight", "description": "讲清楚核心：原理、步骤、关键概念或操作要点"},
+            {"name": "proof", "role": "highlight", "description": "加深信服：案例、数据、小实验、前后对比或示意图"},
+            {"name": "cta", "role": "cta", "description": "收尾号召：一句话总结、关注收藏、下期预告或延伸阅读"},
+        ],
+    },
 }
 
 
@@ -70,6 +82,9 @@ def normalize_template_preset(preset: Optional[str]) -> TemplatePresetId | None:
     if not preset or not isinstance(preset, str):
         return None
     s = preset.strip()
+    # 旧 id 兼容（曾用 piece_production）
+    if s == "piece_production":
+        s = "knowledge"
     if s in TEMPLATES:
         return s
     return None

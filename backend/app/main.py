@@ -20,6 +20,7 @@ from app.api.vlm import router as vlm_router
 from app.api.embed import router as embed_router
 from app.api.process import router as process_router
 from app.api.match import router as match_router
+from app.api.search import router as search_router
 from app.api.tts import router as tts_router
 from app.api.export import router as export_router
 from app.api.chat import router as chat_router
@@ -68,6 +69,7 @@ app.include_router(vlm_router)
 app.include_router(embed_router)
 app.include_router(process_router)
 app.include_router(match_router)
+app.include_router(search_router)
 app.include_router(tts_router)
 app.include_router(export_router)
 app.include_router(chat_router)

@@ -1,16 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Film, Search, Sparkles, Loader2, Filter } from 'lucide-react'
+import { Film, Search, Sparkles, Loader2, Filter, Play } from 'lucide-react'
 import { searchApi, type SemanticSearchAssetResult, type SemanticSearchSegment, videosApi, type Video } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 
 type ViewMode = 'asset' | 'segment'
+type PlayMode = 'video' | 'clip'
 
 export default function AssetSearchPage() {
   const [query, setQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('asset')
+  const [playMode, setPlayMode] = useState<PlayMode>('video')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [results, setResults] = useState<SemanticSearchAssetResult[]>([])
@@ -18,21 +20,39 @@ export default function AssetSearchPage() {
   const [selectedSegment, setSelectedSegment] = useState<SemanticSearchSegment | null>(null)
   const [highlightOnly, setHighlightOnly] = useState(false)
   const [videos, setVideos] = useState<Video[]>([])
+  const [scopeVideoId, setScopeVideoId] = useState<string>('') // 单素材范围检索
+
+  const videoRef = useRef<HTMLVideoElement | null>(null)
 
   const selectedAsset = useMemo(
     () => results.find((r) => r.asset_id === selectedAssetId) ?? results[0] ?? null,
     [results, selectedAssetId],
   )
 
+  const selectedVideoMeta = useMemo(
+    () => videos.find((v) => v.id === (scopeVideoId || selectedAsset?.asset_id || '')) ?? null,
+    [videos, scopeVideoId, selectedAsset?.asset_id],
+  )
+
+  const durationSec = useMemo(() => {
+    const d = selectedAsset?.duration
+    if (typeof d === 'number' && Number.isFinite(d) && d > 0) return d
+    const maxEnd = Math.max(
+      0,
+      ...(selectedAsset?.segments?.map((s) => Number(s.end_time) || 0) ?? [0]),
+    )
+    return maxEnd > 0 ? maxEnd : (selectedVideoMeta?.duration ?? 0) || 0
+  }, [selectedAsset?.duration, selectedAsset?.segments, selectedVideoMeta?.duration])
+
   const playerSrc = useMemo(() => {
-    if (selectedSegment) {
+    if (selectedSegment && playMode === 'clip') {
       return clipStreamUrl(selectedSegment.clip_id)
     }
     if (selectedAsset) {
       return videoStreamUrl(selectedAsset.asset_id)
     }
     return ''
-  }, [selectedAsset, selectedSegment])
+  }, [selectedAsset, selectedSegment, playMode])
 
   // 预取视频元信息（供筛选/展示）
   useEffect(() => {
@@ -52,11 +72,15 @@ export default function AssetSearchPage() {
         const res = await searchApi.semanticSearch({
           query: text,
           highlight_only: highlightOnly,
+          filters: scopeVideoId ? { video_ids: [scopeVideoId] } : undefined,
         })
         setResults(res.results || [])
         if (res.results?.length) {
-          setSelectedAssetId(res.results[0].asset_id)
-          setSelectedSegment(res.results[0].segments[0] ?? null)
+          const firstAsset = scopeVideoId
+            ? res.results.find((r) => r.asset_id === scopeVideoId) ?? res.results[0]
+            : res.results[0]
+          setSelectedAssetId(firstAsset.asset_id)
+          setSelectedSegment(firstAsset.segments[0] ?? null)
         } else {
           setSelectedAssetId('')
           setSelectedSegment(null)
@@ -70,12 +94,32 @@ export default function AssetSearchPage() {
         setLoading(false)
       }
     },
-    [query, highlightOnly],
+    [query, highlightOnly, scopeVideoId],
   )
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     void runSearch()
+  }
+
+  const seekVideoTo = (t: number) => {
+    const el = videoRef.current
+    if (!el) return
+    try {
+      el.currentTime = Math.max(0, t || 0)
+      void el.play().catch(() => {})
+    } catch {
+      // ignore
+    }
+  }
+
+  const handlePickSegment = (assetId: string, seg: SemanticSearchSegment) => {
+    setSelectedAssetId(assetId)
+    setSelectedSegment(seg)
+    if (playMode === 'video') {
+      // 等待 video src 更新后再 seek
+      setTimeout(() => seekVideoTo(seg.start_time), 0)
+    }
   }
 
   const assetCount = results.length
@@ -132,6 +176,28 @@ export default function AssetSearchPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+            <div className="inline-flex items-center gap-2">
+              <span className="text-slate-500">范围</span>
+              <select
+                value={scopeVideoId}
+                onChange={(e) => setScopeVideoId(e.target.value)}
+                className="px-2 py-1 rounded-lg bg-slate-900/60 border border-slate-700 text-[11px] text-slate-200 outline-none focus:border-indigo-500"
+                title="限定在单素材内检索"
+              >
+                <option value="">全部素材</option>
+                {videos
+                  .filter((v) => v.status === 'done')
+                  .map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+              </select>
+              {scopeVideoId ? (
+                <span className="text-[10px] text-slate-500">（单素材检索）</span>
+              ) : null}
+            </div>
+
             <div className="inline-flex items-center gap-1 rounded-full bg-slate-900/80 border border-slate-700 px-1 py-1">
               <button
                 type="button"
@@ -154,6 +220,33 @@ export default function AssetSearchPage() {
                 }`}
               >
                 扁平片段视图
+              </button>
+            </div>
+
+            <div className="inline-flex items-center gap-1 rounded-full bg-slate-900/80 border border-slate-700 px-1 py-1">
+              <button
+                type="button"
+                onClick={() => setPlayMode('video')}
+                className={`px-2.5 py-0.5 rounded-full ${
+                  playMode === 'video'
+                    ? 'bg-slate-200 text-slate-900'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="在原片中跳转到时间点（支持时间轴着色）"
+              >
+                原片跳转
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlayMode('clip')}
+                className={`px-2.5 py-0.5 rounded-full ${
+                  playMode === 'clip'
+                    ? 'bg-slate-200 text-slate-900'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="直接播放命中片段切片"
+              >
+                片段播放
               </button>
             </div>
 
@@ -211,6 +304,9 @@ export default function AssetSearchPage() {
                       onClick={() => {
                         setSelectedAssetId(asset.asset_id)
                         setSelectedSegment(asset.segments[0] ?? null)
+                        if (playMode === 'video' && asset.segments[0]) {
+                          setTimeout(() => seekVideoTo(asset.segments[0].start_time), 0)
+                        }
                       }}
                     >
                       <div className="flex items-center gap-3">
@@ -234,8 +330,7 @@ export default function AssetSearchPage() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setSelectedAssetId(asset.asset_id)
-                              setSelectedSegment(seg)
+                              handlePickSegment(asset.asset_id, seg)
                             }}
                             className={`w-full text-left px-2 py-1.5 rounded-lg border text-[11px] transition-colors ${
                               selectedSegment?.clip_id === seg.clip_id
@@ -282,8 +377,7 @@ export default function AssetSearchPage() {
                       key={seg.clip_id}
                       type="button"
                       onClick={() => {
-                        setSelectedAssetId(asset.asset_id)
-                        setSelectedSegment(seg)
+                        handlePickSegment(asset.asset_id, seg)
                       }}
                       className={`w-full px-4 py-3 text-left text-[11px] transition-colors ${
                         selectedSegment?.clip_id === seg.clip_id
@@ -337,6 +431,7 @@ export default function AssetSearchPage() {
                 {playerSrc ? (
                   <video
                     key={playerSrc}
+                    ref={playMode === 'video' ? videoRef : undefined}
                     src={playerSrc}
                     controls
                     autoPlay
@@ -348,6 +443,50 @@ export default function AssetSearchPage() {
                   </div>
                 )}
               </div>
+
+              {/* Timeline coloring (仅原片跳转模式) */}
+              {playMode === 'video' && selectedAsset && durationSec > 0 && (
+                <div className="border-t border-slate-800 px-4 py-3 space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>时间轴（命中片段/高光着色，可点击跳转）</span>
+                    <span>总时长 {fmt(durationSec)}</span>
+                  </div>
+                  <div className="relative h-3 rounded-full bg-slate-800/70 overflow-hidden ring-1 ring-slate-700/60">
+                    {/* match segments */}
+                    {selectedAsset.segments.map((seg) => {
+                      const left = Math.max(0, Math.min(1, (seg.start_time || 0) / durationSec))
+                      const right = Math.max(0, Math.min(1, (seg.end_time || 0) / durationSec))
+                      const w = Math.max(0.002, right - left)
+                      const color = seg.is_highlight ? 'bg-amber-400/80' : 'bg-cyan-400/70'
+                      return (
+                        <button
+                          key={seg.clip_id}
+                          type="button"
+                          title={`${fmt(seg.start_time)} ~ ${fmt(seg.end_time)} · ${seg.is_highlight ? '高光' : '命中'}`}
+                          onClick={() => handlePickSegment(selectedAsset.asset_id, seg)}
+                          className={`absolute top-0 h-full ${color} hover:brightness-110 transition-all`}
+                          style={{
+                            left: `${left * 100}%`,
+                            width: `${w * 100}%`,
+                          }}
+                        />
+                      )
+                    })}
+                  </div>
+                  {selectedSegment && (
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <Play className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>
+                        当前：{fmt(selectedSegment.start_time)} ~ {fmt(selectedSegment.end_time)}
+                      </span>
+                      <span className="text-slate-600">
+                        · {selectedSegment.is_highlight ? '高光' : '命中'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {selectedSegment && (
                 <div className="border-t border-slate-800 px-4 py-3 space-y-1.5 text-[11px] text-slate-300">
                   <div className="flex items-center gap-2">

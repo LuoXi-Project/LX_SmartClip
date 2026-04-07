@@ -1,6 +1,7 @@
 import os
 import uuid
 import shutil
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -10,6 +11,8 @@ from app.models.videos import ImportVideoByUrlPayload, RenamePayload
 from app.db.database import get_db_conn
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
@@ -119,6 +122,7 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
         )
     except YtDlpDownloadError as exc:
         detail = str(exc)
+        logger.error(f"下载视频失败: {detail}")
         status = 501 if "未检测到 yt-dlp" in detail else 502
         raise HTTPException(status_code=status, detail=detail) from exc
 
@@ -237,12 +241,14 @@ async def get_thumbnail(video_id: str):
         )
         row = await cursor.fetchone()
         if row is None:
+            logger.error(f"视频封面图不存在: {video_id}")
             raise HTTPException(status_code=404, detail="视频不存在")
         thumb_path = row["thumbnail_path"]
     finally:
         await db.close()
 
     if not thumb_path or not os.path.exists(thumb_path):
+        logger.error(f"视频封面图不存在: {video_id}")
         raise HTTPException(status_code=404, detail="封面图不存在")
 
     return FileResponse(thumb_path, media_type="image/jpeg")
@@ -257,12 +263,14 @@ async def stream_video(video_id: str):
         )
         row = await cursor.fetchone()
         if row is None:
+            logger.error(f"视频文件不存在: {video_id}")
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
         file_path = row["file_path"]
     finally:
         await db.close()
 
     if not file_path or not os.path.exists(file_path):
+        logger.error(f"视频文件不存在: {video_id}")
         raise HTTPException(status_code=404, detail="视频文件不存在")
 
     ext = os.path.splitext(file_path)[1].lower()
@@ -284,6 +292,7 @@ async def stream_video(video_id: str):
 async def rename_video(video_id: str, payload: RenamePayload):
     name = payload.name.strip()
     if not name:
+        logger.error(f"视频名称不能为空: {video_id}")
         raise HTTPException(status_code=400, detail="名称不能为空")
 
     db = await get_db_conn()
@@ -293,6 +302,7 @@ async def rename_video(video_id: str, payload: RenamePayload):
         )
         row = await cursor.fetchone()
         if row is None:
+            logger.error(f"视频不存在: {video_id}")
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
         await db.execute(
@@ -314,6 +324,7 @@ async def delete_video(video_id: str):
         )
         row = await cursor.fetchone()
         if row is None:
+            logger.error(f"视频不存在: {video_id}")
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
         file_path = row["file_path"]

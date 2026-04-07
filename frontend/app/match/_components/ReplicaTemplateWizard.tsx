@@ -16,7 +16,6 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
   const [skipVlm, setSkipVlm] = useState(true)
   const [maxClips, setMaxClips] = useState(80)
 
-  const [videoId, setVideoId] = useState<string | null>(null)
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [draftJson, setDraftJson] = useState<any>(null)
   const [guideDraft, setGuideDraft] = useState<string>('')
@@ -39,7 +38,6 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
     setError('')
     setProcessLogs([])
     setConfirmed(false)
-    setVideoId(null)
     setTemplateId(null)
     setDraftJson(null)
     setGuideDraft('')
@@ -52,8 +50,6 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
         title: title.trim() || undefined,
         download_mode: 'best',
       })
-      setVideoId(ingestRes.video_id)
-
       // 进入处理：只保留 asr（跳过抽帧、VLM、embedding）
       setLoadingPhase('processing')
       const skipSteps = ['extract_frames', 'vlm', 'embed']
@@ -261,7 +257,6 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
                     setTemplateId(null)
                     setDraftJson(null)
                     setGuideDraft('')
-                    setVideoId(null)
                     setProcessLogs([])
                     setError('')
                   }}

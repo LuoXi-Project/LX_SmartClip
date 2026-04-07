@@ -374,7 +374,7 @@ export const replicaApi = {
   generateTemplate: (videoId: string, payload?: { skip_vlm?: boolean; max_clips?: number }) =>
     apiClient.post<unknown, ReplicaTemplateDraftResponse>(`/api/replica/${videoId}/generate-template`, payload ?? {}),
 
-  confirmTemplate: (templateId: string, payload: { template_guide: string; template_json?: any }) =>
+  confirmTemplate: (templateId: string, payload: { name?: string; template_guide: string; template_json?: any }) =>
     apiClient.post<unknown, ReplicaTemplateConfirmedResponse>(`/api/replica/template/${templateId}/confirm`, payload),
 
   getTemplate: (templateId: string) =>

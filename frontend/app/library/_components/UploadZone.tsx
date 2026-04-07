@@ -7,12 +7,20 @@ interface UploadZoneProps {
   importingUrl: boolean
   importUrl: string
   importTitle: string
+  importPreset: 'quality' | 'balanced' | 'data_saver' | 'custom'
+  importResolution: 'best' | '1080p' | '720p' | '480p' | '360p'
+  importFpsLimit: '' | '24' | '30' | '60'
+  importPreferMp4: boolean
   dragActive: boolean
   onDrag: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
   onFileSelect: (files: FileList) => void
   onImportUrlChange: (value: string) => void
   onImportTitleChange: (value: string) => void
+  onImportPresetChange: (value: 'quality' | 'balanced' | 'data_saver' | 'custom') => void
+  onImportResolutionChange: (value: 'best' | '1080p' | '720p' | '480p' | '360p') => void
+  onImportFpsLimitChange: (value: '' | '24' | '30' | '60') => void
+  onImportPreferMp4Change: (value: boolean) => void
   onImportByUrl: () => void
 }
 
@@ -21,12 +29,20 @@ export function UploadZone({
   importingUrl,
   importUrl,
   importTitle,
+  importPreset,
+  importResolution,
+  importFpsLimit,
+  importPreferMp4,
   dragActive,
   onDrag,
   onDrop,
   onFileSelect,
   onImportUrlChange,
   onImportTitleChange,
+  onImportPresetChange,
+  onImportResolutionChange,
+  onImportFpsLimitChange,
+  onImportPreferMp4Change,
   onImportByUrl,
 }: UploadZoneProps) {
   return (
@@ -121,6 +137,52 @@ export function UploadZone({
               disabled={importingUrl}
               className="h-10 rounded-lg bg-slate-900/80 border border-slate-700 px-3 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-cyan-500/50"
             />
+          </div>
+          <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+            <select
+              value={importPreset}
+              onChange={(e) => onImportPresetChange(e.target.value as 'quality' | 'balanced' | 'data_saver' | 'custom')}
+              disabled={importingUrl}
+              className="h-10 rounded-lg bg-slate-900/80 border border-slate-700 px-3 text-sm text-slate-100 outline-none focus:ring-2 focus:ring-cyan-500/50"
+            >
+              <option value="quality">预设：高清优先</option>
+              <option value="balanced">预设：均衡推荐</option>
+              <option value="data_saver">预设：流畅优先</option>
+              <option value="custom">预设：自定义</option>
+            </select>
+            <select
+              value={importResolution}
+              onChange={(e) => onImportResolutionChange(e.target.value as 'best' | '1080p' | '720p' | '480p' | '360p')}
+              disabled={importingUrl}
+              className="h-10 rounded-lg bg-slate-900/80 border border-slate-700 px-3 text-sm text-slate-100 outline-none focus:ring-2 focus:ring-cyan-500/50"
+            >
+              <option value="best">分辨率：最佳</option>
+              <option value="1080p">分辨率：1080p</option>
+              <option value="720p">分辨率：720p</option>
+              <option value="480p">分辨率：480p</option>
+              <option value="360p">分辨率：360p</option>
+            </select>
+            <select
+              value={importFpsLimit}
+              onChange={(e) => onImportFpsLimitChange(e.target.value as '' | '24' | '30' | '60')}
+              disabled={importingUrl}
+              className="h-10 rounded-lg bg-slate-900/80 border border-slate-700 px-3 text-sm text-slate-100 outline-none focus:ring-2 focus:ring-cyan-500/50"
+            >
+              <option value="">FPS：不限制</option>
+              <option value="24">FPS：≤ 24</option>
+              <option value="30">FPS：≤ 30</option>
+              <option value="60">FPS：≤ 60</option>
+            </select>
+            <label className="h-10 rounded-lg bg-slate-900/80 border border-slate-700 px-3 text-sm text-slate-100 inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={importPreferMp4}
+                onChange={(e) => onImportPreferMp4Change(e.target.checked)}
+                disabled={importingUrl}
+                className="accent-cyan-500"
+              />
+              优先 MP4
+            </label>
           </div>
           <button
             type="button"

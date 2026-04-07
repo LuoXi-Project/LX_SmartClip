@@ -8,10 +8,10 @@ import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
 const STEPS = [
   { key: 'split',          label: '视频切分',       desc: '按镜头或固定时长切分视频' },
-  { key: 'extract_frames', label: '图帧提取',       desc: '从每个片段等间隔抽帧' },
-  { key: 'asr',            label: '语音识别',       desc: '使用 Whisper 转写台词文本' },
-  { key: 'vlm',            label: '视觉描述 (VLM)', desc: '使用多模态模型生成画面描述' },
-  { key: 'embed',          label: '向量入库',       desc: '生成向量嵌入并存入数据库' },
+  { key: 'extract_frames', label: '图帧提取',       desc: '抽帧后立即进入后续视觉分析' },
+  { key: 'asr',            label: '语音识别',       desc: '与抽帧并行转写台词文本' },
+  { key: 'vlm',            label: '视觉描述 (VLM)', desc: '按片段流水线生成画面描述' },
+  { key: 'embed',          label: '向量入库',       desc: '描述产出后立即向量化入库' },
 ] as const
 
 type StepKey = (typeof STEPS)[number]['key']

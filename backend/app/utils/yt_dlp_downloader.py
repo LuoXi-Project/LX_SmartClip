@@ -38,12 +38,42 @@ def _pick_downloaded_file(output_dir: str, file_stem: str) -> str:
     return max(candidates, key=lambda p: os.path.getsize(p))
 
 
+def _build_format_selector(
+    *,
+    resolution: str = "best",
+    fps_limit: int | None = None,
+    prefer_mp4: bool = True,
+) -> str:
+    max_height_map = {
+        "360p": 360,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+    }
+    max_height = max_height_map.get(resolution)
+    height_filter = f"[height<={max_height}]" if max_height else ""
+    fps_filter = f"[fps<={fps_limit}]" if fps_limit else ""
+    vf = f"{height_filter}{fps_filter}"
+
+    if prefer_mp4:
+        return (
+            f"bestvideo{vf}[ext=mp4]+bestaudio[ext=m4a]/"
+            f"bestvideo{vf}+bestaudio/"
+            f"best{vf}"
+        )
+
+    return f"bestvideo{vf}+bestaudio/best{vf}"
+
+
 def download_video_with_yt_dlp(
     *,
     url: str,
     output_dir: str,
     file_stem: str,
     timeout_sec: int = 60 * 20,
+    resolution: str = "best",
+    fps_limit: int | None = None,
+    prefer_mp4: bool = True,
 ) -> str:
     """
     用 yt-dlp 下载视频到 output_dir，并返回最终文件路径。
@@ -60,7 +90,11 @@ def download_video_with_yt_dlp(
         raise YtDlpDownloadError(f"导入 yt_dlp 失败：{exc}") from exc
 
     ydl_opts = {
-        "format": "bestvideo+bestaudio/best",
+        "format": _build_format_selector(
+            resolution=resolution,
+            fps_limit=fps_limit,
+            prefer_mp4=prefer_mp4,
+        ),
         "merge_output_format": "mp4",
         "noplaylist": True,
         "retries": 3,

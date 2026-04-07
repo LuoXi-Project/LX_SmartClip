@@ -119,6 +119,9 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
             url=payload.url.strip(),
             output_dir=STORAGE_DIR,
             file_stem=video_id,
+            resolution=payload.resolution,
+            fps_limit=payload.fps_limit,
+            prefer_mp4=payload.prefer_mp4,
         )
     except YtDlpDownloadError as exc:
         detail = str(exc)

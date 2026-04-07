@@ -46,6 +46,7 @@ const PARAM_HINTS: Record<string, string> = {
   scene_min_scene_len: '「镜头检测」与「混合模式」：抑制过碎切分；单位为帧（越大越不容易切碎）',
   hybrid_max_segment_sec: '仅在「混合模式」下生效：单镜头超过该秒数时，按「固定分割时长」强制切段',
   frame_fps:           '每秒从片段中抽取的帧数，用于 VLM 画面描述',
+  frame_concurrency:   '抽帧阶段并行处理的片段数量；值越大吞吐越高，但会增加 CPU/磁盘压力',
   frame_target_pixels: '抽帧时将图像长边压制到此像素（如 512），0 表示不压制。配合 VLM 可显著降低 token 消耗',
   asr_model:           'Whisper 语音识别模型规格，越大精度越高但越慢',
   clip_container: '切分输出片段的容器格式（影响后缀与兼容性；常用 mp4）',
@@ -95,7 +96,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
 
   const FIXED_KEYS = ['fixed_duration']
   const SCENE_HYBRID_ADV_KEYS = ['scene_threshold', 'scene_min_scene_len', 'hybrid_max_segment_sec']
-  const FRAME_KEYS = ['frame_fps', 'frame_target_pixels']
+  const FRAME_KEYS = ['frame_fps', 'frame_concurrency', 'frame_target_pixels']
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
 

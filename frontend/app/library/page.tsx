@@ -13,6 +13,8 @@ import { SearchBar, type SortKey, type StatusFilter } from './_components/Search
 import { Pagination } from './_components/Pagination'
 import { PreviewModal } from './_components/PreviewModal'
 
+type DownloadPreset = 'quality' | 'balanced' | 'data_saver' | 'custom'
+
 export default function LibraryPage() {
   const { addVideo, removeVideo } = useAppStore()
   const confirm = useConfirm()
@@ -29,6 +31,10 @@ export default function LibraryPage() {
   const [importingUrl, setImportingUrl] = useState(false)
   const [importUrl, setImportUrl] = useState('')
   const [importTitle, setImportTitle] = useState('')
+  const [importPreset, setImportPreset] = useState<DownloadPreset>('balanced')
+  const [importResolution, setImportResolution] = useState<'best' | '1080p' | '720p' | '480p' | '360p'>('best')
+  const [importFpsLimit, setImportFpsLimit] = useState<'' | '24' | '30' | '60'>('')
+  const [importPreferMp4, setImportPreferMp4] = useState(true)
   const [dragActive, setDragActive] = useState(false)
 
   // Preview state
@@ -119,6 +125,9 @@ export default function LibraryPage() {
       const video = await videosApi.importByUrl({
         url,
         title: importTitle.trim() || undefined,
+        resolution: importResolution,
+        fps_limit: importFpsLimit ? Number(importFpsLimit) : undefined,
+        prefer_mp4: importPreferMp4,
       })
       addVideo(video)
       toast.success('已开始下载并导入素材')
@@ -137,6 +146,27 @@ export default function LibraryPage() {
       toast.error('链接导入失败，请检查链接或 yt-dlp 环境')
     } finally {
       setImportingUrl(false)
+    }
+  }
+
+  const applyImportPreset = (preset: DownloadPreset) => {
+    setImportPreset(preset)
+    if (preset === 'quality') {
+      setImportResolution('1080p')
+      setImportFpsLimit('60')
+      setImportPreferMp4(true)
+      return
+    }
+    if (preset === 'balanced') {
+      setImportResolution('720p')
+      setImportFpsLimit('30')
+      setImportPreferMp4(true)
+      return
+    }
+    if (preset === 'data_saver') {
+      setImportResolution('480p')
+      setImportFpsLimit('30')
+      setImportPreferMp4(true)
     }
   }
 
@@ -243,12 +273,29 @@ export default function LibraryPage() {
           importingUrl={importingUrl}
           importUrl={importUrl}
           importTitle={importTitle}
+          importPreset={importPreset}
+          importResolution={importResolution}
+          importFpsLimit={importFpsLimit}
+          importPreferMp4={importPreferMp4}
           dragActive={dragActive}
           onDrag={handleDrag}
           onDrop={handleDrop}
           onFileSelect={handleUpload}
           onImportUrlChange={setImportUrl}
           onImportTitleChange={setImportTitle}
+          onImportPresetChange={applyImportPreset}
+          onImportResolutionChange={(value) => {
+            setImportResolution(value)
+            setImportPreset('custom')
+          }}
+          onImportFpsLimitChange={(value) => {
+            setImportFpsLimit(value)
+            setImportPreset('custom')
+          }}
+          onImportPreferMp4Change={(value) => {
+            setImportPreferMp4(value)
+            setImportPreset('custom')
+          }}
           onImportByUrl={handleImportByUrl}
         />
 

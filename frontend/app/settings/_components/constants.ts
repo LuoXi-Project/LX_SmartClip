@@ -51,6 +51,7 @@ export const VIDEO_KEYS = [
   'scene_min_scene_len',
   'hybrid_max_segment_sec',
   'frame_fps',
+  'frame_concurrency',
   'frame_target_pixels',
   // ffmpeg transcode options for clip outputs
   'clip_container',

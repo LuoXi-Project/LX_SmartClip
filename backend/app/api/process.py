@@ -39,6 +39,18 @@ async def _check_cancel(video_id: str) -> None:
     if _cancel_event_for(video_id).is_set():
         raise ProcessCancelled()
 
+
+def _parse_positive_int(raw: str, default: int, min_v: int = 1, max_v: int = 16) -> int:
+    try:
+        v = int(str(raw).strip())
+    except Exception:
+        return default
+    if v < min_v:
+        return min_v
+    if v > max_v:
+        return max_v
+    return v
+
 STEP_LABELS = {
     "split":          "视频切分",
     "extract_frames": "图帧提取",
@@ -149,7 +161,7 @@ async def _save_clips_to_db(video_id: str, clips):
 
 
 async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: list = None):
-    """串联执行全素材处理：split -> frames -> asr -> vlm -> embed"""
+    """执行全素材处理（按片段流水线并发）：split -> (frames||asr) -> vlm -> embed"""
     skip_steps = skip_steps or []
 
     video = await _get_video(video_id)
@@ -179,9 +191,16 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         vector_dim      = int(await _read_config(db, "vector_dimension", "1536"))
         frame_fps       = float(await _read_config(db, "frame_fps", "1"))
         frame_target_pixels = int(await _read_config(db, "frame_target_pixels", "0"))
+        frame_concurrency_raw = await _read_config(db, "frame_concurrency", "3")
         vlm_max_images    = int(await _read_config(db, "vlm_max_images_per_batch", "10"))
         vlm_context_length = int(await _read_config(db, "vlm_context_length", "8192"))
-        vlm_concurrency  = int(await _read_config(db, "vlm_concurrency", "3"))
+        asr_concurrency_raw = await _read_config(db, "asr_concurrency", "1")
+        vlm_concurrency_raw = await _read_config(db, "vlm_concurrency", "3")
+        embedding_concurrency_raw = await _read_config(db, "embedding_concurrency", "3")
+        asr_concurrency = _parse_positive_int(asr_concurrency_raw, default=1, min_v=1, max_v=16)
+        frame_concurrency = _parse_positive_int(frame_concurrency_raw, default=3, min_v=1, max_v=16)
+        vlm_concurrency = _parse_positive_int(vlm_concurrency_raw, default=3, min_v=1, max_v=16)
+        embedding_concurrency = _parse_positive_int(embedding_concurrency_raw, default=3, min_v=1, max_v=16)
         embedding_base_url = await _read_config(db, "embedding_base_url", "https://api.openai.com/v1")
         embedding_api_key  = await _read_config(db, "embedding_api_key", "")
         embedding_model    = await _read_config(db, "embedding_model", "text-embedding-3-small")
@@ -237,26 +256,19 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         await _set_video_status(video_id, "error")
         return
 
-    # STEP 2: 图帧提取
-    if "extract_frames" not in skip_steps:
-        await reporter.send("extract_frames", "running", f"开始为 {len(clips_rows)} 个片段抽帧（{frame_fps} 帧/秒）")
-        frame_errors = 0
-        for clip in clips_rows:
-            await _check_cancel(video_id)
-            try:
-                await loop.run_in_executor(None, splitter.extract_frames, clip["clip_path"], frame_fps, frame_target_pixels)
-            except Exception as e:
-                logger.warning("片段 %s 抽帧失败: %s", clip["id"], e)
-                frame_errors += 1
-        await reporter.send(
-            "extract_frames", "done", f"抽帧完成，失败 {frame_errors} 个",
-            {"total": len(clips_rows), "errors": frame_errors},
-        )
+    total_clips = len(clips_rows)
+    do_frames = "extract_frames" not in skip_steps
+    do_asr = "asr" not in skip_steps
+    do_vlm = "vlm" not in skip_steps
+    do_embed = "embed" not in skip_steps
+
+    if do_frames:
+        await reporter.send("extract_frames", "running", f"开始为 {total_clips} 个片段抽帧（{frame_fps} 帧/秒）")
     else:
         await reporter.send("extract_frames", "skip", "跳过图帧提取")
 
-    # STEP 3: ASR
-    if "asr" not in skip_steps:
+    asr_instance = None
+    if do_asr:
         try:
             if asr_provider == "openai":
                 await reporter.send("asr", "running", f"使用 OpenAI ASR ({asr_openai_model}) 开始语音识别...")
@@ -270,45 +282,16 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 开始语音识别...")
                 from app.core.asr.whisper_asr import WhisperASR
                 asr_instance = await loop.run_in_executor(None, WhisperASR, asr_model)
-            processed_asr = 0
-            for i, clip in enumerate(clips_rows):
-                await _check_cancel(video_id)
-                clip_id   = clip["id"]
-                clip_path = clip["clip_path"]
-                try:
-                    audio_path = await loop.run_in_executor(
-                        None, splitter.extract_audio, clip_path, True
-                    )
-                    tr = await loop.run_in_executor(
-                        None, asr_instance.transcribe_detailed, audio_path
-                    )
-                    seg_json = (
-                        json.dumps(tr.segments_as_dicts(), ensure_ascii=False)
-                        if tr.segments
-                        else None
-                    )
-                    await _update_clip_asr(clip_id, tr.text, seg_json)
-                    processed_asr += 1
-                    await reporter.send(
-                        "asr", "running",
-                        f"ASR {i+1}/{len(clips_rows)} 完成",
-                        {"current": i + 1, "total": len(clips_rows)},
-                    )
-                except Exception as e:
-                    logger.warning("片段 %s ASR 失败: %s", clip_id, e)
-            await reporter.send(
-                "asr", "done",
-                f"语音识别完成，成功 {processed_asr}/{len(clips_rows)} 个",
-                {"processed": processed_asr, "total": len(clips_rows)},
-            )
         except Exception as e:
+            do_asr = False
             await reporter.send("asr", "error", f"ASR 初始化失败: {e}")
     else:
         await reporter.send("asr", "skip", "跳过语音识别")
 
-    # STEP 4: VLM
-    if "vlm" not in skip_steps:
+    vlm_instance = None
+    if do_vlm:
         if not vlm_api_key:
+            do_vlm = False
             await reporter.send("vlm", "skip", "VLM API Key 未配置，跳过")
         else:
             await reporter.send("vlm", "running", f"使用 {vlm_model} 生成视觉描述...")
@@ -317,113 +300,308 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 vlm_instance = OpenAIVLM(
                     base_url=vlm_base_url, model=vlm_model, api_key=vlm_api_key
                 )
-                clips_rows = await _get_clips(video_id)
-                processed_vlm = 0
-                finished_vlm = 0
-                sem = asyncio.Semaphore(max(1, vlm_concurrency))
-                progress_lock = asyncio.Lock()
-
-                async def _process_clip_vlm(clip):
-                    nonlocal processed_vlm, finished_vlm
-                    clip_id   = clip["id"]
-                    clip_path = clip["clip_path"]
-                    async with sem:
-                        await _check_cancel(video_id)
-                        try:
-                            clip_name  = os.path.splitext(os.path.basename(clip_path))[0]
-                            frames_dir = os.path.join(splitter.frames_dir, clip_name)
-                            if os.path.isdir(frames_dir):
-                                frame_paths = sorted(
-                                    os.path.join(frames_dir, f)
-                                    for f in os.listdir(frames_dir)
-                                    if f.lower().endswith((".jpg", ".png"))
-                                )
-                            else:
-                                frame_paths = await loop.run_in_executor(
-                                    None, splitter.extract_frames, clip_path, frame_fps, frame_target_pixels
-                                )
-                            if not frame_paths:
-                                return
-                            frame_times_sec = splitter.frame_timestamps_in_clip(
-                                clip_path, len(frame_paths)
-                            )
-                            description = await loop.run_in_executor(
-                                None,
-                                lambda fp=frame_paths,
-                                ts=frame_times_sec: vlm_instance.generate_description(
-                                    fp,
-                                    ts,
-                                    vlm_max_images,
-                                    vlm_context_length,
-                                ),
-                            )
-                            await _update_clip_field(clip_id, "vlm_description", description)
-                            processed_vlm += 1
-                        except Exception as e:
-                            logger.warning("片段 %s VLM 失败: %s", clip_id, e)
-                        finally:
-                            async with progress_lock:
-                                finished_vlm += 1
-                            await reporter.send(
-                                "vlm", "running",
-                                f"VLM {finished_vlm}/{len(clips_rows)} 完成",
-                                {
-                                    "current": finished_vlm,
-                                    "total": len(clips_rows),
-                                    "processed": processed_vlm,
-                                },
-                            )
-
-                await asyncio.gather(*[
-                    _process_clip_vlm(clip) for clip in clips_rows
-                ])
-                await reporter.send(
-                    "vlm", "done",
-                    f"视觉描述完成，成功 {processed_vlm}/{len(clips_rows)} 个（并发={vlm_concurrency})",
-                    {"processed": processed_vlm, "total": len(clips_rows)},
-                )
             except Exception as e:
-                await reporter.send("vlm", "error", f"VLM 失败: {e}")
+                do_vlm = False
+                await reporter.send("vlm", "error", f"VLM 初始化失败: {e}")
     else:
         await reporter.send("vlm", "skip", "跳过视觉描述")
 
-    # STEP 5: Embedding 入库
-    if "embed" not in skip_steps:
+    embedder = None
+    vector_db = None
+    if do_embed:
         if not embedding_api_key:
+            do_embed = False
             await reporter.send("embed", "skip", "Embedding API Key 未配置，跳过向量入库")
         else:
             await reporter.send("embed", "running", "开始生成 Embedding 并入库...")
             try:
-                embedder  = Embedder(base_url=embedding_base_url, api_key=embedding_api_key, model=embedding_model)
-                vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
-                clips_rows = await _get_clips(video_id)
-                processed_emb = 0
-                for i, clip in enumerate(clips_rows):
-                    await _check_cancel(video_id)
-                    clip_id  = clip["id"]
-                    text     = ((clip["asr_text"] or "") + " " + (clip["vlm_description"] or "")).strip()
-                    if not text:
-                        continue
-                    try:
-                        embedding = await loop.run_in_executor(None, embedder.embed, text)
-                        vector_db.add_embedding(clip_id, embedding)
-                        processed_emb += 1
-                        await reporter.send(
-                            "embed", "running",
-                            f"Embedding {i+1}/{len(clips_rows)} 入库",
-                            {"current": i + 1, "total": len(clips_rows)},
-                        )
-                    except Exception as e:
-                        logger.warning("片段 %s Embedding 失败: %s", clip_id, e)
-                await reporter.send(
-                    "embed", "done",
-                    f"向量入库完成，成功 {processed_emb}/{len(clips_rows)} 个（model={embedding_model})",
-                    {"processed": processed_emb, "total": len(clips_rows)},
+                embedder = Embedder(
+                    base_url=embedding_base_url,
+                    api_key=embedding_api_key,
+                    model=embedding_model,
                 )
+                vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
             except Exception as e:
-                await reporter.send("embed", "error", f"Embedding 失败: {e}")
+                do_embed = False
+                await reporter.send("embed", "error", f"Embedding 初始化失败: {e}")
     else:
         await reporter.send("embed", "skip", "跳过向量入库")
+
+    # 多队列流水线：frames/asr 并发，frames -> vlm -> embed 级联。
+    # 优先使用已有的分阶段并发配置（frame/asr/vlm/embedding）。
+    frames_worker_count = max(1, frame_concurrency)
+    asr_worker_count = max(1, asr_concurrency)
+    vlm_worker_count = max(1, vlm_concurrency)
+    embed_worker_count = max(1, embedding_concurrency)
+    max_workers = max(frames_worker_count, asr_worker_count, vlm_worker_count, embed_worker_count)
+    queue_maxsize = max(1, max_workers * 2)
+    vector_db_lock = asyncio.Lock()
+    progress_lock = asyncio.Lock()
+
+    frame_done = 0
+    frame_success = 0
+    asr_done = 0
+    asr_success = 0
+    vlm_done = 0
+    vlm_success = 0
+    emb_done = 0
+    emb_success = 0
+
+    async def _inc_progress(step: str, message_prefix: str, total: int, success: int, done: int):
+        await reporter.send(
+            step,
+            "running",
+            f"{message_prefix} {done}/{total} 完成",
+            {"current": done, "total": total, "processed": success},
+        )
+
+    async def _load_frame_paths(clip_path: str):
+        clip_name = os.path.splitext(os.path.basename(clip_path))[0]
+        frames_dir = os.path.join(splitter.frames_dir, clip_name)
+        if os.path.isdir(frames_dir):
+            return sorted(
+                os.path.join(frames_dir, f)
+                for f in os.listdir(frames_dir)
+                if f.lower().endswith((".jpg", ".png"))
+            )
+        return []
+
+    frame_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
+    asr_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
+    vlm_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
+    embed_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
+
+    clips_payload = []
+    for clip in clips_rows:
+        item = {
+            "id": clip["id"],
+            "clip_path": clip["clip_path"],
+            "asr_text": (clip["asr_text"] or "").strip(),
+            "vlm_description": (clip["vlm_description"] or "").strip(),
+            "frame_paths": None,
+            "asr_ready": asyncio.Event(),
+        }
+        if not do_asr:
+            item["asr_ready"].set()
+        clips_payload.append(item)
+
+    async def _frames_worker():
+        nonlocal frame_done, frame_success
+        while True:
+            item = await frame_queue.get()
+            if item is None:
+                frame_queue.task_done()
+                break
+            ok = False
+            try:
+                await _check_cancel(video_id)
+                frame_paths = item["frame_paths"]
+                if not frame_paths:
+                    if do_frames:
+                        frame_paths = await loop.run_in_executor(
+                            None,
+                            splitter.extract_frames,
+                            item["clip_path"],
+                            frame_fps,
+                            frame_target_pixels,
+                        )
+                    elif do_vlm:
+                        frame_paths = await _load_frame_paths(item["clip_path"])
+                        if not frame_paths:
+                            frame_paths = await loop.run_in_executor(
+                                None,
+                                splitter.extract_frames,
+                                item["clip_path"],
+                                frame_fps,
+                                frame_target_pixels,
+                            )
+                item["frame_paths"] = frame_paths or []
+                ok = bool(item["frame_paths"])
+            except Exception as e:
+                logger.warning("片段 %s 抽帧失败: %s", item["id"], e)
+            finally:
+                if do_frames:
+                    async with progress_lock:
+                        frame_done += 1
+                        if ok:
+                            frame_success += 1
+                        await _inc_progress("extract_frames", "抽帧", total_clips, frame_success, frame_done)
+                await vlm_queue.put(item)
+                frame_queue.task_done()
+
+    async def _asr_worker():
+        nonlocal asr_done, asr_success
+        while True:
+            item = await asr_queue.get()
+            if item is None:
+                asr_queue.task_done()
+                break
+            ok = False
+            try:
+                await _check_cancel(video_id)
+                audio_path = await loop.run_in_executor(
+                    None, splitter.extract_audio, item["clip_path"], True
+                )
+                tr = await loop.run_in_executor(
+                    None, asr_instance.transcribe_detailed, audio_path
+                )
+                seg_json = (
+                    json.dumps(tr.segments_as_dicts(), ensure_ascii=False)
+                    if tr.segments
+                    else None
+                )
+                await _update_clip_asr(item["id"], tr.text, seg_json)
+                item["asr_text"] = (tr.text or "").strip()
+                ok = True
+            except Exception as e:
+                logger.warning("片段 %s ASR 失败: %s", item["id"], e)
+            finally:
+                item["asr_ready"].set()
+                async with progress_lock:
+                    asr_done += 1
+                    if ok:
+                        asr_success += 1
+                    await _inc_progress("asr", "ASR", total_clips, asr_success, asr_done)
+                asr_queue.task_done()
+
+    async def _vlm_worker():
+        nonlocal vlm_done, vlm_success
+        while True:
+            item = await vlm_queue.get()
+            if item is None:
+                vlm_queue.task_done()
+                break
+            ok = False
+            try:
+                await _check_cancel(video_id)
+                if do_vlm and vlm_instance is not None:
+                    frame_paths = item["frame_paths"] or []
+                    if frame_paths:
+                        frame_times_sec = splitter.frame_timestamps_in_clip(
+                            item["clip_path"], len(frame_paths)
+                        )
+                        description = await loop.run_in_executor(
+                            None,
+                            lambda fp=frame_paths, ts=frame_times_sec: vlm_instance.generate_description(
+                                fp,
+                                ts,
+                                vlm_max_images,
+                                vlm_context_length,
+                            ),
+                        )
+                        item["vlm_description"] = (description or "").strip()
+                        await _update_clip_field(item["id"], "vlm_description", item["vlm_description"])
+                        ok = True
+            except Exception as e:
+                logger.warning("片段 %s VLM 失败: %s", item["id"], e)
+            finally:
+                if do_vlm:
+                    async with progress_lock:
+                        vlm_done += 1
+                        if ok:
+                            vlm_success += 1
+                        await _inc_progress("vlm", "VLM", total_clips, vlm_success, vlm_done)
+                await embed_queue.put(item)
+                vlm_queue.task_done()
+
+    async def _embed_worker():
+        nonlocal emb_done, emb_success
+        while True:
+            item = await embed_queue.get()
+            if item is None:
+                embed_queue.task_done()
+                break
+            ok = False
+            try:
+                await _check_cancel(video_id)
+                if do_embed and embedder is not None and vector_db is not None:
+                    if do_asr:
+                        await item["asr_ready"].wait()
+                    text = f'{item["asr_text"]} {item["vlm_description"]}'.strip()
+                    if text:
+                        embedding = await loop.run_in_executor(None, embedder.embed, text)
+                        async with vector_db_lock:
+                            vector_db.add_embedding(item["id"], embedding)
+                        ok = True
+            except Exception as e:
+                logger.warning("片段 %s Embedding 失败: %s", item["id"], e)
+            finally:
+                if do_embed:
+                    async with progress_lock:
+                        emb_done += 1
+                        if ok:
+                            emb_success += 1
+                        await _inc_progress("embed", "Embedding", total_clips, emb_success, emb_done)
+                embed_queue.task_done()
+
+    frames_workers = [asyncio.create_task(_frames_worker()) for _ in range(frames_worker_count)]
+    vlm_workers = [asyncio.create_task(_vlm_worker()) for _ in range(vlm_worker_count)]
+    embed_workers = [asyncio.create_task(_embed_worker()) for _ in range(embed_worker_count)]
+    asr_workers = [asyncio.create_task(_asr_worker()) for _ in range(asr_worker_count)] if do_asr else []
+
+    for item in clips_payload:
+        await frame_queue.put(item)
+        if do_asr:
+            await asr_queue.put(item)
+
+    for _ in range(frames_worker_count):
+        await frame_queue.put(None)
+    if do_asr:
+        for _ in range(asr_worker_count):
+            await asr_queue.put(None)
+
+    await frame_queue.join()
+    for _ in range(vlm_worker_count):
+        await vlm_queue.put(None)
+
+    await vlm_queue.join()
+    for _ in range(embed_worker_count):
+        await embed_queue.put(None)
+
+    await embed_queue.join()
+    if do_asr:
+        await asr_queue.join()
+
+    await asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers)
+
+    if do_frames:
+        await reporter.send(
+            "extract_frames",
+            "done",
+            f"抽帧完成，成功 {frame_success}/{total_clips} 个（并发={frames_worker_count}）",
+            {
+                "processed": frame_success,
+                "total": total_clips,
+                "errors": total_clips - frame_success,
+                "concurrency": frames_worker_count,
+            },
+        )
+    if do_asr:
+        await reporter.send(
+            "asr",
+            "done",
+            f"语音识别完成，成功 {asr_success}/{total_clips} 个（并发={asr_worker_count}）",
+            {"processed": asr_success, "total": total_clips, "concurrency": asr_worker_count},
+        )
+    if do_vlm:
+        await reporter.send(
+            "vlm",
+            "done",
+            f"视觉描述完成，成功 {vlm_success}/{total_clips} 个（并发={vlm_worker_count}）",
+            {"processed": vlm_success, "total": total_clips, "concurrency": vlm_worker_count},
+        )
+    if do_embed:
+        await reporter.send(
+            "embed",
+            "done",
+            f"向量入库完成，成功 {emb_success}/{total_clips} 个（并发={embed_worker_count}，model={embedding_model}）",
+            {
+                "processed": emb_success,
+                "total": total_clips,
+                "concurrency": embed_worker_count,
+                "model": embedding_model,
+            },
+        )
 
     await _set_video_status(video_id, "done")
     await reporter.send("done", "done", "全部处理完成！")

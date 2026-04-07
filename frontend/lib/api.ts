@@ -174,7 +174,13 @@ export const videosApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
-  importByUrl: (payload: { url: string; title?: string }) =>
+  importByUrl: (payload: {
+    url: string
+    title?: string
+    resolution?: 'best' | '1080p' | '720p' | '480p' | '360p'
+    fps_limit?: number
+    prefer_mp4?: boolean
+  }) =>
     apiClient.post<unknown, Video>('/api/videos/import-url', payload),
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
   rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),

@@ -4,6 +4,8 @@ import logging
 import subprocess
 from typing import Optional, Sequence, Tuple
 
+from app.utils.bin_paths import ffprobe_bin
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +46,7 @@ def probe_duration(
     """
     probe = _run_ffprobe(
         [
-            "ffprobe",
+            ffprobe_bin(),
             "-v",
             "error",
             "-show_entries",
@@ -84,7 +86,7 @@ def probe_video_dimensions(
     log = logger_ or logger
     probe = _run_ffprobe(
         [
-            "ffprobe",
+            ffprobe_bin(),
             "-v",
             "error",
             "-select_streams",
@@ -130,7 +132,7 @@ def has_video_stream(
     log = logger_ or logger
     probe = _run_ffprobe(
         [
-            "ffprobe",
+            ffprobe_bin(),
             "-v",
             "error",
             "-select_streams",

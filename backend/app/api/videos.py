@@ -2,13 +2,15 @@ import os
 import uuid
 import shutil
 import logging
+import subprocess
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
-from app.models.videos import ImportVideoByUrlPayload, RenamePayload
+from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, RenamePayload
 
 from app.db.database import get_db_conn
+from app.utils.bin_paths import ffmpeg_bin
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
@@ -149,6 +151,118 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
         "id": video_id,
         "name": name,
         "upload_at": upload_at,
+        "thumbnail_path": thumbnail_path,
+    }
+
+
+@router.post("/{video_id}/reencode")
+async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
+    db = await get_db_conn()
+    old_path = ""
+    old_thumb = None
+    old_name = ""
+    try:
+        cursor = await db.execute(
+            "SELECT id, name, file_path, thumbnail_path FROM videos WHERE id = ?", (video_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+        old_path = row["file_path"]
+        old_thumb = row["thumbnail_path"]
+        old_name = row["name"]
+    finally:
+        await db.close()
+
+    if not old_path or not os.path.exists(old_path):
+        raise HTTPException(status_code=404, detail="源视频文件不存在")
+
+    output_path = os.path.join(STORAGE_DIR, f"{video_id}_reencoded.mp4")
+    vf_parts = []
+    if payload.max_height:
+        # 用 force_original_aspect_ratio=decrease 避免 min(...) 里的逗号被当作滤镜分隔符
+        # force_divisible_by=2: 保证输出宽高为偶数，兼容 libx264 编码约束
+        vf_parts.append(
+            f"scale=-2:{payload.max_height}:force_original_aspect_ratio=decrease:force_divisible_by=2"
+        )
+    if payload.fps:
+        vf_parts.append(f"fps={payload.fps}")
+    vf_parts.append("format=yuv420p")
+    vf_expr = ",".join(vf_parts)
+
+    cmd = [
+        ffmpeg_bin(),
+        "-y",
+        "-i",
+        old_path,
+        "-vf",
+        vf_expr,
+        "-c:v",
+        payload.vcodec,
+        "-preset",
+        payload.preset,
+        "-crf",
+        str(payload.crf),
+        "-c:a",
+        payload.acodec,
+        "-b:a",
+        f"{payload.audio_bitrate_k}k",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60 * 30,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=501, detail="未检测到 ffmpeg，请先安装 ffmpeg") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="重编码超时，请尝试更快预设或更低分辨率") from exc
+
+    if result.returncode != 0 or not os.path.exists(output_path):
+        stderr_text = (result.stderr or "").strip()
+        detail = stderr_text[-4000:] if stderr_text else "ffmpeg 重编码失败"
+        logger.error(
+            "视频重编码失败: video_id=%s returncode=%s cmd=%s stderr_tail=%s",
+            video_id,
+            result.returncode,
+            " ".join(cmd),
+            detail,
+        )
+        raise HTTPException(status_code=502, detail=detail)
+
+    thumbnail_path = generate_thumbnail(output_path, video_id)
+
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            "UPDATE videos SET file_path = ?, thumbnail_path = ? WHERE id = ?",
+            (output_path, thumbnail_path, video_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    if old_path != output_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    if old_thumb and thumbnail_path and old_thumb != thumbnail_path and os.path.exists(old_thumb):
+        try:
+            os.remove(old_thumb)
+        except Exception:
+            pass
+
+    return {
+        "id": video_id,
+        "name": old_name,
+        "file_path": output_path,
         "thumbnail_path": thumbnail_path,
     }
 

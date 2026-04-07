@@ -12,6 +12,7 @@ import { VideoCard } from './_components/VideoCard'
 import { SearchBar, type SortKey, type StatusFilter } from './_components/SearchBar'
 import { Pagination } from './_components/Pagination'
 import { PreviewModal } from './_components/PreviewModal'
+import { ReencodeModal, type ReencodeOptions, type ReencodePreset } from './_components/ReencodeModal'
 
 type DownloadPreset = 'quality' | 'balanced' | 'data_saver' | 'custom'
 
@@ -40,6 +41,17 @@ export default function LibraryPage() {
   // Preview state
   const [previewVideo, setPreviewVideo] = useState<Video | null>(null)
   const [previewError, setPreviewError] = useState(false)
+  const [reencodeTarget, setReencodeTarget] = useState<Video | null>(null)
+  const [reencoding, setReencoding] = useState(false)
+  const [reencodePreset, setReencodePreset] = useState<ReencodePreset>('preview_compatible')
+  const [reencodeOptions, setReencodeOptions] = useState<ReencodeOptions>({
+    vcodec: 'libx264',
+    crf: 23,
+    preset: 'veryfast',
+    fps: '',
+    maxHeight: '1080',
+    audioBitrateK: 128,
+  })
 
   // Search / filter / sort / pagination params
   const [query, setQuery] = useState('')
@@ -213,6 +225,93 @@ export default function LibraryPage() {
     }
   }
 
+  const handleOpenReencode = (video: Video) => {
+    setReencodeTarget(video)
+    setReencodePreset('preview_compatible')
+    setReencodeOptions({
+      vcodec: 'libx264',
+      crf: 23,
+      preset: 'veryfast',
+      fps: '',
+      maxHeight: '1080',
+      audioBitrateK: 128,
+    })
+  }
+
+  const applyReencodePreset = (preset: ReencodePreset) => {
+    setReencodePreset(preset)
+    if (preset === 'preview_compatible') {
+      setReencodeOptions({
+        vcodec: 'libx264',
+        crf: 22,
+        preset: 'veryfast',
+        fps: '30',
+        maxHeight: '1080',
+        audioBitrateK: 128,
+      })
+      return
+    }
+    if (preset === 'balanced') {
+      setReencodeOptions({
+        vcodec: 'libx264',
+        crf: 23,
+        preset: 'faster',
+        fps: '30',
+        maxHeight: '720',
+        audioBitrateK: 128,
+      })
+      return
+    }
+    if (preset === 'small_size') {
+      setReencodeOptions({
+        vcodec: 'libx265',
+        crf: 28,
+        preset: 'fast',
+        fps: '24',
+        maxHeight: '720',
+        audioBitrateK: 96,
+      })
+    }
+  }
+
+  const updateReencodeOptions = (next: ReencodeOptions) => {
+    setReencodeOptions(next)
+    setReencodePreset('custom')
+  }
+
+  const handleSubmitReencode = async () => {
+    if (!reencodeTarget) return
+    setReencoding(true)
+    try {
+      await videosApi.reencode(reencodeTarget.id, {
+        vcodec: reencodeOptions.vcodec,
+        crf: reencodeOptions.crf,
+        preset: reencodeOptions.preset,
+        fps: reencodeOptions.fps ? Number(reencodeOptions.fps) : undefined,
+        max_height: reencodeOptions.maxHeight ? Number(reencodeOptions.maxHeight) : undefined,
+        acodec: 'aac',
+        audio_bitrate_k: reencodeOptions.audioBitrateK,
+      })
+      toast.success('重编码完成，可重新预览')
+      setReencodeTarget(null)
+      await fetchVideos({
+        q: debouncedQuery || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        sort,
+        page,
+        page_size: pageSize,
+      })
+    } catch (error) {
+      console.error('Reencode failed:', error)
+      const detailRaw = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      const detail = typeof detailRaw === 'string' ? detailRaw.trim() : ''
+      const prettyDetail = detail.length > 800 ? `${detail.slice(0, 800)}...` : detail
+      toast.error(prettyDetail ? `重编码失败：${prettyDetail}` : '重编码失败，请检查 ffmpeg 或调整参数')
+    } finally {
+      setReencoding(false)
+    }
+  }
+
   // Drag handlers
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
@@ -353,6 +452,7 @@ export default function LibraryPage() {
                       onPreview={openPreview}
                       onDelete={handleDelete}
                       onRename={handleRename}
+                      onReencode={handleOpenReencode}
                     />
                   ))}
                 </div>
@@ -380,6 +480,18 @@ export default function LibraryPage() {
           onError={() => setPreviewError(true)}
         />
       )}
+
+      <ReencodeModal
+        open={!!reencodeTarget}
+        videoName={reencodeTarget?.name || ''}
+        preset={reencodePreset}
+        options={reencodeOptions}
+        loading={reencoding}
+        onClose={() => !reencoding && setReencodeTarget(null)}
+        onPresetChange={applyReencodePreset}
+        onOptionsChange={updateReencodeOptions}
+        onSubmit={handleSubmitReencode}
+      />
     </main>
   )
 }

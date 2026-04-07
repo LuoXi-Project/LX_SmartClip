@@ -182,6 +182,15 @@ export const videosApi = {
     prefer_mp4?: boolean
   }) =>
     apiClient.post<unknown, Video>('/api/videos/import-url', payload),
+  reencode: (id: string, payload: {
+    vcodec: 'libx264' | 'libx265'
+    crf: number
+    preset: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' | 'slow'
+    fps?: number
+    max_height?: number
+    acodec: 'aac'
+    audio_bitrate_k: number
+  }) => apiClient.post<unknown, { id: string; name: string; file_path: string; thumbnail_path: string | null }>(`/api/videos/${id}/reencode`, payload),
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
   rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),

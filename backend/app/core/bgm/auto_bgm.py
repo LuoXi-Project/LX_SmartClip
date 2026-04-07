@@ -9,6 +9,7 @@ import uuid
 from typing import Dict, List, Optional, Tuple
 
 from app.models.auto_edit import Plan
+from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import probe_duration
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ _BGM_EXTENSIONS = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
 
 
 def _run_ffmpeg(args: List[str], desc: str = "") -> None:
-    cmd = ["ffmpeg", "-y"] + args
+    cmd = [ffmpeg_bin(), "-y"] + args
     logger.info("FFmpeg%s: %s", f" [{desc}]" if desc else "", " ".join(cmd))
     res = subprocess.run(
         cmd,

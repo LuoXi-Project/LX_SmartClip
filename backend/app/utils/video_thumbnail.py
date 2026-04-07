@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import subprocess
 
+from app.utils.bin_paths import ffmpeg_bin
+
 
 THUMBNAIL_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "storage", "thumbnails")
@@ -17,7 +19,7 @@ def generate_thumbnail(video_path: str, video_id: str) -> str | None:
         try:
             result = subprocess.run(
                 [
-                    "ffmpeg",
+                    ffmpeg_bin(),
                     "-y",
                     "-ss",
                     ss,

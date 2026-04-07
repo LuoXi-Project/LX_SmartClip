@@ -3,6 +3,7 @@ import subprocess
 from typing import Dict, List, Optional, Tuple
 import logging
 
+from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe_duration
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class VideoSplitter:
 
         # 使用 FFmpeg 提取音频
         cmd = [
-            "ffmpeg",
+            ffmpeg_bin(),
             "-i", video_path,
             "-q:a", "9",
             "-y" if overwrite else "-n",  # 覆盖或保留已存在文件
@@ -251,7 +252,7 @@ class VideoSplitter:
 
             # 使用 FFmpeg 切分视频
             cmd_base = [
-                "ffmpeg",
+                ffmpeg_bin(),
                 "-i", video_path,
                 "-ss", str(start_time),
                 "-to", str(end_time),
@@ -397,7 +398,7 @@ class VideoSplitter:
             clip_filename = f"{video_name}_hybrid_{i:04d}.{output_container}"
             clip_path = os.path.join(self.clips_dir, clip_filename)
 
-            cmd = ["ffmpeg", "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
+            cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
             cmd += self._build_transcode_args(
                 has_video_stream=video_has_stream,
                 output_container=output_container,
@@ -468,7 +469,7 @@ class VideoSplitter:
             clip_path = os.path.join(self.clips_dir, f"{video_name}.{output_container}")
             # 若目标文件不存在，用 FFmpeg 生成浏览器可播放的 mp4 到 clips 目录
             if not os.path.exists(clip_path):
-                cmd = ["ffmpeg", "-i", video_path]
+                cmd = [ffmpeg_bin(), "-i", video_path]
                 cmd += self._build_transcode_args(
                     has_video_stream=video_has_stream,
                     output_container=output_container,
@@ -496,7 +497,7 @@ class VideoSplitter:
             clip_path = os.path.join(self.clips_dir, clip_filename)
 
             # 使用 FFmpeg 切分视频
-            cmd = ["ffmpeg", "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
+            cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
             cmd += self._build_transcode_args(
                 has_video_stream=video_has_stream,
                 output_container=output_container,
@@ -575,7 +576,7 @@ class VideoSplitter:
             # 使用 FFmpeg 抽取帧：-ss 放在 -i 前快速定位，
             # 显式 -map 0:v:0 确保只映射视频流，避免「no stream」错误
             cmd = [
-                "ffmpeg",
+                ffmpeg_bin(),
                 "-ss", str(timestamp),
                 "-i", clip_path,
                 "-map", "0:v:0",

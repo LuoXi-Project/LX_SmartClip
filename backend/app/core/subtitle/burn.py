@@ -9,6 +9,7 @@ import tempfile
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from app.utils.paths import get_render_tmp_base_dir
+from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import probe_duration, probe_video_dimensions
 
 if TYPE_CHECKING:
@@ -131,7 +132,7 @@ def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> s
 
 def _run_ffmpeg(args: List[str], desc: str = "") -> None:
     """运行 FFmpeg 命令，失败时抛出 RuntimeError 并附带 stderr 输出。"""
-    cmd = ["ffmpeg", "-y"] + args
+    cmd = [ffmpeg_bin(), "-y"] + args
     logger.info("FFmpeg%s: %s", f" [{desc}]" if desc else "", " ".join(cmd))
     result = subprocess.run(
         cmd,

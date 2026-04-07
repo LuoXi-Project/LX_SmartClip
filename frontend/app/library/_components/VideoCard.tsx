@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Play, Calendar, Film, Scissors, Pencil, Check, X } from 'lucide-react'
+import { Trash2, Play, Calendar, Film, Scissors, Pencil, Check, X, RefreshCw } from 'lucide-react'
 import type { Video } from '@/lib/store'
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -16,9 +16,10 @@ interface VideoCardProps {
   onPreview: (video: Video) => void
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => Promise<void>
+  onReencode: (video: Video) => void
 }
 
-export function VideoCard({ video, onPreview, onDelete, onRename }: VideoCardProps) {
+export function VideoCard({ video, onPreview, onDelete, onRename, onReencode }: VideoCardProps) {
   const status = STATUS_MAP[video.status] ?? STATUS_MAP.error
   const [thumbError, setThumbError] = useState(false)
 
@@ -194,6 +195,13 @@ export function VideoCard({ video, onPreview, onDelete, onRename }: VideoCardPro
 
         {/* Actions */}
         <div className="flex gap-2 mt-auto pt-1">
+          <button
+            onClick={() => onReencode(video)}
+            className="px-3 py-2 rounded-lg bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 hover:text-indigo-200 transition-colors"
+            title="重编码（解决预览兼容性）"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
           <a
             href={`/process?video=${video.id}`}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-cyan-600/90 text-white text-xs font-medium rounded-lg hover:bg-cyan-500 transition-colors"

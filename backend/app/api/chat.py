@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import aiosqlite
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse

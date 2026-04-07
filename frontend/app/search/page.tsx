@@ -32,6 +32,7 @@ export default function AssetSearchPage() {
   const [videos, setVideos] = useState<Video[]>([])
   const [scopeVideoIds, setScopeVideoIds] = useState<string[]>([]) // 多选范围
   const [scopeOpen, setScopeOpen] = useState(false)
+  const [playerDurationSec, setPlayerDurationSec] = useState(0)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -85,6 +86,11 @@ export default function AssetSearchPage() {
     )
     return maxEnd > 0 ? maxEnd : (selectedVideoMeta?.duration ?? 0) || 0
   }, [effectiveAsset?.duration, effectiveAsset?.segments, selectedVideoMeta?.duration])
+
+  const timelineDurationSec = useMemo(
+    () => (playerDurationSec > 0 ? playerDurationSec : durationSec),
+    [playerDurationSec, durationSec],
+  )
 
   const playerSrc = useMemo(() => {
     if (selectedSegment && playMode === 'clip') {
@@ -223,6 +229,11 @@ export default function AssetSearchPage() {
       setTimeout(() => seekVideoTo(seg.start_time), 0)
     }
   }
+
+  useEffect(() => {
+    // 切换素材/播放源后，等待新 video metadata 覆盖时长
+    setPlayerDurationSec(0)
+  }, [playerSrc, playMode])
 
   const assetCount = dataMode === 'highlight' ? highlightResults.length : results.length
   const segmentCount =
@@ -623,6 +634,10 @@ export default function AssetSearchPage() {
                     key={playerSrc}
                     ref={playMode === 'video' ? videoRef : undefined}
                     src={playerSrc}
+                    onLoadedMetadata={(e) => {
+                      const next = e.currentTarget.duration
+                      setPlayerDurationSec(Number.isFinite(next) && next > 0 ? next : 0)
+                    }}
                     controls
                     autoPlay
                     className="w-full h-full object-contain bg-black rounded-b-xl"
@@ -635,17 +650,17 @@ export default function AssetSearchPage() {
               </div>
 
               {/* Timeline coloring (仅原片跳转模式) */}
-              {playMode === 'video' && effectiveAsset && durationSec > 0 && (
+              {playMode === 'video' && effectiveAsset && timelineDurationSec > 0 && (
                 <div className="border-t border-slate-800 px-4 py-3 space-y-2">
                   <div className="flex items-center justify-between text-[11px] text-slate-500">
                     <span>时间轴（命中片段/高光着色，可点击跳转）</span>
-                    <span>总时长 {fmt(durationSec)}</span>
+                    <span>总时长 {fmt(timelineDurationSec)}</span>
                   </div>
                   <div className="relative h-3 rounded-full bg-slate-800/70 overflow-hidden ring-1 ring-slate-700/60">
                     {/* match segments */}
                     {effectiveAsset.segments.map((seg) => {
-                      const left = Math.max(0, Math.min(1, (seg.start_time || 0) / durationSec))
-                      const right = Math.max(0, Math.min(1, (seg.end_time || 0) / durationSec))
+                      const left = Math.max(0, Math.min(1, (seg.start_time || 0) / timelineDurationSec))
+                      const right = Math.max(0, Math.min(1, (seg.end_time || 0) / timelineDurationSec))
                       const w = Math.max(0.002, right - left)
                       const color = seg.is_highlight ? 'bg-amber-400/80' : 'bg-cyan-400/70'
                       return (

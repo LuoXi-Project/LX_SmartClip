@@ -518,8 +518,8 @@ export default function AssetSearchPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="grid gap-1.5 mt-1">
-                        {asset.segments.slice(0, 4).map((seg) => (
+                      <div className="grid gap-1.5 mt-1 max-h-72 overflow-y-auto pr-1">
+                        {asset.segments.map((seg) => (
                           <button
                             key={seg.clip_id}
                             type="button"
@@ -549,11 +549,6 @@ export default function AssetSearchPage() {
                             )}
                           </button>
                         ))}
-                        {asset.segments.length > 4 && (
-                          <span className="text-[10px] text-slate-500">
-                            其余 {asset.segments.length - 4} 个片段可在右侧切换预览
-                          </span>
-                        )}
                       </div>
                     </div>
                   ))}

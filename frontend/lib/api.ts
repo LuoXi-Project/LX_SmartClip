@@ -126,6 +126,42 @@ export interface SemanticSearchResponse {
 export const searchApi = {
   semanticSearch: (payload: SemanticSearchRequest) =>
     apiClient.post<unknown, SemanticSearchResponse>('/api/search/assets/semantic', payload),
+  browseHighlights: (payload: HighlightBrowseRequest) =>
+    apiClient.post<unknown, HighlightBrowseResponse>('/api/search/highlights', payload),
+}
+
+// 高光浏览（无需检索）
+export interface HighlightBrowseFilters {
+  video_ids?: string[]
+}
+
+export interface HighlightBrowseRequest {
+  limit_assets?: number
+  limit_segments_per_asset?: number
+  min_score?: number
+  filters?: HighlightBrowseFilters
+}
+
+export interface HighlightBrowseSegment {
+  clip_id: string
+  start_time: number
+  end_time: number
+  duration: number
+  highlight_score: number
+  summary_text?: string | null
+}
+
+export interface HighlightBrowseAssetResult {
+  asset_id: string
+  asset_title: string
+  duration?: number | null
+  cover_url?: string | null
+  asset_score: number
+  segments: HighlightBrowseSegment[]
+}
+
+export interface HighlightBrowseResponse {
+  results: HighlightBrowseAssetResult[]
 }
 
 export const videosApi = {

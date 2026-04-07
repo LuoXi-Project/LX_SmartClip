@@ -62,6 +62,44 @@ class SemanticSearchResponse(BaseModel):
     results: List[SemanticSearchAssetResult]
 
 
+class HighlightBrowseFilters(BaseModel):
+    video_ids: Optional[List[str]] = Field(default=None, description="限定视频（素材）ID 列表；为空表示全部")
+
+
+class HighlightBrowseRequest(BaseModel):
+    """
+    高光浏览（无需语义检索/向量/LLM）。
+    直接读取 clips.vlm_description 并推断高光得分，然后按视频聚合返回。
+    """
+
+    limit_assets: int = Field(default=20, ge=1, le=200, description="最多返回多少个素材")
+    limit_segments_per_asset: int = Field(default=10, ge=1, le=200, description="每个素材最多返回多少段高光")
+    min_score: float = Field(default=0.3, ge=0.0, le=1.0, description="高光最低得分阈值")
+    filters: Optional[HighlightBrowseFilters] = None
+
+
+class HighlightBrowseSegment(BaseModel):
+    clip_id: str
+    start_time: float
+    end_time: float
+    duration: float
+    highlight_score: float
+    summary_text: Optional[str] = None
+
+
+class HighlightBrowseAssetResult(BaseModel):
+    asset_id: str
+    asset_title: str
+    duration: Optional[float] = None
+    cover_url: Optional[str] = None
+    asset_score: float
+    segments: List[HighlightBrowseSegment]
+
+
+class HighlightBrowseResponse(BaseModel):
+    results: List[HighlightBrowseAssetResult]
+
+
 def _infer_highlight_score(text: Optional[str]) -> float:
     """
     从 VLM 描述中粗略推断高光得分。
@@ -103,6 +141,102 @@ def _infer_highlight_score(text: Optional[str]) -> float:
         return 0.6
 
     return 0.0
+
+
+def _browse_highlights_sync(
+    req: HighlightBrowseRequest,
+) -> HighlightBrowseResponse:
+    """
+    同步执行：读取 clips + videos 表，推断高光分数并按视频聚合。
+    放在线程池中避免阻塞事件循环。
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"数据库连接失败: {e}") from e
+
+    try:
+        video_ids = (req.filters.video_ids if req.filters and req.filters.video_ids else None)
+
+        # 拉视频元信息
+        video_meta: Dict[str, Dict] = {}
+        if video_ids:
+            placeholders_v = ",".join("?" * len(video_ids))
+            v_rows = conn.execute(
+                f"SELECT id, name, duration, thumbnail_path FROM videos WHERE id IN ({placeholders_v})",
+                video_ids,
+            ).fetchall()
+        else:
+            v_rows = conn.execute(
+                "SELECT id, name, duration, thumbnail_path FROM videos WHERE status = 'done' ORDER BY upload_at DESC"
+            ).fetchall()
+
+        for r in v_rows:
+            video_meta[r["id"]] = {
+                "name": r["name"],
+                "duration": r["duration"],
+                "thumbnail_path": r["thumbnail_path"],
+            }
+
+        # 拉 clip（只读）
+        if video_ids:
+            placeholders = ",".join("?" * len(video_ids))
+            c_rows = conn.execute(
+                f"SELECT id, video_id, start_time, end_time, duration, vlm_description "
+                f"FROM clips WHERE video_id IN ({placeholders}) ORDER BY video_id, start_time",
+                video_ids,
+            ).fetchall()
+        else:
+            c_rows = conn.execute(
+                "SELECT id, video_id, start_time, end_time, duration, vlm_description "
+                "FROM clips ORDER BY video_id, start_time"
+            ).fetchall()
+
+        by_video: Dict[str, List[HighlightBrowseSegment]] = {}
+        for row in c_rows:
+            vid = row["video_id"]
+            if vid not in video_meta:
+                # 跳过未完成/不存在的视频
+                continue
+            hs = _infer_highlight_score(row["vlm_description"])
+            if hs < float(req.min_score):
+                continue
+            seg = HighlightBrowseSegment(
+                clip_id=row["id"],
+                start_time=float(row["start_time"] or 0.0),
+                end_time=float(row["end_time"] or 0.0),
+                duration=float(row["duration"] or 0.0),
+                highlight_score=float(hs),
+                summary_text=row["vlm_description"],
+            )
+            by_video.setdefault(vid, []).append(seg)
+
+        assets: List[HighlightBrowseAssetResult] = []
+        for vid, segs in by_video.items():
+            if not segs:
+                continue
+            segs_sorted = sorted(segs, key=lambda s: s.highlight_score, reverse=True)[
+                : int(req.limit_segments_per_asset)
+            ]
+            best = segs_sorted[0]
+            vm = video_meta.get(vid, {})
+            assets.append(
+                HighlightBrowseAssetResult(
+                    asset_id=vid,
+                    asset_title=str(vm.get("name") or vid),
+                    duration=vm.get("duration"),
+                    cover_url=vm.get("thumbnail_path"),
+                    asset_score=float(best.highlight_score),
+                    segments=segs_sorted,
+                )
+            )
+
+        assets.sort(key=lambda a: a.asset_score, reverse=True)
+        assets = assets[: int(req.limit_assets)]
+        return HighlightBrowseResponse(results=assets)
+    finally:
+        conn.close()
 
 
 def _group_by_asset(
@@ -238,4 +372,15 @@ async def semantic_search_assets(payload: SemanticSearchRequest, request: Reques
 
     grouped = _group_by_asset(match_res.dict(), highlight_only=payload.highlight_only)
     return SemanticSearchResponse(query=payload.query, results=grouped)
+
+
+@router.post("/search/highlights", response_model=HighlightBrowseResponse)
+async def browse_highlights(payload: HighlightBrowseRequest):
+    """
+    高光浏览（无需检索/无需向量/无需 LLM）。
+    直接基于已分析的 VLM 文本推断高光并返回。
+    """
+    from app.core.blocking_pool import run_heavy
+
+    return await run_heavy(_browse_highlights_sync, payload)
 

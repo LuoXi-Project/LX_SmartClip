@@ -2,25 +2,36 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Film, Search, Sparkles, Loader2, Filter, Play } from 'lucide-react'
-import { searchApi, type SemanticSearchAssetResult, type SemanticSearchSegment, videosApi, type Video } from '@/lib/api'
+import { Film, Search, Sparkles, Loader2, Filter, Play, ChevronDown, X } from 'lucide-react'
+import {
+  searchApi,
+  type SemanticSearchAssetResult,
+  type SemanticSearchSegment,
+  videosApi,
+  type Video,
+  type HighlightBrowseAssetResult,
+} from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 
 type ViewMode = 'asset' | 'segment'
 type PlayMode = 'video' | 'clip'
+type DataMode = 'semantic' | 'highlight'
 
 export default function AssetSearchPage() {
   const [query, setQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('asset')
   const [playMode, setPlayMode] = useState<PlayMode>('video')
+  const [dataMode, setDataMode] = useState<DataMode>('semantic')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [results, setResults] = useState<SemanticSearchAssetResult[]>([])
+  const [highlightResults, setHighlightResults] = useState<HighlightBrowseAssetResult[]>([])
   const [selectedAssetId, setSelectedAssetId] = useState<string>('')
   const [selectedSegment, setSelectedSegment] = useState<SemanticSearchSegment | null>(null)
   const [highlightOnly, setHighlightOnly] = useState(false)
   const [videos, setVideos] = useState<Video[]>([])
-  const [scopeVideoId, setScopeVideoId] = useState<string>('') // 单素材范围检索
+  const [scopeVideoIds, setScopeVideoIds] = useState<string[]>([]) // 多选范围
+  const [scopeOpen, setScopeOpen] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -29,30 +40,61 @@ export default function AssetSearchPage() {
     [results, selectedAssetId],
   )
 
+  const displayAssets = useMemo<SemanticSearchAssetResult[]>(() => {
+    if (dataMode === 'semantic') return results
+    return (highlightResults || []).map((a) => ({
+      asset_id: a.asset_id,
+      asset_title: a.asset_title,
+      duration: a.duration ?? null,
+      cover_url: a.cover_url ?? null,
+      // 在高光浏览模式下，asset_score=最高高光分
+      asset_score: a.asset_score,
+      segments: (a.segments || []).map((s) => ({
+        clip_id: s.clip_id,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        duration: s.duration,
+        // 复用 score 字段用于排序展示
+        score: s.highlight_score,
+        summary_text: s.summary_text ?? null,
+        is_highlight: true,
+        highlight_score: s.highlight_score,
+        thumbnail_url: null,
+        preview_url: null,
+      })),
+    }))
+  }, [dataMode, results, highlightResults])
+
+  const effectiveAsset = useMemo(
+    () => displayAssets.find((r) => r.asset_id === selectedAssetId) ?? displayAssets[0] ?? null,
+    [displayAssets, selectedAssetId],
+  )
+
   const selectedVideoMeta = useMemo(
-    () => videos.find((v) => v.id === (scopeVideoId || selectedAsset?.asset_id || '')) ?? null,
-    [videos, scopeVideoId, selectedAsset?.asset_id],
+    () =>
+      videos.find((v) => v.id === (scopeVideoIds[0] || selectedAsset?.asset_id || '')) ?? null,
+    [videos, scopeVideoIds, selectedAsset?.asset_id],
   )
 
   const durationSec = useMemo(() => {
-    const d = selectedAsset?.duration
+    const d = effectiveAsset?.duration
     if (typeof d === 'number' && Number.isFinite(d) && d > 0) return d
     const maxEnd = Math.max(
       0,
-      ...(selectedAsset?.segments?.map((s) => Number(s.end_time) || 0) ?? [0]),
+      ...(effectiveAsset?.segments?.map((s) => Number(s.end_time) || 0) ?? [0]),
     )
     return maxEnd > 0 ? maxEnd : (selectedVideoMeta?.duration ?? 0) || 0
-  }, [selectedAsset?.duration, selectedAsset?.segments, selectedVideoMeta?.duration])
+  }, [effectiveAsset?.duration, effectiveAsset?.segments, selectedVideoMeta?.duration])
 
   const playerSrc = useMemo(() => {
     if (selectedSegment && playMode === 'clip') {
       return clipStreamUrl(selectedSegment.clip_id)
     }
-    if (selectedAsset) {
-      return videoStreamUrl(selectedAsset.asset_id)
+    if (effectiveAsset) {
+      return videoStreamUrl(effectiveAsset.asset_id)
     }
     return ''
-  }, [selectedAsset, selectedSegment, playMode])
+  }, [effectiveAsset, selectedSegment, playMode])
 
   // 预取视频元信息（供筛选/展示）
   useEffect(() => {
@@ -61,6 +103,15 @@ export default function AssetSearchPage() {
       .then((res) => setVideos(res.items || []))
       .catch(() => {})
   }, [])
+
+  const scopeLabel = useMemo(() => {
+    if (!scopeVideoIds.length) return '全部素材'
+    if (scopeVideoIds.length === 1) {
+      const v = videos.find((x) => x.id === scopeVideoIds[0])
+      return v?.name || scopeVideoIds[0]
+    }
+    return `已选 ${scopeVideoIds.length} 个素材`
+  }, [scopeVideoIds, videos])
 
   const runSearch = useCallback(
     async (q?: string) => {
@@ -72,13 +123,15 @@ export default function AssetSearchPage() {
         const res = await searchApi.semanticSearch({
           query: text,
           highlight_only: highlightOnly,
-          filters: scopeVideoId ? { video_ids: [scopeVideoId] } : undefined,
+          filters: scopeVideoIds.length ? { video_ids: scopeVideoIds } : undefined,
         })
         setResults(res.results || [])
+        setHighlightResults([])
         if (res.results?.length) {
-          const firstAsset = scopeVideoId
-            ? res.results.find((r) => r.asset_id === scopeVideoId) ?? res.results[0]
-            : res.results[0]
+          const firstAsset =
+            scopeVideoIds.length === 1
+              ? res.results.find((r) => r.asset_id === scopeVideoIds[0]) ?? res.results[0]
+              : res.results[0]
           setSelectedAssetId(firstAsset.asset_id)
           setSelectedSegment(firstAsset.segments[0] ?? null)
         } else {
@@ -94,8 +147,57 @@ export default function AssetSearchPage() {
         setLoading(false)
       }
     },
-    [query, highlightOnly, scopeVideoId],
+    [query, highlightOnly, scopeVideoIds],
   )
+
+  const loadHighlights = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await searchApi.browseHighlights({
+        limit_assets: scopeVideoIds.length ? scopeVideoIds.length : 20,
+        limit_segments_per_asset: 10,
+        min_score: 0.3,
+        filters: scopeVideoIds.length ? { video_ids: scopeVideoIds } : undefined,
+      })
+      setHighlightResults(res.results || [])
+      setResults([])
+      const first = (res.results || [])[0]
+      if (first) {
+        setSelectedAssetId(first.asset_id)
+        const seg0 = first.segments?.[0]
+        setSelectedSegment(
+          seg0
+            ? {
+                clip_id: seg0.clip_id,
+                start_time: seg0.start_time,
+                end_time: seg0.end_time,
+                duration: seg0.duration,
+                score: seg0.highlight_score,
+                summary_text: seg0.summary_text,
+                is_highlight: true,
+                highlight_score: seg0.highlight_score,
+              }
+            : null,
+        )
+      } else {
+        setSelectedAssetId('')
+        setSelectedSegment(null)
+      }
+    } catch (e: unknown) {
+      setError(
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          '加载高光失败，请稍后重试',
+      )
+    } finally {
+      setLoading(false)
+    }
+  }, [scopeVideoIds])
+
+  useEffect(() => {
+    if (dataMode !== 'highlight') return
+    void loadHighlights()
+  }, [dataMode, loadHighlights])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -122,8 +224,11 @@ export default function AssetSearchPage() {
     }
   }
 
-  const assetCount = results.length
-  const segmentCount = results.reduce((sum, a) => sum + a.segments.length, 0)
+  const assetCount = dataMode === 'highlight' ? highlightResults.length : results.length
+  const segmentCount =
+    dataMode === 'highlight'
+      ? highlightResults.reduce((sum, a) => sum + a.segments.length, 0)
+      : results.reduce((sum, a) => sum + a.segments.length, 0)
 
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-100">
@@ -176,26 +281,110 @@ export default function AssetSearchPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
-            <div className="inline-flex items-center gap-2">
-              <span className="text-slate-500">范围</span>
-              <select
-                value={scopeVideoId}
-                onChange={(e) => setScopeVideoId(e.target.value)}
-                className="px-2 py-1 rounded-lg bg-slate-900/60 border border-slate-700 text-[11px] text-slate-200 outline-none focus:border-indigo-500"
-                title="限定在单素材内检索"
+            {/* Data mode */}
+            <div className="inline-flex items-center gap-1 rounded-full bg-slate-900/80 border border-slate-700 px-1 py-1">
+              <button
+                type="button"
+                onClick={() => setDataMode('semantic')}
+                className={`px-2.5 py-0.5 rounded-full ${
+                  dataMode === 'semantic'
+                    ? 'bg-indigo-500 text-slate-900'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="语义检索：会走向量召回 + LLM 精排"
               >
-                <option value="">全部素材</option>
-                {videos
-                  .filter((v) => v.status === 'done')
-                  .map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}
-                    </option>
-                  ))}
-              </select>
-              {scopeVideoId ? (
-                <span className="text-[10px] text-slate-500">（单素材检索）</span>
-              ) : null}
+                语义检索
+              </button>
+              <button
+                type="button"
+                onClick={() => setDataMode('highlight')}
+                className={`px-2.5 py-0.5 rounded-full ${
+                  dataMode === 'highlight'
+                    ? 'bg-amber-400 text-slate-900'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="高光浏览：直接读取分析结果，不走向量/LLM"
+              >
+                高光浏览
+              </button>
+            </div>
+
+            {/* Scope multi-select */}
+            <div className="relative inline-flex items-center gap-2">
+              <span className="text-slate-500">范围</span>
+              <button
+                type="button"
+                onClick={() => setScopeOpen((v) => !v)}
+                className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-slate-900/60 border border-slate-700 text-[11px] text-slate-200 hover:border-slate-500 transition-colors"
+                title="支持多选/全选"
+              >
+                <span className="max-w-[220px] truncate">{scopeLabel}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+              {scopeVideoIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setScopeVideoIds([])}
+                  className="p-1 rounded-md border border-slate-800 bg-slate-900/40 hover:border-slate-600"
+                  title="清空范围"
+                >
+                  <X className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+              )}
+
+              {scopeOpen && (
+                <div className="absolute z-20 top-7 left-10 w-[380px] max-w-[80vw] rounded-xl border border-slate-700 bg-slate-950/95 backdrop-blur p-2 shadow-2xl">
+                  <div className="flex items-center justify-between px-2 py-1">
+                    <span className="text-[10px] text-slate-500">多选素材范围（done）</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const all = videos.filter((v) => v.status === 'done').map((v) => v.id)
+                          setScopeVideoIds(all)
+                        }}
+                        className="text-[10px] text-cyan-300 hover:text-cyan-200"
+                      >
+                        全选
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScopeVideoIds([])}
+                        className="text-[10px] text-slate-400 hover:text-slate-200"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-56 overflow-auto divide-y divide-slate-800">
+                    {videos
+                      .filter((v) => v.status === 'done')
+                      .map((v) => {
+                        const checked = scopeVideoIds.includes(v.id)
+                        return (
+                          <label
+                            key={v.id}
+                            className="flex items-center gap-2 px-2 py-2 text-[11px] text-slate-200 hover:bg-slate-900/50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setScopeVideoIds((prev) =>
+                                  prev.includes(v.id) ? prev.filter((x) => x !== v.id) : [...prev, v.id],
+                                )
+                              }}
+                            />
+                            <span className="truncate">{v.name}</span>
+                          </label>
+                        )
+                      })}
+                  </div>
+                  <div className="px-2 py-1 text-[10px] text-slate-500">
+                    当前选择：{scopeVideoIds.length ? `${scopeVideoIds.length} 个` : '全部素材'}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="inline-flex items-center gap-1 rounded-full bg-slate-900/80 border border-slate-700 px-1 py-1">
@@ -258,6 +447,8 @@ export default function AssetSearchPage() {
                   ? 'border-amber-400/70 bg-amber-500/10 text-amber-200'
                   : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-500 hover:text-slate-200'
               }`}
+              disabled={dataMode === 'highlight'}
+              title={dataMode === 'highlight' ? '高光浏览模式下默认都是高光' : '只看高光片段（语义检索结果）'}
             >
               <Filter className="w-3 h-3" />
               <span>仅看高光片段</span>
@@ -284,10 +475,14 @@ export default function AssetSearchPage() {
               <div className="flex-1 flex items-center justify-center text-sm text-red-400 px-4 text-center">
                 {error}
               </div>
-            ) : !results.length ? (
+            ) : !displayAssets.length ? (
               <div className="flex-1 flex flex-col items-center justify-center text-sm text-slate-500 gap-2 px-6 text-center">
                 <Film className="w-10 h-10 text-slate-700" />
-                <p>输入描述并点击「检索」，从已处理素材中查找匹配片段。</p>
+                {dataMode === 'highlight' ? (
+                  <p>正在浏览高光：无需检索即可从已分析结果中展示高光片段。</p>
+                ) : (
+                  <p>输入描述并点击「检索」，从已处理素材中查找匹配片段。</p>
+                )}
               </div>
             ) : viewMode === 'asset' ? (
               <>
@@ -295,11 +490,11 @@ export default function AssetSearchPage() {
                   <span>按素材分组 · 点击片段在右侧预览</span>
                 </div>
                 <div className="flex-1 overflow-auto divide-y divide-slate-800">
-                  {results.map((asset) => (
+                  {displayAssets.map((asset) => (
                     <div
                       key={asset.asset_id}
                       className={`px-4 py-3 space-y-2 cursor-pointer transition-colors ${
-                        selectedAsset?.asset_id === asset.asset_id ? 'bg-slate-900/80' : 'hover:bg-slate-900/60'
+                        effectiveAsset?.asset_id === asset.asset_id ? 'bg-slate-900/80' : 'hover:bg-slate-900/60'
                       }`}
                       onClick={() => {
                         setSelectedAssetId(asset.asset_id)
@@ -370,7 +565,7 @@ export default function AssetSearchPage() {
                   <span>片段列表（按相关度降序）</span>
                 </div>
                 <div className="flex-1 overflow-auto divide-y divide-slate-800">
-                  {results.flatMap((asset) =>
+                  {displayAssets.flatMap((asset) =>
                     asset.segments.map((seg) => ({ asset, seg })),
                   ).map(({ asset, seg }) => (
                     <button
@@ -420,9 +615,9 @@ export default function AssetSearchPage() {
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-[260px]">
             <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
               <span>预览 · 自动高光感知</span>
-              {selectedAsset && (
+              {effectiveAsset && (
                 <span className="text-[11px] text-slate-400">
-                  当前素材：{selectedAsset.asset_title || selectedAsset.asset_id}
+                  当前素材：{effectiveAsset.asset_title || effectiveAsset.asset_id}
                 </span>
               )}
             </div>
@@ -445,7 +640,7 @@ export default function AssetSearchPage() {
               </div>
 
               {/* Timeline coloring (仅原片跳转模式) */}
-              {playMode === 'video' && selectedAsset && durationSec > 0 && (
+              {playMode === 'video' && effectiveAsset && durationSec > 0 && (
                 <div className="border-t border-slate-800 px-4 py-3 space-y-2">
                   <div className="flex items-center justify-between text-[11px] text-slate-500">
                     <span>时间轴（命中片段/高光着色，可点击跳转）</span>
@@ -453,7 +648,7 @@ export default function AssetSearchPage() {
                   </div>
                   <div className="relative h-3 rounded-full bg-slate-800/70 overflow-hidden ring-1 ring-slate-700/60">
                     {/* match segments */}
-                    {selectedAsset.segments.map((seg) => {
+                    {effectiveAsset.segments.map((seg) => {
                       const left = Math.max(0, Math.min(1, (seg.start_time || 0) / durationSec))
                       const right = Math.max(0, Math.min(1, (seg.end_time || 0) / durationSec))
                       const w = Math.max(0.002, right - left)
@@ -463,7 +658,7 @@ export default function AssetSearchPage() {
                           key={seg.clip_id}
                           type="button"
                           title={`${fmt(seg.start_time)} ~ ${fmt(seg.end_time)} · ${seg.is_highlight ? '高光' : '命中'}`}
-                          onClick={() => handlePickSegment(selectedAsset.asset_id, seg)}
+                          onClick={() => handlePickSegment(effectiveAsset.asset_id, seg)}
                           className={`absolute top-0 h-full ${color} hover:brightness-110 transition-all`}
                           style={{
                             left: `${left * 100}%`,

@@ -319,10 +319,12 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 )
                 clips_rows = await _get_clips(video_id)
                 processed_vlm = 0
+                finished_vlm = 0
                 sem = asyncio.Semaphore(max(1, vlm_concurrency))
+                progress_lock = asyncio.Lock()
 
-                async def _process_clip_vlm(i: int, clip):
-                    nonlocal processed_vlm
+                async def _process_clip_vlm(clip):
+                    nonlocal processed_vlm, finished_vlm
                     clip_id   = clip["id"]
                     clip_path = clip["clip_path"]
                     async with sem:
@@ -357,16 +359,23 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                             )
                             await _update_clip_field(clip_id, "vlm_description", description)
                             processed_vlm += 1
-                            await reporter.send(
-                                "vlm", "running",
-                                f"VLM {i+1}/{len(clips_rows)} 完成",
-                                {"current": i + 1, "total": len(clips_rows)},
-                            )
                         except Exception as e:
                             logger.warning("片段 %s VLM 失败: %s", clip_id, e)
+                        finally:
+                            async with progress_lock:
+                                finished_vlm += 1
+                            await reporter.send(
+                                "vlm", "running",
+                                f"VLM {finished_vlm}/{len(clips_rows)} 完成",
+                                {
+                                    "current": finished_vlm,
+                                    "total": len(clips_rows),
+                                    "processed": processed_vlm,
+                                },
+                            )
 
                 await asyncio.gather(*[
-                    _process_clip_vlm(i, clip) for i, clip in enumerate(clips_rows)
+                    _process_clip_vlm(clip) for clip in clips_rows
                 ])
                 await reporter.send(
                     "vlm", "done",

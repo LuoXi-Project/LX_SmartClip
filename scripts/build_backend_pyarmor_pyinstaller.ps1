@@ -1,3 +1,4 @@
+chcp 65001 > nul
 param(
     [string]$HostIP = "127.0.0.1"
 )
@@ -173,6 +174,7 @@ try {
             "cryptography"
             "json_repair"
             "faiss"
+            "yt_dlp"
         )
 
         $CollectAll = @(
@@ -190,6 +192,7 @@ try {
             "cryptography"
             "scenedetect"
             "faiss"
+            "yt_dlp"
         )
 
         $HiddenImports = @(
@@ -197,6 +200,7 @@ try {
             "uvicorn.main"
             "uvicorn.__main__"
             "secret"
+            "yt_dlp"
         )
 
         $ForceCollectArgs = @()

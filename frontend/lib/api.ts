@@ -234,6 +234,70 @@ export const copyGenApi = {
     }),
 }
 
+export interface ReplicaIngestResponse {
+  video_id: string
+  name: string
+  status: string
+}
+
+export interface ReplicaTemplateDraftResponse {
+  template_id: string
+  template_json: any
+  template_guide: string
+  status: 'draft'
+}
+
+export interface ReplicaTemplateConfirmedResponse {
+  template_id: string
+  template_json: any
+  template_guide: string
+  status: 'confirmed'
+}
+
+export interface ReplicaTemplateListItem {
+  template_id: string
+  name: string | null
+  source_video_id: string
+  source_url: string | null
+  pace: string | null
+  tone: string | null
+  status: 'draft' | 'confirmed'
+  created_at: string
+  updated_at: string
+  guide_preview: string
+}
+
+export interface ReplicaTemplateListResponse {
+  items: ReplicaTemplateListItem[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+export const replicaApi = {
+  ingest: (payload: { url: string; title?: string; download_mode?: 'best'; max_download_duration_sec?: number }) =>
+    apiClient.post<unknown, ReplicaIngestResponse>('/api/replica/ingest', payload),
+
+  generateTemplate: (videoId: string, payload?: { skip_vlm?: boolean; max_clips?: number }) =>
+    apiClient.post<unknown, ReplicaTemplateDraftResponse>(`/api/replica/${videoId}/generate-template`, payload ?? {}),
+
+  confirmTemplate: (templateId: string, payload: { template_guide: string; template_json?: any }) =>
+    apiClient.post<unknown, ReplicaTemplateConfirmedResponse>(`/api/replica/template/${templateId}/confirm`, payload),
+
+  getTemplate: (templateId: string) =>
+    apiClient.get<unknown, any>(`/api/replica/template/${templateId}`),
+
+  listTemplates: (params?: { q?: string; status?: 'draft' | 'confirmed'; sort?: 'updated_desc' | 'created_desc'; page?: number; page_size?: number }) =>
+    apiClient.get<unknown, ReplicaTemplateListResponse>('/api/replica/templates', { params }),
+
+  deleteTemplate: (templateId: string) =>
+    apiClient.delete<unknown, { ok: boolean; template_id: string }>(`/api/replica/template/${templateId}`),
+
+  renameTemplate: (templateId: string, name: string) =>
+    apiClient.patch<unknown, { ok: boolean; template_id: string; name: string }>(`/api/replica/template/${templateId}`, { name }),
+}
+
 export const ttsApi = {
   synthesize: (payload: TTSRequest) => apiClient.post<unknown, TTSResponse>('/api/tts/synthesize', payload),
   listVoices: (locale?: string) => apiClient.get<unknown, VoiceInfo[]>(`/api/tts/voices${locale ? `?locale=${locale}` : ''}`),

@@ -31,6 +31,8 @@ export type ManualMatchPanelProps = {
   playingSegId: string | null
   onPreview: (clip: MatchClip) => void
   onToggleExpand: (segId: string) => void
+  /** 复刻模板向导：用于自动注入到文案生成提示词前缀 */
+  replicaTemplateGuide?: string
 }
 
 export function ManualMatchPanel({
@@ -58,6 +60,7 @@ export function ManualMatchPanel({
   playingSegId,
   onPreview,
   onToggleExpand,
+  replicaTemplateGuide,
 }: ManualMatchPanelProps) {
   return (
     <>
@@ -85,7 +88,11 @@ export function ManualMatchPanel({
           />
         </label>
       </div>
-      <CopyGeneratorPanel selectedVideoIds={selectedVideoIds} onApply={onAiApply} />
+      <CopyGeneratorPanel
+        selectedVideoIds={selectedVideoIds}
+        onApply={onAiApply}
+        replicaTemplateGuide={replicaTemplateGuide}
+      />
       <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
           <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />

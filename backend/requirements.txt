@@ -19,3 +19,4 @@ Nuitka>=4.0.7
 pyarmor==9.2.4
 pyinstaller>=6.19.0
 colorlog>=6.10.1
+yt-dlp[default]

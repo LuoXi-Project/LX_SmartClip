@@ -52,6 +52,8 @@ export interface MatchPageState {
   autoUseTimelineEngine: boolean
   /** 调试开关：生成可解释中间产物 */
   autoExplain: boolean
+  /** 链接复刻：已确认的模板引导（注入手动匹配文案 / 一键成片诉求） */
+  replicaTemplateGuide: string
   autoPlans: AutoEditPlanApi[]
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
   autoExpandedPlanIds: string[]
@@ -77,6 +79,7 @@ export interface MatchPageState {
   setAutoBgmTrackFilename: (name: string) => void
   setAutoUseTimelineEngine: (v: boolean) => void
   setAutoExplain: (v: boolean) => void
+  setReplicaTemplateGuide: (v: string) => void
   setAutoPlans: (plans: AutoEditPlanApi[]) => void
   setAutoRealizeDownloads: (
     fn:
@@ -112,6 +115,7 @@ export type MatchPersistedSlice = Pick<
   | 'autoBgmTrackFilename'
   | 'autoUseTimelineEngine'
   | 'autoExplain'
+  | 'replicaTemplateGuide'
   | 'autoPlans'
   | 'autoRealizeDownloads'
   | 'autoExpandedPlanIds'
@@ -220,6 +224,7 @@ export const useMatchStore = create<MatchPageState>()(
       autoBgmTrackFilename: '',
       autoUseTimelineEngine: false,
       autoExplain: false,
+      replicaTemplateGuide: '',
       autoPlans: [] as AutoEditPlanApi[],
       autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
       autoExpandedPlanIds: [] as string[],
@@ -248,6 +253,7 @@ export const useMatchStore = create<MatchPageState>()(
       setAutoBgmTrackFilename: (autoBgmTrackFilename) => set({ autoBgmTrackFilename }),
       setAutoUseTimelineEngine: (autoUseTimelineEngine) => set({ autoUseTimelineEngine }),
       setAutoExplain: (autoExplain) => set({ autoExplain }),
+      setReplicaTemplateGuide: (replicaTemplateGuide) => set({ replicaTemplateGuide }),
       setAutoPlans: (autoPlans) => set({ autoPlans }),
       setAutoRealizeDownloads: (fn) =>
         set((state) => ({
@@ -274,11 +280,12 @@ export const useMatchStore = create<MatchPageState>()(
           templatePreset: 'ecommerce',
           autoTemplateEnabled: false,
           segmentCounter: 0,
+          replicaTemplateGuide: '',
         }),
     }),
     {
       name: 'lx-match-state',
-      version: 4,
+      version: 5,
       /** 只持久化数据字段，避免把函数/未知键写进 localStorage */
       partialize: (state): MatchPersistedSlice => ({
         segments: state.segments,
@@ -302,6 +309,7 @@ export const useMatchStore = create<MatchPageState>()(
         autoBgmTrackFilename: state.autoBgmTrackFilename,
         autoUseTimelineEngine: state.autoUseTimelineEngine,
         autoExplain: state.autoExplain,
+        replicaTemplateGuide: state.replicaTemplateGuide,
         autoPlans: state.autoPlans,
         autoRealizeDownloads: state.autoRealizeDownloads,
         autoExpandedPlanIds: state.autoExpandedPlanIds,
@@ -362,6 +370,7 @@ export const useMatchStore = create<MatchPageState>()(
         if (typeof merged.autoBgmTrackFilename !== 'string') merged.autoBgmTrackFilename = ''
         if (typeof merged.autoUseTimelineEngine !== 'boolean') merged.autoUseTimelineEngine = false
         if (typeof merged.autoExplain !== 'boolean') merged.autoExplain = false
+        if (typeof merged.replicaTemplateGuide !== 'string') merged.replicaTemplateGuide = ''
         return mergeLegacyAutoEditCache(merged) as MatchPersistedSlice
       },
       onRehydrateStorage: () => (state) => {
@@ -393,6 +402,7 @@ export const useMatchStore = create<MatchPageState>()(
           if (typeof state.autoBgmTrackFilename !== 'string') state.autoBgmTrackFilename = ''
           if (typeof state.autoUseTimelineEngine !== 'boolean') state.autoUseTimelineEngine = false
           if (typeof state.autoExplain !== 'boolean') state.autoExplain = false
+          if (typeof state.replicaTemplateGuide !== 'string') state.replicaTemplateGuide = ''
         }
       },
     }

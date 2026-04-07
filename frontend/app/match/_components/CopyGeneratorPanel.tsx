@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AlertCircle, Check, ChevronDown, ChevronUp,
   ClipboardCopy, Loader2, Sparkles, Wand2, RefreshCw, X,
@@ -19,6 +19,10 @@ const TEMPLATES: CopyTemplate[] = [
 ]
 
 interface Props { selectedVideoIds: string[]; onApply: (segments: string[]) => void }
+interface PropsWithReplicaGuide extends Props {
+  /** 复刻模板向导的“提示词约束”，在用户未填创作诉求时自动注入 */
+  replicaTemplateGuide?: string
+}
 
 function TemplatesGrid({ templates, active, onSelect }: { templates: CopyTemplate[]; active: string | null; onSelect: (t: CopyTemplate) => void }) {
   return (
@@ -133,7 +137,7 @@ function OutputSection({ generated, generating, copied, outputRef, onCopy, onReg
   )
 }
 
-export function CopyGeneratorPanel({ selectedVideoIds, onApply }: Props) {
+export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateGuide }: PropsWithReplicaGuide) {
   const [open, setOpen] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [style, setStyle] = useState('')
@@ -147,8 +151,19 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply }: Props) {
   const outputRef = useRef<HTMLDivElement>(null)
   const noVideos = selectedVideoIds.length === 0
 
+  useEffect(() => {
+    if (!replicaTemplateGuide?.trim()) return
+    // 只在用户尚未输入时自动注入，避免覆盖用户手工编辑
+    if (!prompt.trim()) {
+      setPrompt(replicaTemplateGuide.trim())
+    }
+  }, [replicaTemplateGuide]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function applyTemplate(t: CopyTemplate) {
-    setActiveTemplate(t.id); setPrompt(t.prompt); setStyle(t.style)
+    const prefix = replicaTemplateGuide?.trim() ? `${replicaTemplateGuide.trim()}\n\n` : ''
+    setActiveTemplate(t.id)
+    setPrompt(prefix + t.prompt)
+    setStyle(t.style)
   }
 
   async function generate() {

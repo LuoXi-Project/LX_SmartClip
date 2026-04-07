@@ -21,6 +21,8 @@ import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { useToast } from '@/components/ui/toast-provider'
+import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
+import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
 
 const VIDEO_PAGE_SIZE = 9
 
@@ -78,6 +80,8 @@ export default function MatchPage() {
     setAutoUseTimelineEngine,
     autoExplain,
     setAutoExplain,
+    replicaTemplateGuide,
+    setReplicaTemplateGuide,
     autoPlans,
     setAutoPlans,
     autoRealizeDownloads,
@@ -137,6 +141,29 @@ export default function MatchPage() {
   function appendAutoPlanLog(message: string) {
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     setAutoPlanLogs((prev) => [...prev, `${time} ${message}`])
+  }
+
+  /** 复刻模板确认后：跳转到「手动匹配」流水线（注入 store，供文案生成使用） */
+  function goReplicaToManualPipeline() {
+    const g = useMatchStore.getState().replicaTemplateGuide.trim()
+    if (!g) {
+      toast.error('请先在上方生成并确认复刻模板，或从模板库选用')
+      return
+    }
+    setMatchMode('manual')
+    toast.success('已切换至「手动匹配」：复刻约束将用于 AI 文案生成')
+  }
+
+  /** 复刻模板确认后：跳转到「一键成片」流水线（将约束写入剪辑诉求） */
+  function goReplicaToAutoPipeline() {
+    const g = useMatchStore.getState().replicaTemplateGuide.trim()
+    if (!g) {
+      toast.error('请先在上方生成并确认复刻模板，或从模板库选用')
+      return
+    }
+    setAutoPrompt(`【复刻模板约束】\n${g}\n\n【用户诉求】\n`)
+    setMatchMode('auto')
+    toast.success('已切换至「一键成片」：请在剪辑诉求中补充主题后生成方案')
   }
 
   useEffect(() => {
@@ -446,7 +473,8 @@ export default function MatchPage() {
   }
 
   async function handleGenerateAutoPlans() {
-    if (!autoPrompt.trim()) return
+    const rawUserPrompt = autoPrompt.trim()
+    if (!rawUserPrompt) return
     if (selectedVideoIds.length === 0 && doneVideos.length === 0) return
     setAutoLoading(true)
     setAutoError('')
@@ -460,7 +488,7 @@ export default function MatchPage() {
     try {
       const payload = {
         video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id),
-        user_prompt: autoPrompt.trim(),
+        user_prompt: rawUserPrompt,
         mode: autoMode,
         template_preset: mode === 'template' || autoTemplateEnabled ? templatePreset : undefined,
         target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
@@ -644,7 +672,59 @@ export default function MatchPage() {
             onNextPage={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
           />
 
-          {mode === 'auto' || mode === 'template' ? (
+          {mode === 'replica' ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-5">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">链接复刻 · 模板</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  在此生成或选用复刻模板。确认后请<strong className="text-slate-300">二选一</strong>进入「手动匹配」或「一键成片」——两条不同流水线，不是先后步骤；最终都可导出成片。
+                </p>
+              </div>
+              <ReplicaTemplateLibrary
+                onUse={({ guide }) => {
+                  setReplicaTemplateGuide(guide)
+                  toast.success('已载入模板，请选择下方要进入的流水线')
+                }}
+              />
+              <ReplicaTemplateWizard
+                initialGuide={replicaTemplateGuide}
+                onConfirmed={({ guide }) => {
+                  setReplicaTemplateGuide(guide)
+                  toast.success('模板已确认，请选择下方要进入的流水线')
+                }}
+              />
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-3">
+                <p className="text-xs font-semibold text-amber-200">模板就绪后，进入哪条流水线？</p>
+                <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!replicaTemplateGuide.trim()}
+                    onClick={goReplicaToManualPipeline}
+                    className="flex-1 min-w-[200px] px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-semibold transition-colors"
+                  >
+                    去手动匹配（注入复刻约束到文案生成）
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!replicaTemplateGuide.trim()}
+                    onClick={goReplicaToAutoPipeline}
+                    className="flex-1 min-w-[200px] px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-semibold transition-colors"
+                  >
+                    去一键成片（注入复刻约束到剪辑诉求）
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  手动匹配：段落检索 + TTS + 侧栏导出；一键成片：LLM 方案 + 预览 + 成片。可随时回到本页切换模板。
+                </p>
+              </div>
+            </div>
+          ) : mode === 'auto' || mode === 'template' ? (
+            <>
+              {autoPrompt.trim().startsWith('【复刻模板约束】') ? (
+                <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-200">
+                  剪辑诉求已包含从「链接复刻」注入的模板约束；请在下方面板中补充「用户诉求」后生成方案。
+                </div>
+              ) : null}
             <TemplateClipPanel
               autoPrompt={autoPrompt}
               onAutoPromptChange={setAutoPrompt}
@@ -680,6 +760,7 @@ export default function MatchPage() {
               onGeneratePlans={handleGenerateAutoPlans}
               onRealizePlan={handleAutoRealizePlan}
             />
+            </>
           ) : mode === 'voiceover' ? (
             <>
               <VoiceoverQuickCutPanel
@@ -725,39 +806,59 @@ export default function MatchPage() {
               />
             </>
           ) : (
-            <ManualMatchPanel
-              topK={topK}
-              topN={topN}
-              onTopKChange={setTopK}
-              onTopNChange={setTopN}
-              selectedVideoIds={selectedVideoIds}
-              onAiApply={handleAiApply}
-              globalQuery={globalQuery}
-              onGlobalQueryChange={setGlobalQuery}
-              onSplit={splitGlobalQuery}
-              onMatchAll={matchAll}
-              globalMatching={globalMatching}
-              onAddSegment={() => addSegment()}
-              segments={segments}
-              onClearAll={() => setMatchSegments([])}
-              onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}
-              onRemoveSegment={removeSegment}
-              onMatchSegment={matchSegment}
-              onToggleClipSelected={toggleClipSelected}
-              onSynthesiseTts={synthesiseTts}
-              onPlayAudio={(segId) => {
-                const seg = segments.find((s) => s.id === segId)
-                if (seg?.ttsFilename) playAudio(segId, seg.ttsFilename)
-              }}
-              onStopAudio={stopAudio}
-              playingSegId={playingSegId}
-              onPreview={setPreviewClip}
-              onToggleExpand={(segId) => {
-                const seg = segments.find((s) => s.id === segId)
-                if (!seg) return
-                patchSeg(seg.id, { expanded: !seg.expanded })
-              }}
-            />
+            <>
+              {replicaTemplateGuide.trim() ? (
+                <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <p className="text-xs text-indigo-200">
+                    已载入链接复刻模板约束，将用于下方「AI 文案生成」的创作诉求前缀。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplicaTemplateGuide('')
+                      toast.success('已清除复刻模板约束')
+                    }}
+                    className="shrink-0 text-xs text-slate-400 hover:text-red-300 border border-slate-700 rounded-lg px-3 py-1.5"
+                  >
+                    清除约束
+                  </button>
+                </div>
+              ) : null}
+              <ManualMatchPanel
+                topK={topK}
+                topN={topN}
+                onTopKChange={setTopK}
+                onTopNChange={setTopN}
+                selectedVideoIds={selectedVideoIds}
+                onAiApply={handleAiApply}
+                globalQuery={globalQuery}
+                onGlobalQueryChange={setGlobalQuery}
+                onSplit={splitGlobalQuery}
+                onMatchAll={matchAll}
+                globalMatching={globalMatching}
+                onAddSegment={() => addSegment()}
+                segments={segments}
+                onClearAll={() => setMatchSegments([])}
+                onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}
+                onRemoveSegment={removeSegment}
+                onMatchSegment={matchSegment}
+                onToggleClipSelected={toggleClipSelected}
+                onSynthesiseTts={synthesiseTts}
+                onPlayAudio={(segId) => {
+                  const seg = segments.find((s) => s.id === segId)
+                  if (seg?.ttsFilename) playAudio(segId, seg.ttsFilename)
+                }}
+                onStopAudio={stopAudio}
+                playingSegId={playingSegId}
+                onPreview={setPreviewClip}
+                replicaTemplateGuide={replicaTemplateGuide || undefined}
+                onToggleExpand={(segId) => {
+                  const seg = segments.find((s) => s.id === segId)
+                  if (!seg) return
+                  patchSeg(seg.id, { expanded: !seg.expanded })
+                }}
+              />
+            </>
           )}
           {/* 各模式共用：字幕样式手调 + 时间轴预览（条目由导出/成片流程生成） */}
           <MatchSubtitleWorkspace

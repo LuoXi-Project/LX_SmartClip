@@ -35,6 +35,23 @@ CREATE TABLE IF NOT EXISTS clips (
 );
 """
 
+CREATE_REPLICA_TEMPLATES = """
+CREATE TABLE IF NOT EXISTS replica_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    source_video_id TEXT NOT NULL,
+    source_url TEXT,
+    template_json TEXT NOT NULL,
+    template_guide TEXT NOT NULL,
+    pace TEXT,
+    tone TEXT,
+    structure_json TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 CREATE_CONFIG = """
 CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
@@ -145,7 +162,19 @@ async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(CREATE_VIDEOS)
         await db.execute(CREATE_CLIPS)
+        await db.execute(CREATE_REPLICA_TEMPLATES)
         await db.execute(CREATE_CONFIG)
+
+        # 兼容旧库：replica_templates 补列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）
+        try:
+            cur = await db.execute("PRAGMA table_info(replica_templates)")
+            cols = [str(r[1]) for r in await cur.fetchall()]  # (cid, name, type, notnull, dflt_value, pk)
+            if "name" not in cols:
+                await db.execute("ALTER TABLE replica_templates ADD COLUMN name TEXT")
+        except Exception:
+            # 不因兼容迁移失败而阻断启动
+            pass
+
         for key, value, type_, label, options in DEFAULT_CONFIG:
             await db.execute(
                 "INSERT OR IGNORE INTO config (key, value, type, label, options) VALUES (?,?,?,?,?)",

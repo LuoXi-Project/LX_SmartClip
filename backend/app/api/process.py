@@ -337,6 +337,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     queue_maxsize = max(1, max_workers * 2)
     vector_db_lock = asyncio.Lock()
     progress_lock = asyncio.Lock()
+    vlm_enqueue_lock = asyncio.Lock()
 
     frame_done = 0
     frame_success = 0
@@ -379,11 +380,23 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
             "asr_text": (clip["asr_text"] or "").strip(),
             "vlm_description": (clip["vlm_description"] or "").strip(),
             "frame_paths": None,
+            "frame_ready": asyncio.Event(),
             "asr_ready": asyncio.Event(),
+            "vlm_enqueued": False,
         }
         if not do_asr:
             item["asr_ready"].set()
         clips_payload.append(item)
+
+    async def _maybe_enqueue_vlm(item: dict):
+        """同一片段仅在依赖就绪后入队一次，避免等待全量阶段结束。"""
+        if not item["frame_ready"].is_set() or not item["asr_ready"].is_set():
+            return
+        async with vlm_enqueue_lock:
+            if item["vlm_enqueued"]:
+                return
+            item["vlm_enqueued"] = True
+            await vlm_queue.put(item)
 
     async def _frames_worker():
         nonlocal frame_done, frame_success
@@ -420,13 +433,14 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
             except Exception as e:
                 logger.warning("片段 %s 抽帧失败: %s", item["id"], e)
             finally:
+                item["frame_ready"].set()
                 if do_frames:
                     async with progress_lock:
                         frame_done += 1
                         if ok:
                             frame_success += 1
                         await _inc_progress("extract_frames", "抽帧", total_clips, frame_success, frame_done)
-                await vlm_queue.put(item)
+                await _maybe_enqueue_vlm(item)
                 frame_queue.task_done()
 
     async def _asr_worker():
@@ -457,6 +471,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 logger.warning("片段 %s ASR 失败: %s", item["id"], e)
             finally:
                 item["asr_ready"].set()
+                await _maybe_enqueue_vlm(item)
                 async with progress_lock:
                     asr_done += 1
                     if ok:
@@ -551,6 +566,8 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
             await asr_queue.put(None)
 
     await frame_queue.join()
+    if do_asr:
+        await asr_queue.join()
     for _ in range(vlm_worker_count):
         await vlm_queue.put(None)
 
@@ -559,8 +576,6 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         await embed_queue.put(None)
 
     await embed_queue.join()
-    if do_asr:
-        await asr_queue.join()
 
     await asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers)
 

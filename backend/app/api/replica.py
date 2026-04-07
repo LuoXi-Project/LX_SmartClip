@@ -4,9 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
-import subprocess
-import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -28,6 +25,8 @@ from app.models.replica import (
     ReplicaTemplateListResponse,
 )
 from app.utils.ffprobe_utils import probe_duration
+from app.utils.video_thumbnail import generate_thumbnail
+from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -97,83 +96,16 @@ def _fmt_time(seconds: float) -> str:
     return f"{m}:{sec:02d}"
 
 
-def _require_yt_dlp_or_import() -> None:
-    """
-    兼容两种安装形态：
-    - 有 `yt-dlp` 可执行文件（shutil.which 命中）
-    - 只有 Python 包（可通过 `python -m yt_dlp` 调用）
-    """
-    if shutil.which("yt-dlp"):
-        return
-    try:
-        import yt_dlp  # noqa: F401
-    except Exception:
-        raise HTTPException(
-            status_code=501,
-            detail="未检测到 yt-dlp 可执行文件，也未检测到 python 包。请安装 yt-dlp 后重试。",
-        )
-
-
-def _build_yt_dlp_base_cmd() -> list[str]:
-    """
-    返回可用于 subprocess 的 yt-dlp 命令前缀。
-    - 若存在可执行文件：['yt-dlp']
-    - 否则：['python', '-m', 'yt_dlp']
-    """
-    exe = shutil.which("yt-dlp")
-    if exe:
-        return [exe]
-    # 依赖 _require_yt_dlp_or_import 先做探测，这里直接用 python -m
-    return [sys.executable, "-m", "yt_dlp"]
-
-
 async def _download_reference_video(req: ReplicaIngestRequest, *, video_id: str) -> str:
     """
     用 yt-dlp 下载参考视频到 storage/videos，返回最终落盘文件路径。
     """
-    os.makedirs(_STORAGE_VIDEOS_DIR, exist_ok=True)
-    _require_yt_dlp_or_import()
-
-    # 通过无扩展名模板让 yt-dlp 按实际格式产出
-    out_tpl = os.path.join(_STORAGE_VIDEOS_DIR, f"{video_id}.%(ext)s")
-
-    cmd = [
-        *_build_yt_dlp_base_cmd(),
-        "-f",
-        "bestvideo+bestaudio/best",
-        "--merge-output-format",
-        "mp4",
-        "--no-playlist",
-        "--retries",
-        "3",
-        "--fragment-retries",
-        "3",
-        "--no-part",
-        "--restrict-filenames",
-        "-o",
-        out_tpl,
-        req.url,
-    ]
-
-    # 尽量减少控制台噪音；失败会保留 stdout/stderr 兜底错误
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60 * 20)
-    if proc.returncode != 0:
-        err_tail = (proc.stderr.decode(errors="replace") or "").strip()[-2000:]
-        raise HTTPException(status_code=502, detail=f"yt-dlp 下载失败：{err_tail}")
-
-    # 选取刚下载的输出文件
-    candidates: list[str] = []
-    for name in os.listdir(_STORAGE_VIDEOS_DIR):
-        if name.startswith(video_id + "."):
-            candidates.append(os.path.join(_STORAGE_VIDEOS_DIR, name))
-    if not candidates:
-        raise HTTPException(status_code=502, detail="yt-dlp 下载成功但未找到落盘视频文件")
-
-    # 优先 mp4，其次按文件大小最大的那个
-    mp4s = [p for p in candidates if p.lower().endswith(".mp4")]
-    if mp4s:
-        return max(mp4s, key=lambda p: os.path.getsize(p))
-    return max(candidates, key=lambda p: os.path.getsize(p))
+    try:
+        return download_video_with_yt_dlp(url=req.url, output_dir=_STORAGE_VIDEOS_DIR, file_stem=video_id)
+    except YtDlpDownloadError as exc:
+        detail = str(exc)
+        status = 501 if "未检测到 yt-dlp" in detail else 502
+        raise HTTPException(status_code=status, detail=detail) from exc
 
 
 async def _insert_video_row(*, video_id: str, name: str, file_path: str) -> None:
@@ -257,6 +189,7 @@ async def ingest_reference_video(req: ReplicaIngestRequest) -> ReplicaIngestResp
         duration = probe_duration(file_path)
     except Exception:
         duration = None
+    thumbnail_path = generate_thumbnail(file_path, video_id)
 
     # 若超时长限制：MVP 不做二次转码（避免引入额外复杂度）
     # 后续可以在这里扩展为 ffmpeg trim。
@@ -269,7 +202,7 @@ async def ingest_reference_video(req: ReplicaIngestRequest) -> ReplicaIngestResp
             INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
             VALUES (?, ?, ?, ?, ?, 0, 'scene', 'pending', ?)
             """,
-            (video_id, name, file_path, None, duration, _utc_now_iso()),
+            (video_id, name, file_path, thumbnail_path, duration, _utc_now_iso()),
         )
         await db.commit()
     finally:
@@ -355,7 +288,7 @@ async def generate_replica_template(
         vrow = await cur.fetchone()
         vname = (str(vrow["name"]) if vrow and vrow["name"] else "").strip()
         default_name = vname or f"复刻模板_{template_id[:8]}"
-        source_url = None
+        source_url = req.url
         await db.execute(
             """
             INSERT INTO replica_templates

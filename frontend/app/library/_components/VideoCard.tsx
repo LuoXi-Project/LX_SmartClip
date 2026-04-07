@@ -41,7 +41,7 @@ export function VideoCard({ video, onPreview, onDelete, onRename }: VideoCardPro
     }
   }, [editing])
 
-  const thumbnailUrl = !thumbError
+  const thumbnailUrl = !thumbError && !!video.thumbnail_path
     ? `/api/videos/${video.id}/thumbnail`
     : null
 

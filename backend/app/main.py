@@ -5,7 +5,7 @@ from app.utils.logging_utils import setup_logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 import os
@@ -167,4 +167,8 @@ async def spa_fallback_on_404(request, exc: StarletteHTTPException):
             index_path = os.path.join(_frontend_dist_path, "index.html")
             if os.path.isfile(index_path):
                 return FileResponse(index_path)
-    raise exc
+    detail = getattr(exc, "detail", None)
+    if detail is None:
+        detail = "Not Found" if exc.status_code == 404 else "HTTP Error"
+    headers = getattr(exc, "headers", None) or {}
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail}, headers=headers)

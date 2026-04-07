@@ -174,6 +174,8 @@ export const videosApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
+  importByUrl: (payload: { url: string; title?: string }) =>
+    apiClient.post<unknown, Video>('/api/videos/import-url', payload),
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
   rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),

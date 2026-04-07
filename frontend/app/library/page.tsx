@@ -26,6 +26,9 @@ export default function LibraryPage() {
 
   // Upload / drag state
   const [uploading, setUploading] = useState(false)
+  const [importingUrl, setImportingUrl] = useState(false)
+  const [importUrl, setImportUrl] = useState('')
+  const [importTitle, setImportTitle] = useState('')
   const [dragActive, setDragActive] = useState(false)
 
   // Preview state
@@ -103,6 +106,38 @@ export default function LibraryPage() {
       page_size: pageSize,
     })
     setPage(1)
+  }
+
+  const handleImportByUrl = async () => {
+    const url = importUrl.trim()
+    if (!url) {
+      toast.error('请输入要下载的视频链接')
+      return
+    }
+    setImportingUrl(true)
+    try {
+      const video = await videosApi.importByUrl({
+        url,
+        title: importTitle.trim() || undefined,
+      })
+      addVideo(video)
+      toast.success('已开始下载并导入素材')
+      setImportUrl('')
+      setImportTitle('')
+      await fetchVideos({
+        q: debouncedQuery || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        sort,
+        page: 1,
+        page_size: pageSize,
+      })
+      setPage(1)
+    } catch (error) {
+      console.error('Import by URL failed:', error)
+      toast.error('链接导入失败，请检查链接或 yt-dlp 环境')
+    } finally {
+      setImportingUrl(false)
+    }
   }
 
   // Rename handler
@@ -205,10 +240,16 @@ export default function LibraryPage() {
         {/* ── Upload Zone ── */}
         <UploadZone
           uploading={uploading}
+          importingUrl={importingUrl}
+          importUrl={importUrl}
+          importTitle={importTitle}
           dragActive={dragActive}
           onDrag={handleDrag}
           onDrop={handleDrop}
           onFileSelect={handleUpload}
+          onImportUrlChange={setImportUrl}
+          onImportTitleChange={setImportTitle}
+          onImportByUrl={handleImportByUrl}
         />
 
         {/* ── Loading skeleton ── */}

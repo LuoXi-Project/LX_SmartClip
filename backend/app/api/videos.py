@@ -1,25 +1,22 @@
 import os
 import uuid
 import shutil
-import subprocess
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
-from app.models.videos import RenamePayload
+from app.models.videos import ImportVideoByUrlPayload, RenamePayload
 
 from app.db.database import get_db_conn
+from app.utils.video_thumbnail import generate_thumbnail
+from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 STORAGE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "storage", "videos")
 )
-THUMBNAIL_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "storage", "thumbnails")
-)
 os.makedirs(STORAGE_DIR, exist_ok=True)
-os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 ALLOWED_CONTENT_TYPES = {
     "video/mp4",
@@ -71,32 +68,6 @@ def _infer_highlight_score(text: str | None) -> float:
     return 0.0
 
 
-def generate_thumbnail(video_path: str, video_id: str) -> str | None:
-    """使用 ffmpeg 提取视频封面帧，返回封面图路径，失败返回 None。"""
-    out_path = os.path.join(THUMBNAIL_DIR, f"{video_id}.jpg")
-    for ss in ("00:00:01", "00:00:00"):
-        try:
-            result = subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-ss", ss,
-                    "-i", video_path,
-                    "-frames:v", "1",
-                    "-vf", "scale=320:-1",
-                    "-q:v", "5",
-                    out_path,
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=300,
-            )
-            if result.returncode == 0 and os.path.exists(out_path):
-                return out_path
-        except Exception:
-            pass
-    return None
-
-
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
     if file.content_type not in ALLOWED_CONTENT_TYPES:
@@ -131,6 +102,45 @@ async def upload_video(file: UploadFile = File(...)):
     return {
         "id": video_id,
         "name": file.filename,
+        "upload_at": upload_at,
+        "thumbnail_path": thumbnail_path,
+    }
+
+
+@router.post("/import-url")
+async def import_video_by_url(payload: ImportVideoByUrlPayload):
+    video_id = str(uuid.uuid4())
+    name = (payload.title or "").strip() or f"yt_import_{video_id[:8]}"
+    try:
+        save_path = download_video_with_yt_dlp(
+            url=payload.url.strip(),
+            output_dir=STORAGE_DIR,
+            file_stem=video_id,
+        )
+    except YtDlpDownloadError as exc:
+        detail = str(exc)
+        status = 501 if "未检测到 yt-dlp" in detail else 502
+        raise HTTPException(status_code=status, detail=detail) from exc
+
+    upload_at = datetime.utcnow().isoformat()
+    thumbnail_path = generate_thumbnail(save_path, video_id)
+
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            """
+            INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
+            VALUES (?, ?, ?, ?, NULL, 0, 'scene', 'pending', ?)
+            """,
+            (video_id, name, save_path, thumbnail_path, upload_at),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {
+        "id": video_id,
+        "name": name,
         "upload_at": upload_at,
         "thumbnail_path": thumbnail_path,
     }

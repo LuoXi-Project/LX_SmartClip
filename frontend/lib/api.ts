@@ -83,6 +83,51 @@ export interface VideoListResponse {
   total_pages: number
 }
 
+// 语义素材检索
+export interface SemanticSearchFilters {
+  video_ids?: string[]
+}
+
+export interface SemanticSearchRequest {
+  query: string
+  top_k?: number
+  top_n?: number
+  highlight_only?: boolean
+  filters?: SemanticSearchFilters
+}
+
+export interface SemanticSearchSegment {
+  clip_id: string
+  start_time: number
+  end_time: number
+  duration: number
+  score: number
+  summary_text?: string | null
+  is_highlight: boolean
+  highlight_score: number
+  thumbnail_url?: string | null
+  preview_url?: string | null
+}
+
+export interface SemanticSearchAssetResult {
+  asset_id: string
+  asset_title: string
+  duration?: number | null
+  cover_url?: string | null
+  asset_score: number
+  segments: SemanticSearchSegment[]
+}
+
+export interface SemanticSearchResponse {
+  query: string
+  results: SemanticSearchAssetResult[]
+}
+
+export const searchApi = {
+  semanticSearch: (payload: SemanticSearchRequest) =>
+    apiClient.post<unknown, SemanticSearchResponse>('/api/search/assets/semantic', payload),
+}
+
 export const videosApi = {
   list: (params?: VideoListParams) =>
     apiClient.get<unknown, VideoListResponse>('/api/videos', { params }),
@@ -98,6 +143,15 @@ export const videosApi = {
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),
   processCancel: (id: string) =>
     apiClient.post<unknown, { ok: boolean; video_id: string }>(`/api/videos/${id}/process-cancel`),
+  highlights: (id: string, params?: { limit?: number; min_score?: number }) =>
+    apiClient.get<unknown, { video_id: string; total: number; segments: Array<{
+      clip_id: string
+      start_time: number
+      end_time: number
+      duration: number
+      highlight_score: number
+      summary_text?: string | null
+    }> }>(`/api/videos/${id}/highlights`, { params }),
 }
 
 export const matchApi = {

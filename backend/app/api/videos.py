@@ -31,6 +31,46 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 
+def _infer_highlight_score(text: str | None) -> float:
+    """
+    从 clips.vlm_description 中粗略推断高光得分。
+
+    说明：
+        - 当前不增加数据库字段，仅在读取时做轻量解析。
+        - 若后续增加结构化高光字段，可替换为直接读取字段。
+    """
+    if not text:
+        return 0.0
+
+    t = text.strip()
+    if not t:
+        return 0.0
+
+    try:
+        import re
+
+        m = re.search(r"高光评级[:：]\s*(高光|一般|非高光)", t)
+        if m:
+            lvl = m.group(1)
+            if "高光" == lvl:
+                return 1.0
+            if "一般" in lvl:
+                return 0.6
+            if "非高光" in lvl:
+                return 0.2
+    except Exception:
+        pass
+
+    keywords = ("高光", "精彩", "亮点", "高潮", "最有价值", "推荐保留")
+    hit = sum(1 for k in keywords if k in t)
+    if hit >= 2:
+        return 0.8
+    if hit == 1:
+        return 0.6
+
+    return 0.0
+
+
 def generate_thumbnail(video_path: str, video_id: str) -> str | None:
     """使用 ffmpeg 提取视频封面帧，返回封面图路径，失败返回 None。"""
     out_path = os.path.join(THUMBNAIL_DIR, f"{video_id}.jpg")
@@ -281,3 +321,57 @@ async def delete_video(video_id: str):
         os.remove(thumbnail_path)
 
     return {"id": video_id, "deleted": True}
+
+
+@router.get("/{video_id}/highlights")
+async def list_video_highlights(
+    video_id: str,
+    limit: int = 10,
+    min_score: float = 0.3,
+):
+    """
+    返回指定素材内的高光片段列表（按推测的高光得分排序）。
+
+    说明：
+        - 目前通过解析 clips.vlm_description 中的“高光评级”或关键词粗略推断 highlight_score。
+        - 后续如有结构化高光字段，可直接改为从表字段读取。
+    """
+    limit = max(1, min(100, int(limit)))
+    try:
+        min_score = float(min_score)
+    except Exception:
+        min_score = 0.3
+
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT id, start_time, end_time, duration, vlm_description "
+            "FROM clips WHERE video_id = ? ORDER BY start_time",
+            (video_id,),
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await db.close()
+
+    segments = []
+    for row in rows:
+        score = _infer_highlight_score(row["vlm_description"])
+        if score < min_score:
+            continue
+        segments.append(
+            {
+                "clip_id": row["id"],
+                "start_time": row["start_time"],
+                "end_time": row["end_time"],
+                "duration": row["duration"],
+                "highlight_score": score,
+                "summary_text": row["vlm_description"],
+            }
+        )
+
+    segments.sort(key=lambda s: s["highlight_score"], reverse=True)
+    return {
+        "video_id": video_id,
+        "total": len(segments),
+        "segments": segments[:limit],
+    }

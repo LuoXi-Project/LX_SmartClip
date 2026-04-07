@@ -23,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="h-4 w-px bg-slate-700" />
             <Link href="/library" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材库</Link>
             <Link href="/process" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材处理</Link>
+            <Link href="/search" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材检索</Link>
             <Link href="/match" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">智能剪辑</Link>
             <Link href="/tts" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">TTS 配音</Link>
             <Link href="/bgm" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">BGM 音乐库</Link>

@@ -1,12 +1,15 @@
 import os
 import subprocess
-from typing import Dict, List, Optional, Tuple
+import queue
+import threading
+from typing import Callable, Dict, Generator, List, Optional, Set, Tuple
 import logging
 
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe_duration
 
 logger = logging.getLogger(__name__)
+_SENTINEL = object()
 
 class ClipInfo:
     """视频片段信息"""
@@ -209,6 +212,7 @@ class VideoSplitter:
         video_path: str,
         duration: float,
         transcode_opts: Optional[Dict[str, str]] = None,
+        on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
     ) -> List[ClipInfo]:
         """
         固定时长切分视频
@@ -272,6 +276,8 @@ class VideoSplitter:
                 logger.info(f"切分片段 {i+1}/{num_clips}: {start_time:.2f}s - {end_time:.2f}s")
                 subprocess.run(cmd, check=True, capture_output=True)
                 clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
+                if on_clip_created:
+                    on_clip_created(clips[-1])
             except subprocess.CalledProcessError as e:
                 logger.error(f"切分片段失败: {e.stderr.decode()}")
                 raise RuntimeError(f"切分片段失败: {str(e)}")
@@ -355,6 +361,141 @@ class VideoSplitter:
         ]
         return ranges, True
 
+    def detect_shots_stream(
+        self,
+        video_path: str,
+        *,
+        mode: str = "adaptive",
+        fixed_duration: float = 60.0,
+        adaptive_threshold: float = 30.0,
+        adaptive_min_scene_len: int = 30,
+        max_shots: Optional[int] = None,
+    ) -> Generator[Dict[str, float], None, None]:
+        """流式返回镜头区间，避免等待全量检测完成。"""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"视频文件不存在: {video_path}")
+
+        mode = (mode or "adaptive").strip().lower()
+        if mode not in {"adaptive", "fixed"}:
+            mode = "adaptive"
+
+        if mode == "fixed":
+            dur = self.get_video_duration(video_path)
+            if dur <= 0:
+                return
+            seg = max(0.1, float(fixed_duration))
+            shot_id = 0
+            t = 0.0
+            while t < dur - 1e-6:
+                ed = min(dur, t + seg)
+                if ed <= t + 1e-6:
+                    break
+                yield {"shot_id": shot_id, "start": float(t), "end": float(ed)}
+                shot_id += 1
+                if max_shots is not None and shot_id >= int(max_shots):
+                    break
+                t = ed
+            return
+
+        try:
+            from scenedetect import open_video, SceneManager, FrameTimecode
+            from scenedetect.detectors import ContentDetector
+        except ImportError:
+            raise ImportError("请安装 scenedetect: pip install scenedetect[opencv]")
+
+        threshold_value = float(adaptive_threshold)
+        if 0.0 < threshold_value <= 1.0:
+            logger.warning(
+                f"检测到旧阈值范围 threshold={threshold_value}，自动使用推荐值 30.0 避免过碎切分"
+            )
+            threshold_value = 30.0
+        min_scene_len_value = max(1, int(adaptive_min_scene_len))
+
+        video = open_video(video_path)
+        video_fps = float(video.frame_rate)
+        min_duration_sec = min_scene_len_value / max(video_fps, 1e-6)
+
+        shot_queue: queue.Queue = queue.Queue()
+        detect_error: List[Exception] = []
+        scene_cut_frames: List[int] = []
+        sent_shot_keys: Set[Tuple[float, float]] = set()
+
+        def frame_callback(frame_image, frame_num: int) -> None:  # noqa: ANN001
+            scene_cut_frames.append(frame_num)
+            cut_count = len(scene_cut_frames)
+            current_time = FrameTimecode(frame_num, video_fps).get_seconds()
+            if cut_count == 1:
+                shot_start = 0.0
+                shot_end = current_time
+            else:
+                prev_frame = scene_cut_frames[cut_count - 2]
+                shot_start = FrameTimecode(prev_frame, video_fps).get_seconds()
+                shot_end = current_time
+            if shot_end - shot_start < min_duration_sec - 1e-6:
+                return
+            key = (round(shot_start, 6), round(shot_end, 6))
+            if key in sent_shot_keys:
+                return
+            sent_shot_keys.add(key)
+            shot_queue.put({"start": float(shot_start), "end": float(shot_end)})
+
+        def _run_detect() -> None:
+            try:
+                scene_manager = SceneManager()
+                scene_manager.add_detector(
+                    ContentDetector(
+                        threshold=threshold_value,
+                        min_scene_len=min_scene_len_value,
+                    )
+                )
+                scene_manager.detect_scenes(video, callback=frame_callback, show_progress=True)
+                scene_list = scene_manager.get_scene_list() or []
+                seen_scenes: Set[Tuple[float, float]] = set()
+                final_shots: List[Dict[str, float]] = []
+                for scene in scene_list:
+                    start_t = float(scene[0].get_seconds())
+                    end_t = float(scene[1].get_seconds())
+                    if end_t <= start_t + 1e-6:
+                        continue
+                    key = (round(start_t, 6), round(end_t, 6))
+                    if key in seen_scenes:
+                        continue
+                    seen_scenes.add(key)
+                    final_shots.append({"start": start_t, "end": end_t})
+
+                for s in final_shots:
+                    key = (round(s["start"], 6), round(s["end"], 6))
+                    if key not in sent_shot_keys:
+                        sent_shot_keys.add(key)
+                        shot_queue.put(s)
+
+                if not final_shots:
+                    dur = self.get_video_duration(video_path)
+                    if dur > 0:
+                        shot_queue.put({"start": 0.0, "end": float(dur)})
+            except Exception as exc:  # noqa: BLE001
+                detect_error.append(exc)
+            finally:
+                shot_queue.put(_SENTINEL)
+
+        thread = threading.Thread(target=_run_detect, daemon=True)
+        thread.start()
+
+        shot_count = 0
+        while True:
+            item = shot_queue.get()
+            if item is _SENTINEL:
+                break
+            if max_shots is not None and shot_count >= int(max_shots):
+                continue
+            item["shot_id"] = shot_count
+            yield item
+            shot_count += 1
+
+        if detect_error:
+            raise detect_error[0]
+        thread.join()
+
     def split_by_hybrid(
         self,
         video_path: str,
@@ -363,6 +504,7 @@ class VideoSplitter:
         max_segment_sec: float = 60.0,
         chunk_sec: float = 10.0,
         transcode_opts: Optional[Dict[str, str]] = None,
+        on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
     ) -> List[ClipInfo]:
         """
         混合切分：先做镜头识别；若某镜头时长超过 max_segment_sec，再按 chunk_sec 强制切段。
@@ -382,39 +524,44 @@ class VideoSplitter:
             f"max_segment_sec={max_segment_sec}, chunk_sec={chunk_sec}"
         )
 
-        ranges, _had_cuts = self._detect_scene_time_ranges(
-            video_path, threshold, min_scene_len
-        )
-
-        expanded: List[Tuple[float, float]] = []
-        for st, en in ranges:
-            expanded.extend(self._expand_long_scene_ranges(st, en, max_segment_sec, chunk_sec))
-
         clips: List[ClipInfo] = []
         video_name = os.path.splitext(os.path.basename(video_path))[0]
+        clip_idx = 0
 
-        for i, (start_time, end_time) in enumerate(expanded):
-            clip_duration = end_time - start_time
-            clip_filename = f"{video_name}_hybrid_{i:04d}.{output_container}"
-            clip_path = os.path.join(self.clips_dir, clip_filename)
-
-            cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
-            cmd += self._build_transcode_args(
-                has_video_stream=video_has_stream,
-                output_container=output_container,
-                opts=transcode_opts,
+        for shot in self.detect_shots_stream(
+            video_path,
+            mode="adaptive",
+            adaptive_threshold=threshold,
+            adaptive_min_scene_len=min_scene_len,
+        ):
+            shot_start = float(shot["start"])
+            shot_end = float(shot["end"])
+            expanded = self._expand_long_scene_ranges(
+                shot_start, shot_end, max_segment_sec, chunk_sec
             )
-            cmd += ["-y", clip_path]
+            for start_time, end_time in expanded:
+                clip_duration = end_time - start_time
+                clip_filename = f"{video_name}_hybrid_{clip_idx:04d}.{output_container}"
+                clip_path = os.path.join(self.clips_dir, clip_filename)
 
-            try:
-                logger.info(
-                    f"混合切分片段 {i+1}/{len(expanded)}: {start_time:.2f}s - {end_time:.2f}s"
+                cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
+                cmd += self._build_transcode_args(
+                    has_video_stream=video_has_stream,
+                    output_container=output_container,
+                    opts=transcode_opts,
                 )
-                subprocess.run(cmd, check=True, capture_output=True)
-                clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
-            except subprocess.CalledProcessError as e:
-                logger.error(f"混合切分失败: {e.stderr.decode()}")
-                raise RuntimeError(f"混合切分失败: {str(e)}")
+                cmd += ["-y", clip_path]
+
+                try:
+                    logger.info(f"混合切分片段 {clip_idx+1}: {start_time:.2f}s - {end_time:.2f}s")
+                    subprocess.run(cmd, check=True, capture_output=True)
+                    clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
+                    if on_clip_created:
+                        on_clip_created(clips[-1])
+                    clip_idx += 1
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"混合切分失败: {e.stderr.decode()}")
+                    raise RuntimeError(f"混合切分失败: {str(e)}")
 
         logger.info(f"混合切分完成: {len(clips)} 个片段")
         return clips
@@ -425,6 +572,7 @@ class VideoSplitter:
         threshold: float = 30.0,
         min_scene_len: int = 30,
         transcode_opts: Optional[Dict[str, str]] = None,
+        on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
     ) -> List[ClipInfo]:
         """
         使用 PySceneDetect 进行镜头识别切分
@@ -458,16 +606,48 @@ class VideoSplitter:
             f"镜头识别切分: 视频={video_path}, 阈值={threshold_value}, min_scene_len={min_scene_len_value}"
         )
 
-        scenes, had_scene_cuts = self._detect_scene_time_ranges(
-            video_path, threshold_value, min_scene_len_value
-        )
+        clips = []
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+        shot_count = 0
 
-        if not had_scene_cuts:
+        for shot in self.detect_shots_stream(
+            video_path,
+            mode="adaptive",
+            adaptive_threshold=threshold_value,
+            adaptive_min_scene_len=min_scene_len_value,
+        ):
+            start_time = float(shot["start"])
+            end_time = float(shot["end"])
+            clip_duration = end_time - start_time
+
+            # 生成片段文件路径
+            clip_filename = f"{video_name}_scene_{shot_count:03d}.{output_container}"
+            clip_path = os.path.join(self.clips_dir, clip_filename)
+
+            # 使用 FFmpeg 切分视频
+            cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
+            cmd += self._build_transcode_args(
+                has_video_stream=video_has_stream,
+                output_container=output_container,
+                opts=transcode_opts,
+            )
+            cmd += ["-y", clip_path]
+
+            try:
+                logger.info(f"切分场景 {shot_count+1}: {start_time:.2f}s - {end_time:.2f}s")
+                subprocess.run(cmd, check=True, capture_output=True)
+                clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
+                if on_clip_created:
+                    on_clip_created(clips[-1])
+                shot_count += 1
+            except subprocess.CalledProcessError as e:
+                logger.error(f"切分场景失败: {e.stderr.decode()}")
+                raise RuntimeError(f"切分场景失败: {str(e)}")
+
+        if not clips:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)
-            video_name = os.path.splitext(os.path.basename(video_path))[0]
             clip_path = os.path.join(self.clips_dir, f"{video_name}.{output_container}")
-            # 若目标文件不存在，用 FFmpeg 生成浏览器可播放的 mp4 到 clips 目录
             if not os.path.exists(clip_path):
                 cmd = [ffmpeg_bin(), "-i", video_path]
                 cmd += self._build_transcode_args(
@@ -482,36 +662,10 @@ class VideoSplitter:
                 except subprocess.CalledProcessError as e:
                     logger.error(f"编码视频失败: {e.stderr.decode()}")
                     raise RuntimeError(f"编码视频失败: {str(e)}")
-            return [ClipInfo(clip_path, 0, total_duration, total_duration)]
-
-        logger.info(f"检测到 {len(scenes)} 个场景")
-
-        clips = []
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-
-        for i, (start_time, end_time) in enumerate(scenes):
-            clip_duration = end_time - start_time
-
-            # 生成片段文件路径
-            clip_filename = f"{video_name}_scene_{i:03d}.{output_container}"
-            clip_path = os.path.join(self.clips_dir, clip_filename)
-
-            # 使用 FFmpeg 切分视频
-            cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
-            cmd += self._build_transcode_args(
-                has_video_stream=video_has_stream,
-                output_container=output_container,
-                opts=transcode_opts,
-            )
-            cmd += ["-y", clip_path]
-
-            try:
-                logger.info(f"切分场景 {i+1}/{len(scenes)}: {start_time:.2f}s - {end_time:.2f}s")
-                subprocess.run(cmd, check=True, capture_output=True)
-                clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
-            except subprocess.CalledProcessError as e:
-                logger.error(f"切分场景失败: {e.stderr.decode()}")
-                raise RuntimeError(f"切分场景失败: {str(e)}")
+            fallback_clip = ClipInfo(clip_path, 0, total_duration, total_duration)
+            if on_clip_created:
+                on_clip_created(fallback_clip)
+            return [fallback_clip]
 
         logger.info(f"镜头识别切分完成: {len(clips)} 个片段")
         return clips

@@ -160,6 +160,42 @@ async def _save_clips_to_db(video_id: str, clips):
         await db.close()
 
 
+async def _clear_clips_for_video(video_id: str):
+    db = await get_db_conn()
+    try:
+        await db.execute("DELETE FROM clips WHERE video_id = ?", (video_id,))
+        await db.execute("UPDATE videos SET total_clips = 0 WHERE id = ?", (video_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _insert_clip_to_db(video_id: str, clip) -> str:
+    clip_id = str(uuid.uuid4())
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            "INSERT INTO clips (id, video_id, clip_path, start_time, end_time, duration) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                clip_id,
+                video_id,
+                clip.clip_path,
+                float(clip.start_time),
+                float(clip.end_time),
+                float(clip.duration),
+            ),
+        )
+        await db.execute(
+            "UPDATE videos SET total_clips = (SELECT COUNT(*) FROM clips WHERE video_id = ?) WHERE id = ?",
+            (video_id, video_id),
+        )
+        await db.commit()
+        return clip_id
+    finally:
+        await db.close()
+
+
 async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: list = None):
     """执行全素材处理（按片段流水线并发）：split -> (frames||asr) -> vlm -> embed"""
     skip_steps = skip_steps or []
@@ -211,51 +247,13 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
     await _check_cancel(video_id)
 
-    # STEP 1: 视频切分
-    if "split" not in skip_steps:
-        await reporter.send("split", "running", f"开始切分视频（模式：{split_mode})")
-        try:
-            if split_mode == "fixed":
-                clips = await loop.run_in_executor(
-                    None, splitter.split_by_fixed, video_path, fixed_duration
-                )
-            elif split_mode == "hybrid":
-                clips = await loop.run_in_executor(
-                    None,
-                    lambda: splitter.split_by_hybrid(
-                        video_path,
-                        scene_threshold,
-                        scene_min_scene_len,
-                        hybrid_max_segment_sec,
-                        fixed_duration,
-                    ),
-                )
-            else:
-                clips = await loop.run_in_executor(
-                    None,
-                    lambda: splitter.split_by_scene(
-                        video_path, scene_threshold, scene_min_scene_len
-                    ),
-                )
-            await _check_cancel(video_id)
-            await _save_clips_to_db(video_id, clips)
-            await reporter.send(
-                "split", "done", f"切分完成，共 {len(clips)} 个片段",
-                {"total_clips": len(clips)},
-            )
-        except Exception as e:
-            await reporter.send("split", "error", f"切分失败: {e}")
-            await _set_video_status(video_id, "error")
-            raise
+    do_split = "split" not in skip_steps
+    if do_split:
+        await reporter.send("split", "running", f"开始切分视频（流式模式：{split_mode})")
     else:
         await reporter.send("split", "skip", "跳过视频切分")
 
-    clips_rows = await _get_clips(video_id)
-    if not clips_rows:
-        await reporter.send("extract_frames", "error", "没有可处理的片段")
-        await _set_video_status(video_id, "error")
-        return
-
+    clips_rows = await _get_clips(video_id) if not do_split else []
     total_clips = len(clips_rows)
     do_frames = "extract_frames" not in skip_steps
     do_asr = "asr" not in skip_steps
@@ -263,7 +261,10 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     do_embed = "embed" not in skip_steps
 
     if do_frames:
-        await reporter.send("extract_frames", "running", f"开始为 {total_clips} 个片段抽帧（{frame_fps} 帧/秒）")
+        if do_split:
+            await reporter.send("extract_frames", "running", f"开始流式抽帧（{frame_fps} 帧/秒）")
+        else:
+            await reporter.send("extract_frames", "running", f"开始为 {total_clips} 个片段抽帧（{frame_fps} 帧/秒）")
     else:
         await reporter.send("extract_frames", "skip", "跳过图帧提取")
 
@@ -372,13 +373,12 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     vlm_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
     embed_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
 
-    clips_payload = []
-    for clip in clips_rows:
+    def _make_item(clip_id: str, clip_path: str, asr_text: str = "", vlm_description: str = "") -> dict:
         item = {
-            "id": clip["id"],
-            "clip_path": clip["clip_path"],
-            "asr_text": (clip["asr_text"] or "").strip(),
-            "vlm_description": (clip["vlm_description"] or "").strip(),
+            "id": clip_id,
+            "clip_path": clip_path,
+            "asr_text": (asr_text or "").strip(),
+            "vlm_description": (vlm_description or "").strip(),
             "frame_paths": None,
             "frame_ready": asyncio.Event(),
             "asr_ready": asyncio.Event(),
@@ -386,7 +386,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         }
         if not do_asr:
             item["asr_ready"].set()
-        clips_payload.append(item)
+        return item
 
     async def _maybe_enqueue_vlm(item: dict):
         """同一片段仅在依赖就绪后入队一次，避免等待全量阶段结束。"""
@@ -553,11 +553,119 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     vlm_workers = [asyncio.create_task(_vlm_worker()) for _ in range(vlm_worker_count)]
     embed_workers = [asyncio.create_task(_embed_worker()) for _ in range(embed_worker_count)]
     asr_workers = [asyncio.create_task(_asr_worker()) for _ in range(asr_worker_count)] if do_asr else []
+    cancelled_early = False
 
-    for item in clips_payload:
+    async def _enqueue_item(item: dict):
         await frame_queue.put(item)
         if do_asr:
             await asr_queue.put(item)
+
+    if do_split:
+        await _clear_clips_for_video(video_id)
+        split_out_queue: asyncio.Queue = asyncio.Queue()
+        split_done = object()
+        split_error = {"err": None}
+        split_count = 0
+
+        def _on_clip_created(clip):
+            asyncio.run_coroutine_threadsafe(split_out_queue.put(clip), loop).result()
+
+        async def _run_split_task():
+            try:
+                if split_mode == "fixed":
+                    await loop.run_in_executor(
+                        None,
+                        lambda: splitter.split_by_fixed(
+                            video_path,
+                            fixed_duration,
+                            on_clip_created=_on_clip_created,
+                        ),
+                    )
+                elif split_mode == "hybrid":
+                    await loop.run_in_executor(
+                        None,
+                        lambda: splitter.split_by_hybrid(
+                            video_path,
+                            scene_threshold,
+                            scene_min_scene_len,
+                            hybrid_max_segment_sec,
+                            fixed_duration,
+                            on_clip_created=_on_clip_created,
+                        ),
+                    )
+                else:
+                    await loop.run_in_executor(
+                        None,
+                        lambda: splitter.split_by_scene(
+                            video_path,
+                            scene_threshold,
+                            scene_min_scene_len,
+                            on_clip_created=_on_clip_created,
+                        ),
+                    )
+            except Exception as e:
+                split_error["err"] = e
+            finally:
+                await split_out_queue.put(split_done)
+
+        split_task = asyncio.create_task(_run_split_task())
+
+        while True:
+            try:
+                await _check_cancel(video_id)
+            except ProcessCancelled:
+                cancelled_early = True
+                break
+            try:
+                clip_obj = await asyncio.wait_for(split_out_queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            if clip_obj is split_done:
+                break
+            try:
+                await _check_cancel(video_id)
+            except ProcessCancelled:
+                cancelled_early = True
+                break
+            clip_id = await _insert_clip_to_db(video_id, clip_obj)
+            split_count += 1
+            total_clips = split_count
+            await reporter.send(
+                "split",
+                "running",
+                f"已切分 {split_count} 个片段，正在流式进入后续处理",
+                {"processed": split_count},
+            )
+            await _enqueue_item(_make_item(clip_id, clip_obj.clip_path))
+
+        await split_task
+        if split_error["err"] is not None:
+            raise split_error["err"]
+        if split_count <= 0:
+            await reporter.send("extract_frames", "error", "没有可处理的片段")
+            await _set_video_status(video_id, "error")
+            return
+        await reporter.send("split", "done", f"切分完成，共 {split_count} 个片段", {"total_clips": split_count})
+    else:
+        if not clips_rows:
+            await reporter.send("extract_frames", "error", "没有可处理的片段")
+            await _set_video_status(video_id, "error")
+            return
+        for clip in clips_rows:
+            await _enqueue_item(
+                _make_item(
+                    clip["id"],
+                    clip["clip_path"],
+                    clip["asr_text"] or "",
+                    clip["vlm_description"] or "",
+                )
+            )
+
+    if cancelled_early:
+        for t in [*frames_workers, *vlm_workers, *embed_workers, *asr_workers]:
+            t.cancel()
+        await asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers, return_exceptions=True)
+        raise ProcessCancelled()
 
     for _ in range(frames_worker_count):
         await frame_queue.put(None)

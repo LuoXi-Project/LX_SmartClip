@@ -216,6 +216,28 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         scene_min_scene_len = int(await _read_config(db, "scene_min_scene_len", "30"))
         fixed_duration  = float(await _read_config(db, "fixed_duration", "10"))
         hybrid_max_segment_sec = float(await _read_config(db, "hybrid_max_segment_sec", "60"))
+
+        # 切分性能/转码参数（由前端配置）
+        transcode_opts = {
+            "clip_container": await _read_config(db, "clip_container", "mp4"),
+            "clip_vcodec": await _read_config(db, "clip_vcodec", "libx264"),
+            "clip_acodec": await _read_config(db, "clip_acodec", "aac"),
+            "clip_preset": await _read_config(db, "clip_preset", "veryfast"),
+            "clip_crf": await _read_config(db, "clip_crf", "23"),
+            "clip_video_bitrate_kbps": await _read_config(db, "clip_video_bitrate_kbps", "0"),
+            "clip_audio_bitrate_kbps": await _read_config(db, "clip_audio_bitrate_kbps", "128"),
+            "clip_fps": await _read_config(db, "clip_fps", "0"),
+            "clip_scale_width": await _read_config(db, "clip_scale_width", "0"),
+            "clip_scale_height": await _read_config(db, "clip_scale_height", "0"),
+            "clip_pix_fmt": await _read_config(db, "clip_pix_fmt", "yuv420p"),
+            # cut performance / stream copy
+            "cut_mode": await _read_config(db, "cut_mode", "fast"),
+            "stream_copy": await _read_config(db, "stream_copy", "false"),
+            "stream_copy_audio": await _read_config(db, "stream_copy_audio", "false"),
+            "split_max_workers": await _read_config(db, "split_max_workers", "2"),
+            "ffmpeg_threads_per_job": await _read_config(db, "ffmpeg_threads_per_job", "1"),
+            "quiet_split": await _read_config(db, "quiet_split", "true"),
+        }
         asr_provider    = await _read_config(db, "asr_provider", "whisper")
         asr_model       = await _read_config(db, "asr_model", "base")
         asr_base_url    = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
@@ -585,6 +607,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                         lambda: splitter.split_by_fixed(
                             video_path,
                             fixed_duration,
+                            transcode_opts=transcode_opts,
                             on_clip_created=_on_clip_created,
                         ),
                     )
@@ -597,6 +620,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                             scene_min_scene_len,
                             hybrid_max_segment_sec,
                             fixed_duration,
+                            transcode_opts=transcode_opts,
                             on_clip_created=_on_clip_created,
                         ),
                     )
@@ -607,6 +631,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                             video_path,
                             scene_threshold,
                             scene_min_scene_len,
+                            transcode_opts=transcode_opts,
                             on_clip_created=_on_clip_created,
                         ),
                     )

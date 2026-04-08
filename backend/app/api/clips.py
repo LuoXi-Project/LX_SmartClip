@@ -89,6 +89,13 @@ async def split_video(video_id: str):
             "clip_scale_width": await _get_config_value(db, "clip_scale_width", "0"),
             "clip_scale_height": await _get_config_value(db, "clip_scale_height", "0"),
             "clip_pix_fmt": await _get_config_value(db, "clip_pix_fmt", "yuv420p"),
+            # cut performance / stream copy
+            "cut_mode": await _get_config_value(db, "cut_mode", "fast"),
+            "stream_copy": await _get_config_value(db, "stream_copy", "false"),
+            "stream_copy_audio": await _get_config_value(db, "stream_copy_audio", "false"),
+            "split_max_workers": await _get_config_value(db, "split_max_workers", "2"),
+            "ffmpeg_threads_per_job": await _get_config_value(db, "ffmpeg_threads_per_job", "1"),
+            "quiet_split": await _get_config_value(db, "quiet_split", "true"),
         }
 
         # 执行切分

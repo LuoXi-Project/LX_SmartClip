@@ -2,10 +2,13 @@ import os
 import subprocess
 import queue
 import threading
+import bisect
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, Generator, List, Optional, Set, Tuple
 import logging
 
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.bin_paths import ffprobe_bin
 from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe_duration
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,281 @@ class VideoSplitter:
         os.makedirs(self.clips_dir, exist_ok=True)
         os.makedirs(self.audio_dir, exist_ok=True)
         os.makedirs(self.frames_dir, exist_ok=True)
+
+        # keyframe 缓存：同一视频多次切分时避免重复 ffprobe
+        # {video_path: sorted_keyframe_pts_time_list}
+        self._keyframe_cache: Dict[str, List[float]] = {}
+
+    @staticmethod
+    def _parse_bool(val: Optional[str], default: bool = False) -> bool:
+        if val is None:
+            return default
+        if isinstance(val, bool):
+            return val
+        s = str(val).strip().lower()
+        return s in {"1", "true", "yes", "y", "on", "t"}
+
+    def _probe_keyframe_times(self, video_path: str) -> List[float]:
+        """
+        探测 v:0 的关键帧 pts_time 列表（秒），用于 -c copy 时对齐切点。
+
+        说明：不同封装/编码器的 keyframe 输出格式可能不同，这里做了两段式兜底。
+        """
+        # 尽量只输出关键帧，避免 show_frames 产生海量输出
+        cmd1 = [
+            ffprobe_bin(),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-skip_frame",
+            "nokey",
+            "-show_entries",
+            "frame=pts_time",
+            "-of",
+            "csv=p=0",
+            video_path,
+        ]
+        try:
+            p1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600)
+            text = (p1.stdout.decode(errors="replace") or "").strip()
+            out: List[float] = []
+            if text:
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        out.append(float(line))
+                    except Exception:
+                        continue
+            if out:
+                # 去重 + 排序
+                return sorted(set(out))
+        except Exception:
+            # 走兜底
+            pass
+
+        # 兜底：输出 key_frame 与 pts_time，再在 Python 过滤（可能更慢，但仅在 cmd1 失效时触发）
+        cmd2 = [
+            ffprobe_bin(),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "frame=key_frame,pts_time",
+            "-of",
+            "csv=p=0",
+            video_path,
+        ]
+        p2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600)
+        out2: List[float] = []
+        text2 = (p2.stdout.decode(errors="replace") or "").strip()
+        if not text2:
+            return []
+        # csv=p=0 下每行形如：key_frame,pts_time
+        for line in text2.splitlines():
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) < 2:
+                continue
+            k, pts = parts[0], parts[1]
+            if k not in {"1", "1.0", "true"}:
+                continue
+            try:
+                out2.append(float(pts))
+            except Exception:
+                continue
+        return sorted(set(out2))
+
+    def _get_keyframe_times_cached(self, video_path: str) -> List[float]:
+        if video_path in self._keyframe_cache:
+            return self._keyframe_cache[video_path]
+        times = self._probe_keyframe_times(video_path)
+        self._keyframe_cache[video_path] = times
+        return times
+
+    @staticmethod
+    def _adjust_range_to_keyframes(
+        keyframes: List[float],
+        start_time: float,
+        end_time: float,
+    ) -> Tuple[float, float]:
+        """
+        让 (start_time, end_time) 以关键帧为边界（用于 -c copy）。
+        规则：start 向下取前一个关键帧；end 优先取后一个关键帧（若不存在则保持原 end）。
+        """
+        if not keyframes:
+            return start_time, end_time
+
+        # 确保 start/end 非负
+        start_time = max(0.0, float(start_time))
+        end_time = max(0.0, float(end_time))
+
+        if end_time <= start_time + 1e-6:
+            return start_time, end_time
+
+        # start: <= start 的最大关键帧
+        i = bisect.bisect_right(keyframes, start_time) - 1
+        start_adj = keyframes[i] if i >= 0 else keyframes[0]
+
+        # end: >= end 的最小关键帧；若不存在，退回原 end
+        j = bisect.bisect_left(keyframes, end_time)
+        end_adj = keyframes[j] if j < len(keyframes) else end_time
+
+        # 保底，避免 end_adj 小于等于 start_adj 导致 -t<=0
+        if end_adj <= start_adj + 1e-6:
+            end_adj = start_adj + (end_time - start_time)
+        return float(start_adj), float(end_adj)
+
+    def _cut_ranges_parallel(
+        self,
+        video_path: str,
+        ranges: List[Tuple[float, float]],
+        *,
+        transcode_opts: Optional[Dict[str, str]] = None,
+        on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        # 命名前缀 & 序号格式
+        name_prefix: str,
+        index_width: int = 3,
+    ) -> List[ClipInfo]:
+        """
+        通用切分管线：给定一组 (start, end) 区间，使用 ffmpeg 并行切分。
+
+        统一支持：
+        - cut_mode fast/precise（-ss 放置位置）
+        - stream_copy（视频流 copy 时关键帧对齐 + 关键帧缓存）
+        - quiet_split（压低日志和 ffmpeg 输出）
+        - split_max_workers / ffmpeg_threads_per_job 等性能参数
+        """
+        if not ranges:
+            return []
+
+        opts = dict(transcode_opts or {})
+
+        # ===== 基础配置 =====
+        video_has_stream = self.has_video_stream(video_path)
+        output_container = opts.get("clip_container", "mp4").strip() or "mp4"
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+
+        # cut_mode
+        cut_mode_val = (opts.get("cut_mode") or "fast").strip().lower()
+        if cut_mode_val not in {"fast", "precise"}:
+            cut_mode_val = "fast"
+
+        # stream_copy（只控制视频）
+        if "stream_copy" in opts:
+            stream_copy_val = self._parse_bool(opts.get("stream_copy"), default=False)
+        else:
+            vcodec_cfg = (opts.get("clip_vcodec") or "").strip().lower()
+            stream_copy_val = vcodec_cfg == "copy"
+
+        # worker 数
+        cfg_workers = str(opts.get("split_max_workers") or "").strip()
+        if cfg_workers:
+            try:
+                max_workers = max(1, int(float(cfg_workers)))
+            except Exception:
+                max_workers = max(1, min(4, os.cpu_count() or 1))
+        else:
+            max_workers = max(1, min(4, os.cpu_count() or 1))
+
+        # 日志/quiet
+        quiet_split_val = self._parse_bool(opts.get("quiet_split"), default=True)
+        ffmpeg_loglevel = str(opts.get("ffmpeg_loglevel") or "").strip()
+        if not ffmpeg_loglevel:
+            ffmpeg_loglevel = "error" if quiet_split_val else "warning"
+
+        # ffmpeg 线程
+        ffmpeg_threads = str(opts.get("ffmpeg_threads_per_job") or "").strip()
+        if ffmpeg_threads:
+            try:
+                ffmpeg_threads_val = max(1, int(float(ffmpeg_threads)))
+            except Exception:
+                ffmpeg_threads_val = 1
+        else:
+            ffmpeg_threads_val = 1 if max_workers > 1 else 0
+
+        # stream_copy 强制视频编码器为 copy；音频由 stream_copy_audio/clip_acodec 控制
+        if stream_copy_val:
+            opts["clip_vcodec"] = "copy"
+            if self._parse_bool(opts.get("stream_copy_audio"), default=False):
+                opts["clip_acodec"] = "copy"
+
+        # 关键帧缓存（仅视频流 copy 时）
+        keyframes: List[float] = []
+        video_duration: Optional[float] = None
+        if stream_copy_val and video_has_stream:
+            keyframes = self._get_keyframe_times_cached(video_path)
+            video_duration = self.get_video_duration(video_path)
+
+        # 转码参数整体一次性构建
+        transcode_args = self._build_transcode_args(
+            has_video_stream=video_has_stream,
+            output_container=output_container,
+            opts=opts,
+        )
+
+        results_by_idx: Dict[int, ClipInfo] = {}
+        futures = []
+
+        def _run_one(idx: int, start_time: float, end_time: float, clip_path: str) -> Tuple[int, ClipInfo]:
+            start_adj, end_adj = start_time, end_time
+            if stream_copy_val and keyframes:
+                start_adj, end_adj = self._adjust_range_to_keyframes(keyframes, start_time, end_time)
+                if video_duration is not None:
+                    end_adj = min(float(end_adj), float(video_duration))
+
+            duration = max(0.0, float(end_adj - start_adj))
+            if duration <= 1e-6:
+                raise RuntimeError(f"切段时长过短（idx={idx}）: start={start_adj}, end={end_adj}")
+
+            cmd: List[str] = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", ffmpeg_loglevel]
+            if ffmpeg_threads_val > 0:
+                cmd += ["-threads", str(ffmpeg_threads_val)]
+
+            if cut_mode_val == "fast":
+                cmd += ["-ss", str(start_adj), "-i", video_path, "-t", str(duration)]
+            else:
+                cmd += ["-i", video_path, "-ss", str(start_adj), "-t", str(duration)]
+
+            cmd += transcode_args
+            cmd += ["-y", clip_path]
+
+            try:
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            except subprocess.CalledProcessError as e:
+                err_tail = ""
+                if getattr(e, "stderr", None):
+                    try:
+                        err_tail = e.stderr.decode(errors="replace")[-2000:]
+                    except Exception:
+                        err_tail = ""
+                raise RuntimeError(f"切分失败（idx={idx}）: {err_tail or str(e)}")
+
+            return idx, ClipInfo(clip_path, start_adj, end_adj, duration)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for idx, (st, ed) in enumerate(ranges):
+                clip_filename = f"{video_name}_{name_prefix}_{idx:0{index_width}d}.{output_container}"
+                clip_path = os.path.join(self.clips_dir, clip_filename)
+                futures.append(executor.submit(_run_one, idx, float(st), float(ed), clip_path))
+                if not quiet_split_val:
+                    logger.info(f"提交切分片段 {name_prefix}#{idx}: {st:.2f}s - {ed:.2f}s")
+
+            for fut in as_completed(futures):
+                try:
+                    idx_ret, clip_info = fut.result()
+                    results_by_idx[idx_ret] = clip_info
+                    if on_clip_created:
+                        on_clip_created(clip_info)
+                except Exception:
+                    for pending in futures:
+                        pending.cancel()
+                    raise
+
+        total = len(results_by_idx)
+        return [results_by_idx[i] for i in range(total)]
 
     def extract_audio(self, video_path: str, overwrite: bool = False) -> str:
         """
@@ -230,10 +508,6 @@ class VideoSplitter:
         if duration <= 0:
             raise ValueError(f"时长必须大于 0: {duration}")
 
-        # 预先探测一次，避免每个片段都重复 ffprobe
-        video_has_stream = self.has_video_stream(video_path)
-        output_container = (transcode_opts or {}).get("clip_container", "mp4").strip() or "mp4"
-
         # 获取视频总时长
         total_duration = self.get_video_duration(video_path)
         
@@ -242,46 +516,23 @@ class VideoSplitter:
         
         logger.info(f"固定时长切分: 总时长={total_duration}s, 片段时长={duration}s, 片段数={num_clips}")
 
-        clips = []
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-
+        # 预生成所有时间区间
+        ranges: List[Tuple[float, float]] = []
         for i in range(num_clips):
             start_time = i * duration
             end_time = min((i + 1) * duration, total_duration)
-            clip_duration = end_time - start_time
+            if end_time <= start_time + 1e-6:
+                continue
+            ranges.append((start_time, end_time))
 
-            # 生成片段文件路径
-            clip_filename = f"{video_name}_clip_{i:03d}.{output_container}"
-            clip_path = os.path.join(self.clips_dir, clip_filename)
-
-            # 使用 FFmpeg 切分视频
-            cmd_base = [
-                ffmpeg_bin(),
-                "-i", video_path,
-                "-ss", str(start_time),
-                "-to", str(end_time),
-            ]
-
-            transcode_args = self._build_transcode_args(
-                has_video_stream=video_has_stream,
-                output_container=output_container,
-                opts=transcode_opts,
-            )
-            cmd = cmd_base + transcode_args + [
-                "-y",  # 覆盖已存在的文件
-                clip_path,
-            ]
-
-            try:
-                logger.info(f"切分片段 {i+1}/{num_clips}: {start_time:.2f}s - {end_time:.2f}s")
-                subprocess.run(cmd, check=True, capture_output=True)
-                clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
-                if on_clip_created:
-                    on_clip_created(clips[-1])
-            except subprocess.CalledProcessError as e:
-                logger.error(f"切分片段失败: {e.stderr.decode()}")
-                raise RuntimeError(f"切分片段失败: {str(e)}")
-
+        clips = self._cut_ranges_parallel(
+            video_path,
+            ranges,
+            transcode_opts=transcode_opts,
+            on_clip_created=on_clip_created,
+            name_prefix="clip",
+            index_width=3,
+        )
         logger.info(f"固定时长切分完成: {len(clips)} 个片段")
         return clips
 
@@ -370,6 +621,7 @@ class VideoSplitter:
         adaptive_threshold: float = 30.0,
         adaptive_min_scene_len: int = 30,
         max_shots: Optional[int] = None,
+        show_progress: bool = True,
     ) -> Generator[Dict[str, float], None, None]:
         """流式返回镜头区间，避免等待全量检测完成。"""
         if not os.path.exists(video_path):
@@ -448,7 +700,7 @@ class VideoSplitter:
                         min_scene_len=min_scene_len_value,
                     )
                 )
-                scene_manager.detect_scenes(video, callback=frame_callback, show_progress=True)
+                scene_manager.detect_scenes(video, callback=frame_callback, show_progress=show_progress)
                 scene_list = scene_manager.get_scene_list() or []
                 seen_scenes: Set[Tuple[float, float]] = set()
                 final_shots: List[Dict[str, float]] = []
@@ -505,6 +757,11 @@ class VideoSplitter:
         chunk_sec: float = 10.0,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        # 性能优化开关（优先从 transcode_opts 读取；此处保留参数以便直接调用时覆写）
+        cut_mode: Optional[str] = None,
+        stream_copy: Optional[bool] = None,
+        max_workers: Optional[int] = None,
+        quiet_split: Optional[bool] = None,
     ) -> List[ClipInfo]:
         """
         混合切分：先做镜头识别；若某镜头时长超过 max_segment_sec，再按 chunk_sec 强制切段。
@@ -516,53 +773,178 @@ class VideoSplitter:
         if max_segment_sec <= 0:
             raise ValueError(f"混合模式最大镜头时长必须大于 0: {max_segment_sec}")
 
+        opts = dict(transcode_opts or {})
+
+        # ===== 性能相关配置（尽量兼容现有 transcode_opts）
+        # cut_mode：
+        # - fast：-ss 放在 -i 前（快速寻址，适合提速；精度可在需要时通过切换 precise 处理）
+        # - precise：-ss 放在 -i 后（更精确，但更慢）
+        cut_mode_val = (cut_mode or opts.get("cut_mode") or "fast").strip().lower()
+        if cut_mode_val not in {"fast", "precise"}:
+            cut_mode_val = "fast"
+
+        # stream_copy：
+        # 1) 优先使用显式参数 stream_copy
+        # 2) 否则从 opts 推断：clip_vcodec/clip_acodec 是否为 copy
+        if stream_copy is None:
+            # 支持 transcode_opts["stream_copy"] 显式开关；该开关用于控制“视频流是否 copy”
+            if "stream_copy" in opts:
+                stream_copy_val = self._parse_bool(opts.get("stream_copy"), default=False)
+            else:
+                # 兼容老配置：clip_vcodec == copy 即视为视频流 copy
+                vcodec = (opts.get("clip_vcodec") or "").strip().lower()
+                stream_copy_val = vcodec == "copy"
+        else:
+            stream_copy_val = bool(stream_copy)
+
+        # max_workers：并行 ffmpeg 作业数
+        if max_workers is None:
+            cfg = str(opts.get("split_max_workers") or "").strip()
+            if cfg:
+                try:
+                    max_workers_val = max(1, int(float(cfg)))
+                except Exception:
+                    max_workers_val = max(1, min(4, os.cpu_count() or 1))
+            else:
+                max_workers_val = max(1, min(4, os.cpu_count() or 1))
+        else:
+            max_workers_val = max(1, int(max_workers))
+
+        # quiet_split：降低 Python 侧日志，减少 stdout/stderr 输出开销
+        if quiet_split is None:
+            quiet_split_val = self._parse_bool(opts.get("quiet_split"), default=True)
+        else:
+            quiet_split_val = bool(quiet_split)
+
+        ffmpeg_loglevel = str(opts.get("ffmpeg_loglevel") or "").strip()
+        if not ffmpeg_loglevel:
+            ffmpeg_loglevel = "error" if quiet_split_val else "warning"
+
+        # ffmpeg 线程：并行场景下建议每个 ffmpeg 限制线程，避免 CPU 过度争用
+        ffmpeg_threads = str(opts.get("ffmpeg_threads_per_job") or "").strip()
+        if ffmpeg_threads:
+            try:
+                ffmpeg_threads_val = max(1, int(float(ffmpeg_threads)))
+            except Exception:
+                ffmpeg_threads_val = 1
+        else:
+            ffmpeg_threads_val = 1 if max_workers_val > 1 else 0  # 0 表示不显式设置
+
         video_has_stream = self.has_video_stream(video_path)
-        output_container = (transcode_opts or {}).get("clip_container", "mp4").strip() or "mp4"
+        output_container = opts.get("clip_container", "mp4").strip() or "mp4"
+
+        # stream_copy 时补齐编码器为 copy（除非用户显式指定了其他编码器）
+        if stream_copy_val:
+            # stream_copy_val 只表示“视频流 copy”，因此这里强制 clip_vcodec=copy
+            opts["clip_vcodec"] = "copy"
+            # 音频是否也 copy：默认沿用 opts（通常由 clip_acodec 决定）
+            if self._parse_bool(opts.get("stream_copy_audio"), default=False):
+                opts["clip_acodec"] = "copy"
 
         logger.info(
             f"混合切分: 视频={video_path}, threshold={threshold}, min_scene_len={min_scene_len}, "
-            f"max_segment_sec={max_segment_sec}, chunk_sec={chunk_sec}"
+            f"max_segment_sec={max_segment_sec}, chunk_sec={chunk_sec}, cut_mode={cut_mode_val}, "
+            f"stream_copy={stream_copy_val}, workers={max_workers_val}"
+        )
+
+        # keyframe cache：仅在 -c copy 时对齐切点
+        keyframes: List[float] = []
+        video_duration: Optional[float] = None
+        if stream_copy_val and video_has_stream:
+            keyframes = self._get_keyframe_times_cached(video_path)
+            video_duration = self.get_video_duration(video_path)
+
+        # 转码参数对所有片段一致，预先构建减少重复开销
+        transcode_args = self._build_transcode_args(
+            has_video_stream=video_has_stream,
+            output_container=output_container,
+            opts=opts,
         )
 
         clips: List[ClipInfo] = []
+        results_by_idx: Dict[int, ClipInfo] = {}
+
         video_name = os.path.splitext(os.path.basename(video_path))[0]
+        futures = []
         clip_idx = 0
 
-        for shot in self.detect_shots_stream(
-            video_path,
-            mode="adaptive",
-            adaptive_threshold=threshold,
-            adaptive_min_scene_len=min_scene_len,
-        ):
-            shot_start = float(shot["start"])
-            shot_end = float(shot["end"])
-            expanded = self._expand_long_scene_ranges(
-                shot_start, shot_end, max_segment_sec, chunk_sec
-            )
-            for start_time, end_time in expanded:
-                clip_duration = end_time - start_time
-                clip_filename = f"{video_name}_hybrid_{clip_idx:04d}.{output_container}"
-                clip_path = os.path.join(self.clips_dir, clip_filename)
+        def _run_one(idx: int, start_time: float, end_time: float, clip_path: str) -> Tuple[int, ClipInfo]:
+            # 对齐关键帧（仅 stream copy）
+            start_adj, end_adj = start_time, end_time
+            if stream_copy_val and keyframes:
+                start_adj, end_adj = self._adjust_range_to_keyframes(keyframes, start_time, end_time)
+                if video_duration is not None:
+                    end_adj = min(float(end_adj), float(video_duration))
 
-                cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
-                cmd += self._build_transcode_args(
-                    has_video_stream=video_has_stream,
-                    output_container=output_container,
-                    opts=transcode_opts,
-                )
-                cmd += ["-y", clip_path]
+            duration = max(0.0, float(end_adj - start_adj))
+            if duration <= 1e-6:
+                raise RuntimeError(f"切段时长过短（idx={idx}）: start={start_adj}, end={end_adj}")
 
-                try:
-                    logger.info(f"混合切分片段 {clip_idx+1}: {start_time:.2f}s - {end_time:.2f}s")
-                    subprocess.run(cmd, check=True, capture_output=True)
-                    clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
-                    if on_clip_created:
-                        on_clip_created(clips[-1])
+            cmd: List[str] = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", ffmpeg_loglevel]
+            if ffmpeg_threads_val > 0:
+                cmd += ["-threads", str(ffmpeg_threads_val)]
+
+            # 快速/精确切割：切换 -ss 放置位置
+            if cut_mode_val == "fast":
+                cmd += ["-ss", str(start_adj), "-i", video_path, "-t", str(duration)]
+            else:
+                cmd += ["-i", video_path, "-ss", str(start_adj), "-t", str(duration)]
+
+            cmd += transcode_args
+            cmd += ["-y", clip_path]
+
+            stderr = subprocess.PIPE  # 只捕获 error 级别输出，便于定位失败原因
+            stdout = subprocess.DEVNULL
+            try:
+                subprocess.run(cmd, check=True, stdout=stdout, stderr=stderr)
+            except subprocess.CalledProcessError as e:
+                err_tail = ""
+                if getattr(e, "stderr", None):
+                    try:
+                        err_tail = e.stderr.decode(errors="replace")[-2000:]
+                    except Exception:
+                        err_tail = ""
+                raise RuntimeError(f"混合切分失败（idx={idx}）: {err_tail or str(e)}")
+
+            return idx, ClipInfo(clip_path, start_adj, end_adj, duration)
+
+        with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
+            for shot in self.detect_shots_stream(
+                video_path,
+                mode="adaptive",
+                adaptive_threshold=threshold,
+                adaptive_min_scene_len=min_scene_len,
+                show_progress=not quiet_split_val,
+            ):
+                shot_start = float(shot["start"])
+                shot_end = float(shot["end"])
+                expanded = self._expand_long_scene_ranges(shot_start, shot_end, max_segment_sec, chunk_sec)
+                for start_time, end_time in expanded:
+                    clip_filename = f"{video_name}_hybrid_{clip_idx:04d}.{output_container}"
+                    clip_path = os.path.join(self.clips_dir, clip_filename)
+                    futures.append(
+                        executor.submit(_run_one, clip_idx, start_time, end_time, clip_path)
+                    )
+                    if not quiet_split_val:
+                        logger.info(f"提交混合切分片段 {clip_idx+1}: {start_time:.2f}s - {end_time:.2f}s")
                     clip_idx += 1
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"混合切分失败: {e.stderr.decode()}")
-                    raise RuntimeError(f"混合切分失败: {str(e)}")
 
+            # 收集结果（尽早触发 on_clip_created 以保持流水线）
+            for fut in as_completed(futures):
+                try:
+                    idx_ret, clip_info = fut.result()
+                    results_by_idx[idx_ret] = clip_info
+                    if on_clip_created:
+                        on_clip_created(clip_info)
+                except Exception:
+                    # 避免等待其他 ffmpeg 作业无谓继续，直接抛错交由上层中断
+                    for pending in futures:
+                        pending.cancel()
+                    raise
+
+        # 按 idx 排序回填 clips 列表
+        total_clips = len(results_by_idx)
+        clips = [results_by_idx[i] for i in range(total_clips)]
         logger.info(f"混合切分完成: {len(clips)} 个片段")
         return clips
 
@@ -588,10 +970,6 @@ class VideoSplitter:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
-        # 预先探测一次，避免在每个场景片段都重复 ffprobe
-        video_has_stream = self.has_video_stream(video_path)
-        output_container = (transcode_opts or {}).get("clip_container", "mp4").strip() or "mp4"
-
         # 兼容旧配置：若传入 0~1 的阈值（如 0.4），按新版参数回退到推荐值
         threshold_value = float(threshold)
         if 0.0 < threshold_value <= 1.0:
@@ -606,10 +984,9 @@ class VideoSplitter:
             f"镜头识别切分: 视频={video_path}, 阈值={threshold_value}, min_scene_len={min_scene_len_value}"
         )
 
-        clips = []
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-        shot_count = 0
-
+        # 拉取场景时间区间（复用 streaming 逻辑以避免重复实现）
+        # 这里不需要 streaming 消费，一次性拉到列表即可
+        ranges: List[Tuple[float, float]] = []
         for shot in self.detect_shots_stream(
             video_path,
             mode="adaptive",
@@ -618,55 +995,32 @@ class VideoSplitter:
         ):
             start_time = float(shot["start"])
             end_time = float(shot["end"])
-            clip_duration = end_time - start_time
+            if end_time <= start_time + 1e-6:
+                continue
+            ranges.append((start_time, end_time))
 
-            # 生成片段文件路径
-            clip_filename = f"{video_name}_scene_{shot_count:03d}.{output_container}"
-            clip_path = os.path.join(self.clips_dir, clip_filename)
-
-            # 使用 FFmpeg 切分视频
-            cmd = [ffmpeg_bin(), "-i", video_path, "-ss", str(start_time), "-to", str(end_time)]
-            cmd += self._build_transcode_args(
-                has_video_stream=video_has_stream,
-                output_container=output_container,
-                opts=transcode_opts,
-            )
-            cmd += ["-y", clip_path]
-
-            try:
-                logger.info(f"切分场景 {shot_count+1}: {start_time:.2f}s - {end_time:.2f}s")
-                subprocess.run(cmd, check=True, capture_output=True)
-                clips.append(ClipInfo(clip_path, start_time, end_time, clip_duration))
-                if on_clip_created:
-                    on_clip_created(clips[-1])
-                shot_count += 1
-            except subprocess.CalledProcessError as e:
-                logger.error(f"切分场景失败: {e.stderr.decode()}")
-                raise RuntimeError(f"切分场景失败: {str(e)}")
-
-        if not clips:
+        if not ranges:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
             total_duration = self.get_video_duration(video_path)
-            clip_path = os.path.join(self.clips_dir, f"{video_name}.{output_container}")
-            if not os.path.exists(clip_path):
-                cmd = [ffmpeg_bin(), "-i", video_path]
-                cmd += self._build_transcode_args(
-                    has_video_stream=video_has_stream,
-                    output_container=output_container,
-                    opts=transcode_opts,
-                )
-                cmd += ["-y", clip_path]
-                try:
-                    subprocess.run(cmd, check=True, capture_output=True)
-                    logger.info(f"整段视频已编码生成到 clips 目录: {clip_path}")
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"编码视频失败: {e.stderr.decode()}")
-                    raise RuntimeError(f"编码视频失败: {str(e)}")
-            fallback_clip = ClipInfo(clip_path, 0, total_duration, total_duration)
-            if on_clip_created:
-                on_clip_created(fallback_clip)
-            return [fallback_clip]
+            # 使用统一的切分管线输出整段视频（便于应用转码参数、日志控制）
+            whole = self._cut_ranges_parallel(
+                video_path,
+                [(0.0, total_duration)],
+                transcode_opts=transcode_opts,
+                on_clip_created=on_clip_created,
+                name_prefix="scene_fallback",
+                index_width=3,
+            )
+            return whole
 
+        clips = self._cut_ranges_parallel(
+            video_path,
+            ranges,
+            transcode_opts=transcode_opts,
+            on_clip_created=on_clip_created,
+            name_prefix="scene",
+            index_width=3,
+        )
         logger.info(f"镜头识别切分完成: {len(clips)} 个片段")
         return clips
 

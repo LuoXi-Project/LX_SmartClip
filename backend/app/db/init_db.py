@@ -68,6 +68,13 @@ DEFAULT_CONFIG = [
     ("scene_threshold", "0.4", "number", "场景检测阈值", None),
     ("scene_min_scene_len", "30", "number", "最小镜头长度（帧）", None),
     ("hybrid_max_segment_sec", "60", "number", "混合模式单镜头最长（秒）", None),
+    # 切分性能相关参数（FFmpeg / 分段吞吐）
+    ("cut_mode", "fast", "select", "切割模式（速度/精度）", '["fast","precise"]'),
+    ("stream_copy", "false", "select", "视频流复制（copy）", '["false","true"]'),
+    ("stream_copy_audio", "false", "select", "音频流复制（copy）", '["false","true"]'),
+    ("split_max_workers", "2", "number", "切分并行任务数", None),
+    ("ffmpeg_threads_per_job", "1", "number", "每个 ffmpeg 的线程数", None),
+    ("quiet_split", "true", "select", "安静切分（减少日志/进度输出）", '["true","false"]'),
     # 切分/转码输出参数（FFmpeg）
     ("clip_container", "mp4", "select", "切分输出格式（容器）", '["mp4","mov","mkv","webm"]'),
     ("clip_vcodec", "libx264", "select", "视频编码器", '["libx264","libx265","libvpx-vp9","copy"]'),

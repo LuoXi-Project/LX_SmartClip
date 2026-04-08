@@ -50,6 +50,13 @@ export const VIDEO_KEYS = [
   'scene_threshold',
   'scene_min_scene_len',
   'hybrid_max_segment_sec',
+  // cut performance (FFmpeg)
+  'cut_mode',
+  'stream_copy',
+  'stream_copy_audio',
+  'split_max_workers',
+  'ffmpeg_threads_per_job',
+  'quiet_split',
   'frame_fps',
   'frame_concurrency',
   'frame_target_pixels',

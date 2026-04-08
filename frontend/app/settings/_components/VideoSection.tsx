@@ -45,6 +45,12 @@ const PARAM_HINTS: Record<string, string> = {
   scene_threshold:     '「镜头检测」与「混合模式」：画面变化灵敏度；值越小越敏感（推荐 27~35，旧版 0~1 会自动映射）',
   scene_min_scene_len: '「镜头检测」与「混合模式」：抑制过碎切分；单位为帧（越大越不容易切碎）',
   hybrid_max_segment_sec: '仅在「混合模式」下生效：单镜头超过该秒数时，按「固定分割时长」强制切段',
+  cut_mode: '切割模式：`fast` 更快（`-ss` 放在 `-i` 前），`precise` 更准但更慢（`-ss` 放在 `-i` 后）',
+  stream_copy: '视频流复制（copy）：开启后尽量不转码，速度更快；但对切点精度需要关键帧对齐',
+  stream_copy_audio: '音频流复制（copy）：与 `stream_copy` 配合可进一步加速；关闭则使用音频编码器重新编码',
+  split_max_workers: '切分并行任务数：越大吞吐越高，但会增加 CPU/磁盘压力（建议 1~4）',
+  ffmpeg_threads_per_job: '每个 ffmpeg 任务的线程数：并行切分时建议保持较小值（如 1）',
+  quiet_split: '安静切分：减少 ffmpeg/场景检测的控制台输出，通常可提升整体吞吐',
   frame_fps:           '每秒从片段中抽取的帧数，用于 VLM 画面描述',
   frame_concurrency:   '抽帧阶段并行处理的片段数量；值越大吞吐越高，但会增加 CPU/磁盘压力',
   frame_target_pixels: '抽帧时将图像长边压制到此像素（如 512），0 表示不压制。配合 VLM 可显著降低 token 消耗',
@@ -69,6 +75,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const currentMode = v('split_mode') || 'scene'
   const [sceneHybridAdvOpen, setSceneHybridAdvOpen] = useState(currentMode === 'scene' || currentMode === 'hybrid')
   const [frameExtractionOpen, setFrameExtractionOpen] = useState(true)
+  const [cutPerfOpen, setCutPerfOpen] = useState(true)
 
   useEffect(() => {
     setSceneHybridAdvOpen(currentMode === 'scene' || currentMode === 'hybrid')
@@ -96,6 +103,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
 
   const FIXED_KEYS = ['fixed_duration']
   const SCENE_HYBRID_ADV_KEYS = ['scene_threshold', 'scene_min_scene_len', 'hybrid_max_segment_sec']
+  const CUT_PERF_KEYS = ['cut_mode', 'stream_copy', 'stream_copy_audio', 'split_max_workers', 'ffmpeg_threads_per_job', 'quiet_split']
   const FRAME_KEYS = ['frame_fps', 'frame_concurrency', 'frame_target_pixels']
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
@@ -175,6 +183,18 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
             onOpenChange={setSceneHybridAdvOpen}
           >
             {renderFields(SCENE_HYBRID_ADV_KEYS)}
+          </SettingsDetails>
+        )}
+
+        {/* cut performance */}
+        {CUT_PERF_KEYS.some((k) => config[k]) && (
+          <SettingsDetails
+            title="切分性能参数"
+            hint="可提升切分速度/降低日志输出；copy 模式对播放器兼容性需留意"
+            open={cutPerfOpen}
+            onOpenChange={setCutPerfOpen}
+          >
+            {renderFields(CUT_PERF_KEYS)}
           </SettingsDetails>
         )}
 

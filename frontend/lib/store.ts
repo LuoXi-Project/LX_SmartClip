@@ -8,6 +8,7 @@ import type { ExportMode, SubtitleStyle } from '@/lib/subtitle-types'
 import { DEFAULT_SUBTITLE_STYLE } from '@/lib/subtitle-types'
 
 export type { Video }
+export type TemplatePresetSource = 'library' | 'replica'
 
 export interface TtsHistoryItem {
   id: string
@@ -34,6 +35,8 @@ export interface MatchPageState {
   matchMode: MatchWorkspaceMode
   /** 模板剪辑预设 */
   templatePreset: string
+  /** 模板选择来源：模板库 / 链接复刻锁定 */
+  templatePresetSource: TemplatePresetSource
   /** 自动一键成片页面内：是否启用模板剪辑(v4) */
   autoTemplateEnabled: boolean
   /** 段落 id 递增，与 segments 一并持久化，避免返回页面后 id 冲突 */
@@ -68,6 +71,7 @@ export interface MatchPageState {
   setMatchExportMode: (m: ExportMode) => void
   setMatchMode: (mode: MatchWorkspaceMode) => void
   setTemplatePreset: (p: string) => void
+  setTemplatePresetSource: (s: TemplatePresetSource) => void
   setAutoTemplateEnabled: (v: boolean) => void
   setMatchSegmentCounter: (n: number | ((prev: number) => number)) => void
   setAutoPrompt: (v: string) => void
@@ -104,6 +108,7 @@ export type MatchPersistedSlice = Pick<
   | 'exportMode'
   | 'matchMode'
   | 'templatePreset'
+  | 'templatePresetSource'
   | 'autoTemplateEnabled'
   | 'segmentCounter'
   | 'autoPrompt'
@@ -213,6 +218,7 @@ export const useMatchStore = create<MatchPageState>()(
       exportMode: 'zip' as ExportMode,
       matchMode: 'manual' as const,
       templatePreset: 'ecommerce',
+      templatePresetSource: 'library' as const,
       autoTemplateEnabled: false,
       segmentCounter: 0,
       autoPrompt: '',
@@ -239,6 +245,7 @@ export const useMatchStore = create<MatchPageState>()(
       setMatchExportMode: (exportMode) => set({ exportMode }),
       setMatchMode: (matchMode) => set({ matchMode }),
       setTemplatePreset: (templatePreset) => set({ templatePreset }),
+      setTemplatePresetSource: (templatePresetSource) => set({ templatePresetSource }),
       setAutoTemplateEnabled: (autoTemplateEnabled) => set({ autoTemplateEnabled }),
       setMatchSegmentCounter: (n) =>
         set((state) => ({
@@ -278,6 +285,7 @@ export const useMatchStore = create<MatchPageState>()(
           subtitleStyle: DEFAULT_SUBTITLE_STYLE,
           exportMode: 'zip',
           templatePreset: 'ecommerce',
+          templatePresetSource: 'library',
           autoTemplateEnabled: false,
           segmentCounter: 0,
           replicaTemplateGuide: '',
@@ -298,6 +306,7 @@ export const useMatchStore = create<MatchPageState>()(
         exportMode: state.exportMode,
         matchMode: state.matchMode,
         templatePreset: state.templatePreset,
+        templatePresetSource: state.templatePresetSource,
         autoTemplateEnabled: state.autoTemplateEnabled,
         segmentCounter: state.segmentCounter,
         autoPrompt: state.autoPrompt,
@@ -326,6 +335,7 @@ export const useMatchStore = create<MatchPageState>()(
         const merged: Partial<MatchPersistedSlice> = {
           matchMode: 'manual',
           templatePreset: 'ecommerce',
+          templatePresetSource: 'library',
           autoTemplateEnabled: false,
           segmentCounter: 0,
           autoPrompt: '',
@@ -343,6 +353,9 @@ export const useMatchStore = create<MatchPageState>()(
         merged.matchMode = normalizeMatchWorkspaceMode(merged.matchMode)
         if (typeof merged.templatePreset !== 'string' || !merged.templatePreset.trim()) {
           merged.templatePreset = 'ecommerce'
+        }
+        if (merged.templatePresetSource !== 'library' && merged.templatePresetSource !== 'replica') {
+          merged.templatePresetSource = 'library'
         }
         if (typeof merged.autoTemplateEnabled !== 'boolean') merged.autoTemplateEnabled = false
         if (typeof merged.segmentCounter !== 'number' || merged.segmentCounter < 0) merged.segmentCounter = 0
@@ -385,6 +398,9 @@ export const useMatchStore = create<MatchPageState>()(
           state.matchMode = normalizeMatchWorkspaceMode(state.matchMode)
           if (typeof state.templatePreset !== 'string' || !state.templatePreset.trim()) {
             state.templatePreset = 'ecommerce'
+          }
+          if (state.templatePresetSource !== 'library' && state.templatePresetSource !== 'replica') {
+            state.templatePresetSource = 'library'
           }
           if (typeof state.autoTemplateEnabled !== 'boolean') state.autoTemplateEnabled = false
           if (typeof state.segmentCounter !== 'number' || state.segmentCounter < 0) state.segmentCounter = 0

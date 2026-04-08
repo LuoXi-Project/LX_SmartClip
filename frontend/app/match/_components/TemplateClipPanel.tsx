@@ -10,11 +10,17 @@ import { AutoEditPanel, type AutoEditPanelProps } from './AutoEditPanel'
  * v4 模板剪辑：槽位结构（hook/problem/solution…）将对接后端；此处先选行业模板预设，
  * 并复用「自动一键成片」方案卡片与时间轴手调（方案详情内编辑），保证与实验模式一致的体验。
  */
-export function TemplateClipPanel(props: AutoEditPanelProps) {
+type TemplateClipPanelProps = AutoEditPanelProps & {
+  templatePresetSource: 'library' | 'replica'
+  onReleaseReplicaTemplateLock: () => void
+}
+
+export function TemplateClipPanel(props: TemplateClipPanelProps) {
   const preset = useMatchStore((s) => s.templatePreset)
   const setPreset = useMatchStore((s) => s.setTemplatePreset)
   const autoTemplateEnabled = useMatchStore((s) => s.autoTemplateEnabled)
   const setAutoTemplateEnabled = useMatchStore((s) => s.setAutoTemplateEnabled)
+  const templateLockedByReplica = props.templatePresetSource === 'replica'
   // 避免模板列表异步加载时“回退到第一个模板”覆盖用户刚选的模板
   const userSelectedRef = useRef(false)
 
@@ -90,10 +96,23 @@ export function TemplateClipPanel(props: AutoEditPanelProps) {
           <p className="text-[11px] text-slate-500 leading-relaxed">暂无模板</p>
         ) : (
           <div className="flex flex-wrap gap-2">
+            {templateLockedByReplica ? (
+              <div className="w-full flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-2">
+                <p className="text-[11px] text-emerald-200">当前由链接复刻约束驱动，模板已锁定为：复刻模板</p>
+                <button
+                  type="button"
+                  onClick={props.onReleaseReplicaTemplateLock}
+                  className="text-[11px] text-slate-200 border border-slate-600 rounded-lg px-2.5 py-1 hover:border-slate-500"
+                >
+                  解除锁定
+                </button>
+              </div>
+            ) : null}
             {templates.map((t) => (
               <button
                 key={t.id}
                 type="button"
+                disabled={templateLockedByReplica}
                 onClick={() => {
                   userSelectedRef.current = true
                   setPreset(t.id)
@@ -102,6 +121,8 @@ export function TemplateClipPanel(props: AutoEditPanelProps) {
                   preset === t.id
                     ? 'border-amber-500/70 bg-amber-500/15 text-amber-200'
                     : 'border-slate-700 bg-slate-900/50 text-slate-400 hover:border-slate-600'
+                } ${
+                  templateLockedByReplica ? 'cursor-not-allowed opacity-45 hover:border-slate-700' : ''
                 }`}
               >
                 {t.label}

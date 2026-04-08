@@ -195,6 +195,31 @@ def _build_render_codec_args(render_opts: Optional[Dict[str, str]] = None) -> Li
     return args
 
 
+def _force_video_reencode(codec_args: List[str], render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """
+    当存在视频滤镜（如 ass/subtitles）时，不能使用 -c:v copy。
+    若配置为 copy，这里回退到默认可用编码参数。
+    """
+    next_args = list(codec_args)
+    try:
+        v_idx = next_args.index("-c:v")
+    except ValueError:
+        return next_args
+    if v_idx + 1 >= len(next_args):
+        return next_args
+    if (next_args[v_idx + 1] or "").strip().lower() != "copy":
+        return next_args
+
+    fallback_opts = dict(render_opts or {})
+    fallback_opts["clip_vcodec"] = "libx264"
+    fallback_opts.setdefault("clip_preset", "veryfast")
+    fallback_opts.setdefault("clip_crf", "23")
+    fallback_opts.setdefault("clip_pix_fmt", "yuv420p")
+    fallback_codec_args = _build_render_codec_args(fallback_opts)
+    logger.warning("检测到视频滤镜 + clip_vcodec=copy，已自动回退为 libx264 重编码")
+    return fallback_codec_args
+
+
 def _build_extra_video_filters(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
     """根据配置构建额外视频滤镜（缩放/帧率）。"""
     opts = render_opts or {}
@@ -462,6 +487,8 @@ def burn_to_mp4(
             vf_filter = f"{vf_filter},{','.join(extra_filters)}"
         af_filter = None
         concat_codec_args = _build_render_codec_args(render_opts)
+        # 本流程固定包含 ass 视频滤镜，必须视频重编码；否则 ffmpeg 会报 filtering+copy 冲突。
+        concat_codec_args = _force_video_reencode(concat_codec_args, render_opts=render_opts)
         if normalize_audio:
             # 需要音频滤镜时必须重编码，避免 clip_acodec=copy 导致滤镜失效
             af_filter = "dynaudnorm=f=150:g=15,alimiter=limit=0.98"

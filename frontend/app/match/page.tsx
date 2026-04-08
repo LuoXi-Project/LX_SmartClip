@@ -25,6 +25,7 @@ import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
 import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
 
 const VIDEO_PAGE_SIZE = 9
+const REPLICA_LOCKED_TEMPLATE_PRESET = 'replica_locked'
 
 function normalizeAutoPlanStage(stage?: string): AutoPlanStage {
   if (!stage) return 'planning'
@@ -60,6 +61,9 @@ export default function MatchPage() {
     autoTemplateEnabled,
     setAutoTemplateEnabled,
     templatePreset,
+    templatePresetSource,
+    setTemplatePreset,
+    setTemplatePresetSource,
     setMatchMode,
     setMatchSegmentCounter,
     autoPrompt,
@@ -163,6 +167,8 @@ export default function MatchPage() {
       return
     }
     setAutoPrompt(`【复刻模板约束】\n${g}\n\n【用户诉求】\n`)
+    setTemplatePreset(REPLICA_LOCKED_TEMPLATE_PRESET)
+    setTemplatePresetSource('replica')
     setMatchMode('auto')
     toast.success('已切换至「一键成片」：请在剪辑诉求中补充主题后生成方案')
   }
@@ -725,7 +731,7 @@ export default function MatchPage() {
             <>
               {autoPrompt.trim().startsWith('【复刻模板约束】') ? (
                 <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-200">
-                  剪辑诉求已包含从「链接复刻」注入的模板约束；请在下方面板中补充「用户诉求」后生成方案。
+                  剪辑诉求已包含从「链接复刻」注入的模板约束；当前模板预设已锁定为“复刻模板”，请先补充「用户诉求」再生成方案。
                 </div>
               ) : null}
             <TemplateClipPanel
@@ -760,6 +766,13 @@ export default function MatchPage() {
               autoPlanStage={autoPlanStage}
               autoPlanStagePercent={autoPlanStagePercent}
               subtitleEnabled={subtitleEnabled}
+              templatePresetSource={templatePresetSource}
+              onReleaseReplicaTemplateLock={() => {
+                setReplicaTemplateGuide('')
+                setTemplatePresetSource('library')
+                if (templatePreset === REPLICA_LOCKED_TEMPLATE_PRESET) setTemplatePreset('ecommerce')
+                toast.success('已解除复刻模板锁定，可自由选择模板')
+              }}
               onGeneratePlans={handleGenerateAutoPlans}
               onRealizePlan={handleAutoRealizePlan}
             />
@@ -819,6 +832,7 @@ export default function MatchPage() {
                     type="button"
                     onClick={() => {
                       setReplicaTemplateGuide('')
+                      setTemplatePresetSource('library')
                       toast.success('已清除复刻模板约束')
                     }}
                     className="shrink-0 text-xs text-slate-400 hover:text-red-300 border border-slate-700 rounded-lg px-3 py-1.5"

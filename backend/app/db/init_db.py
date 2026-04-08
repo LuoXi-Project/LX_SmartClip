@@ -62,6 +62,22 @@ CREATE TABLE IF NOT EXISTS config (
 );
 """
 
+CREATE_PROCESS_TASKS = """
+CREATE TABLE IF NOT EXISTS process_tasks (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    current_step TEXT,
+    progress_json TEXT,
+    metrics_json TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT,
+    FOREIGN KEY (video_id) REFERENCES videos(id)
+);
+"""
+
 DEFAULT_CONFIG = [
     ("split_mode", "scene", "select", "分割模式", '["scene","fixed","hybrid"]'),
     ("fixed_duration", "10", "number", "固定分割时长（秒）", None),
@@ -179,6 +195,7 @@ async def init_db():
         await db.execute(CREATE_CLIPS)
         await db.execute(CREATE_REPLICA_TEMPLATES)
         await db.execute(CREATE_CONFIG)
+        await db.execute(CREATE_PROCESS_TASKS)
 
         # 兼容旧库：replica_templates 补列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）
         try:

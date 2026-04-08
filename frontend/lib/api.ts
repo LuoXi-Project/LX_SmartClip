@@ -67,6 +67,32 @@ export function createProcessWebSocket(
   return ws
 }
 
+export interface ProcessTaskSnapshot {
+  id: string
+  video_id: string
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled'
+  current_step: string | null
+  steps: Record<string, { status: string; message: string; detail: Record<string, unknown> }>
+  metrics: Record<string, unknown> | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  finished_at: string | null
+}
+
+export function connectProcessJobWebSocket(taskId: string): WebSocket {
+  return new WebSocket(`${WS_BASE_URL}/api/process-jobs/${taskId}/ws`)
+}
+
+export const processJobsApi = {
+  create: (videoId: string) =>
+    apiClient.post<unknown, { task_id: string; video_id: string; status: string; stream_url: string }>(`/api/videos/${videoId}/process-jobs`),
+  get: (taskId: string) =>
+    apiClient.get<unknown, ProcessTaskSnapshot>(`/api/process-jobs/${taskId}`),
+  cancel: (taskId: string) =>
+    apiClient.post<unknown, { ok: boolean; task_id: string; video_id: string }>(`/api/process-jobs/${taskId}/cancel`),
+}
+
 export interface VideoListParams {
   q?: string
   status?: string

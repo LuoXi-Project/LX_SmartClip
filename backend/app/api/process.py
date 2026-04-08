@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ from app.core.metrics.token_usage import TokenAccumulator, TokenUsage
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["process"])
+jobs_router = APIRouter(prefix="/api/process-jobs", tags=["process"])
 splitter = VideoSplitter()
 
 # 用户停止：不能继承 Exception，否则会被流水线里大量 except Exception 吞掉
@@ -23,6 +25,12 @@ class ProcessCancelled(BaseException):
 
 
 _cancel_events: dict[str, asyncio.Event] = {}
+_job_tasks: dict[str, asyncio.Task] = {}
+_task_subscribers: dict[str, set[WebSocket]] = {}
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat()
 
 
 def _cancel_event_for(video_id: str) -> asyncio.Event:
@@ -71,8 +79,9 @@ async def _read_config(db, key: str, default: str = "") -> str:
 class ProgressReporter:
     """向 WebSocket 推送进度；无 WebSocket 时仅记录日志"""
 
-    def __init__(self, ws: WebSocket = None):
+    def __init__(self, ws: WebSocket = None, task_id: str | None = None):
         self.ws = ws
+        self.task_id = task_id
 
     async def send(self, step: str, status: str, message: str, detail: dict = None):
         payload = {
@@ -82,6 +91,15 @@ class ProgressReporter:
             "detail":  detail or {},
         }
         logger.info("[%s] %s: %s", step, status, message)
+        if self.task_id:
+            await _update_task_from_progress(
+                self.task_id,
+                step=step,
+                status=status,
+                message=message,
+                detail=payload["detail"],
+            )
+            await _broadcast_task_message(self.task_id, payload)
         if self.ws:
             try:
                 await self.ws.send_json(payload)
@@ -118,6 +136,131 @@ async def _get_clips(video_id: str):
         return await cursor.fetchall()
     finally:
         await db.close()
+
+
+async def _get_task(task_id: str):
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute("SELECT * FROM process_tasks WHERE id = ?", (task_id,))
+        return await cursor.fetchone()
+    finally:
+        await db.close()
+
+
+async def _get_running_task_for_video(video_id: str):
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM process_tasks WHERE video_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1",
+            (video_id,),
+        )
+        return await cursor.fetchone()
+    finally:
+        await db.close()
+
+
+def _row_to_task_payload(row) -> dict:
+    if not row:
+        return {}
+    try:
+        steps = json.loads(row["progress_json"]) if row["progress_json"] else {}
+    except Exception:
+        steps = {}
+    try:
+        metrics = json.loads(row["metrics_json"]) if row["metrics_json"] else None
+    except Exception:
+        metrics = None
+    return {
+        "id": row["id"],
+        "video_id": row["video_id"],
+        "status": row["status"],
+        "current_step": row["current_step"],
+        "steps": steps,
+        "metrics": metrics,
+        "error_message": row["error_message"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "finished_at": row["finished_at"],
+    }
+
+
+async def _create_task(video_id: str) -> dict:
+    running = await _get_running_task_for_video(video_id)
+    if running:
+        return _row_to_task_payload(running)
+    task_id = str(uuid.uuid4())
+    now = _now_iso()
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            "INSERT INTO process_tasks (id, video_id, status, progress_json, created_at, updated_at) VALUES (?, ?, 'running', ?, ?, ?)",
+            (task_id, video_id, "{}", now, now),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    created = await _get_task(task_id)
+    return _row_to_task_payload(created)
+
+
+async def _update_task_status(task_id: str, status: str, error_message: str | None = None):
+    now = _now_iso()
+    finished_at = now if status in ("done", "error", "cancelled") else None
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            "UPDATE process_tasks SET status = ?, error_message = ?, updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?",
+            (status, error_message, now, finished_at, task_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _update_task_from_progress(task_id: str, step: str, status: str, message: str, detail: dict):
+    row = await _get_task(task_id)
+    if not row:
+        return
+    try:
+        progress = json.loads(row["progress_json"]) if row["progress_json"] else {}
+    except Exception:
+        progress = {}
+    progress[step] = {
+        "status": status,
+        "message": message,
+        "detail": detail or {},
+    }
+    metrics = None
+    if isinstance(detail, dict):
+        m = detail.get("metrics")
+        if isinstance(m, dict):
+            metrics = m
+    now = _now_iso()
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            "UPDATE process_tasks SET current_step = ?, progress_json = ?, metrics_json = COALESCE(?, metrics_json), updated_at = ? WHERE id = ?",
+            (step, json.dumps(progress, ensure_ascii=False), json.dumps(metrics, ensure_ascii=False) if metrics else None, now, task_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _broadcast_task_message(task_id: str, payload: dict):
+    subscribers = _task_subscribers.get(task_id)
+    if not subscribers:
+        return
+    stale: list[WebSocket] = []
+    for ws in subscribers:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            stale.append(ws)
+    for ws in stale:
+        subscribers.discard(ws)
+    if not subscribers:
+        _task_subscribers.pop(task_id, None)
 
 
 async def _update_clip_field(clip_id: str, field: str, value: str):
@@ -198,7 +341,7 @@ async def _insert_clip_to_db(video_id: str, clip) -> str:
         await db.close()
 
 
-async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: list = None):
+async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: list = None, task_id: str | None = None):
     """执行全素材处理（按片段流水线并发）：split -> (frames||asr) -> vlm -> embed"""
     skip_steps = skip_steps or []
 
@@ -895,85 +1038,125 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 # HTTP 接口：POST /api/videos/{id}/process-cancel
 @router.post("/{video_id}/process-cancel")
 async def process_video_cancel(video_id: str):
-    """请求停止当前素材处理（与 WebSocket 断线配合使用）。"""
+    """兼容旧接口：按视频取消正在运行的任务。"""
+    running = await _get_running_task_for_video(video_id)
+    if not running:
+        return {"ok": True, "video_id": video_id}
+    request_process_cancel(video_id)
+    return {"ok": True, "video_id": video_id, "task_id": running["id"]}
+
+
+async def _run_task(task_id: str, video_id: str, skip_steps: list[str] | None = None):
+    reporter = ProgressReporter(ws=None, task_id=task_id)
+    try:
+        await _run_pipeline(video_id, reporter, skip_steps=skip_steps or [], task_id=task_id)
+        await _update_task_status(task_id, "done")
+    except ProcessCancelled:
+        await _set_video_status(video_id, "pending")
+        await reporter.send("done", "done", "处理已停止", {"cancelled": True})
+        await _update_task_status(task_id, "cancelled")
+    except Exception as e:
+        await _set_video_status(video_id, "error")
+        await reporter.send("error", "error", f"处理异常: {str(e)}")
+        await _update_task_status(task_id, "error", error_message=str(e))
+    finally:
+        _job_tasks.pop(task_id, None)
+
+
+@router.post("/{video_id}/process-jobs")
+async def create_process_job(video_id: str):
     video = await _get_video(video_id)
     if not video:
         raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
-    request_process_cancel(video_id)
-    return {"ok": True, "video_id": video_id}
+    if is_license_enforced() and not await ensure_license_valid():
+        raise HTTPException(status_code=403, detail="LICENSE_REQUIRED")
+
+    task_payload = await _create_task(video_id)
+    task_id = task_payload["id"]
+    if task_id not in _job_tasks:
+        _job_tasks[task_id] = asyncio.create_task(_run_task(task_id, video_id))
+    return {
+        "task_id": task_id,
+        "video_id": video_id,
+        "status": task_payload["status"],
+        "stream_url": f"/api/process-jobs/{task_id}/ws",
+    }
 
 
-# HTTP 接口：POST /api/videos/{id}/process
+@jobs_router.get("/{task_id}")
+async def get_process_job(task_id: str):
+    row = await _get_task(task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"任务 '{task_id}' 不存在")
+    return _row_to_task_payload(row)
+
+
+@jobs_router.post("/{task_id}/cancel")
+async def cancel_process_job(task_id: str):
+    row = await _get_task(task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"任务 '{task_id}' 不存在")
+    request_process_cancel(row["video_id"])
+    return {"ok": True, "task_id": task_id, "video_id": row["video_id"]}
+
+
+@jobs_router.websocket("/{task_id}/ws")
+async def process_job_ws(task_id: str, ws: WebSocket):
+    await ws.accept()
+    row = await _get_task(task_id)
+    if not row:
+        await ws.send_json({"step": "error", "status": "error", "message": "任务不存在", "detail": {}})
+        await ws.close()
+        return
+    _task_subscribers.setdefault(task_id, set()).add(ws)
+    try:
+        while True:
+            await ws.receive()
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        _task_subscribers.get(task_id, set()).discard(ws)
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+# 兼容旧接口：行为改为“创建后台任务并返回 task_id”
 @router.post("/{video_id}/process")
 async def process_video_http(video_id: str):
-    """一键处理接口（HTTP），串联执行所有处理步骤。"""
-    reporter = ProgressReporter(ws=None)
-    try:
-        await _run_pipeline(video_id, reporter)
-        return {"video_id": video_id, "status": "done", "message": "处理完成"}
-    except HTTPException:
-        raise
-    except ProcessCancelled:
-        await _set_video_status(video_id, "pending")
-        await reporter.send("done", "done", "处理已停止", {"cancelled": True})
-        return {"video_id": video_id, "status": "cancelled", "message": "处理已停止"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    return await create_process_job(video_id)
 
 
-# WebSocket 接口：WS /api/videos/{id}/process-ws
+# 兼容旧 WebSocket 接口：不再断开即取消，仅复用任务订阅
 @router.websocket("/{video_id}/process-ws")
 async def process_video_ws(video_id: str, ws: WebSocket):
-    """
-    WebSocket 处理接口，实时推送每步进度。
-    消息格式: {"step": str, "status": str, "message": str, "detail": dict}
-    客户端可在连接后发送: {"skip_steps": ["vlm", "embed"]}
-    """
     await ws.accept()
-    if is_license_enforced() and not await ensure_license_valid():
-        await ws.close(code=1008, reason="LICENSE_REQUIRED")
+    video = await _get_video(video_id)
+    if not video:
+        await ws.send_json({"step": "error", "status": "error", "message": "视频不存在", "detail": {}})
+        await ws.close()
         return
-    reporter = ProgressReporter(ws=ws)
-
-    skip_steps = []
+    if is_license_enforced() and not await ensure_license_valid():
+        await ws.send_json({"step": "error", "status": "error", "message": "LICENSE_REQUIRED", "detail": {}})
+        await ws.close()
+        return
     try:
-        data = await asyncio.wait_for(ws.receive_json(), timeout=60.0)
-        skip_steps = data.get("skip_steps", [])
-    except (asyncio.TimeoutError, Exception):
+        _ = await asyncio.wait_for(ws.receive_json(), timeout=60.0)
+    except Exception:
         pass
-
-    async def _drain_ws_until_disconnect():
-        try:
-            while True:
-                await ws.receive()
-        except WebSocketDisconnect:
-            request_process_cancel(video_id)
-        except RuntimeError as e:
-            # Starlette 在收到 disconnect 后再次 receive 会抛 RuntimeError
-            # 这里视同断开，触发取消并安静退出，避免污染日志。
-            if "disconnect message" in str(e):
-                request_process_cancel(video_id)
-                return
-            raise
-
-    drain_task = asyncio.create_task(_drain_ws_until_disconnect())
+    task_payload = await _create_task(video_id)
+    task_id = task_payload["id"]
+    if task_id not in _job_tasks:
+        _job_tasks[task_id] = asyncio.create_task(_run_task(task_id, video_id))
+    _task_subscribers.setdefault(task_id, set()).add(ws)
     try:
-        await _run_pipeline(video_id, reporter, skip_steps=skip_steps)
-    except WebSocketDisconnect:
-        logger.info("WebSocket 断开: video_id=%s", video_id)
-    except ProcessCancelled:
-        await _set_video_status(video_id, "pending")
-        await reporter.send("done", "done", "处理已停止", {"cancelled": True})
-    except HTTPException as e:
-        await reporter.send("error", "error", e.detail)
-    except Exception as e:
-        await reporter.send("error", "error", f"处理异常: {str(e)}")
+        while True:
+            await ws.receive()
+    except (WebSocketDisconnect, RuntimeError):
+        pass
     finally:
-        drain_task.cancel()
-        try:
-            await drain_task
-        except (asyncio.CancelledError, RuntimeError):
-            pass
+        _task_subscribers.get(task_id, set()).discard(ws)
         try:
             await ws.close()
         except Exception:

@@ -18,7 +18,7 @@ from app.api.clips import router as clips_router
 from app.api.asr import router as asr_router
 from app.api.vlm import router as vlm_router
 from app.api.embed import router as embed_router
-from app.api.process import router as process_router
+from app.api.process import router as process_router, jobs_router as process_jobs_router
 from app.api.match import router as match_router
 from app.api.search import router as search_router
 from app.api.tts import router as tts_router
@@ -68,6 +68,7 @@ app.include_router(asr_router)
 app.include_router(vlm_router)
 app.include_router(embed_router)
 app.include_router(process_router)
+app.include_router(process_jobs_router)
 app.include_router(match_router)
 app.include_router(search_router)
 app.include_router(tts_router)

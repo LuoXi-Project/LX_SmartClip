@@ -19,7 +19,14 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
 import aiosqlite
-from app.db.init_db import DB_PATH, DEFAULT_CONFIG, CREATE_VIDEOS, CREATE_CLIPS, CREATE_CONFIG
+from app.db.init_db import (
+    DB_PATH,
+    DEFAULT_CONFIG,
+    CREATE_VIDEOS,
+    CREATE_CLIPS,
+    CREATE_CONFIG,
+    CREATE_PROCESS_TASKS,
+)
 
 
 async def migrate():
@@ -29,6 +36,7 @@ async def migrate():
         await db.execute(CREATE_VIDEOS)
         await db.execute(CREATE_CLIPS)
         await db.execute(CREATE_CONFIG)
+        await db.execute(CREATE_PROCESS_TASKS)
 
         # 为旧数据库补充 thumbnail_path 列（幂等）
         try:

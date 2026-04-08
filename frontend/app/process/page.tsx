@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import apiClient, { createProcessWebSocket, videosApi, type ProcessMessage, type Video } from '@/lib/api'
+import apiClient, { connectProcessJobWebSocket, processJobsApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
@@ -38,6 +38,7 @@ function cardCls(s: StepStatus) {
 }
 
 const PAGE_SIZE = 9
+const ACTIVE_TASK_KEY = 'smartclip:process:activeTask'
 
 export default function ProcessPage() {
   const [videos, setVideos] = useState<Video[]>([])
@@ -50,6 +51,7 @@ export default function ProcessPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [resultOpen, setResultOpen] = useState(false)
+  const [activeTaskId, setActiveTaskId] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -64,6 +66,85 @@ export default function ProcessPage() {
   }, [])
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [steps])
+
+  const persistActiveTask = (taskId: string) => {
+    setActiveTaskId(taskId)
+    if (taskId) localStorage.setItem(ACTIVE_TASK_KEY, taskId)
+    else localStorage.removeItem(ACTIVE_TASK_KEY)
+  }
+
+  const applyTaskSnapshot = (snapshot: ProcessTaskSnapshot) => {
+    const next = blank()
+    STEPS.forEach((s) => {
+      const val = snapshot.steps?.[s.key]
+      if (val) next[s.key] = {
+        status: val.status as StepStatus,
+        message: val.message || '',
+        detail: (val.detail || {}) as Record<string, unknown>,
+      }
+    })
+    setSteps(next)
+    setFinalMetrics(snapshot.metrics || null)
+    setSelId(snapshot.video_id || '')
+    setDone(snapshot.status === 'done')
+    setRunning(snapshot.status === 'running' || snapshot.status === 'pending')
+  }
+
+  const bindTaskSocket = (taskId: string) => {
+    wsRef.current?.close()
+    const ws = connectProcessJobWebSocket(taskId)
+    wsRef.current = ws
+    ws.onmessage = (e) => {
+      try {
+        const msg: ProcessMessage = JSON.parse(e.data)
+        applyMsg(msg)
+        if (msg.step === 'done') {
+          setRunning(false)
+          const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
+          const m = (msg.detail && typeof msg.detail === 'object' && 'metrics' in msg.detail)
+            ? (msg.detail as { metrics?: Record<string, unknown> }).metrics
+            : null
+          if (m && typeof m === 'object') setFinalMetrics(m)
+          if (cancelled) {
+            setDone(false)
+            normalizeRunningStepsAsStopped()
+            persistActiveTask('')
+          } else {
+            setDone(true)
+            setSteps((p) => {
+              const n = { ...p }
+              STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
+              return n
+            })
+            persistActiveTask('')
+          }
+        }
+        if (msg.step === 'error') {
+          setRunning(false)
+          persistActiveTask('')
+        }
+      } catch {
+        // noop
+      }
+    }
+    ws.onerror = () => setRunning(false)
+    ws.onclose = () => setRunning(false)
+  }
+
+  useEffect(() => {
+    const taskId = localStorage.getItem(ACTIVE_TASK_KEY)
+    if (!taskId) return
+    processJobsApi.get(taskId)
+      .then((snapshot) => {
+        persistActiveTask(snapshot.id)
+        applyTaskSnapshot(snapshot)
+        if (snapshot.status === 'running' || snapshot.status === 'pending') bindTaskSocket(snapshot.id)
+        if (snapshot.status === 'done' || snapshot.status === 'cancelled' || snapshot.status === 'error') persistActiveTask('')
+      })
+      .catch(() => persistActiveTask(''))
+    return () => wsRef.current?.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const filteredVideos = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -95,44 +176,20 @@ export default function ProcessPage() {
     setSteps((p) => ({ ...p, [msg.step as StepKey]: { status: msg.status as StepStatus, message: msg.message, detail: msg.detail } }))
   }
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!selId || running) return
     setSteps(blank())
     setRunning(true)
     setDone(false)
     setFinalMetrics(null)
-    const ws = createProcessWebSocket(selId)
-    wsRef.current = ws
-    ws.onmessage = (e) => {
-      try {
-        const msg: ProcessMessage = JSON.parse(e.data)
-        applyMsg(msg)
-        if (msg.step === 'done') {
-          setRunning(false)
-          const m = (msg.detail && typeof msg.detail === 'object' && 'metrics' in msg.detail)
-            ? (msg.detail as { metrics?: Record<string, unknown> }).metrics
-            : null
-          if (m && typeof m === 'object') setFinalMetrics(m)
-          const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
-          if (cancelled) {
-            setDone(false)
-            normalizeRunningStepsAsStopped()
-          } else {
-            setDone(true)
-            setSteps((p) => {
-              const n = { ...p }
-              STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
-              return n
-            })
-          }
-        }
-        if (msg.step === 'error') setRunning(false)
-      } catch { /* noop */ }
-    }
-    ws.onerror = () => setRunning(false)
-    ws.onclose = () => {
+    try {
+      const created = await processJobsApi.create(selId)
+      persistActiveTask(created.task_id)
+      const snapshot = await processJobsApi.get(created.task_id)
+      applyTaskSnapshot(snapshot)
+      bindTaskSocket(created.task_id)
+    } catch {
       setRunning(false)
-      normalizeRunningStepsAsStopped()
     }
   }
 
@@ -155,9 +212,10 @@ export default function ProcessPage() {
   const getEmbedTotalTokens = (m: any) => m?.tokens?.embed?.total_tokens ?? 0
 
   const handleStop = () => {
-    if (!selId) return
-    void videosApi.processCancel(selId).catch(() => {})
+    if (!activeTaskId) return
+    void processJobsApi.cancel(activeTaskId).catch(() => {})
     wsRef.current?.close()
+    persistActiveTask('')
     setRunning(false)
     setDone(false)
     normalizeRunningStepsAsStopped()

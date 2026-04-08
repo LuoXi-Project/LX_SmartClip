@@ -1,0 +1,52 @@
+{
+  "summary": {
+    "count": 4,
+    "overall_mean": 0.703,
+    "by_type_mean": {
+      "short_video": 0.875,
+      "film_commentary": 0.531,
+      "scene_story": 0.875
+    },
+    "failed_ids": [
+      "bad_case_01"
+    ]
+  },
+  "items": [
+    {
+      "id": "short_01",
+      "replica_type": "short_video",
+      "structure_ok": 1.0,
+      "chapter_ok": 1.0,
+      "transition_ok": 1.0,
+      "reusable_ok": 0.5,
+      "total": 0.875
+    },
+    {
+      "id": "film_01",
+      "replica_type": "film_commentary",
+      "structure_ok": 1.0,
+      "chapter_ok": 1.0,
+      "transition_ok": 1.0,
+      "reusable_ok": 1.0,
+      "total": 1.0
+    },
+    {
+      "id": "scene_01",
+      "replica_type": "scene_story",
+      "structure_ok": 1.0,
+      "chapter_ok": 1.0,
+      "transition_ok": 1.0,
+      "reusable_ok": 0.5,
+      "total": 0.875
+    },
+    {
+      "id": "bad_case_01",
+      "replica_type": "film_commentary",
+      "structure_ok": 0.0,
+      "chapter_ok": 0.25,
+      "transition_ok": 0.0,
+      "reusable_ok": 0.0,
+      "total": 0.062
+    }
+  ]
+}

@@ -398,6 +398,13 @@ export interface ReplicaTemplateListItem {
   created_at: string
   updated_at: string
   guide_preview: string
+  replica_type?: 'short_video' | 'film_commentary' | 'scene_story' | null
+  style_profile?: string | null
+  quality_signals?: {
+    coverage?: number
+    coherence?: number
+    density_stability?: number
+  } | null
 }
 
 export interface ReplicaTemplateListResponse {
@@ -417,7 +424,9 @@ export const replicaApi = {
     payload?: {
       skip_vlm?: boolean
       max_clips?: number
-      replica_type?: 'short_video' | 'film_commentary'
+      replica_type?: 'short_video' | 'film_commentary' | 'scene_story'
+      style_profile?: string
+      quality_mode?: 'balanced' | 'high_quality'
     }
   ) =>
     apiClient.post<unknown, ReplicaTemplateDraftResponse>(`/api/replica/${videoId}/generate-template`, payload ?? {}),
@@ -428,7 +437,15 @@ export const replicaApi = {
   getTemplate: (templateId: string) =>
     apiClient.get<unknown, any>(`/api/replica/template/${templateId}`),
 
-  listTemplates: (params?: { q?: string; status?: 'draft' | 'confirmed'; sort?: 'updated_desc' | 'created_desc'; page?: number; page_size?: number }) =>
+  listTemplates: (params?: {
+    q?: string
+    status?: 'draft' | 'confirmed'
+    replica_type?: 'short_video' | 'film_commentary' | 'scene_story'
+    style_profile?: string
+    sort?: 'updated_desc' | 'created_desc'
+    page?: number
+    page_size?: number
+  }) =>
     apiClient.get<unknown, ReplicaTemplateListResponse>('/api/replica/templates', { params }),
 
   deleteTemplate: (templateId: string) =>

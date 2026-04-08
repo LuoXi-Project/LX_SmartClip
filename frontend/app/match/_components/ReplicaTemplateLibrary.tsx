@@ -17,6 +17,8 @@ export function ReplicaTemplateLibrary({
   const TEMPLATE_PAGE_SIZES = [6, 12, 24]
   const [q, setQ] = useState('')
   const [status, setStatus] = useState<'all' | 'confirmed' | 'draft'>('confirmed')
+  const [replicaType, setReplicaType] = useState<'all' | 'short_video' | 'film_commentary' | 'scene_story'>('all')
+  const [styleProfile, setStyleProfile] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(6)
   const [loading, setLoading] = useState(false)
@@ -40,6 +42,8 @@ export function ReplicaTemplateLibrary({
       .listTemplates({
         q: q.trim() || undefined,
         status: statusParam,
+        replica_type: replicaType === 'all' ? undefined : replicaType,
+        style_profile: styleProfile.trim() || undefined,
         sort: 'updated_desc',
         page,
         page_size: pageSize,
@@ -62,7 +66,7 @@ export function ReplicaTemplateLibrary({
     return () => {
       mounted = false
     }
-  }, [q, statusParam, page, pageSize, refreshSignal])
+  }, [q, statusParam, replicaType, styleProfile, page, pageSize, refreshSignal])
 
   async function handleUse(t: ReplicaTemplateListItem) {
     const data = await replicaApi.getTemplate(t.template_id)
@@ -87,6 +91,8 @@ export function ReplicaTemplateLibrary({
       const res = await replicaApi.listTemplates({
         q: q.trim() || undefined,
         status: statusParam,
+        replica_type: replicaType === 'all' ? undefined : replicaType,
+        style_profile: styleProfile.trim() || undefined,
         sort: 'updated_desc',
         page,
         page_size: pageSize,
@@ -167,6 +173,28 @@ export function ReplicaTemplateLibrary({
             </button>
           ))}
         </div>
+        <select
+          value={replicaType}
+          onChange={(e) => {
+            setReplicaType((e.target.value as 'all' | 'short_video' | 'film_commentary' | 'scene_story') || 'all')
+            setPage(1)
+          }}
+          className="rounded-xl border border-slate-700 bg-slate-900/40 text-slate-300 text-xs px-3 py-2"
+        >
+          <option value="all">全部类型</option>
+          <option value="short_video">短视频</option>
+          <option value="film_commentary">影视解说</option>
+          <option value="scene_story">场景剧情</option>
+        </select>
+        <input
+          value={styleProfile}
+          onChange={(e) => {
+            setStyleProfile(e.target.value)
+            setPage(1)
+          }}
+          placeholder="风格标签筛选（如电影讲解）"
+          className="rounded-xl border border-slate-700 bg-slate-900/40 text-slate-300 text-xs px-3 py-2 w-44 outline-none"
+        />
       </div>
 
       {error && <div className="text-xs text-red-300">{error}</div>}
@@ -186,6 +214,17 @@ export function ReplicaTemplateLibrary({
                     </span>
                     {t.pace && <span className="text-[10px] text-slate-500 border border-slate-700 rounded-full px-2 py-0.5">pace={t.pace}</span>}
                     {t.tone && <span className="text-[10px] text-slate-500 border border-slate-700 rounded-full px-2 py-0.5">tone={t.tone}</span>}
+                    {t.replica_type && <span className="text-[10px] text-cyan-300 border border-cyan-500/30 rounded-full px-2 py-0.5">{t.replica_type}</span>}
+                    {t.style_profile && <span className="text-[10px] text-violet-300 border border-violet-500/30 rounded-full px-2 py-0.5">{t.style_profile}</span>}
+                    {t.quality_signals && (
+                      <span className="text-[10px] text-emerald-300 border border-emerald-500/30 rounded-full px-2 py-0.5">
+                        Q={((
+                          Number(t.quality_signals.coverage || 0) +
+                          Number(t.quality_signals.coherence || 0) +
+                          Number(t.quality_signals.density_stability || 0)
+                        ) / 3).toFixed(2)}
+                      </span>
+                    )}
                   </div>
                   {t.source_url && (
                     <div className="mt-1 text-[11px] text-slate-500 truncate" title={t.source_url}>

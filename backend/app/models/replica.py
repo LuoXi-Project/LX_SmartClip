@@ -27,9 +27,18 @@ class ReplicaIngestResponse(BaseModel):
 class ReplicaGenerateTemplateRequest(BaseModel):
     skip_vlm: bool = True
     max_clips: int = Field(80, ge=5, le=300, description="引用片段数量上限（基于 asr_text 聚合）")
-    replica_type: Literal["short_video", "film_commentary"] = Field(
+    replica_type: Literal["short_video", "film_commentary", "scene_story"] = Field(
         "short_video",
-        description="复刻类型：short_video=短视频模板；film_commentary=影视解说模板",
+        description="复刻类型：short_video=短视频模板；film_commentary=影视解说模板；scene_story=场景剧情模板",
+    )
+    style_profile: Optional[str] = Field(
+        None,
+        max_length=64,
+        description="风格细分标签（可选），如：带货口播/电影讲解/探店剧情",
+    )
+    quality_mode: Literal["balanced", "high_quality"] = Field(
+        "high_quality",
+        description="生成质量模式：balanced 更快；high_quality 更稳",
     )
 
 
@@ -80,6 +89,9 @@ class ReplicaTemplateListItem(BaseModel):
     created_at: str
     updated_at: str
     guide_preview: str
+    replica_type: Optional[str] = None
+    style_profile: Optional[str] = None
+    quality_signals: Optional[Dict[str, Any]] = None
 
 
 class ReplicaTemplateListResponse(BaseModel):

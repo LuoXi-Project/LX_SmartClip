@@ -13,7 +13,9 @@ type Props = {
 export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSaved }: Props) {
   const [open, setOpen] = useState(true)
   const [sourceType, setSourceType] = useState<'url' | 'library' | 'upload'>('url')
-  const [replicaType, setReplicaType] = useState<'short_video' | 'film_commentary'>('short_video')
+  const [replicaType, setReplicaType] = useState<'short_video' | 'film_commentary' | 'scene_story'>('short_video')
+  const [styleProfile, setStyleProfile] = useState<string>('通用')
+  const [qualityMode, setQualityMode] = useState<'balanced' | 'high_quality'>('high_quality')
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [libraryVideos, setLibraryVideos] = useState<Video[]>([])
@@ -32,6 +34,27 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
   const [loadingPhase, setLoadingPhase] = useState<'idle' | 'ingesting' | 'processing' | 'generating' | 'confirming'>('idle')
   const [error, setError] = useState('')
   const [processLogs, setProcessLogs] = useState<string[]>([])
+  const styleOptions = useMemo(() => {
+    if (replicaType === 'film_commentary') return ['电影讲解', '电视剧解说', '悬疑推理', '人物解析', '通用']
+    if (replicaType === 'scene_story') return ['探店剧情', 'Vlog叙事', '情绪短片', '剧情反转', '通用']
+    return ['带货口播', '知识讲解', '测评种草', '热点快评', '通用']
+  }, [replicaType])
+
+  useEffect(() => {
+    if (replicaType === 'film_commentary' && maxClips < 100) setMaxClips(120)
+    if (replicaType === 'scene_story' && maxClips < 90) setMaxClips(100)
+    if (replicaType === 'short_video' && maxClips > 120) setMaxClips(80)
+    if (!styleOptions.includes(styleProfile)) setStyleProfile(styleOptions[0] || '通用')
+  }, [replicaType, styleOptions, styleProfile, maxClips])
+
+  const structureCompleteness = useMemo(() => {
+    const tj = draftJson && typeof draftJson === 'object' ? draftJson : null
+    const chapters = Array.isArray(tj?.chapter_plan) ? tj.chapter_plan.length : 0
+    const slots = Array.isArray(tj?.structure) ? tj.structure.length : 0
+    const ok = chapters >= 3 && slots >= 5
+    return { ok, chapters, slots }
+  }, [draftJson])
+
 
   const wsRef = useRef<WebSocket | null>(null)
 
@@ -149,6 +172,8 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
         skip_vlm: skipVlm,
         max_clips: maxClips,
         replica_type: replicaType,
+        style_profile: styleProfile.trim() || '通用',
+        quality_mode: qualityMode,
       })
       setTemplateId(draft.template_id)
       setDraftJson(draft.template_json)
@@ -315,11 +340,35 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
               <span className="text-xs text-slate-400">复刻方向</span>
               <select
                 value={replicaType}
-                onChange={(e) => setReplicaType((e.target.value as 'short_video' | 'film_commentary') || 'short_video')}
+                onChange={(e) => setReplicaType((e.target.value as 'short_video' | 'film_commentary' | 'scene_story') || 'short_video')}
                 className="rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-xs text-slate-200 outline-none focus:border-amber-400"
               >
                 <option value="short_video">短视频模板（节奏紧凑）</option>
                 <option value="film_commentary">影视解说（长叙事结构）</option>
+                <option value="scene_story">场景剧情（镜头叙事）</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">风格标签</span>
+              <select
+                value={styleProfile}
+                onChange={(e) => setStyleProfile(e.target.value || '通用')}
+                className="rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-xs text-slate-200 outline-none focus:border-amber-400"
+              >
+                {styleOptions.map((x) => (
+                  <option key={x} value={x}>{x}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">质量模式</span>
+              <select
+                value={qualityMode}
+                onChange={(e) => setQualityMode((e.target.value as 'balanced' | 'high_quality') || 'high_quality')}
+                className="rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-xs text-slate-200 outline-none focus:border-amber-400"
+              >
+                <option value="high_quality">高质量（更稳）</option>
+                <option value="balanced">平衡（更快）</option>
               </select>
             </div>
 
@@ -346,6 +395,9 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
             </label>
             {replicaType === 'film_commentary' && maxClips < 100 && (
               <span className="text-[11px] text-amber-300">影视解说建议设为 100-160，叙事提取更完整</span>
+            )}
+            {replicaType === 'scene_story' && maxClips < 90 && (
+              <span className="text-[11px] text-amber-300">场景剧情建议设为 90-140，角色与场景切换更完整</span>
             )}
           </div>
 
@@ -418,6 +470,10 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
                 rows={6}
                 className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 outline-none focus:border-amber-400 placeholder-slate-600 resize-none"
               />
+              <div className={`text-[11px] ${structureCompleteness.ok ? 'text-emerald-300' : 'text-amber-300'}`}>
+                结构完整度：章节 {structureCompleteness.chapters} / 槽位 {structureCompleteness.slots}
+                {structureCompleteness.ok ? '（可用于长内容复刻）' : '（建议重试或提高片段上限）'}
+              </div>
 
               <div className="flex items-center gap-3">
                 <button

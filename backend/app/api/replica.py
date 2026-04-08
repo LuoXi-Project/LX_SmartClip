@@ -37,97 +37,107 @@ _STORAGE_VIDEOS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "storage", "videos")
 )
 
-_SHORT_VIDEO_TEMPLATE_SYS_PROMPT = """
-你是“短视频复刻模板”的分析助手。
-你将收到：参考视频的 ASR 片段（带 clip_id 与时间窗）文本。
+_REPLICA_TYPE_DEFAULT = "short_video"
+_STYLE_PROFILE_FALLBACK = "通用"
+_QUALITY_DEFAULT = "high_quality"
 
-任务：
-1) 归纳该参考视频的“复刻写作方式”，包括：
-   - pace（节奏快慢）：slow/medium/fast
-   - tone（情绪基调）：calm/neutral/energetic
-   - structure（结构角色顺序）：从以下集合中生成 5 段，且按出现顺序输出
-     可选 role 集合：hook, context, highlight, proof, cta
-2) 生成 template_json（结构化模板）用于长期复用。
-3) 生成 template_guide（中文字符串），用于后续把“用户自己的素材/台词”套入同一写作节奏与句式。
-
-硬约束：
-- 只输出 JSON，不要包含任何 Markdown、不做解释。
-- JSON 结构严格为：
-{
-  "pace": "slow|medium|fast",
-  "tone": "calm|neutral|energetic",
-  "structure": ["hook","context","highlight","proof","cta"],
-  "template_json": {
-    "pace": "...",
-    "tone": "...",
-    "structure": ["...","...","...","...","..."],
-    "slot_guidelines": {
-      "hook": "一句话风格+长度+禁忌",
-      "context": "...",
-      "highlight": "...",
-      "proof": "...",
-      "cta": "..."
-    }
-  },
-  "template_guide": "后续写作时的复刻约束说明（必须可直接粘贴到文案/成片规划提示词中）"
+_REPLICA_TYPE_RULES = {
+    "short_video": {
+        "label": "短视频模板",
+        "roles": ["hook", "context", "highlight", "proof", "cta"],
+        "structure_len": "5~6",
+        "sampling": {"first": 0.4, "middle": 0.3, "last": 0.3},
+        "context_chars": 14000,
+        "chunk_target": 6,
+    },
+    "film_commentary": {
+        "label": "影视解说",
+        "roles": ["opening", "background", "setup", "conflict", "turning_point", "climax", "reflection", "value", "cta"],
+        "structure_len": "7~10",
+        "sampling": {"first": 0.25, "middle": 0.45, "last": 0.30},
+        "context_chars": 22000,
+        "chunk_target": 10,
+    },
+    "scene_story": {
+        "label": "场景剧情",
+        "roles": ["opening", "setting", "character", "conflict", "resolution", "emotion", "cta"],
+        "structure_len": "6~8",
+        "sampling": {"first": 0.30, "middle": 0.45, "last": 0.25},
+        "context_chars": 18000,
+        "chunk_target": 8,
+    },
 }
 
-补充说明：
-- 参考输入是台词 ASR，不要“臆造”参考视频中没有出现的画面细节。
-- 复刻目标是“解说风格/节奏/话术结构”，而不是逐字复述。
-- template_guide 中需要包含：句长/停顿节奏、角色分配（hook/context/highlight/proof/cta 的信息密度倾向）、CTA 方式倾向（例如提问/强行动/领券/私信等，用同一模式复刻）。
+
+def _build_stage_a_system_prompt(replica_type: str, style_profile: str) -> str:
+    cfg = _REPLICA_TYPE_RULES.get(replica_type, _REPLICA_TYPE_RULES[_REPLICA_TYPE_DEFAULT])
+    return f"""
+你是“{cfg['label']}”复刻分析助手，当前风格标签是“{style_profile}”。
+你将收到单个时间窗的 ASR 文本，请先做局部结构化摘要。
+
+只输出 JSON，不要解释，结构严格为：
+{{
+  "window_role": "该时间窗在整体叙事中的作用",
+  "summary": "该时间窗关键内容（仅基于ASR）",
+  "tone": "calm|neutral|energetic",
+  "pace": "slow|medium|fast",
+  "signals": {{
+    "emotion_curve": "情绪变化",
+    "transition_pattern": "衔接方式",
+    "information_density": "low|medium|high"
+  }}
+}}
 """
 
-_FILM_COMMENTARY_TEMPLATE_SYS_PROMPT = """
-你是“影视解说复刻模板”的分析助手。
-你将收到：参考视频的 ASR 片段（带 clip_id 与时间窗）文本。
+
+def _build_stage_b_system_prompt(replica_type: str, style_profile: str) -> str:
+    cfg = _REPLICA_TYPE_RULES.get(replica_type, _REPLICA_TYPE_RULES[_REPLICA_TYPE_DEFAULT])
+    role_csv = ", ".join(cfg["roles"])
+    return f"""
+你是“{cfg['label']}复刻模板”的高级分析助手，风格标签“{style_profile}”。
+你会收到多个时间窗摘要，请合并成最终复刻模板。
 
 任务：
-1) 归纳该参考视频的“影视解说写作方式”，包括：
-   - pace（节奏快慢）：slow/medium/fast
-   - tone（情绪基调）：calm/neutral/energetic
-   - structure（结构角色顺序）：从以下集合中生成 7~10 段，且按出现顺序输出
-     可选 role 集合：opening, background, setup, conflict, turning_point, climax, reflection, value, cta
-2) 生成 template_json（结构化模板）用于长期复用。
-3) 生成 template_guide（中文字符串），用于后续把“用户自己的素材/台词”套入同一写作节奏与句式。
+1) 输出 pace/tone/structure，structure 长度要求：{cfg['structure_len']}，并优先使用角色集合：{role_csv}
+2) 生成 template_json（用于长期复用）
+3) 生成 template_guide（可直接粘贴到后续文案/成片规划提示词）
+4) 补充 narrative_arc/chapter_plan/transition_patterns/cta_style/quality_signals
 
 硬约束：
-- 只输出 JSON，不要包含任何 Markdown、不做解释。
-- JSON 结构严格为：
-{
+- 只输出 JSON，不要 Markdown，不要解释。
+- 结构严格为：
+{{
   "pace": "slow|medium|fast",
   "tone": "calm|neutral|energetic",
-  "structure": ["opening","background","setup","conflict","turning_point","climax","reflection","cta"],
-  "template_json": {
+  "structure": ["..."],
+  "template_json": {{
+    "replica_type": "{replica_type}",
+    "style_profile": "{style_profile}",
     "pace": "...",
     "tone": "...",
     "structure": ["..."],
-    "slot_guidelines": {
-      "opening": "一句话风格+长度+禁忌",
-      "background": "...",
-      "setup": "...",
-      "conflict": "...",
-      "turning_point": "...",
-      "climax": "...",
-      "reflection": "...",
-      "value": "...",
-      "cta": "..."
-    }
-  },
-  "template_guide": "后续写作时的复刻约束说明（必须可直接粘贴到文案/成片规划提示词中）"
-}
-
-补充说明：
-- 参考输入是台词 ASR，不要“臆造”参考视频中没有出现的画面细节。
-- 复刻目标是“解说风格/节奏/叙事结构”，而不是逐字复述。
-- template_guide 必须明确：叙事推进方式（铺垫-冲突-转折-高潮-余韵）、信息密度分配、情绪递进轨迹、常用句式、章节衔接方式与段落长度建议。
-- CTA 对影视解说通常弱化强营销，更偏“观点提问/引导讨论/下一集悬念”。
+    "slot_guidelines": {{}},
+    "narrative_arc": "...",
+    "chapter_plan": [
+      {{
+        "chapter": "章节名",
+        "goal": "该章目标",
+        "emotion_target": "该章情绪目标",
+        "density": "low|medium|high",
+        "transition_hint": "衔接句式建议"
+      }}
+    ],
+    "transition_patterns": ["..."],
+    "cta_style": "...",
+    "quality_signals": {{
+      "coverage": 0,
+      "coherence": 0,
+      "density_stability": 0
+    }}
+  }},
+  "template_guide": "复刻执行说明"
+}}
 """
-
-_TEMPLATE_SYS_PROMPTS = {
-    "short_video": _SHORT_VIDEO_TEMPLATE_SYS_PROMPT,
-    "film_commentary": _FILM_COMMENTARY_TEMPLATE_SYS_PROMPT,
-}
 
 
 def _utc_now_iso() -> str:
@@ -140,6 +150,23 @@ def _safe_preview(text: str, max_len: int = 160) -> str:
     if len(s) <= max_len:
         return s
     return s[: max_len - 1].rstrip() + "…"
+
+
+def _parse_template_meta(raw_template_json: object) -> tuple[str | None, str | None, dict | None]:
+    obj: dict = {}
+    if isinstance(raw_template_json, str):
+        try:
+            parsed = json.loads(raw_template_json)
+            obj = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            obj = {}
+    elif isinstance(raw_template_json, dict):
+        obj = raw_template_json
+    replica_type = str(obj.get("replica_type") or "").strip() or None
+    style_profile = str(obj.get("style_profile") or "").strip() or None
+    q = obj.get("quality_signals")
+    quality_signals = q if isinstance(q, dict) else None
+    return replica_type, style_profile, quality_signals
 
 
 def _fmt_time(seconds: float) -> str:
@@ -224,6 +251,130 @@ async def _build_reference_asr_context(
     return "\n".join(lines).strip()
 
 
+async def _fetch_reference_asr_rows(
+    db: aiosqlite.Connection,
+    video_id: str,
+    *,
+    max_clips: int,
+) -> list[aiosqlite.Row]:
+    async with db.execute(
+        """
+        SELECT id, start_time, end_time, asr_text
+        FROM clips
+        WHERE video_id = ?
+          AND TRIM(COALESCE(asr_text, '')) <> ''
+        ORDER BY start_time
+        LIMIT ?
+        """,
+        (video_id, max_clips),
+    ) as cur:
+        return await cur.fetchall()
+
+
+def _select_rows_by_ratio(rows: list[aiosqlite.Row], ratio: dict[str, float], cap: int) -> list[aiosqlite.Row]:
+    if not rows:
+        return []
+    n = min(len(rows), max(1, cap))
+    first_n = max(1, int(n * ratio.get("first", 0.34)))
+    mid_n = max(1, int(n * ratio.get("middle", 0.33)))
+    last_n = max(1, n - first_n - mid_n)
+    if first_n + mid_n + last_n > n:
+        last_n = max(1, n - first_n - mid_n)
+
+    first = rows[:first_n]
+    mid_start = max(first_n, (len(rows) // 2) - (mid_n // 2))
+    middle = rows[mid_start: mid_start + mid_n]
+    last = rows[-last_n:]
+
+    dedup: dict[str, aiosqlite.Row] = {}
+    for r in [*first, *middle, *last]:
+        dedup[str(r["id"])] = r
+    return sorted(dedup.values(), key=lambda x: float(x["start_time"] or 0.0))
+
+
+def _rows_to_context(rows: list[aiosqlite.Row], *, context_max_chars: int) -> str:
+    total = 0
+    lines: list[str] = []
+    for r in rows:
+        clip_id = str(r["id"])
+        t0 = float(r["start_time"] or 0.0)
+        t1 = float(r["end_time"] or 0.0)
+        asr = (r["asr_text"] or "").strip()
+        if not asr:
+            continue
+        block = f"\n[clip_id={clip_id}] [{_fmt_time(t0)}→{_fmt_time(t1)}]\n台词：{asr}"
+        if lines and total + len(block) > context_max_chars:
+            break
+        lines.append(block)
+        total += len(block)
+    return "\n".join(lines).strip()
+
+
+def _build_stage_a_windows(rows: list[aiosqlite.Row], target_windows: int) -> list[list[aiosqlite.Row]]:
+    if not rows:
+        return []
+    k = max(1, min(target_windows, len(rows)))
+    step = max(1, len(rows) // k)
+    windows: list[list[aiosqlite.Row]] = []
+    idx = 0
+    while idx < len(rows):
+        windows.append(rows[idx: idx + step])
+        idx += step
+    return windows[:k]
+
+
+async def _run_stage_a_summaries(
+    llm: LLMClient,
+    *,
+    replica_type: str,
+    style_profile: str,
+    rows: list[aiosqlite.Row],
+    target_windows: int,
+) -> list[dict]:
+    sys_prompt = _build_stage_a_system_prompt(replica_type, style_profile)
+    windows = _build_stage_a_windows(rows, target_windows)
+    summaries: list[dict] = []
+    for i, win in enumerate(windows, start=1):
+        context = _rows_to_context(win, context_max_chars=5000)
+        if not context:
+            continue
+        user = f"【窗口序号】{i}\n【窗口ASR】\n{context}"
+        raw = await llm.chat(messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}])
+        cleaned = extract_json_object(raw if isinstance(raw, str) else "")
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            logger.warning("stageA json parse failed at window=%s", i)
+            continue
+        if isinstance(parsed, dict):
+            summaries.append(parsed)
+    return summaries
+
+
+def _calc_quality_signals(template_json: dict, *, summary_count: int, expected_chapters: int) -> dict:
+    chapters = template_json.get("chapter_plan")
+    chapter_count = len(chapters) if isinstance(chapters, list) else 0
+    coverage = min(1.0, summary_count / max(1, expected_chapters))
+    coherence = min(1.0, chapter_count / max(1, expected_chapters))
+    density = template_json.get("quality_signals", {}).get("density_stability")
+    density_stability = float(density) if isinstance(density, (int, float)) else 0.7
+    return {
+        "coverage": round(coverage, 3),
+        "coherence": round(coherence, 3),
+        "density_stability": round(max(0.0, min(1.0, density_stability)), 3),
+    }
+
+
+def _is_template_quality_ok(template_json: dict, *, expected_min_chapters: int) -> bool:
+    structure = template_json.get("structure")
+    chapters = template_json.get("chapter_plan")
+    if not isinstance(structure, list) or len(structure) < 5:
+        return False
+    if not isinstance(chapters, list) or len(chapters) < expected_min_chapters:
+        return False
+    return True
+
+
 @router.post("/ingest", response_model=ReplicaIngestResponse)
 async def ingest_reference_video(req: ReplicaIngestRequest) -> ReplicaIngestResponse:
     """
@@ -273,10 +424,17 @@ async def generate_replica_template(
     """
     db = await get_db_conn()
     source_url: str | None = None
+    raw_rows: list[aiosqlite.Row] = []  # type: ignore[name-defined]
     try:
-        # 先确认 clips(asr_text) 是否存在
-        context = await _build_reference_asr_context(db, video_id, max_clips=req.max_clips)
-        if not context:
+        selected_replica_type = req.replica_type if req.replica_type in _REPLICA_TYPE_RULES else _REPLICA_TYPE_DEFAULT
+        style_profile = (req.style_profile or "").strip() or _STYLE_PROFILE_FALLBACK
+        quality_mode = req.quality_mode if req.quality_mode in ("balanced", "high_quality") else _QUALITY_DEFAULT
+        cfg_by_type = _REPLICA_TYPE_RULES[selected_replica_type]
+
+        raw_rows = await _fetch_reference_asr_rows(db, video_id, max_clips=req.max_clips)
+        sampled_rows = _select_rows_by_ratio(raw_rows, cfg_by_type["sampling"], req.max_clips)
+        context = _rows_to_context(sampled_rows, context_max_chars=int(cfg_by_type["context_chars"]))
+        if not sampled_rows or not context:
             raise HTTPException(
                 status_code=400,
                 detail="未找到参考视频的 ASR 内容。请先触发 /api/videos/{video_id}/process（至少完成 asr）。",
@@ -314,16 +472,30 @@ async def generate_replica_template(
         timeout=3600,
     )
 
-    selected_replica_type = req.replica_type if req.replica_type in _TEMPLATE_SYS_PROMPTS else "short_video"
-    sys_prompt = _TEMPLATE_SYS_PROMPTS[selected_replica_type]
-
-    user = (
-        f"【复刻类型】\n{selected_replica_type}\n\n"
-        "【参考视频 ASR】\n"
-        f"{context}\n\n"
-        "请根据这些片段推断其复刻写作方式，并输出符合要求的 JSON。"
+    stage_a_target = int(cfg_by_type["chunk_target"])
+    if quality_mode == "balanced":
+        stage_a_target = max(3, stage_a_target - 2)
+    stage_a = await _run_stage_a_summaries(
+        llm,
+        replica_type=selected_replica_type,
+        style_profile=style_profile,
+        rows=sampled_rows,
+        target_windows=stage_a_target,
     )
-    raw = await llm.chat(messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}])
+    if not stage_a:
+        raise HTTPException(status_code=502, detail="分段摘要失败，无法生成模板")
+
+    stage_b_prompt = _build_stage_b_system_prompt(selected_replica_type, style_profile)
+    stage_b_user = (
+        f"【复刻类型】\n{selected_replica_type}\n\n"
+        f"【风格标签】\n{style_profile}\n\n"
+        "【参考视频 ASR（采样上下文）】\n"
+        f"{context}\n\n"
+        "【分段摘要（StageA）】\n"
+        f"{json.dumps(stage_a, ensure_ascii=False)}\n\n"
+        "请输出最终 JSON 模板。"
+    )
+    raw = await llm.chat(messages=[{"role": "system", "content": stage_b_prompt}, {"role": "user", "content": stage_b_user}])
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=502, detail="LLM 返回模板为空")
 
@@ -344,8 +516,52 @@ async def generate_replica_template(
     template_guide = str(data.get("template_guide") or "").strip()
     if not template_guide:
         raise HTTPException(status_code=502, detail="LLM 未生成 template_guide")
-    if isinstance(template_json, dict):
-        template_json.setdefault("replica_type", selected_replica_type)
+    if not isinstance(template_json, dict):
+        template_json = {"raw": template_json}
+
+    template_json.setdefault("replica_type", selected_replica_type)
+    template_json.setdefault("style_profile", style_profile)
+    template_json.setdefault("quality_mode", quality_mode)
+    template_json.setdefault("structure", structure if isinstance(structure, list) else [])
+    template_json.setdefault("narrative_arc", "")
+    template_json.setdefault("chapter_plan", [])
+    template_json.setdefault("transition_patterns", [])
+    template_json.setdefault("cta_style", "")
+    template_json["quality_signals"] = _calc_quality_signals(
+        template_json,
+        summary_count=len(stage_a),
+        expected_chapters=max(5, stage_a_target // 2),
+    )
+
+    if not _is_template_quality_ok(template_json, expected_min_chapters=3) and quality_mode == "high_quality":
+        logger.info("replica quality retry video_id=%s type=%s", video_id, selected_replica_type)
+        raw_retry = await llm.chat(
+            messages=[
+                {"role": "system", "content": stage_b_prompt},
+                {"role": "user", "content": stage_b_user + "\n\n请补足章节完整度，确保 chapter_plan 至少 3 章并与 structure 一致。"},
+            ]
+        )
+        cleaned_retry = extract_json_object(raw_retry if isinstance(raw_retry, str) else "")
+        try:
+            data_retry = json.loads(cleaned_retry)
+            maybe_tj = data_retry.get("template_json")
+            if isinstance(maybe_tj, dict):
+                template_json = maybe_tj
+                template_guide = str(data_retry.get("template_guide") or template_guide).strip()
+                pace = data_retry.get("pace", pace)
+                tone = data_retry.get("tone", tone)
+                structure = data_retry.get("structure", structure)
+                template_json.setdefault("replica_type", selected_replica_type)
+                template_json.setdefault("style_profile", style_profile)
+                template_json.setdefault("quality_mode", quality_mode)
+                template_json.setdefault("chapter_plan", [])
+                template_json["quality_signals"] = _calc_quality_signals(
+                    template_json,
+                    summary_count=len(stage_a),
+                    expected_chapters=max(5, stage_a_target // 2),
+                )
+        except Exception:
+            logger.warning("replica quality retry parse failed video_id=%s", video_id)
 
     # 入库 draft
     db = await get_db_conn()
@@ -481,6 +697,8 @@ async def get_replica_template(template_id: str) -> ReplicaTemplateGetResponse:
 async def list_replica_templates(
     q: str | None = Query(None, description="搜索关键词（匹配 source_url / template_guide）"),
     status: str | None = Query(None, description="过滤状态：draft/confirmed（可选）"),
+    replica_type: str | None = Query(None, description="过滤类型：short_video/film_commentary/scene_story"),
+    style_profile: str | None = Query(None, description="过滤风格标签（可选）"),
     sort: str | None = Query("updated_desc", description="排序：updated_desc/created_desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=48),
@@ -490,6 +708,8 @@ async def list_replica_templates(
     """
     qq = (q or "").strip()
     st = (status or "").strip().lower()
+    type_filter = (replica_type or "").strip().lower()
+    style_filter = (style_profile or "").strip().lower()
     order_by = "updated_at DESC"
     if (sort or "").strip().lower() == "created_desc":
         order_by = "created_at DESC"
@@ -509,29 +729,37 @@ async def list_replica_templates(
 
     db = await get_db_conn()
     try:
-        cur = await db.execute(f"SELECT COUNT(1) AS c FROM replica_templates {where_sql}", params)
-        row = await cur.fetchone()
-        total = int(row["c"] or 0) if row else 0
-        total_pages = max(1, (total + page_size - 1) // page_size) if page_size else 1
-        if page > total_pages and total_pages > 0:
-            page = total_pages
-            offset = (page - 1) * page_size
-
         cur2 = await db.execute(
             f"""
-            SELECT id, name, source_video_id, source_url, pace, tone, status, created_at, updated_at, template_guide
+            SELECT id, name, source_video_id, source_url, pace, tone, status, created_at, updated_at, template_guide, template_json
             FROM replica_templates
             {where_sql}
             ORDER BY {order_by}
-            LIMIT ? OFFSET ?
             """,
-            [*params, page_size, offset],
+            [*params],
         )
         rows = await cur2.fetchall()
 
-        items: list[ReplicaTemplateListItem] = []
+        filtered_rows: list[aiosqlite.Row] = []  # type: ignore[name-defined]
         for r in rows:
+            rt, sp, _qs = _parse_template_meta(r["template_json"])
+            if type_filter and (rt or "").lower() != type_filter:
+                continue
+            if style_filter and style_filter not in (sp or "").lower():
+                continue
+            filtered_rows.append(r)
+
+        total = len(filtered_rows)
+        total_pages = max(1, (total + page_size - 1) // page_size) if page_size else 1
+        if page > total_pages and total_pages > 0:
+            page = total_pages
+        offset = (page - 1) * page_size
+        page_rows = filtered_rows[offset: offset + page_size]
+
+        items: list[ReplicaTemplateListItem] = []
+        for r in page_rows:
             guide = str(r["template_guide"] or "")
+            rt, sp, qs = _parse_template_meta(r["template_json"])
             items.append(
                 ReplicaTemplateListItem(
                     template_id=str(r["id"]),
@@ -544,6 +772,9 @@ async def list_replica_templates(
                     created_at=str(r["created_at"] or ""),
                     updated_at=str(r["updated_at"] or ""),
                     guide_preview=_safe_preview(guide),
+                    replica_type=rt,
+                    style_profile=sp,
+                    quality_signals=qs,
                 )
             )
 

@@ -56,13 +56,51 @@ export default function ProcessPage() {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
-      .then((d) => {
-        if (Array.isArray(d)) setVideos(d)
-        else setVideos((d as { items: Video[] })?.items || [])
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    const loadAllVideos = async () => {
+      try {
+        const first = await apiClient.get<unknown, {
+          items?: Video[]
+          total_pages?: number
+          page?: number
+          page_size?: number
+        } | Video[]>('/api/videos')
+
+        if (Array.isArray(first)) {
+          setVideos(first)
+          return
+        }
+
+        const firstItems = first?.items || []
+        const totalPages = Number(first?.total_pages || 1)
+        const currentPage = Number(first?.page || 1)
+        const pageSize = Number(first?.page_size || firstItems.length || PAGE_SIZE)
+
+        if (totalPages <= currentPage) {
+          setVideos(firstItems)
+          return
+        }
+
+        const restPages = await Promise.all(
+          Array.from({ length: totalPages - currentPage }, (_, i) => currentPage + i + 1).map((p) =>
+            apiClient.get<unknown, { items?: Video[] }>('/api/videos', {
+              params: { page: p, page_size: pageSize },
+            }),
+          ),
+        )
+
+        const merged = [
+          ...firstItems,
+          ...restPages.flatMap((res) => res?.items || []),
+        ]
+        setVideos(merged)
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void loadAllVideos()
   }, [])
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [steps])

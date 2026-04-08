@@ -6,7 +6,7 @@ import time
 import uuid
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from app.db.database import get_db_conn, DB_PATH
-from app.core.splitter import VideoSplitter
+from app.core.splitter import VideoSplitter, StopRequested
 from app.core.embedder import Embedder
 from app.core.vector_db.faiss_db import FaissVectorDB
 from app.core.license import ensure_license_valid, is_license_enforced
@@ -270,6 +270,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         await db.close()
 
     loop = asyncio.get_event_loop()
+    cancel_event = _cancel_event_for(video_id)
 
     await _check_cancel(video_id)
 
@@ -717,6 +718,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                             fixed_duration,
                             transcode_opts=transcode_opts,
                             on_clip_created=_on_clip_created,
+                            should_stop=cancel_event.is_set,
                         ),
                     )
                 else:
@@ -728,8 +730,11 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                             scene_min_scene_len,
                             transcode_opts=transcode_opts,
                             on_clip_created=_on_clip_created,
+                            should_stop=cancel_event.is_set,
                         ),
                     )
+            except (StopRequested, ProcessCancelled):
+                split_error["err"] = ProcessCancelled()
             except Exception as e:
                 split_error["err"] = e
             finally:

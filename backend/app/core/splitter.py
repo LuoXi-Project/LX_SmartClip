@@ -14,6 +14,9 @@ from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe
 logger = logging.getLogger(__name__)
 _SENTINEL = object()
 
+class StopRequested(Exception):
+    """外部请求停止切分流程。"""
+
 class ClipInfo:
     """视频片段信息"""
     def __init__(self, clip_path: str, start_time: float, end_time: float, duration: float):
@@ -182,6 +185,7 @@ class VideoSplitter:
         *,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
         # 命名前缀 & 序号格式
         name_prefix: str,
         index_width: int = 3,
@@ -304,6 +308,8 @@ class VideoSplitter:
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             for idx, (st, ed) in enumerate(ranges):
+                if should_stop and should_stop():
+                    raise StopRequested("切分已停止")
                 clip_filename = f"{video_name}_{name_prefix}_{idx:0{index_width}d}.{output_container}"
                 clip_path = os.path.join(self.clips_dir, clip_filename)
                 futures.append(executor.submit(_run_one, idx, float(st), float(ed), clip_path))
@@ -311,6 +317,10 @@ class VideoSplitter:
                     logger.info(f"提交切分片段 {name_prefix}#{idx}: {st:.2f}s - {ed:.2f}s")
 
             for fut in as_completed(futures):
+                if should_stop and should_stop():
+                    for pending in futures:
+                        pending.cancel()
+                    raise StopRequested("切分已停止")
                 try:
                     idx_ret, clip_info = fut.result()
                     results_by_idx[idx_ret] = clip_info
@@ -622,6 +632,7 @@ class VideoSplitter:
         adaptive_min_scene_len: int = 30,
         max_shots: Optional[int] = None,
         show_progress: bool = True,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> Generator[Dict[str, float], None, None]:
         """流式返回镜头区间，避免等待全量检测完成。"""
         if not os.path.exists(video_path):
@@ -673,6 +684,8 @@ class VideoSplitter:
         sent_shot_keys: Set[Tuple[float, float]] = set()
 
         def frame_callback(frame_image, frame_num: int) -> None:  # noqa: ANN001
+            if should_stop and should_stop():
+                raise StopRequested("镜头识别已停止")
             scene_cut_frames.append(frame_num)
             cut_count = len(scene_cut_frames)
             current_time = FrameTimecode(frame_num, video_fps).get_seconds()
@@ -735,7 +748,12 @@ class VideoSplitter:
 
         shot_count = 0
         while True:
-            item = shot_queue.get()
+            if should_stop and should_stop():
+                raise StopRequested("镜头识别已停止")
+            try:
+                item = shot_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
             if item is _SENTINEL:
                 break
             if max_shots is not None and shot_count >= int(max_shots):
@@ -762,6 +780,7 @@ class VideoSplitter:
         stream_copy: Optional[bool] = None,
         max_workers: Optional[int] = None,
         quiet_split: Optional[bool] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[ClipInfo]:
         """
         混合切分：先做镜头识别；若某镜头时长超过 max_segment_sec，再按 chunk_sec 强制切段。
@@ -915,11 +934,16 @@ class VideoSplitter:
                 adaptive_threshold=threshold,
                 adaptive_min_scene_len=min_scene_len,
                 show_progress=not quiet_split_val,
+                should_stop=should_stop,
             ):
+                if should_stop and should_stop():
+                    raise StopRequested("混合切分已停止")
                 shot_start = float(shot["start"])
                 shot_end = float(shot["end"])
                 expanded = self._expand_long_scene_ranges(shot_start, shot_end, max_segment_sec, chunk_sec)
                 for start_time, end_time in expanded:
+                    if should_stop and should_stop():
+                        raise StopRequested("混合切分已停止")
                     clip_filename = f"{video_name}_hybrid_{clip_idx:04d}.{output_container}"
                     clip_path = os.path.join(self.clips_dir, clip_filename)
                     futures.append(
@@ -931,6 +955,10 @@ class VideoSplitter:
 
             # 收集结果（尽早触发 on_clip_created 以保持流水线）
             for fut in as_completed(futures):
+                if should_stop and should_stop():
+                    for pending in futures:
+                        pending.cancel()
+                    raise StopRequested("混合切分已停止")
                 try:
                     idx_ret, clip_info = fut.result()
                     results_by_idx[idx_ret] = clip_info
@@ -955,6 +983,7 @@ class VideoSplitter:
         min_scene_len: int = 30,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[ClipInfo]:
         """
         使用 PySceneDetect 进行镜头识别切分
@@ -992,7 +1021,10 @@ class VideoSplitter:
             mode="adaptive",
             adaptive_threshold=threshold_value,
             adaptive_min_scene_len=min_scene_len_value,
+            should_stop=should_stop,
         ):
+            if should_stop and should_stop():
+                raise StopRequested("镜头识别切分已停止")
             start_time = float(shot["start"])
             end_time = float(shot["end"])
             if end_time <= start_time + 1e-6:
@@ -1008,6 +1040,7 @@ class VideoSplitter:
                 [(0.0, total_duration)],
                 transcode_opts=transcode_opts,
                 on_clip_created=on_clip_created,
+                should_stop=should_stop,
                 name_prefix="scene_fallback",
                 index_width=3,
             )
@@ -1018,6 +1051,7 @@ class VideoSplitter:
             ranges,
             transcode_opts=transcode_opts,
             on_clip_created=on_clip_created,
+            should_stop=should_stop,
             name_prefix="scene",
             index_width=3,
         )

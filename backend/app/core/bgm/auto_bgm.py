@@ -95,6 +95,13 @@ def _mood_keywords() -> Dict[str, List[str]]:
         "epic": ["燃", "震撼", "史诗", "热血", "高潮", "epic", "power", "cinematic"],
         "sad": ["伤感", "遗憾", "催泪", "低落", "sad", "melancholy", "piano"],
         "tech": ["科技", "未来", "数码", "赛博", "tech", "electro", "synth"],
+        "horror": ["恐怖", "惊悚", "悬疑", "诡异", "阴森", "恐惧", "horror", "scary", "dark"],
+        "suspense": ["悬念", "紧张", "压迫", "潜行", "悬疑推进", "suspense", "tense", "thriller"],
+        "action": ["动作", "打斗", "追逐", "战斗", "冲突", "action", "battle", "chase", "intense"],
+        "romantic": ["浪漫", "甜蜜", "心动", "恋爱", "氛围感", "romantic", "love", "sweet"],
+        "inspiring": ["励志", "希望", "成长", "逆袭", "热泪", "inspiring", "uplifting", "motivational"],
+        "retro": ["复古", "怀旧", "经典", "老派", "港风", "retro", "vintage", "nostalgic"],
+        "fantasy": ["奇幻", "魔幻", "梦境", "神秘", "空灵", "fantasy", "mystic", "ethereal"],
     }
 
 
@@ -128,6 +135,21 @@ def _normalize_mood(mood: str) -> str:
         "史诗": "epic",
         "伤感": "sad",
         "科技": "tech",
+        "恐怖": "horror",
+        "惊悚": "horror",
+        "悬疑": "horror",
+        "紧张": "suspense",
+        "悬念": "suspense",
+        "动作": "action",
+        "打斗": "action",
+        "浪漫": "romantic",
+        "恋爱": "romantic",
+        "励志": "inspiring",
+        "希望": "inspiring",
+        "复古": "retro",
+        "怀旧": "retro",
+        "奇幻": "fantasy",
+        "魔幻": "fantasy",
     }
     return mapping.get(raw, raw)
 
@@ -151,6 +173,20 @@ def _choose_bgm_from_manifest(plan: Plan) -> Optional[str]:
         preferred_bpm = 78
     elif target_mood == "tech":
         preferred_bpm = 128
+    elif target_mood == "horror":
+        preferred_bpm = 92
+    elif target_mood == "suspense":
+        preferred_bpm = 96
+    elif target_mood == "action":
+        preferred_bpm = 140
+    elif target_mood == "romantic":
+        preferred_bpm = 92
+    elif target_mood == "inspiring":
+        preferred_bpm = 110
+    elif target_mood == "retro":
+        preferred_bpm = 108
+    elif target_mood == "fantasy":
+        preferred_bpm = 100
 
     best_score = -10**9
     best_path: Optional[str] = None

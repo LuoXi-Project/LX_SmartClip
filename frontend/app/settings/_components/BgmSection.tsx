@@ -12,6 +12,10 @@ import { BgmTrackCard } from './BgmTrackCard'
 const BGM_TAG_OPTIONS = [
   '搞笑', '轻快', '欢乐', '活泼', '治愈', '舒缓', '安静', '温柔',
   '燃', '震撼', '史诗', '热血', '科技', '未来感', '赛博', '情绪',
+  '恐怖', '惊悚', '悬疑', '诡异', '阴森',
+  '悬念', '紧张', '压迫', '动作', '打斗', '追逐',
+  '浪漫', '甜蜜', '恋爱', '励志', '希望', '成长',
+  '复古', '怀旧', '奇幻', '魔幻', '空灵',
 ]
 
 const MOOD_OPTIONS = [
@@ -21,6 +25,13 @@ const MOOD_OPTIONS = [
   { value: 'epic', label: '燃 / 史诗' },
   { value: 'sad', label: '伤感 / 抒情' },
   { value: 'tech', label: '科技 / 未来' },
+  { value: 'horror', label: '恐怖 / 悬疑' },
+  { value: 'suspense', label: '悬疑 / 紧张' },
+  { value: 'action', label: '动作 / 高能' },
+  { value: 'romantic', label: '浪漫 / 甜蜜' },
+  { value: 'inspiring', label: '励志 / 希望' },
+  { value: 'retro', label: '复古 / 怀旧' },
+  { value: 'fantasy', label: '奇幻 / 神秘' },
 ]
 
 type TrackEditState = {

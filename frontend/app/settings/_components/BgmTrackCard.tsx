@@ -1,5 +1,6 @@
 'use client'
 
+import { useMemo, useState } from 'react'
 import { Save, Trash2 } from 'lucide-react'
 import type { BgmTrack } from '@/lib/api'
 import { BgmMiniPlayer } from './BgmMiniPlayer'
@@ -34,6 +35,16 @@ export function BgmTrackCard({
 }: Props) {
   const t = track
   const selectedTags = editingState?.tags ?? t.tags
+  const [expandTags, setExpandTags] = useState(false)
+
+  const visibleTags = useMemo(() => {
+    if (expandTags) return tagOptions
+    const selectedFirst = tagOptions.filter((tag) => selectedTags.includes(tag))
+    const rest = tagOptions.filter((tag) => !selectedTags.includes(tag))
+    const limit = Math.max(12, selectedFirst.length)
+    return [...selectedFirst, ...rest].slice(0, limit)
+  }, [expandTags, selectedTags, tagOptions])
+  const hiddenTagCount = Math.max(0, tagOptions.length - visibleTags.length)
 
   return (
     <div
@@ -76,11 +87,22 @@ export function BgmTrackCard({
           </div>
         </div>
 
-        <div className="flex flex-col md:flex-row md:items-center md:gap-3 gap-1.5">
-          <div className="flex-1 space-y-1">
-            <span className="text-[10px] text-slate-500">标签（中文多选）</span>
-            <div className="flex flex-wrap gap-1.5">
-              {tagOptions.map((tag) => {
+        <div className="flex flex-col lg:flex-row lg:items-start lg:gap-3 gap-2">
+          <div className="flex-1 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-500">
+                标签（已选 {selectedTags.length} / {tagOptions.length}）
+              </span>
+              <button
+                type="button"
+                onClick={() => setExpandTags((v) => !v)}
+                className="text-[10px] px-2 py-0.5 rounded-md border border-slate-700 bg-slate-900/70 text-slate-300 hover:text-white hover:border-slate-500 transition-colors"
+              >
+                {expandTags ? '收起' : `展开${hiddenTagCount > 0 ? ` +${hiddenTagCount}` : ''}`}
+              </button>
+            </div>
+            <div className={`flex flex-wrap gap-1.5 ${expandTags ? 'max-h-28 overflow-y-auto pr-1' : ''}`}>
+              {visibleTags.map((tag) => {
                 const selected = selectedTags.includes(tag)
                 return (
                   <button
@@ -103,7 +125,7 @@ export function BgmTrackCard({
           <BgmMiniPlayer
             src={t.url}
             downloadFilename={t.filename}
-            className="w-full md:min-w-[min(100%,380px)] md:max-w-lg mt-1.5 md:mt-0"
+            className="w-full lg:min-w-[320px] lg:max-w-md mt-1.5 lg:mt-0"
           />
         </div>
 

@@ -37,6 +37,74 @@ def _estimate_item_duration(text: str, *, pace: str) -> float:
     return max(3.0, min(9.0, base))
 
 
+def _fill_timeline_by_reuse(
+    *,
+    items: List[TimelineItem],
+    target_duration: float,
+    mode: str,
+) -> List[TimelineItem]:
+    """
+    当候选事件不足导致总时长明显短于目标时长，允许复用素材补齐时长。
+    规则：
+    - 仅在已有 items 时启用
+    - 按原有顺序循环补充，保持节奏稳定
+    - 最后一段按剩余时长裁剪，避免显著超时
+    """
+    if target_duration <= 0:
+        return items
+    if not items:
+        return items
+
+    current = float(sum((it.duration_budget_sec or 0.0) for it in items))
+    if current >= target_duration * 0.92:
+        return items
+
+    # auto/voiceover 以 TTS 字幕为主，不能重复文案；改为“拉长时长预算”而非复制条目。
+    if mode in ("auto", "voiceover"):
+        # 先按比例整体拉伸，再做轮转微调直至接近目标
+        factor = max(1.0, target_duration / max(0.1, current))
+        for it in items:
+            base = float(it.duration_budget_sec or 3.0)
+            it.duration_budget_sec = min(20.0, max(0.5, base * factor))
+        current = float(sum((it.duration_budget_sec or 0.0) for it in items))
+        i = 0
+        while current < target_duration * 0.98 and items:
+            idx = i % len(items)
+            cur = float(items[idx].duration_budget_sec or 0.0)
+            if cur < 24.0:
+                step = min(1.0, target_duration - current)
+                items[idx].duration_budget_sec = cur + max(0.2, step)
+                current += max(0.2, step)
+            i += 1
+            if i > len(items) * 80:
+                break
+        return items
+
+    base = list(items)
+    cycle = 0
+    while current < target_duration and base:
+        cycle += 1
+        for j, it in enumerate(base, 1):
+            if current >= target_duration:
+                break
+            dur = float(it.duration_budget_sec or 3.0)
+            remain = max(0.0, target_duration - current)
+            if remain <= 0.0:
+                break
+            next_dur = dur if remain >= dur else max(0.5, remain)
+            items.append(
+                TimelineItem(
+                    event_id=f"{it.event_id}#r{cycle}_{j}",
+                    clip_id=it.clip_id,
+                    subtitle_text=it.subtitle_text,
+                    audio_mode=it.audio_mode,
+                    duration_budget_sec=next_dur,
+                )
+            )
+            current += next_dur
+    return items
+
+
 def arrange_timeline(
     *,
     pool: MergedEventPool,
@@ -107,6 +175,7 @@ def arrange_timeline(
                 )
             )
 
+        items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
         total = sum((it.duration_budget_sec or 0.0) for it in items)
         return FinalTimeline(items=items, total_duration_sec_est=total if total > 0 else None)
 
@@ -154,6 +223,7 @@ def arrange_timeline(
     _pick(t2, b2)
     _pick(t3, b3)
 
+    items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
     total = sum((it.duration_budget_sec or 0.0) for it in items)
     return FinalTimeline(items=items, total_duration_sec_est=total if total > 0 else None)
 
@@ -271,6 +341,7 @@ def arrange_timeline_variants(
                     )
                 )
 
+            items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
             total = sum((it.duration_budget_sec or 0.0) for it in items)
             timelines.append(FinalTimeline(items=items, total_duration_sec_est=total if total > 0 else None))
 
@@ -356,6 +427,7 @@ def arrange_timeline_variants(
         items.extend(_pick(s2, b2, rng=rng, used_event_ids=used_event_ids))
         items.extend(_pick(s3, b3, rng=rng, used_event_ids=used_event_ids))
 
+        items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
         total = sum((it.duration_budget_sec or 0.0) for it in items)
         timelines.append(FinalTimeline(items=items, total_duration_sec_est=total if total > 0 else None))
 

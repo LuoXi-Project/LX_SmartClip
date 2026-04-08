@@ -19,6 +19,7 @@ from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.llm import LLMConfig
 from app.core.llm import LLMClient
+from app.core.llm.response_utils import extract_json_object
 from app.core.auto_edit.plan_generation import call_llm_for_plans
 from app.core.auto_edit.segments import ClipCandidate, collect_plan_clip_ids, segments_from_plan
 from app.core.auto_edit_v2.plan_compile import (
@@ -48,6 +49,7 @@ from app.models.auto_edit import (
     AutoEditRealizeResponse,
     VoiceoverQuickCutRequest,
 )
+from app.models.auto_edit_timeline import FinalTimeline, StrategyDSL, TimelineItem
 from app.core.auto_edit.voiceover_quick_cut import (
     build_plan_from_clip_groups,
     load_clip_groups_by_videos,
@@ -62,6 +64,125 @@ router = APIRouter(prefix="/api/auto-edit", tags=["auto-edit"])
 _PLAN_STREAM_SESSIONS: Dict[str, AutoEditPlanRequest] = {}
 _PLAN_STREAM_CREATED_AT: Dict[str, float] = {}
 _PLAN_STREAM_EXPIRE_SEC = 10 * 60
+
+
+async def _expand_timeline_with_llm_copy_if_needed(
+    *,
+    cfg: dict,
+    timeline: FinalTimeline,
+    dsl: StrategyDSL,
+    mode: str,
+    target_duration_sec: int | None,
+    user_prompt: str,
+    context: str,
+) -> FinalTimeline:
+    """
+    当 timeline 预计时长不足目标时，让 LLM 续写旁白文案并复用素材 clip_id 以补齐时长。
+    仅在 auto/voiceover 模式启用，避免 original 模式改写文案。
+    """
+    if mode not in ("auto", "voiceover"):
+        return timeline
+    target = float(target_duration_sec or dsl.target_duration_sec or 0.0)
+    if target <= 0:
+        return timeline
+    current = float(sum((it.duration_budget_sec or 0.0) for it in timeline.items))
+    if current >= target * 0.92:
+        return timeline
+    if not timeline.items:
+        return timeline
+
+    remain = max(0.0, target - current)
+    if remain < 6.0:
+        return timeline
+
+    clip_ids = [it.clip_id for it in timeline.items if it.clip_id]
+    if not clip_ids:
+        return timeline
+
+    llm = LLMClient(
+        base_url=cfg["base_url"],
+        api_key=cfg["api_key"],
+        model=cfg["model"],
+        temperature=0.45,
+        max_tokens=min(int(cfg.get("max_tokens") or 20480), 4096),
+        timeout=3600,
+    )
+    base_script = [str(it.subtitle_text or "").strip() for it in timeline.items if str(it.subtitle_text or "").strip()]
+    preset = str(getattr(dsl, "template_preset", "") or "")
+    domain = "通用解说"
+    structure_hint = "保持叙事连贯与信息递进。"
+    if "film" in preset:
+        domain = "影视解说"
+        structure_hint = "按铺垫-冲突-转折-高潮-余韵推进，允许留白和悬念。"
+    elif "scene" in preset:
+        domain = "场景剧情"
+        structure_hint = "突出场景变化、人物关系推进与情绪变化。"
+    elif "short" in preset:
+        domain = "短视频口播"
+        structure_hint = "保持节奏紧凑，重点明确，结尾有行动引导。"
+    sys = (
+        f"你是{domain}续写助手。目标：在不重复原句的前提下，续写新的旁白文案以补齐目标时长。"
+        "你只能输出 JSON，不要解释。"
+    )
+    user = (
+        f"【用户诉求】\n{(user_prompt or '').strip()}\n\n"
+        f"【内容域】{domain}\n"
+        f"【风格节奏】pace={dsl.style.pace}, tone={dsl.style.tone}\n"
+        f"【结构约束】{structure_hint}\n"
+        f"【目标补齐时长】{int(remain)} 秒\n\n"
+        "【已有文案（禁止逐句重复）】\n"
+        + "\n".join([f"- {x}" for x in base_script[:30]])
+        + "\n\n【素材摘要】\n"
+        + (context or "")[:3000]
+        + "\n\n请输出 JSON："
+        + '{"segments":[{"text":"续写旁白句","duration_sec":5.0}]}'
+    )
+    raw = await llm.chat([{"role": "system", "content": sys}, {"role": "user", "content": user}])
+    cleaned = extract_json_object(raw if isinstance(raw, str) else "")
+    try:
+        data = json.loads(cleaned)
+    except Exception:
+        return timeline
+    segs = data.get("segments") if isinstance(data, dict) else None
+    if not isinstance(segs, list) or not segs:
+        return timeline
+
+    next_items = list(timeline.items)
+    extra_total = 0.0
+    seq = 0
+    for s in segs:
+        if not isinstance(s, dict):
+            continue
+        text = str(s.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            dur = float(s.get("duration_sec") or 0.0)
+        except Exception:
+            dur = 0.0
+        if dur <= 0.0:
+            dur = 4.5 if dsl.style.pace == "fast" else 6.0
+        remain2 = max(0.0, remain - extra_total)
+        if remain2 <= 0.0:
+            break
+        dur = max(1.0, min(dur, remain2))
+        clip_id = clip_ids[seq % len(clip_ids)]
+        seq += 1
+        next_items.append(
+            TimelineItem(
+                event_id=f"llm_ext_{seq}",
+                clip_id=clip_id,
+                subtitle_text=text,
+                audio_mode="tts" if mode in ("auto", "voiceover") else "original",
+                duration_budget_sec=dur,
+            )
+        )
+        extra_total += dur
+        if extra_total >= remain * 0.98:
+            break
+
+    total = float(sum((it.duration_budget_sec or 0.0) for it in next_items))
+    return FinalTimeline(items=next_items, total_duration_sec_est=total if total > 0 else None)
 
 
 @router.get("/templates")
@@ -309,6 +430,15 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
             )
             plans = []
             for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                tl = await _expand_timeline_with_llm_copy_if_needed(
+                    cfg=cfg,
+                    timeline=tl,
+                    dsl=dsl,
+                    mode=req.mode,
+                    target_duration_sec=req.target_duration_sec,
+                    user_prompt=req.user_prompt,
+                    context=context,
+                )
                 plans.append(
                     compile_timeline_to_plan(
                         timeline=tl,
@@ -350,6 +480,15 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 )
                 plans = []
                 for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                    tl = await _expand_timeline_with_llm_copy_if_needed(
+                        cfg=cfg,
+                        timeline=tl,
+                        dsl=dsl,
+                        mode=req.mode,
+                        target_duration_sec=req.target_duration_sec,
+                        user_prompt=req.user_prompt,
+                        context=context,
+                    )
                     plans.append(
                         compile_timeline_to_plan(
                             timeline=tl,
@@ -571,6 +710,15 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                     )
                     plans = []
                     for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                        tl = await _expand_timeline_with_llm_copy_if_needed(
+                            cfg=cfg,
+                            timeline=tl,
+                            dsl=dsl,
+                            mode=req.mode,
+                            target_duration_sec=req.target_duration_sec,
+                            user_prompt=req.user_prompt,
+                            context=context,
+                        )
                         plans.append(
                             compile_timeline_to_plan(
                                 timeline=tl,
@@ -619,6 +767,15 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         )
                         plans = []
                         for i, tl in enumerate(timelines[: max(1, req.num_plans)], 1):
+                            tl = await _expand_timeline_with_llm_copy_if_needed(
+                                cfg=cfg,
+                                timeline=tl,
+                                dsl=dsl,
+                                mode=req.mode,
+                                target_duration_sec=req.target_duration_sec,
+                                user_prompt=req.user_prompt,
+                                context=context,
+                            )
                             plans.append(
                                 compile_timeline_to_plan(
                                     timeline=tl,

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { bgmApi, type BgmTrack } from '@/lib/api'
 import Link from 'next/link'
 import { Music2, UploadCloud, RefreshCcw, ExternalLink } from 'lucide-react'
@@ -60,6 +60,11 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<Record<string, TrackEditState>>({})
+  const [searchQuery, setSearchQuery] = useState('')
+  const [moodFilter, setMoodFilter] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [uploadMeta, setUploadMeta] = useState<UploadMetaState>({
     title: '',
     mood: '',
@@ -83,6 +88,10 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    setPage(1)
+  }, [searchQuery, moodFilter, tagFilter, pageSize])
 
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -173,6 +182,30 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     }
   }
 
+  const filteredTracks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return tracks.filter((t) => {
+      const moodText = String(t.mood || '').toLowerCase()
+      const tags = (t.tags || []).map((x) => x.toLowerCase())
+      const matchesQuery = !q || [
+        t.title,
+        t.filename,
+        moodText,
+        ...(t.tags || []),
+      ].some((field) => String(field || '').toLowerCase().includes(q))
+      const matchesMood = !moodFilter || moodText === moodFilter
+      const matchesTag = !tagFilter || tags.includes(tagFilter.toLowerCase())
+      return matchesQuery && matchesMood && matchesTag
+    })
+  }, [tracks, searchQuery, moodFilter, tagFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filteredTracks.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const paginatedTracks = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredTracks.slice(start, start + pageSize)
+  }, [filteredTracks, currentPage, pageSize])
+
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/80">
@@ -236,15 +269,79 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
           <p className="text-xs text-slate-400">加载 BGM 列表中...</p>
         )}
 
+        {!loading && tracks.length > 0 && (
+          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索标题 / 文件名 / 标签 / 情绪"
+                className="md:col-span-2 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
+              />
+              <select
+                value={moodFilter}
+                onChange={(e) => setMoodFilter(e.target.value)}
+                className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
+              >
+                <option value="">全部情绪</option>
+                {MOOD_OPTIONS.filter((x) => x.value).map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+                className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
+              >
+                <option value="">全部标签</option>
+                {BGM_TAG_OPTIONS.map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <p className="text-xs text-slate-400">
+                共 {tracks.length} 首，命中 {filteredTracks.length} 首；第 {currentPage} / {totalPages} 页
+              </p>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-500">每页</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-colors"
+                >
+                  {[10, 20, 50].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
         {!loading && tracks.length === 0 && (
           <p className="text-xs text-slate-500">
             还没有任何 BGM。点击右上角「上传音频」添加背景音乐文件，推荐放一些 loop 友好的无版权音乐。
           </p>
         )}
 
-        {!loading && tracks.length > 0 && (
+        {!loading && tracks.length > 0 && filteredTracks.length === 0 && (
+          <p className="text-xs text-slate-500">
+            没有匹配结果，试试放宽关键词或清空筛选条件。
+          </p>
+        )}
+
+        {!loading && tracks.length > 0 && filteredTracks.length > 0 && (
           <div className="space-y-3">
-            {tracks.map((t) => (
+            {paginatedTracks.map((t) => (
               <BgmTrackCard
                 key={t.id}
                 track={t}
@@ -257,6 +354,24 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
                 onDelete={onDelete}
               />
             ))}
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="px-2.5 py-1 text-xs rounded-md border border-slate-700 bg-slate-900/70 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800/80 transition-colors"
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="px-2.5 py-1 text-xs rounded-md border border-slate-700 bg-slate-900/70 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800/80 transition-colors"
+              >
+                下一页
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -6,6 +6,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+import sqlite3
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Query
@@ -220,6 +221,7 @@ async def generate_replica_template(
     基于参考视频已处理的 clips(asr_text) 生成复刻模板草案（draft）。
     """
     db = await get_db_conn()
+    source_url: str | None = None
     try:
         # 先确认 clips(asr_text) 是否存在
         context = await _build_reference_asr_context(db, video_id, max_clips=req.max_clips)
@@ -228,6 +230,14 @@ async def generate_replica_template(
                 status_code=400,
                 detail="未找到参考视频的 ASR 内容。请先触发 /api/videos/{video_id}/process（至少完成 asr）。",
             )
+        # 来源统一从 videos 表读取：链接导入可落 source_url，本地上传/素材库则为 None
+        # 兼容旧库：videos 可能不存在 source_url 列
+        try:
+            cur = await db.execute("SELECT source_url FROM videos WHERE id = ?", (video_id,))
+            video_row = await cur.fetchone()
+            source_url = (str(video_row["source_url"]).strip() if video_row and video_row["source_url"] else None)
+        except (sqlite3.OperationalError, aiosqlite.OperationalError):
+            source_url = None
 
         cfg = await LLMConfig.get_llm_params_with_defaults(
             db,
@@ -288,7 +298,6 @@ async def generate_replica_template(
         vrow = await cur.fetchone()
         vname = (str(vrow["name"]) if vrow and vrow["name"] else "").strip()
         default_name = vname or f"复刻模板_{template_id[:8]}"
-        source_url = req.url
         await db.execute(
             """
             INSERT INTO replica_templates

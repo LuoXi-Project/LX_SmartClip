@@ -2,17 +2,23 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, Sparkles } from 'lucide-react'
-import { createProcessWebSocket, replicaApi, type ProcessMessage } from '@/lib/api'
+import { createProcessWebSocket, replicaApi, videosApi, type ProcessMessage, type Video } from '@/lib/api'
 
 type Props = {
   onConfirmed: (payload: { templateId: string; guide: string }) => void
   initialGuide?: string
+  onTemplateSaved?: () => void
 }
 
-export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
+export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSaved }: Props) {
   const [open, setOpen] = useState(true)
+  const [sourceType, setSourceType] = useState<'url' | 'library' | 'upload'>('url')
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
+  const [libraryVideos, setLibraryVideos] = useState<Video[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [selectedVideoId, setSelectedVideoId] = useState('')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [skipVlm, setSkipVlm] = useState(true)
   const [maxClips, setMaxClips] = useState(80)
 
@@ -32,7 +38,24 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
     if (initialGuide?.trim() && !guideDraft.trim() && !confirmed) setGuideDraft(initialGuide)
   }, [initialGuide]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canGenerate = useMemo(() => url.trim().length > 5 && loadingPhase === 'idle', [url, loadingPhase])
+  useEffect(() => {
+    setLibraryLoading(true)
+    videosApi
+      .list({ page_size: 200, sort: 'created_desc' })
+      .then((res) => {
+        const items = res?.items || []
+        setLibraryVideos(items.filter((v) => v.status === 'done' || v.status === 'pending'))
+      })
+      .catch(() => setLibraryVideos([]))
+      .finally(() => setLibraryLoading(false))
+  }, [])
+
+  const canGenerate = useMemo(() => {
+    if (loadingPhase !== 'idle') return false
+    if (sourceType === 'url') return url.trim().length > 5
+    if (sourceType === 'library') return !!selectedVideoId
+    return !!uploadFile
+  }, [loadingPhase, sourceType, url, selectedVideoId, uploadFile])
 
   async function generate() {
     setError('')
@@ -44,12 +67,31 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
     setTemplateName('')
 
     try {
-      setLoadingPhase('ingesting')
-      const ingestRes = await replicaApi.ingest({
-        url: url.trim(),
-        title: title.trim() || undefined,
-        download_mode: 'best',
-      })
+      let sourceVideoId = ''
+      let sourceLabel = ''
+      let fromDownloadLink = false
+      if (sourceType === 'url') {
+        setLoadingPhase('ingesting')
+        const ingestRes = await replicaApi.ingest({
+          url: url.trim(),
+          title: title.trim() || undefined,
+          download_mode: 'best',
+        })
+        sourceVideoId = ingestRes.video_id
+        sourceLabel = title.trim() || url.trim()
+        fromDownloadLink = true
+      } else if (sourceType === 'library') {
+        sourceVideoId = selectedVideoId
+        const picked = libraryVideos.find((v) => v.id === selectedVideoId)
+        sourceLabel = picked?.name || '素材库视频'
+      } else {
+        if (!uploadFile) throw new Error('请先选择要复刻的本地视频')
+        setLoadingPhase('ingesting')
+        const uploaded = await videosApi.upload(uploadFile)
+        sourceVideoId = uploaded.id
+        sourceLabel = title.trim() || uploaded.name || uploadFile.name || '上传视频'
+      }
+
       // 进入处理：只保留 asr（跳过抽帧、VLM、embedding）
       setLoadingPhase('processing')
       const skipSteps = ['extract_frames', 'vlm', 'embed']
@@ -59,58 +101,67 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
         if (idx !== -1) skipSteps.splice(idx, 1)
       }
 
-      const ws = createProcessWebSocket(ingestRes.video_id, skipSteps)
-      wsRef.current = ws
+      const picked = sourceType === 'library' ? libraryVideos.find((v) => v.id === selectedVideoId) : null
+      const skipProcess = !!picked && picked.status === 'done' && picked.total_clips > 0
+      if (!skipProcess) {
+        const ws = createProcessWebSocket(sourceVideoId, skipSteps)
+        wsRef.current = ws
 
-      let processDone = false
-      await new Promise<void>((resolve, reject) => {
-        ws.addEventListener('message', async (ev) => {
-          try {
-            const msg = JSON.parse((ev as MessageEvent).data || '{}') as ProcessMessage
-            const line = `[${msg.step}] ${msg.status} ${msg.message}`
-            setProcessLogs((prev) => {
-              const next = [...prev, line]
-              // 防止日志无限增长
-              return next.slice(Math.max(0, next.length - 80))
-            })
+        let processDone = false
+        await new Promise<void>((resolve, reject) => {
+          ws.addEventListener('message', async (ev) => {
+            try {
+              const msg = JSON.parse((ev as MessageEvent).data || '{}') as ProcessMessage
+              const line = `[${msg.step}] ${msg.status} ${msg.message}`
+              setProcessLogs((prev) => {
+                const next = [...prev, line]
+                // 防止日志无限增长
+                return next.slice(Math.max(0, next.length - 80))
+              })
 
-            if (msg.step === 'done' && msg.status === 'done') {
-              processDone = true
-              try {
-                ws.close()
-              } catch {
-                // ignore
+              if (msg.step === 'done' && msg.status === 'done') {
+                processDone = true
+                try {
+                  ws.close()
+                } catch {
+                  // ignore
+                }
+                resolve()
               }
-              resolve()
+              if (msg.status === 'error' || msg.step === 'error') {
+                reject(new Error(msg.detail ? JSON.stringify(msg.detail) : msg.message || '处理失败'))
+              }
+            } catch (e) {
+              reject(e as Error)
             }
-            if (msg.status === 'error' || msg.step === 'error') {
-              reject(new Error(msg.detail ? JSON.stringify(msg.detail) : msg.message || '处理失败'))
-            }
-          } catch (e) {
-            reject(e as Error)
-          }
+          })
+          ws.addEventListener('error', () => reject(new Error('处理进度连接失败')))
         })
-        ws.addEventListener('error', () => reject(new Error('处理进度连接失败')))
-      })
 
-      if (!processDone) throw new Error('参考视频处理未完成')
+        if (!processDone) throw new Error('参考视频处理未完成')
+      } else {
+        setProcessLogs((prev) => [...prev, '[done] done 复用已处理素材，跳过处理阶段'])
+      }
 
       setLoadingPhase('generating')
-      const draft = await replicaApi.generateTemplate(ingestRes.video_id, { skip_vlm: skipVlm, max_clips: maxClips })
+      const draft = await replicaApi.generateTemplate(sourceVideoId, { skip_vlm: skipVlm, max_clips: maxClips })
       setTemplateId(draft.template_id)
       setDraftJson(draft.template_json)
       setGuideDraft(draft.template_guide)
-      // 默认模板名：优先使用用户填的标题，否则用链接域名兜底
+      onTemplateSaved?.()
+      // 默认模板名：优先使用用户填的标题，否则用来源信息兜底
       const t = title.trim()
       if (t) {
         setTemplateName(t)
-      } else {
+      } else if (sourceType === 'url' && fromDownloadLink) {
         try {
           const u = new URL(url.trim())
           setTemplateName(`${u.hostname}复刻模板`)
         } catch {
           setTemplateName('复刻模板')
         }
+      } else {
+        setTemplateName(`${sourceLabel}复刻模板`)
       }
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || '生成复刻模板失败'
@@ -133,6 +184,7 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
       await replicaApi.confirmTemplate(templateId, { name, template_guide: nextGuide, template_json: draftJson })
       setConfirmed(true)
       onConfirmed({ templateId, guide: nextGuide })
+      onTemplateSaved?.()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as any)?.message || '确认失败'
       setError(msg)
@@ -143,7 +195,11 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
 
   const phaseLabel = useMemo(() => {
     if (loadingPhase === 'idle') return ''
-    if (loadingPhase === 'ingesting') return '正在下载参考视频...'
+    if (loadingPhase === 'ingesting') {
+      if (sourceType === 'upload') return '正在上传参考视频...'
+      if (sourceType === 'library') return '正在准备素材库参考视频...'
+      return '正在下载参考视频...'
+    }
     if (loadingPhase === 'processing') return '正在处理参考视频（ASR）...'
     if (loadingPhase === 'generating') return '正在生成复刻模板...'
     if (loadingPhase === 'confirming') return '正在确认模板...'
@@ -157,9 +213,9 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
           <Sparkles className="w-4 h-4 text-amber-300" />
         </div>
         <div className="flex-1 space-y-1">
-          <p className="text-sm font-semibold text-amber-100">链接复刻模板</p>
+          <p className="text-sm font-semibold text-amber-100">视频复刻模板</p>
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            填入参考视频链接，系统下载并提取 ASR，然后生成可复用的“节奏/话术/结构”模板。确认后即可在本地视频上做复刻。
+            支持参考链接、素材库视频、本地上传三种来源。系统提取 ASR 后生成可复用的“节奏/话术/结构”模板，确认后即可复刻。
           </p>
         </div>
         <button
@@ -173,16 +229,71 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
 
       {open && (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSourceType('url')}
+              className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${sourceType === 'url' ? 'bg-amber-600/30 border-amber-400/50 text-amber-100' : 'bg-slate-900/50 border-slate-700 text-slate-300 hover:text-slate-100'}`}
+            >
+              链接下载
+            </button>
+            <button
+              type="button"
+              onClick={() => setSourceType('library')}
+              className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${sourceType === 'library' ? 'bg-amber-600/30 border-amber-400/50 text-amber-100' : 'bg-slate-900/50 border-slate-700 text-slate-300 hover:text-slate-100'}`}
+            >
+              素材库视频
+            </button>
+            <button
+              type="button"
+              onClick={() => setSourceType('upload')}
+              className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${sourceType === 'upload' ? 'bg-amber-600/30 border-amber-400/50 text-amber-100' : 'bg-slate-900/50 border-slate-700 text-slate-300 hover:text-slate-100'}`}
+            >
+              本地上传
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-[11px] text-slate-400">参考链接</label>
-              <input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="粘贴电影讲解/带货/测评视频链接..."
-                className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 outline-none focus:border-amber-400 placeholder-slate-600"
-              />
-            </div>
+            {sourceType === 'url' && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-slate-400">参考链接</label>
+                <input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="粘贴电影讲解/带货/测评视频链接..."
+                  className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 outline-none focus:border-amber-400 placeholder-slate-600"
+                />
+              </div>
+            )}
+            {sourceType === 'library' && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-slate-400">选择素材库视频</label>
+                <select
+                  value={selectedVideoId}
+                  onChange={(e) => setSelectedVideoId(e.target.value)}
+                  className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 outline-none focus:border-amber-400"
+                >
+                  <option value="">{libraryLoading ? '正在加载...' : '请选择一个视频'}</option>
+                  {libraryVideos.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}（{v.status === 'done' ? '已处理' : '待处理'}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {sourceType === 'upload' && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-slate-400">上传参考视频</label>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-amber-400 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-xs file:text-slate-100"
+                />
+                {uploadFile && <p className="text-[11px] text-slate-400 truncate">已选择：{uploadFile.name}</p>}
+              </div>
+            )}
             <div className="space-y-1.5">
               <label className="text-[11px] text-slate-400">展示标题（可选）</label>
               <input
@@ -226,7 +337,7 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide }: Props) {
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-semibold transition-colors shadow-lg shadow-amber-900/30"
             >
               {loadingPhase !== 'idle' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              下载并生成模板
+              {sourceType === 'url' ? '下载并生成模板' : sourceType === 'upload' ? '上传并生成模板' : '生成模板'}
             </button>
             {phaseLabel && <div className="text-xs text-amber-300">{phaseLabel}</div>}
           </div>

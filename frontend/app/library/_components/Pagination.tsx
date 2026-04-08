@@ -8,9 +8,10 @@ interface PaginationProps {
   pageSize: number
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
+  pageSizes?: number[]
 }
 
-const PAGE_SIZES = [12, 24, 48]
+const DEFAULT_PAGE_SIZES = [12, 24, 48]
 
 function buildPageNumbers(page: number, total: number): (number | '…')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
@@ -48,8 +49,10 @@ export function Pagination({
   pageSize,
   onPageChange,
   onPageSizeChange,
+  pageSizes,
 }: PaginationProps) {
-  if (totalPages <= 1 && pageSize === PAGE_SIZES[0]) return null
+  const sizeOptions = pageSizes && pageSizes.length > 0 ? pageSizes : DEFAULT_PAGE_SIZES
+  if (totalPages <= 1 && pageSize === sizeOptions[0]) return null
 
   const pages = buildPageNumbers(page, totalPages)
 
@@ -59,7 +62,7 @@ export function Pagination({
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <span>每页</span>
         <div className="flex gap-1">
-          {PAGE_SIZES.map((s) => (
+          {sizeOptions.map((s) => (
             <button
               key={s}
               onClick={() => onPageSizeChange(s)}

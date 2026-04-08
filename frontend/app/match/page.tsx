@@ -119,6 +119,7 @@ export default function MatchPage() {
   const [srtError, setSrtError] = useState('')
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
   const [resultOpen, setResultOpen] = useState(false)
+  const [replicaTemplateRefreshSignal, setReplicaTemplateRefreshSignal] = useState(0)
 
   // 自动成片 · 仅会话态（不持久化）
   const [autoLoading, setAutoLoading] = useState(false)
@@ -681,6 +682,7 @@ export default function MatchPage() {
                 </p>
               </div>
               <ReplicaTemplateLibrary
+                refreshSignal={replicaTemplateRefreshSignal}
                 onUse={({ guide }) => {
                   setReplicaTemplateGuide(guide)
                   toast.success('已载入模板，请选择下方要进入的流水线')
@@ -688,6 +690,7 @@ export default function MatchPage() {
               />
               <ReplicaTemplateWizard
                 initialGuide={replicaTemplateGuide}
+                onTemplateSaved={() => setReplicaTemplateRefreshSignal((v) => v + 1)}
                 onConfirmed={({ guide }) => {
                   setReplicaTemplateGuide(guide)
                   toast.success('模板已确认，请选择下方要进入的流水线')

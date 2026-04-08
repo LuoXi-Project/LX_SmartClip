@@ -4,16 +4,21 @@ import { useEffect, useMemo, useState } from 'react'
 import { Trash2, Search, Check, Pencil } from 'lucide-react'
 import { replicaApi, type ReplicaTemplateListItem } from '@/lib/api'
 import { Pagination } from '@/app/library/_components/Pagination'
+import { useConfirm } from '@/hooks/use-confirm'
 
 export function ReplicaTemplateLibrary({
   onUse,
+  refreshSignal = 0,
 }: {
   onUse: (payload: { templateId: string; guide: string }) => void
+  refreshSignal?: number
 }) {
+  const confirm = useConfirm()
+  const TEMPLATE_PAGE_SIZES = [6, 12, 24]
   const [q, setQ] = useState('')
   const [status, setStatus] = useState<'all' | 'confirmed' | 'draft'>('confirmed')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(12)
+  const [pageSize, setPageSize] = useState(6)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [items, setItems] = useState<ReplicaTemplateListItem[]>([])
@@ -57,7 +62,7 @@ export function ReplicaTemplateLibrary({
     return () => {
       mounted = false
     }
-  }, [q, statusParam, page, pageSize])
+  }, [q, statusParam, page, pageSize, refreshSignal])
 
   async function handleUse(t: ReplicaTemplateListItem) {
     const data = await replicaApi.getTemplate(t.template_id)
@@ -67,7 +72,14 @@ export function ReplicaTemplateLibrary({
   }
 
   async function handleDelete(t: ReplicaTemplateListItem) {
-    if (!confirm('确认删除该复刻模板？删除后不可恢复。')) return
+    const ok = await confirm({
+      title: '确认删除模板',
+      description: `确定删除模板「${t.name?.trim() || '未命名模板'}」吗？删除后不可恢复。`,
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      variant: 'danger',
+    })
+    if (!ok) return
     setDeletingId(t.template_id)
     try {
       await replicaApi.deleteTemplate(t.template_id)
@@ -224,6 +236,7 @@ export function ReplicaTemplateLibrary({
             page={page}
             totalPages={totalPages}
             pageSize={pageSize}
+            pageSizes={TEMPLATE_PAGE_SIZES}
             onPageChange={setPage}
             onPageSizeChange={(s) => {
               setPageSize(s)

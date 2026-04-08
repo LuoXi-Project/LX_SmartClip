@@ -1,5 +1,6 @@
 import logging
-from typing import List
+from typing import Callable, List, Optional
+from app.core.metrics.token_usage import extract_usage, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,11 @@ class Embedder:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         logger.info(f"初始化 Embedder: model={model}")
 
-    def embed(self, text: str) -> List[float]:
+    def embed(
+        self,
+        text: str,
+        on_usage: Optional[Callable[[Optional[TokenUsage]], None]] = None,
+    ) -> List[float]:
         """
         生成文本的向量嵌入
         
@@ -44,6 +49,11 @@ class Embedder:
                 model=self.model,
                 input=text,
             )
+            if on_usage is not None:
+                try:
+                    on_usage(extract_usage(response))
+                except Exception:
+                    pass
             embedding = response.data[0].embedding
             logger.info(f"Embedding 生成成功: 维度={len(embedding)}")
             return embedding

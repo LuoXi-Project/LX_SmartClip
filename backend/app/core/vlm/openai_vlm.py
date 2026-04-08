@@ -2,9 +2,10 @@ import os
 import math
 import base64
 import logging
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 from app.core.vlm.base import IVLM
 from app.core.retry import retry_sync
+from app.core.metrics.token_usage import extract_usage, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,7 @@ class OpenAIVLM(IVLM):
         frame_times_sec: Optional[List[float]] = None,
         max_images: int = 0,
         context_length: int = 0,
+        on_usage: Optional[Callable[[Optional[TokenUsage], int], None]] = None,
     ) -> str:
         """
         根据图像帧生成描述
@@ -252,7 +254,11 @@ class OpenAIVLM(IVLM):
             except Exception as e:
                 logger.warning(f"token 预算检查失败: {e}")
 
-        self.estimate_total_tokens(frame_paths)
+        estimated_total_tokens = 0
+        try:
+            estimated_total_tokens = int(self.estimate_total_tokens(frame_paths) or 0)
+        except Exception:
+            estimated_total_tokens = 0
 
         hint_ts = (
             "每张图前的方括号内为该图在当前片段内的采样时刻（秒），请结合时间顺序理解动作变化。"
@@ -351,6 +357,19 @@ class OpenAIVLM(IVLM):
 
         try:
             response = retry_sync(_call_api)
+            usage: Optional[TokenUsage] = None
+            try:
+                usage = extract_usage(response)
+            except Exception:
+                usage = None
+
+            if on_usage is not None:
+                try:
+                    # usage 缺失时，回传 estimated_total_tokens 供上层汇总展示
+                    on_usage(usage, estimated_total_tokens if usage is None else 0)
+                except Exception:
+                    # 统计回调异常不影响主流程
+                    pass
             choices = getattr(response, "choices", None)
             if not choices:
                 raise RuntimeError("VLM 返回无 choices（可能为空响应）")

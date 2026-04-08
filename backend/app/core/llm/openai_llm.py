@@ -1,9 +1,10 @@
 import json
 import logging
-from typing import List
+from typing import Callable, List, Optional
 
 from app.core.llm.base import ILLM
 from app.core.retry import retry_sync
+from app.core.metrics.token_usage import TokenUsage, extract_usage
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,13 @@ class OpenAILLM(ILLM):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         logger.info("初始化 OpenAILLM: model=%s", model)
 
-    def rank(self, query: str, candidates: List[dict]) -> List[dict]:
+    def rank(
+        self,
+        query: str,
+        candidates: List[dict],
+        *,
+        on_usage: Optional[Callable[[Optional[TokenUsage]], None]] = None,
+    ) -> List[dict]:
         """
         使用 LLM 对候选片段精排。
 
@@ -79,6 +86,11 @@ class OpenAILLM(ILLM):
                 )
 
             resp = retry_sync(_call_api)
+            if on_usage is not None:
+                try:
+                    on_usage(extract_usage(resp))
+                except Exception:
+                    pass
             choices = getattr(resp, "choices", None)
             if not choices:
                 raise RuntimeError("LLM 返回无 choices（可能为空响应）")

@@ -46,6 +46,7 @@ export default function ProcessPage() {
   const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
   const [steps, setSteps] = useState<Record<StepKey, SS>>(blank)
+  const [finalMetrics, setFinalMetrics] = useState<Record<string, unknown> | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [resultOpen, setResultOpen] = useState(false)
@@ -87,6 +88,7 @@ export default function ProcessPage() {
     setSteps(blank())
     setRunning(true)
     setDone(false)
+    setFinalMetrics(null)
     const ws = createProcessWebSocket(selId)
     wsRef.current = ws
     ws.onmessage = (e) => {
@@ -95,6 +97,10 @@ export default function ProcessPage() {
         applyMsg(msg)
         if (msg.step === 'done') {
           setRunning(false)
+          const m = (msg.detail && typeof msg.detail === 'object' && 'metrics' in msg.detail)
+            ? (msg.detail as { metrics?: Record<string, unknown> }).metrics
+            : null
+          if (m && typeof m === 'object') setFinalMetrics(m)
           const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
           if (cancelled) {
             setDone(false)
@@ -113,6 +119,24 @@ export default function ProcessPage() {
     ws.onerror = () => setRunning(false)
     ws.onclose = () => setRunning(false)
   }
+
+  const fmtMs = (ms?: unknown) => {
+    const n = typeof ms === 'number' ? ms : (typeof ms === 'string' ? Number(ms) : NaN)
+    if (!Number.isFinite(n) || n < 0) return '-'
+    if (n < 1000) return `${Math.round(n)}ms`
+    return `${(n / 1000).toFixed(1)}s`
+  }
+
+  const getMetricsFromDetail = (detail: Record<string, unknown> | undefined) => {
+    if (!detail || typeof detail !== 'object') return null
+    const m = (detail as any).metrics
+    return m && typeof m === 'object' ? m : null
+  }
+
+  const getTimingForStep = (step: StepKey, m: any) => m?.timing_ms?.[step]
+  const getVlmTotalTokens = (m: any) => m?.tokens?.vlm?.total_tokens ?? 0
+  const getVlmEstimatedTokens = (m: any) => m?.tokens?.vlm?.estimated_total_tokens ?? 0
+  const getEmbedTotalTokens = (m: any) => m?.tokens?.embed?.total_tokens ?? 0
 
   const handleStop = () => {
     if (!selId) return
@@ -250,6 +274,21 @@ export default function ProcessPage() {
             const cur = st.detail.current as number | undefined
             const tot = st.detail.total as number | undefined
             const sp = cur && tot ? Math.round(cur / tot * 100) : 0
+            const metrics = getMetricsFromDetail(st.detail)
+            const tStep = getTimingForStep(step.key, metrics)
+            const vlmTok = getVlmTotalTokens(metrics)
+            const vlmEst = getVlmEstimatedTokens(metrics)
+            const embTok = getEmbedTotalTokens(metrics)
+            let stepMetricText = `耗时: ${fmtMs(tStep)}`
+            if (step.key === 'vlm') {
+              stepMetricText += ` · VLM tokens: ${vlmTok}${vlmEst > 0 ? ` (估算+${vlmEst})` : ''}`
+            } else if (step.key === 'embed') {
+              stepMetricText += ` · Embedding tokens: ${embTok}`
+            } else if (step.key === 'asr') {
+              stepMetricText += ' · ASR 不统计 token'
+            } else if (step.key === 'split' || step.key === 'extract_frames') {
+              stepMetricText += ' · 本步骤无 token 消耗'
+            }
             return (
               <div key={step.key} className={`border rounded-lg px-5 py-4 transition-all duration-300 ${cardCls(st.status)}`}>
                 <div className="flex items-start gap-3">
@@ -262,6 +301,9 @@ export default function ProcessPage() {
                       {st.status === 'error' && <span className="text-xs text-red-400/80">失败</span>}
                     </div>
                     <p className="text-xs text-slate-500 mb-2">{step.desc}</p>
+                    <p className="text-[11px] text-slate-500 mb-2">
+                      {stepMetricText}
+                    </p>
                     {st.status === 'running' && cur && tot && (
                       <div className="mb-2 space-y-1">
                         <div className="flex justify-between text-xs text-slate-500"><span>{cur}/{tot}</span><span>{sp}%</span></div>
@@ -277,6 +319,47 @@ export default function ProcessPage() {
             )
           })}
         </section>
+
+        {finalMetrics && (
+          <section className="space-y-2">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">耗时 / Token 汇总</h2>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 px-5 py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="text-slate-400">
+                  <div className="text-slate-500 mb-1">阶段耗时</div>
+                  <div>切分: {fmtMs((finalMetrics as any)?.timing_ms?.split)}</div>
+                  <div>抽帧: {fmtMs((finalMetrics as any)?.timing_ms?.extract_frames)}</div>
+                  <div>语音识别: {fmtMs((finalMetrics as any)?.timing_ms?.asr)}</div>
+                  <div>视觉理解: {fmtMs((finalMetrics as any)?.timing_ms?.vlm)}</div>
+                  <div>向量化: {fmtMs((finalMetrics as any)?.timing_ms?.embed)}</div>
+                  <div className="mt-1 text-slate-300">总计: {fmtMs((finalMetrics as any)?.timing_ms?.total)}</div>
+                </div>
+                <div className="text-slate-400">
+                  <div className="text-slate-500 mb-1">Token 用量（usage 优先）</div>
+                  <div>VLM 调用次数: {(finalMetrics as any)?.tokens?.vlm?.calls ?? 0}</div>
+                  <div>VLM 输入 Token: {(finalMetrics as any)?.tokens?.vlm?.prompt_tokens ?? 0}</div>
+                  <div>VLM 输出 Token: {(finalMetrics as any)?.tokens?.vlm?.completion_tokens ?? 0}</div>
+                  <div className="text-slate-300">VLM 总 Token: {(finalMetrics as any)?.tokens?.vlm?.total_tokens ?? 0}</div>
+                  {((finalMetrics as any)?.tokens?.vlm?.estimated_total_tokens ?? 0) > 0 && (
+                    <div className="text-slate-500 mt-1">VLM 估算 Token（仅 usage 缺失时）: {(finalMetrics as any)?.tokens?.vlm?.estimated_total_tokens}</div>
+                  )}
+                  <div className="mt-2">LLM 调用次数: {(finalMetrics as any)?.tokens?.llm?.calls ?? 0}</div>
+                  <div>LLM 输入 Token: {(finalMetrics as any)?.tokens?.llm?.prompt_tokens ?? 0}</div>
+                  <div>LLM 输出 Token: {(finalMetrics as any)?.tokens?.llm?.completion_tokens ?? 0}</div>
+                  <div className="text-slate-300">LLM 总 Token: {(finalMetrics as any)?.tokens?.llm?.total_tokens ?? 0}</div>
+                  <div className="mt-2">Embedding 调用次数: {(finalMetrics as any)?.tokens?.embed?.calls ?? 0}</div>
+                  <div>Embedding 输入 Token: {(finalMetrics as any)?.tokens?.embed?.prompt_tokens ?? 0}</div>
+                  <div className="text-slate-300">Embedding 总 Token: {(finalMetrics as any)?.tokens?.embed?.total_tokens ?? 0}</div>
+                </div>
+              </div>
+              {Array.isArray((finalMetrics as any)?.errors) && (finalMetrics as any).errors.length > 0 && (
+                <div className="mt-3 text-[11px] text-slate-600">
+                  统计异常（不影响处理）: {(finalMetrics as any).errors.join(', ')}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {done && (
           <section className="border border-emerald-600/30 bg-emerald-500/5 rounded-lg px-6 py-5 flex items-center gap-4">

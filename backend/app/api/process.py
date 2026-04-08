@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from app.db.database import get_db_conn, DB_PATH
@@ -9,6 +10,7 @@ from app.core.splitter import VideoSplitter
 from app.core.embedder import Embedder
 from app.core.vector_db.faiss_db import FaissVectorDB
 from app.core.license import ensure_license_valid, is_license_enforced
+from app.core.metrics.token_usage import TokenAccumulator, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +273,52 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
     await _check_cancel(video_id)
 
+    # ===== Metrics（阶段耗时 + token）=====
+    t0 = time.perf_counter()
+    step_start_ts: dict[str, float] = {}
+    step_end_ts: dict[str, float] = {}
+    metrics_errors: list[str] = []
+    vlm_tokens = TokenAccumulator()
+    llm_tokens = TokenAccumulator()  # 当前 pipeline 不调用 LLM，但预留结构给前端统一展示
+    embed_tokens = TokenAccumulator()
+
+    def _now() -> float:
+        return time.perf_counter()
+
+    def _ensure_step_start(step: str) -> None:
+        if step not in step_start_ts:
+            step_start_ts[step] = _now()
+
+    def _ensure_step_end(step: str) -> None:
+        if step not in step_end_ts and step in step_start_ts:
+            step_end_ts[step] = _now()
+
+    def _timing_ms_snapshot() -> dict:
+        out: dict[str, int] = {}
+        for s in ("split", "extract_frames", "asr", "vlm", "embed"):
+            st = step_start_ts.get(s)
+            ed = step_end_ts.get(s)
+            if st is None:
+                out[s] = 0
+            else:
+                out[s] = int(((ed or _now()) - st) * 1000)
+        out["total"] = int((_now() - t0) * 1000)
+        return out
+
+    def _metrics_snapshot() -> dict:
+        return {
+            "timing_ms": _timing_ms_snapshot(),
+            "tokens": {
+                "vlm": vlm_tokens.to_dict(),
+                "llm": llm_tokens.to_dict(),
+                "embed": embed_tokens.to_dict(),
+            },
+            "errors": list(metrics_errors),
+        }
+
     do_split = "split" not in skip_steps
     if do_split:
+        _ensure_step_start("split")
         await reporter.send("split", "running", f"开始切分视频（流式模式：{split_mode})")
     else:
         await reporter.send("split", "skip", "跳过视频切分")
@@ -379,11 +425,20 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     emb_success = 0
 
     async def _inc_progress(step: str, message_prefix: str, total: int, success: int, done: int):
+        # phase timing
+        _ensure_step_start(step)
+        if total > 0 and done >= total:
+            _ensure_step_end(step)
         await reporter.send(
             step,
             "running",
             f"{message_prefix} {done}/{total} 完成",
-            {"current": done, "total": total, "processed": success},
+            {
+                "current": done,
+                "total": total,
+                "processed": success,
+                "metrics": _metrics_snapshot(),
+            },
         )
 
     async def _load_frame_paths(clip_path: str):
@@ -524,15 +579,35 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                         frame_times_sec = splitter.frame_timestamps_in_clip(
                             item["clip_path"], len(frame_paths)
                         )
-                        description = await loop.run_in_executor(
-                            None,
-                            lambda fp=frame_paths, ts=frame_times_sec: vlm_instance.generate_description(
+                        def _call_vlm(fp, ts):
+                            box: dict[str, object] = {"usage": None, "est": 0}
+
+                            def _on_usage(u: TokenUsage | None, est: int):
+                                box["usage"] = u
+                                box["est"] = int(est or 0)
+
+                            desc = vlm_instance.generate_description(
                                 fp,
                                 ts,
                                 vlm_max_images,
                                 vlm_context_length,
-                            ),
+                                on_usage=_on_usage,
+                            )
+                            return desc, box
+
+                        description, usage_box = await loop.run_in_executor(
+                            None,
+                            lambda fp=frame_paths, ts=frame_times_sec: _call_vlm(fp, ts),
                         )
+                        try:
+                            usage = usage_box.get("usage")  # type: ignore[assignment]
+                            est = int(usage_box.get("est") or 0)
+                            if usage is None or isinstance(usage, TokenUsage):
+                                vlm_tokens.add_call(usage, estimated_total_tokens=est)
+                            else:
+                                metrics_errors.append("vlm_usage_type_error")
+                        except Exception:
+                            metrics_errors.append("vlm_usage_merge_error")
                         item["vlm_description"] = (description or "").strip()
                         await _update_clip_field(item["id"], "vlm_description", item["vlm_description"])
                         ok = True
@@ -563,7 +638,27 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                         await item["asr_ready"].wait()
                     text = f'{item["asr_text"]} {item["vlm_description"]}'.strip()
                     if text:
-                        embedding = await loop.run_in_executor(None, embedder.embed, text)
+                        def _call_embed(inp: str):
+                            box: dict[str, object] = {"usage": None}
+
+                            def _on_usage(u: TokenUsage | None):
+                                box["usage"] = u
+
+                            vec = embedder.embed(inp, on_usage=_on_usage)
+                            return vec, box
+
+                        embedding, usage_box = await loop.run_in_executor(
+                            None,
+                            lambda t=text: _call_embed(t),
+                        )
+                        try:
+                            usage = usage_box.get("usage")  # type: ignore[assignment]
+                            if usage is None or isinstance(usage, TokenUsage):
+                                embed_tokens.add_call(usage)
+                            else:
+                                metrics_errors.append("embed_usage_type_error")
+                        except Exception:
+                            metrics_errors.append("embed_usage_merge_error")
                         async with vector_db_lock:
                             vector_db.add_embedding(item["id"], embedding)
                         ok = True
@@ -677,7 +772,13 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
             await reporter.send("extract_frames", "error", "没有可处理的片段")
             await _set_video_status(video_id, "error")
             return
-        await reporter.send("split", "done", f"切分完成，共 {split_count} 个片段", {"total_clips": split_count})
+        _ensure_step_end("split")
+        await reporter.send(
+            "split",
+            "done",
+            f"切分完成，共 {split_count} 个片段",
+            {"total_clips": split_count, "metrics": _metrics_snapshot()},
+        )
     else:
         if not clips_rows:
             await reporter.send("extract_frames", "error", "没有可处理的片段")
@@ -720,6 +821,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     await asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers)
 
     if do_frames:
+        _ensure_step_end("extract_frames")
         await reporter.send(
             "extract_frames",
             "done",
@@ -729,23 +831,37 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 "total": total_clips,
                 "errors": total_clips - frame_success,
                 "concurrency": frames_worker_count,
+                "metrics": _metrics_snapshot(),
             },
         )
     if do_asr:
+        _ensure_step_end("asr")
         await reporter.send(
             "asr",
             "done",
             f"语音识别完成，成功 {asr_success}/{total_clips} 个（并发={asr_worker_count}）",
-            {"processed": asr_success, "total": total_clips, "concurrency": asr_worker_count},
+            {
+                "processed": asr_success,
+                "total": total_clips,
+                "concurrency": asr_worker_count,
+                "metrics": _metrics_snapshot(),
+            },
         )
     if do_vlm:
+        _ensure_step_end("vlm")
         await reporter.send(
             "vlm",
             "done",
             f"视觉描述完成，成功 {vlm_success}/{total_clips} 个（并发={vlm_worker_count}）",
-            {"processed": vlm_success, "total": total_clips, "concurrency": vlm_worker_count},
+            {
+                "processed": vlm_success,
+                "total": total_clips,
+                "concurrency": vlm_worker_count,
+                "metrics": _metrics_snapshot(),
+            },
         )
     if do_embed:
+        _ensure_step_end("embed")
         await reporter.send(
             "embed",
             "done",
@@ -755,11 +871,13 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                 "total": total_clips,
                 "concurrency": embed_worker_count,
                 "model": embedding_model,
+                "metrics": _metrics_snapshot(),
             },
         )
 
     await _set_video_status(video_id, "done")
-    await reporter.send("done", "done", "全部处理完成！")
+    # 最终汇总
+    await reporter.send("done", "done", "全部处理完成！", {"metrics": _metrics_snapshot()})
 
 
 # HTTP 接口：POST /api/videos/{id}/process-cancel

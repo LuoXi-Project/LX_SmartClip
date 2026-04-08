@@ -37,7 +37,7 @@ _STORAGE_VIDEOS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "storage", "videos")
 )
 
-_TEMPLATE_SYS_PROMPT = """
+_SHORT_VIDEO_TEMPLATE_SYS_PROMPT = """
 你是“短视频复刻模板”的分析助手。
 你将收到：参考视频的 ASR 片段（带 clip_id 与时间窗）文本。
 
@@ -77,6 +77,57 @@ _TEMPLATE_SYS_PROMPT = """
 - 复刻目标是“解说风格/节奏/话术结构”，而不是逐字复述。
 - template_guide 中需要包含：句长/停顿节奏、角色分配（hook/context/highlight/proof/cta 的信息密度倾向）、CTA 方式倾向（例如提问/强行动/领券/私信等，用同一模式复刻）。
 """
+
+_FILM_COMMENTARY_TEMPLATE_SYS_PROMPT = """
+你是“影视解说复刻模板”的分析助手。
+你将收到：参考视频的 ASR 片段（带 clip_id 与时间窗）文本。
+
+任务：
+1) 归纳该参考视频的“影视解说写作方式”，包括：
+   - pace（节奏快慢）：slow/medium/fast
+   - tone（情绪基调）：calm/neutral/energetic
+   - structure（结构角色顺序）：从以下集合中生成 7~10 段，且按出现顺序输出
+     可选 role 集合：opening, background, setup, conflict, turning_point, climax, reflection, value, cta
+2) 生成 template_json（结构化模板）用于长期复用。
+3) 生成 template_guide（中文字符串），用于后续把“用户自己的素材/台词”套入同一写作节奏与句式。
+
+硬约束：
+- 只输出 JSON，不要包含任何 Markdown、不做解释。
+- JSON 结构严格为：
+{
+  "pace": "slow|medium|fast",
+  "tone": "calm|neutral|energetic",
+  "structure": ["opening","background","setup","conflict","turning_point","climax","reflection","cta"],
+  "template_json": {
+    "pace": "...",
+    "tone": "...",
+    "structure": ["..."],
+    "slot_guidelines": {
+      "opening": "一句话风格+长度+禁忌",
+      "background": "...",
+      "setup": "...",
+      "conflict": "...",
+      "turning_point": "...",
+      "climax": "...",
+      "reflection": "...",
+      "value": "...",
+      "cta": "..."
+    }
+  },
+  "template_guide": "后续写作时的复刻约束说明（必须可直接粘贴到文案/成片规划提示词中）"
+}
+
+补充说明：
+- 参考输入是台词 ASR，不要“臆造”参考视频中没有出现的画面细节。
+- 复刻目标是“解说风格/节奏/叙事结构”，而不是逐字复述。
+- template_guide 必须明确：叙事推进方式（铺垫-冲突-转折-高潮-余韵）、信息密度分配、情绪递进轨迹、常用句式、章节衔接方式与段落长度建议。
+- CTA 对影视解说通常弱化强营销，更偏“观点提问/引导讨论/下一集悬念”。
+"""
+
+_TEMPLATE_SYS_PROMPTS = {
+    "short_video": _SHORT_VIDEO_TEMPLATE_SYS_PROMPT,
+    "film_commentary": _FILM_COMMENTARY_TEMPLATE_SYS_PROMPT,
+}
 
 
 def _utc_now_iso() -> str:
@@ -263,12 +314,16 @@ async def generate_replica_template(
         timeout=3600,
     )
 
+    selected_replica_type = req.replica_type if req.replica_type in _TEMPLATE_SYS_PROMPTS else "short_video"
+    sys_prompt = _TEMPLATE_SYS_PROMPTS[selected_replica_type]
+
     user = (
+        f"【复刻类型】\n{selected_replica_type}\n\n"
         "【参考视频 ASR】\n"
         f"{context}\n\n"
         "请根据这些片段推断其复刻写作方式，并输出符合要求的 JSON。"
     )
-    raw = await llm.chat(messages=[{"role": "system", "content": _TEMPLATE_SYS_PROMPT}, {"role": "user", "content": user}])
+    raw = await llm.chat(messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}])
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=502, detail="LLM 返回模板为空")
 
@@ -289,6 +344,8 @@ async def generate_replica_template(
     template_guide = str(data.get("template_guide") or "").strip()
     if not template_guide:
         raise HTTPException(status_code=502, detail="LLM 未生成 template_guide")
+    if isinstance(template_json, dict):
+        template_json.setdefault("replica_type", selected_replica_type)
 
     # 入库 draft
     db = await get_db_conn()

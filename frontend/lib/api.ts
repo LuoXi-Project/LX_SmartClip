@@ -412,7 +412,14 @@ export const replicaApi = {
   ingest: (payload: { url: string; title?: string; download_mode?: 'best'; max_download_duration_sec?: number }) =>
     apiClient.post<unknown, ReplicaIngestResponse>('/api/replica/ingest', payload),
 
-  generateTemplate: (videoId: string, payload?: { skip_vlm?: boolean; max_clips?: number }) =>
+  generateTemplate: (
+    videoId: string,
+    payload?: {
+      skip_vlm?: boolean
+      max_clips?: number
+      replica_type?: 'short_video' | 'film_commentary'
+    }
+  ) =>
     apiClient.post<unknown, ReplicaTemplateDraftResponse>(`/api/replica/${videoId}/generate-template`, payload ?? {}),
 
   confirmTemplate: (templateId: string, payload: { name?: string; template_guide: string; template_json?: any }) =>

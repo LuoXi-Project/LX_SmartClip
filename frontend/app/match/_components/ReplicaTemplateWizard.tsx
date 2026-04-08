@@ -13,6 +13,7 @@ type Props = {
 export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSaved }: Props) {
   const [open, setOpen] = useState(true)
   const [sourceType, setSourceType] = useState<'url' | 'library' | 'upload'>('url')
+  const [replicaType, setReplicaType] = useState<'short_video' | 'film_commentary'>('short_video')
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [libraryVideos, setLibraryVideos] = useState<Video[]>([])
@@ -144,7 +145,11 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
       }
 
       setLoadingPhase('generating')
-      const draft = await replicaApi.generateTemplate(sourceVideoId, { skip_vlm: skipVlm, max_clips: maxClips })
+      const draft = await replicaApi.generateTemplate(sourceVideoId, {
+        skip_vlm: skipVlm,
+        max_clips: maxClips,
+        replica_type: replicaType,
+      })
       setTemplateId(draft.template_id)
       setDraftJson(draft.template_json)
       setGuideDraft(draft.template_guide)
@@ -306,6 +311,18 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">复刻方向</span>
+              <select
+                value={replicaType}
+                onChange={(e) => setReplicaType((e.target.value as 'short_video' | 'film_commentary') || 'short_video')}
+                className="rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-xs text-slate-200 outline-none focus:border-amber-400"
+              >
+                <option value="short_video">短视频模板（节奏紧凑）</option>
+                <option value="film_commentary">影视解说（长叙事结构）</option>
+              </select>
+            </div>
+
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -327,6 +344,9 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
                 className="w-24 rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-amber-400"
               />
             </label>
+            {replicaType === 'film_commentary' && maxClips < 100 && (
+              <span className="text-[11px] text-amber-300">影视解说建议设为 100-160，叙事提取更完整</span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

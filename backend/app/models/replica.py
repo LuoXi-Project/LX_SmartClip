@@ -27,6 +27,10 @@ class ReplicaIngestResponse(BaseModel):
 class ReplicaGenerateTemplateRequest(BaseModel):
     skip_vlm: bool = True
     max_clips: int = Field(80, ge=5, le=300, description="引用片段数量上限（基于 asr_text 聚合）")
+    replica_type: Literal["short_video", "film_commentary"] = Field(
+        "short_video",
+        description="复刻类型：short_video=短视频模板；film_commentary=影视解说模板",
+    )
 
 
 class ReplicaTemplateDraft(BaseModel):

@@ -44,6 +44,25 @@ function calcGlmTokens(width: number, height: number): number {
   return Math.ceil(w / patchSize) * Math.ceil(h / patchSize) * patchTokens + baseTokens
 }
 
+/**
+ * 【新增】豆包系列模型图片Token计算
+ * @param version 1.8-before = 1.8之前版本 | 1.8 / 2.0 = 新版本
+ * @param maxTokens 单图最大Token，默认1312
+ */
+function calcDoubaoTokens(
+  width: number,
+  height: number,
+  version: '1.8-before' | '1.8' | '2.0' = '1.8',
+  maxTokens = 1312
+): number {
+  const totalPixels = width * height;
+  const tokenCost = version === '1.8' || version === '2.0'
+    ? totalPixels / 1764
+    : totalPixels / 784;
+
+  return Math.min(Math.round(tokenCost), maxTokens);
+}
+
 const RESOLUTION_PRESETS = [
   { label: '720p  (1280x720)',   w: 1280, h: 720  },
   { label: '1080p (1920x1080)', w: 1920, h: 1080 },
@@ -77,14 +96,16 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
   const preset = RESOLUTION_PRESETS[resPresetIdx]
   const isQwenStyle = ['siliconflow', 'zhipuai'].includes(vlmProvider)
   const isGlmStyle = vlmProvider === 'zhipuai' || v('vlm_model').toLowerCase().includes('glm')
+  const isDoubaoStyle = vlmProvider === 'doubao'
 
   const tokensPerImage = useMemo(
-    () => isGlmStyle ? calcGlmTokens(preset.w, preset.h) : isQwenStyle ? calcQwenTokens(preset.w, preset.h) : calcOpenAITokens(preset.w, preset.h),
-    [preset, isQwenStyle, isGlmStyle]
+    () => isGlmStyle ? calcGlmTokens(preset.w, preset.h) : isQwenStyle ? calcQwenTokens(preset.w, preset.h) : isDoubaoStyle ? calcDoubaoTokens(preset.w, preset.h) : calcOpenAITokens(preset.w, preset.h),
+    [preset, isQwenStyle, isGlmStyle, isDoubaoStyle]
   )
   const openaiTokens = useMemo(() => calcOpenAITokens(preset.w, preset.h), [preset])
   const qwenTokens   = useMemo(() => calcQwenTokens(preset.w, preset.h),   [preset])
   const glmTokens    = useMemo(() => calcGlmTokens(preset.w, preset.h),    [preset])
+  const doubaoTokens = useMemo(() => calcDoubaoTokens(preset.w, preset.h, '2.0'), [preset])
 
   const imageTokensUsed = useMemo(
     () => maxImages * tokensPerImage + TOKENS_PROMPT_OVERHEAD,
@@ -220,6 +241,8 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
                 <span>OpenAI: <span className="font-mono text-slate-400">{openaiTokens}</span></span>
                 <span className="text-slate-700">|</span>
                 <span>Qwen: <span className="font-mono text-slate-400">{qwenTokens}</span></span>
+                <span className="text-slate-700">|</span>
+                <span>豆包: <span className="font-mono text-slate-400">{doubaoTokens}</span></span>
                 <span className="text-slate-700">|</span>
                 <span>GLM: <span className="font-mono text-slate-400">{glmTokens}</span></span>
               </div>

@@ -70,7 +70,7 @@ class OpenAIASR(IASR):
             base_url: API 地址（如 https://api.openai.com/v1）
             api_key:  API 密钥
             model:    模型名称（默认 whisper-1）
-            language: 语言代码（默认 zh）
+            language: 语言代码（默认 zh）；留空则请求中不传 language，由服务端自动检测
         """
         try:
             from openai import OpenAI
@@ -80,7 +80,7 @@ class OpenAIASR(IASR):
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
-        self.language = language
+        self.language = (language or "").strip()
         # timeout=None 让每次请求自行传入动态超时，不在客户端层面限制
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=None)
         logger.info("初始化 OpenAI ASR: base_url=%s, model=%s", base_url, model)
@@ -98,25 +98,29 @@ class OpenAIASR(IASR):
         def _call_verbose():
             # 与 OpenAPI 一致：verbose_json + segment 粒度才会返回完整 segments 时间轴
             with open(audio_path, "rb") as f:
-                result = self.client.audio.transcriptions.create(
+                kwargs = dict(
                     model=self.model,
                     file=f,
-                    language=self.language,
                     response_format="verbose_json",
                     timestamp_granularities=["segment"],
                     timeout=httpx.Timeout(timeout, connect=10),
                 )
+                if self.language:
+                    kwargs["language"] = self.language
+                result = self.client.audio.transcriptions.create(**kwargs)
                 logger.info("OpenAI ASR 转写结果: %r", result)
                 return result
 
         def _call_plain():
             with open(audio_path, "rb") as f:
-                return self.client.audio.transcriptions.create(
+                kwargs = dict(
                     model=self.model,
                     file=f,
-                    language=self.language,
                     timeout=httpx.Timeout(timeout, connect=10),
                 )
+                if self.language:
+                    kwargs["language"] = self.language
+                return self.client.audio.transcriptions.create(**kwargs)
 
         try:
             try:
@@ -145,5 +149,5 @@ class OpenAIASR(IASR):
             "provider": "openai-asr",
             "base_url": self.base_url,
             "model": self.model,
-            "language": self.language,
+            "language": self.language or None,
         }

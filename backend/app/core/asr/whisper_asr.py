@@ -31,13 +31,14 @@ def _segments_from_whisper_result(result: dict) -> tuple[ASRSegment, ...]:
 class WhisperASR(IASR):
     """Whisper 语音识别实现"""
 
-    def __init__(self, model_size: str = "base", device: str = "cpu"):
+    def __init__(self, model_size: str = "base", device: str = "cpu", language: str | None = "zh"):
         """
         初始化 Whisper ASR
 
         Args:
             model_size: 模型大小（tiny, base, small, medium, large）
             device: 计算设备（cpu, cuda）
+            language: Whisper 语言代码（默认 zh）；None 或空字符串表示自动检测
         """
         try:
             import whisper
@@ -46,6 +47,7 @@ class WhisperASR(IASR):
 
         self.model_size = model_size
         self.device = device
+        self._language = language
         self.whisper = whisper
 
         logger.info(f"加载 Whisper 模型: {model_size} (device={device})")
@@ -62,7 +64,10 @@ class WhisperASR(IASR):
         logger.info(f"开始转写音频: {audio_path}")
 
         def _call_whisper():
-            return self.model.transcribe(audio_path, language="zh")
+            lang = None if self._language is None else str(self._language).strip()
+            if not lang:
+                return self.model.transcribe(audio_path)
+            return self.model.transcribe(audio_path, language=lang)
 
         try:
             result = retry_sync(_call_whisper)
@@ -80,9 +85,10 @@ class WhisperASR(IASR):
 
     def get_model_info(self) -> dict:
         """获取模型信息"""
+        lang_out = None if self._language is None else str(self._language).strip()
         return {
             "provider": "openai-whisper",
             "model_size": self.model_size,
             "device": self.device,
-            "language": "zh",
+            "language": lang_out or None,
         }

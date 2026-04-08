@@ -66,7 +66,29 @@ export const VIDEO_KEYS = [
   'clip_scale_height',
   'clip_pix_fmt',
 ]
-export const ASR_KEYS  = ['asr_provider', 'asr_model', 'asr_base_url', 'asr_api_key', 'asr_openai_model', 'asr_concurrency']
+export const ASR_LANGUAGE_PRESETS: { value: string; label: string }[] = [
+  { value: '', label: '自动检测（留空）' },
+  { value: 'zh', label: '中文 (zh)' },
+  { value: 'en', label: '英文 (en)' },
+  { value: 'ja', label: '日文 (ja)' },
+  { value: 'ko', label: '韩文 (ko)' },
+  { value: 'yue', label: '粤语 (yue)' },
+  { value: 'fr', label: '法文 (fr)' },
+  { value: 'de', label: '德文 (de)' },
+  { value: 'es', label: '西班牙文 (es)' },
+  { value: 'ru', label: '俄文 (ru)' },
+  { value: 'pt', label: '葡萄牙文 (pt)' },
+]
+
+export const ASR_KEYS = [
+  'asr_provider',
+  'asr_model',
+  'asr_base_url',
+  'asr_api_key',
+  'asr_openai_model',
+  'asr_language',
+  'asr_concurrency',
+]
 export const TTS_KEYS  = [
   'tts_provider',
   // edge-tts

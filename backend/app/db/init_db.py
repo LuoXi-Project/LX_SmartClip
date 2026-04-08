@@ -116,6 +116,13 @@ DEFAULT_CONFIG = [
     ("asr_base_url", "https://api.openai.com/v1", "string", "ASR API 地址", None),
     ("asr_api_key", "", "string", "ASR API 密钥", None),
     ("asr_openai_model", "whisper-1", "string", "ASR 模型名称 (OpenAI 协议)", None),
+    (
+        "asr_language",
+        "zh",
+        "string",
+        "ASR 语言代码（ISO 639-1；留空为自动检测；可与各服务商文档自行对齐）",
+        None,
+    ),
     ("asr_concurrency", "1", "number", "ASR 并发数量", None),
     ("llm_base_url", "https://api.openai.com/v1", "string", "LLM API 地址", None),
     ("llm_api_key", "", "string", "LLM API 密钥", None),

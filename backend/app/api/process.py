@@ -221,6 +221,8 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         asr_base_url    = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key     = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
+        asr_language_raw = await _read_config(db, "asr_language", "zh")
+        asr_language = (asr_language_raw or "").strip()
         vlm_base_url    = await _read_config(db, "vlm_base_url", "https://api.openai.com/v1")
         vlm_model       = await _read_config(db, "vlm_model", "gpt-4o")
         vlm_api_key     = await _read_config(db, "vlm_api_key", "")
@@ -278,11 +280,16 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
                     base_url=asr_base_url,
                     api_key=asr_api_key,
                     model=asr_openai_model,
+                    language=asr_language,
                 )
             else:
                 await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 开始语音识别...")
                 from app.core.asr.whisper_asr import WhisperASR
-                asr_instance = await loop.run_in_executor(None, WhisperASR, asr_model)
+
+                def _make_whisper():
+                    return WhisperASR(asr_model, language=asr_language or None)
+
+                asr_instance = await loop.run_in_executor(None, _make_whisper)
         except Exception as e:
             do_asr = False
             await reporter.send("asr", "error", f"ASR 初始化失败: {e}")

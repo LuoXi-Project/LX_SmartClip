@@ -20,17 +20,37 @@ def _cache_key(provider: str, **kwargs) -> str:
     return "|".join([provider] + [f"{k}={v}" for k, v in sorted(kwargs.items())])
 
 
-def get_asr(provider: str = "whisper", model_size: str = "base",
-            base_url: str = "", api_key: str = "", model: str = "whisper-1"):
+def get_asr(
+    provider: str = "whisper",
+    model_size: str = "base",
+    base_url: str = "",
+    api_key: str = "",
+    model: str = "whisper-1",
+    language: str = "",
+):
     """获取 ASR 实例（带缓存）"""
-    key = _cache_key(provider, model_size=model_size, base_url=base_url, model=model)
+    key = _cache_key(
+        provider,
+        model_size=model_size,
+        base_url=base_url,
+        model=model,
+        language=language or "",
+    )
     if key not in _asr_cache:
         if provider == "openai":
             logger.info("初始化 OpenAI ASR (base_url=%s, model=%s)", base_url, model)
-            _asr_cache[key] = OpenAIASR(base_url=base_url, api_key=api_key, model=model)
+            _asr_cache[key] = OpenAIASR(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                language=language,
+            )
         else:
             logger.info("初始化 Whisper ASR (model_size=%s)", model_size)
-            _asr_cache[key] = WhisperASR(model_size=model_size)
+            _asr_cache[key] = WhisperASR(
+                model_size=model_size,
+                language=language or None,
+            )
     return _asr_cache[key]
 
 
@@ -74,6 +94,7 @@ async def process_asr(video_id: str):
         asr_base_url   = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key    = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
+        asr_language = (await _read_config(db, "asr_language", "zh") or "").strip()
         asr_concurrency_raw = await _read_config(db, "asr_concurrency", "1")
         asr_concurrency = _parse_positive_int(asr_concurrency_raw, default=1, min_v=1, max_v=16)
 
@@ -84,6 +105,7 @@ async def process_asr(video_id: str):
             base_url=asr_base_url,
             api_key=asr_api_key,
             model=asr_openai_model,
+            language=asr_language,
         )
 
         # 查询视频的所有片段
@@ -171,6 +193,7 @@ async def get_asr_info():
         asr_base_url     = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key      = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
+        asr_language = (await _read_config(db, "asr_language", "zh") or "").strip()
     finally:
         await db.close()
 
@@ -179,4 +202,5 @@ async def get_asr_info():
         "model_size": model_size,
         "asr_base_url": asr_base_url,
         "asr_openai_model": asr_openai_model,
+        "asr_language": asr_language or None,
     }

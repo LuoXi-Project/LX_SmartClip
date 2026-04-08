@@ -1,6 +1,6 @@
 'use client'
 
-import { ASR_PROVIDERS, ASR_KEYS } from './constants'
+import { ASR_PROVIDERS, ASR_KEYS, ASR_LANGUAGE_PRESETS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
 import { Save, Info } from 'lucide-react'
@@ -21,11 +21,16 @@ interface Props {
   onApplyProvider: (p: ProviderPreset) => void
 }
 
+const ASR_LANG_CUSTOM = '__custom__'
+
 export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, onSave, onSaveGroup, onApplyProvider }: Props) {
   const v = (k: string) => edits[k] ?? config[k]?.value ?? ''
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = ASR_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('asr_concurrency') || '1', 10) || 1)
+  const presetLangValues = new Set(ASR_LANGUAGE_PRESETS.map((p) => p.value))
+  const langRaw = v('asr_language')
+  const langSelectValue = presetLangValues.has(langRaw) ? langRaw : ASR_LANG_CUSTOM
 
   const SelectRow = ({ cfgKey, label }: { cfgKey: string; label: string }) => {
     if (!config[cfgKey]) return null
@@ -111,6 +116,48 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
               onSave={() => onSave('asr_openai_model')}
             />
           </>
+        )}
+
+        {config.asr_language && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-400">识别语言</label>
+            <p className="text-[11px] text-slate-500 leading-relaxed -mt-0.5">
+              常用 ISO 639-1 代码；留空为自动检测。若网关要求特殊写法（如 zh-CN），请在右侧直接输入完整代码。
+            </p>
+            <div className="flex gap-2 flex-col sm:flex-row sm:items-start">
+              <select
+                value={langSelectValue}
+                onChange={(e) => {
+                  const nv = e.target.value
+                  if (nv === ASR_LANG_CUSTOM) return
+                  onSet('asr_language', nv)
+                }}
+                className="w-full sm:w-[min(100%,220px)] shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors"
+              >
+                {ASR_LANGUAGE_PRESETS.map((p) => (
+                  <option key={p.value === '' ? '_auto' : p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+                <option value={ASR_LANG_CUSTOM}>
+                  {langSelectValue === ASR_LANG_CUSTOM ? '自定义（当前输入）' : '自定义…'}
+                </option>
+              </select>
+              <input
+                type="text"
+                value={langRaw}
+                onChange={(e) => onSet('asr_language', e.target.value)}
+                placeholder="如 zh、en、ja，或 zh-CN / cmn-Hans"
+                className="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
+              />
+              <SaveBtn
+                dirty={isDirty('asr_language')}
+                saving={!!saving['asr_language']}
+                saved={!!saved['asr_language']}
+                onSave={() => onSave('asr_language')}
+              />
+            </div>
+          </div>
         )}
 
         <div className="border-t border-slate-800/70 pt-2" />

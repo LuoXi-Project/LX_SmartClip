@@ -57,6 +57,8 @@ export interface MatchPageState {
   autoExplain: boolean
   /** 链接复刻：已确认的模板引导（注入手动匹配文案 / 一键成片诉求） */
   replicaTemplateGuide: string
+  /** 链接复刻：模板类型，驱动一键成片模板预设 */
+  replicaTemplateType: 'short_video' | 'film_commentary' | 'scene_story' | ''
   autoPlans: AutoEditPlanApi[]
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
   autoExpandedPlanIds: string[]
@@ -84,6 +86,7 @@ export interface MatchPageState {
   setAutoUseTimelineEngine: (v: boolean) => void
   setAutoExplain: (v: boolean) => void
   setReplicaTemplateGuide: (v: string) => void
+  setReplicaTemplateType: (v: 'short_video' | 'film_commentary' | 'scene_story' | '') => void
   setAutoPlans: (plans: AutoEditPlanApi[]) => void
   setAutoRealizeDownloads: (
     fn:
@@ -121,6 +124,7 @@ export type MatchPersistedSlice = Pick<
   | 'autoUseTimelineEngine'
   | 'autoExplain'
   | 'replicaTemplateGuide'
+  | 'replicaTemplateType'
   | 'autoPlans'
   | 'autoRealizeDownloads'
   | 'autoExpandedPlanIds'
@@ -231,6 +235,7 @@ export const useMatchStore = create<MatchPageState>()(
       autoUseTimelineEngine: false,
       autoExplain: false,
       replicaTemplateGuide: '',
+      replicaTemplateType: '',
       autoPlans: [] as AutoEditPlanApi[],
       autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
       autoExpandedPlanIds: [] as string[],
@@ -261,6 +266,7 @@ export const useMatchStore = create<MatchPageState>()(
       setAutoUseTimelineEngine: (autoUseTimelineEngine) => set({ autoUseTimelineEngine }),
       setAutoExplain: (autoExplain) => set({ autoExplain }),
       setReplicaTemplateGuide: (replicaTemplateGuide) => set({ replicaTemplateGuide }),
+      setReplicaTemplateType: (replicaTemplateType) => set({ replicaTemplateType }),
       setAutoPlans: (autoPlans) => set({ autoPlans }),
       setAutoRealizeDownloads: (fn) =>
         set((state) => ({
@@ -289,6 +295,7 @@ export const useMatchStore = create<MatchPageState>()(
           autoTemplateEnabled: false,
           segmentCounter: 0,
           replicaTemplateGuide: '',
+          replicaTemplateType: '',
         }),
     }),
     {
@@ -319,6 +326,7 @@ export const useMatchStore = create<MatchPageState>()(
         autoUseTimelineEngine: state.autoUseTimelineEngine,
         autoExplain: state.autoExplain,
         replicaTemplateGuide: state.replicaTemplateGuide,
+        replicaTemplateType: state.replicaTemplateType,
         autoPlans: state.autoPlans,
         autoRealizeDownloads: state.autoRealizeDownloads,
         autoExpandedPlanIds: state.autoExpandedPlanIds,
@@ -384,6 +392,7 @@ export const useMatchStore = create<MatchPageState>()(
         if (typeof merged.autoUseTimelineEngine !== 'boolean') merged.autoUseTimelineEngine = false
         if (typeof merged.autoExplain !== 'boolean') merged.autoExplain = false
         if (typeof merged.replicaTemplateGuide !== 'string') merged.replicaTemplateGuide = ''
+        if (typeof (merged as any).replicaTemplateType !== 'string') (merged as any).replicaTemplateType = ''
         return mergeLegacyAutoEditCache(merged) as MatchPersistedSlice
       },
       onRehydrateStorage: () => (state) => {
@@ -419,6 +428,7 @@ export const useMatchStore = create<MatchPageState>()(
           if (typeof state.autoUseTimelineEngine !== 'boolean') state.autoUseTimelineEngine = false
           if (typeof state.autoExplain !== 'boolean') state.autoExplain = false
           if (typeof state.replicaTemplateGuide !== 'string') state.replicaTemplateGuide = ''
+          if (typeof (state as any).replicaTemplateType !== 'string') (state as any).replicaTemplateType = ''
         }
       },
     }

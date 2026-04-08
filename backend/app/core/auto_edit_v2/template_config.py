@@ -68,6 +68,48 @@ TEMPLATES: Dict[TemplatePresetId, TemplateDefSpec] = {
             {"name": "cta", "role": "cta", "description": "一句话总结或关注/下期/延伸阅读的具体一句，禁止「收尾号召」或罗列任务清单式概括"},
         ],
     },
+    "replica_short_video": {
+        "label": "复刻·短视频",
+        "pace": "fast",
+        "tone": "energetic",
+        "slots": [
+            {"name": "hook", "role": "hook", "description": "开场强钩子成品句"},
+            {"name": "context", "role": "context", "description": "背景/场景一句"},
+            {"name": "highlight_1", "role": "highlight", "description": "核心亮点一句"},
+            {"name": "highlight_2", "role": "highlight", "description": "证据/补充亮点一句"},
+            {"name": "cta", "role": "cta", "description": "收口行动一句"},
+        ],
+    },
+    "replica_film_commentary": {
+        "label": "复刻·影视解说",
+        "pace": "medium",
+        "tone": "neutral",
+        "slots": [
+            {"name": "opening", "role": "hook", "description": "开场设悬念一句"},
+            {"name": "background", "role": "context", "description": "背景铺垫一句"},
+            {"name": "setup", "role": "context", "description": "人物/事件设定一句"},
+            {"name": "conflict", "role": "highlight", "description": "冲突爆发一句"},
+            {"name": "turning_point", "role": "highlight", "description": "转折升级一句"},
+            {"name": "climax", "role": "highlight", "description": "高潮推进一句"},
+            {"name": "reflection", "role": "context", "description": "观点回落一句"},
+            {"name": "cta", "role": "cta", "description": "讨论引导/下集悬念一句"},
+        ],
+    },
+    "replica_scene_story": {
+        "label": "复刻·场景剧情",
+        "pace": "medium",
+        "tone": "neutral",
+        "slots": [
+            {"name": "opening", "role": "hook", "description": "场景引入一句"},
+            {"name": "setting", "role": "context", "description": "关系设定一句"},
+            {"name": "character", "role": "context", "description": "人物动机一句"},
+            {"name": "conflict", "role": "highlight", "description": "矛盾冲突一句"},
+            {"name": "progression", "role": "highlight", "description": "情节推进一句"},
+            {"name": "resolution", "role": "highlight", "description": "转折或化解一句"},
+            {"name": "emotion", "role": "context", "description": "情绪余韵一句"},
+            {"name": "cta", "role": "cta", "description": "结尾提问/互动一句"},
+        ],
+    },
 }
 
 
@@ -85,6 +127,8 @@ def normalize_template_preset(preset: Optional[str]) -> TemplatePresetId | None:
     # 旧 id 兼容（曾用 piece_production）
     if s == "piece_production":
         s = "knowledge"
+    if s == "replica_locked":
+        s = "replica_film_commentary"
     if s in TEMPLATES:
         return s
     return None

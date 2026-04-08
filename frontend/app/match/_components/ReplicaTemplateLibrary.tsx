@@ -10,7 +10,7 @@ export function ReplicaTemplateLibrary({
   onUse,
   refreshSignal = 0,
 }: {
-  onUse: (payload: { templateId: string; guide: string }) => void
+  onUse: (payload: { templateId: string; guide: string; replicaType: 'short_video' | 'film_commentary' | 'scene_story' }) => void
   refreshSignal?: number
 }) {
   const confirm = useConfirm()
@@ -72,7 +72,8 @@ export function ReplicaTemplateLibrary({
     const data = await replicaApi.getTemplate(t.template_id)
     const guide = String(data?.template_guide || '').trim()
     if (!guide) return
-    onUse({ templateId: t.template_id, guide })
+    const rt = (data?.template_json?.replica_type || t.replica_type || 'short_video') as 'short_video' | 'film_commentary' | 'scene_story'
+    onUse({ templateId: t.template_id, guide, replicaType: rt })
   }
 
   async function handleDelete(t: ReplicaTemplateListItem) {

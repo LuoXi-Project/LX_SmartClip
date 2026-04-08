@@ -5,7 +5,7 @@ import { Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import { createProcessWebSocket, replicaApi, videosApi, type ProcessMessage, type Video } from '@/lib/api'
 
 type Props = {
-  onConfirmed: (payload: { templateId: string; guide: string }) => void
+  onConfirmed: (payload: { templateId: string; guide: string; replicaType: 'short_video' | 'film_commentary' | 'scene_story' }) => void
   initialGuide?: string
   onTemplateSaved?: () => void
 }
@@ -213,7 +213,8 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
     try {
       await replicaApi.confirmTemplate(templateId, { name, template_guide: nextGuide, template_json: draftJson })
       setConfirmed(true)
-      onConfirmed({ templateId, guide: nextGuide })
+      const rt = (draftJson?.replica_type as 'short_video' | 'film_commentary' | 'scene_story' | undefined) || replicaType
+      onConfirmed({ templateId, guide: nextGuide, replicaType: rt })
       onTemplateSaved?.()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as any)?.message || '确认失败'

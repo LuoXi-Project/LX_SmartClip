@@ -27,6 +27,13 @@ import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
 const VIDEO_PAGE_SIZE = 9
 const REPLICA_LOCKED_TEMPLATE_PRESET = 'replica_locked'
 
+function mapReplicaTypeToPreset(replicaType: 'short_video' | 'film_commentary' | 'scene_story' | ''): string {
+  if (replicaType === 'film_commentary') return 'replica_film_commentary'
+  if (replicaType === 'scene_story') return 'replica_scene_story'
+  if (replicaType === 'short_video') return 'replica_short_video'
+  return REPLICA_LOCKED_TEMPLATE_PRESET
+}
+
 function normalizeAutoPlanStage(stage?: string): AutoPlanStage {
   if (!stage) return 'planning'
   const lower = stage.toLowerCase()
@@ -86,6 +93,7 @@ export default function MatchPage() {
     setAutoExplain,
     replicaTemplateGuide,
     setReplicaTemplateGuide,
+    setReplicaTemplateType,
     autoPlans,
     setAutoPlans,
     autoRealizeDownloads,
@@ -167,7 +175,7 @@ export default function MatchPage() {
       return
     }
     setAutoPrompt(`【复刻模板约束】\n${g}\n\n【用户诉求】\n`)
-    setTemplatePreset(REPLICA_LOCKED_TEMPLATE_PRESET)
+    setTemplatePreset(mapReplicaTypeToPreset(useMatchStore.getState().replicaTemplateType))
     setTemplatePresetSource('replica')
     setMatchMode('auto')
     toast.success('已切换至「一键成片」：请在剪辑诉求中补充主题后生成方案')
@@ -689,16 +697,18 @@ export default function MatchPage() {
               </div>
               <ReplicaTemplateLibrary
                 refreshSignal={replicaTemplateRefreshSignal}
-                onUse={({ guide }) => {
+                onUse={({ guide, replicaType }) => {
                   setReplicaTemplateGuide(guide)
+                  setReplicaTemplateType(replicaType)
                   toast.success('已载入模板，请选择下方要进入的流水线')
                 }}
               />
               <ReplicaTemplateWizard
                 initialGuide={replicaTemplateGuide}
                 onTemplateSaved={() => setReplicaTemplateRefreshSignal((v) => v + 1)}
-                onConfirmed={({ guide }) => {
+                onConfirmed={({ guide, replicaType }) => {
                   setReplicaTemplateGuide(guide)
+                  setReplicaTemplateType(replicaType)
                   toast.success('模板已确认，请选择下方要进入的流水线')
                 }}
               />
@@ -769,8 +779,9 @@ export default function MatchPage() {
               templatePresetSource={templatePresetSource}
               onReleaseReplicaTemplateLock={() => {
                 setReplicaTemplateGuide('')
+                setReplicaTemplateType('')
                 setTemplatePresetSource('library')
-                if (templatePreset === REPLICA_LOCKED_TEMPLATE_PRESET) setTemplatePreset('ecommerce')
+                if (templatePreset === REPLICA_LOCKED_TEMPLATE_PRESET || templatePreset.startsWith('replica_')) setTemplatePreset('ecommerce')
                 toast.success('已解除复刻模板锁定，可自由选择模板')
               }}
               onGeneratePlans={handleGenerateAutoPlans}
@@ -832,6 +843,7 @@ export default function MatchPage() {
                     type="button"
                     onClick={() => {
                       setReplicaTemplateGuide('')
+                      setReplicaTemplateType('')
                       setTemplatePresetSource('library')
                       toast.success('已清除复刻模板约束')
                     }}

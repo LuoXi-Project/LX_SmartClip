@@ -678,7 +678,13 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
     vlm_workers = [asyncio.create_task(_vlm_worker()) for _ in range(vlm_worker_count)]
     embed_workers = [asyncio.create_task(_embed_worker()) for _ in range(embed_worker_count)]
     asr_workers = [asyncio.create_task(_asr_worker()) for _ in range(asr_worker_count)] if do_asr else []
+    all_workers = [*frames_workers, *vlm_workers, *embed_workers, *asr_workers]
     cancelled_early = False
+
+    async def _cancel_all_workers():
+        for t in all_workers:
+            t.cancel()
+        await asyncio.gather(*all_workers, return_exceptions=True)
 
     async def _enqueue_item(item: dict):
         await frame_queue.put(item)
@@ -772,8 +778,10 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
 
         await split_task
         if split_error["err"] is not None:
+            await _cancel_all_workers()
             raise split_error["err"]
         if split_count <= 0:
+            await _cancel_all_workers()
             await reporter.send("extract_frames", "error", "没有可处理的片段")
             await _set_video_status(video_id, "error")
             return
@@ -786,6 +794,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
         )
     else:
         if not clips_rows:
+            await _cancel_all_workers()
             await reporter.send("extract_frames", "error", "没有可处理的片段")
             await _set_video_status(video_id, "error")
             return
@@ -800,9 +809,7 @@ async def _run_pipeline(video_id: str, reporter: ProgressReporter, skip_steps: l
             )
 
     if cancelled_early:
-        for t in [*frames_workers, *vlm_workers, *embed_workers, *asr_workers]:
-            t.cancel()
-        await asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers, return_exceptions=True)
+        await _cancel_all_workers()
         raise ProcessCancelled()
 
     for _ in range(frames_worker_count):
@@ -941,6 +948,13 @@ async def process_video_ws(video_id: str, ws: WebSocket):
                 await ws.receive()
         except WebSocketDisconnect:
             request_process_cancel(video_id)
+        except RuntimeError as e:
+            # Starlette 在收到 disconnect 后再次 receive 会抛 RuntimeError
+            # 这里视同断开，触发取消并安静退出，避免污染日志。
+            if "disconnect message" in str(e):
+                request_process_cancel(video_id)
+                return
+            raise
 
     drain_task = asyncio.create_task(_drain_ws_until_disconnect())
     try:
@@ -958,7 +972,7 @@ async def process_video_ws(video_id: str, ws: WebSocket):
         drain_task.cancel()
         try:
             await drain_task
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, RuntimeError):
             pass
         try:
             await ws.close()

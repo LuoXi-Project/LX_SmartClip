@@ -78,6 +78,18 @@ export default function ProcessPage() {
     setPage(1)
   }
 
+  const normalizeRunningStepsAsStopped = () => {
+    setSteps((p) => {
+      const n = { ...p }
+      STEPS.forEach((s) => {
+        if (n[s.key].status === 'running') {
+          n[s.key] = { status: 'skip', message: '已停止', detail: n[s.key].detail }
+        }
+      })
+      return n
+    })
+  }
+
   const applyMsg = (msg: ProcessMessage) => {
     if (msg.step === 'done' || msg.step === 'error') return
     setSteps((p) => ({ ...p, [msg.step as StepKey]: { status: msg.status as StepStatus, message: msg.message, detail: msg.detail } }))
@@ -104,6 +116,7 @@ export default function ProcessPage() {
           const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
           if (cancelled) {
             setDone(false)
+            normalizeRunningStepsAsStopped()
           } else {
             setDone(true)
             setSteps((p) => {
@@ -117,7 +130,10 @@ export default function ProcessPage() {
       } catch { /* noop */ }
     }
     ws.onerror = () => setRunning(false)
-    ws.onclose = () => setRunning(false)
+    ws.onclose = () => {
+      setRunning(false)
+      normalizeRunningStepsAsStopped()
+    }
   }
 
   const fmtMs = (ms?: unknown) => {
@@ -143,6 +159,8 @@ export default function ProcessPage() {
     void videosApi.processCancel(selId).catch(() => {})
     wsRef.current?.close()
     setRunning(false)
+    setDone(false)
+    normalizeRunningStepsAsStopped()
   }
   const selVideo = videos.find((v) => v.id === selId)
   const pct = Math.round(STEPS.filter((s) => ['done', 'skip'].includes(steps[s.key].status)).length / STEPS.length * 100)

@@ -23,4 +23,5 @@ export type PreviewTimeline = {
   absStart: number
   absEnd: number
   clipLocalEnd: number
+  windowSemantic: 'clip_like' | 'timeline_like'
 }

@@ -42,6 +42,7 @@ export function AutoEditPlanCard({
   autoRealizeDownloads,
 }: AutoEditPlanCardProps) {
   const planTitle = p.title || `方案 ${idx + 1}`
+  const eps = 0.05
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
@@ -144,9 +145,33 @@ export function AutoEditPlanCard({
             const videoId = s.clip_group?.[0]?.video_id || null
             const cm = clipId ? clipMetaByClip[clipId] : undefined
 
-            // 展示句子级 quick-cut 的 start/end（若方案与整段一致，数值本身也会相同）
-            const t0 = s.start_time_sec
-            const t1 = s.end_time_sec
+            // 兼容“clip 内相对时间”语义：当窗口落在 clip 时长范围内，换算到源视频绝对时间后再展示/预览。
+            const rawStart = Number(s.start_time_sec) || 0
+            const rawEnd = Number(s.end_time_sec) || rawStart
+            const clipDuration = cm ? Math.max(0, Number(cm.end_time) - Number(cm.start_time)) : null
+            const windowDur = Math.max(0, rawEnd - rawStart)
+            const canMapByClip =
+              clipDuration != null &&
+              clipDuration > 0 &&
+              rawStart >= -eps &&
+              rawEnd > rawStart &&
+              windowDur <= clipDuration + eps
+            let mappedStart = rawStart
+            let mappedEnd = rawEnd
+            if (canMapByClip && clipDuration != null) {
+              if (rawEnd <= clipDuration + eps) {
+                mappedStart = rawStart
+              } else if (windowDur > 0) {
+                // 越界时按“片段起点 + seg持续时间”展示/预览
+                mappedStart = 0
+              } else {
+                mappedStart = Math.min(rawStart, Math.max(0, clipDuration - windowDur))
+              }
+              mappedStart = Math.max(0, Math.min(mappedStart, Math.max(0, clipDuration - windowDur)))
+              mappedEnd = mappedStart + windowDur
+            }
+            const displayStart = canMapByClip && cm ? Number(cm.start_time) + mappedStart : rawStart
+            const displayEnd = canMapByClip && cm ? Number(cm.start_time) + mappedEnd : rawEnd
 
             return (
               <button
@@ -162,8 +187,8 @@ export function AutoEditPlanCard({
                     clipId,
                     videoId,
                     source: videoId ? 'video' : 'clip',
-                    startSec: s.start_time_sec,
-                    endSec: s.end_time_sec,
+                    startSec: displayStart,
+                    endSec: displayEnd,
                   })
                 }}
                 disabled={!clipId}
@@ -171,14 +196,14 @@ export function AutoEditPlanCard({
                 title={
                   clipId
                     ? cm
-                      ? `成片使用库内整段：${fmt(cm.start_time)}–${fmt(cm.end_time)}（方案标注 ${fmt(
-                          s.start_time_sec
-                        )}–${fmt(s.end_time_sec)} 可能不同）`
-                      : `加载库内时间中… 方案标注 ${fmt(s.start_time_sec)}–${fmt(s.end_time_sec)}`
+                      ? canMapByClip
+                        ? `已按片段起点换算（越界会钳制）：${fmt(rawStart)}–${fmt(rawEnd)} + clip起点${fmt(cm.start_time)} => ${fmt(displayStart)}–${fmt(displayEnd)}`
+                        : `按方案时间窗预览：${fmt(displayStart)}–${fmt(displayEnd)}（clip区间 ${fmt(cm.start_time)}–${fmt(cm.end_time)}）`
+                      : `加载库内时间中… 方案标注 ${fmt(rawStart)}–${fmt(rawEnd)}`
                     : '该片段缺少 clip_id，暂不可预览'
                 }
               >
-                #{s.order}（{fmt(t0)}-{fmt(t1)}）
+                #{s.order}（{fmt(displayStart)}-{fmt(displayEnd)}）
               </button>
             )
           })}

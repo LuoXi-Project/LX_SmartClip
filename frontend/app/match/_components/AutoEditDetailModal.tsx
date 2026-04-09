@@ -266,7 +266,7 @@ export function AutoEditDetailModal({
                       </div>
 
                       <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-2">
-                        <p className="text-[11px] text-slate-400">片段 / 时间轴 / 可控时长</p>
+                        <p className="text-[11px] text-slate-400">片段 / 时间轴 / 可控时长（start/end 可能是时间轴坐标，不一定是片段内时间）</p>
                         <div className="mt-1 text-[11px] text-slate-300 space-y-1">
                           <p className="text-slate-400">
                             selected_clip_ids：

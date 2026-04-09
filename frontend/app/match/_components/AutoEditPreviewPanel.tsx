@@ -33,7 +33,14 @@ export function AutoEditPreviewPanel({ selectedPreview, setSelectedPreview, clip
     const absStart = meta && Math.abs(planStart - meta.start_time) < eps ? meta.start_time : planStart
     const absEnd = meta && Math.abs(planEnd - meta.end_time) < eps ? meta.end_time : planEnd
     const clipLocalEnd = Math.max(0, absEnd - absStart)
-    return { meta, planStart, planEnd, absStart, absEnd, clipLocalEnd }
+    const clipDuration = meta ? Math.max(0, Number(meta.end_time) - Number(meta.start_time)) : null
+    const windowDur = Math.max(0, planEnd - planStart)
+    const overClipRange =
+      clipDuration != null &&
+      clipDuration > 0 &&
+      (planStart < -eps || planEnd > clipDuration + eps || windowDur > clipDuration + eps)
+    const windowSemantic: PreviewTimeline['windowSemantic'] = overClipRange ? 'timeline_like' : 'clip_like'
+    return { meta, planStart, planEnd, absStart, absEnd, clipLocalEnd, windowSemantic }
   }, [selectedPreview, clipMetaByClip])
 
   const previewSrc = useMemo(() => {
@@ -101,6 +108,10 @@ export function AutoEditPreviewPanel({ selectedPreview, setSelectedPreview, clip
               <span className="block text-slate-600 mt-0.5 truncate">
                 {selectedPreview.source === 'video' ? (
                   <>原视频预览 · video_id: {resolvedVideoId || '解析中…'}</>
+                ) : previewTimeline.windowSemantic === 'timeline_like' ? (
+                  <>
+                    片段文件预览（窗口疑似为时间轴坐标，不是片段内坐标）· clip_id: {selectedPreview.clipId || '-'}
+                  </>
                 ) : (
                   <>片段文件预览（0 – {fmt(previewTimeline.clipLocalEnd)}）· clip_id: {selectedPreview.clipId || '-'}</>
                 )}

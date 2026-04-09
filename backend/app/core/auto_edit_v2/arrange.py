@@ -37,6 +37,16 @@ def _estimate_item_duration(text: str, *, pace: str) -> float:
     return max(3.0, min(9.0, base))
 
 
+def _exceed_clip_quota(*, clip_id: str, clip_counts: dict[str, int], max_events_per_clip: int) -> bool:
+    if max_events_per_clip <= 0:
+        return False
+    return clip_counts.get(clip_id, 0) >= max_events_per_clip
+
+
+def _touch_clip_quota(*, clip_id: str, clip_counts: dict[str, int]) -> None:
+    clip_counts[clip_id] = clip_counts.get(clip_id, 0) + 1
+
+
 def _fill_timeline_by_reuse(
     *,
     items: List[TimelineItem],
@@ -128,6 +138,8 @@ def arrange_timeline(
         per_slot = target / float(max(1, len(roles_sequence)))
 
         used_event_ids: Set[str] = set()
+        clip_counts: dict[str, int] = {}
+        max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
         items: List[TimelineItem] = []
 
         # pool.events 已按 global_rank/score 排序（merge_rank.assign_tiers_and_rank）
@@ -138,6 +150,13 @@ def arrange_timeline(
                 if not isinstance(eid, str) or not eid or eid in used_event_ids:
                     continue
                 if getattr(e, "role", None) != role:
+                    continue
+                clip_id = str(getattr(e, "clip_id", "") or "")
+                if _exceed_clip_quota(
+                    clip_id=clip_id,
+                    clip_counts=clip_counts,
+                    max_events_per_clip=max_events_per_clip,
+                ):
                     continue
                 text = (e.text or "").strip()
                 if not text:
@@ -151,6 +170,13 @@ def arrange_timeline(
                     eid = getattr(e, "event_id", None)
                     if not isinstance(eid, str) or not eid or eid in used_event_ids:
                         continue
+                    clip_id = str(getattr(e, "clip_id", "") or "")
+                    if _exceed_clip_quota(
+                        clip_id=clip_id,
+                        clip_counts=clip_counts,
+                        max_events_per_clip=max_events_per_clip,
+                    ):
+                        continue
                     text = (e.text or "").strip()
                     if not text:
                         continue
@@ -161,6 +187,7 @@ def arrange_timeline(
                 continue
 
             used_event_ids.add(pick.event_id)
+            _touch_clip_quota(clip_id=str(pick.clip_id), clip_counts=clip_counts)
             text = (pick.text or "").strip()
             dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
             dur = max(0.5, min(per_slot, dur_est))
@@ -181,6 +208,8 @@ def arrange_timeline(
 
     # 非模板：保持旧“按 tier 预算选取”编排器逻辑
     items: List[TimelineItem] = []
+    clip_counts: dict[str, int] = {}
+    max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
 
     target = float(target_duration_sec or dsl.target_duration_sec or 0.0)
     if target <= 0:
@@ -200,6 +229,13 @@ def arrange_timeline(
             text = (e.text or "").strip()
             if not text:
                 continue
+            clip_id = str(getattr(e, "clip_id", "") or "")
+            if _exceed_clip_quota(
+                clip_id=clip_id,
+                clip_counts=clip_counts,
+                max_events_per_clip=max_events_per_clip,
+            ):
+                continue
             dur = _estimate_item_duration(text, pace=dsl.style.pace)
             if used + dur > budget and used > 0:
                 break
@@ -212,6 +248,7 @@ def arrange_timeline(
                     duration_budget_sec=dur,
                 )
             )
+            _touch_clip_quota(clip_id=clip_id, clip_counts=clip_counts)
             used += dur
 
     # pool.events 已按 global_rank/score 排序（merge_rank.assign_tiers_and_rank）
@@ -289,6 +326,8 @@ def arrange_timeline_variants(
         for i in range(n):
             rng = random.Random(base_seed + i * 9973)
             used_event_ids: Set[str] = set()
+            clip_counts: dict[str, int] = {}
+            max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
             items: List[TimelineItem] = []
 
             for role in roles_sequence:
@@ -304,6 +343,13 @@ def arrange_timeline_variants(
                     eid = getattr(e, "event_id", None)
                     if not isinstance(eid, str) or not eid or eid in used_event_ids:
                         continue
+                    clip_id = str(getattr(e, "clip_id", "") or "")
+                    if _exceed_clip_quota(
+                        clip_id=clip_id,
+                        clip_counts=clip_counts,
+                        max_events_per_clip=max_events_per_clip,
+                    ):
+                        continue
                     text = (e.text or "").strip()
                     if not text:
                         continue
@@ -317,6 +363,13 @@ def arrange_timeline_variants(
                         eid = getattr(e, "event_id", None)
                         if not isinstance(eid, str) or not eid or eid in used_event_ids:
                             continue
+                        clip_id = str(getattr(e, "clip_id", "") or "")
+                        if _exceed_clip_quota(
+                            clip_id=clip_id,
+                            clip_counts=clip_counts,
+                            max_events_per_clip=max_events_per_clip,
+                        ):
+                            continue
                         text = (e.text or "").strip()
                         if not text:
                             continue
@@ -327,6 +380,7 @@ def arrange_timeline_variants(
                     continue
 
                 used_event_ids.add(pick.event_id)
+                _touch_clip_quota(clip_id=str(pick.clip_id), clip_counts=clip_counts)
                 text = (pick.text or "").strip()
                 dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
                 dur = max(0.5, min(per_slot, dur_est))
@@ -376,6 +430,7 @@ def arrange_timeline_variants(
     def _pick(events, budget: float, *, rng: random.Random, used_event_ids: Set[str]) -> List[TimelineItem]:
         items: List[TimelineItem] = []
         used = 0.0
+        max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
         for e in events:
             if used >= budget:
                 break
@@ -389,6 +444,12 @@ def arrange_timeline_variants(
             if used + dur > budget and used > 0:
                 break
             clip_id = getattr(e, "clip_id", "")
+            if _exceed_clip_quota(
+                clip_id=str(clip_id),
+                clip_counts=clip_counts,
+                max_events_per_clip=max_events_per_clip,
+            ):
+                continue
             event_id = getattr(e, "event_id", "") or f"e_{rng.randint(1, 10**9)}"
             items.append(
                 TimelineItem(
@@ -401,6 +462,7 @@ def arrange_timeline_variants(
             )
             if isinstance(eid, str) and eid:
                 used_event_ids.add(eid)
+            _touch_clip_quota(clip_id=str(clip_id), clip_counts=clip_counts)
             used += dur
         return items
 
@@ -417,6 +479,7 @@ def arrange_timeline_variants(
         b3 = max(b3, base_b3 * (1.0 + jitter * 0.4))
 
         used_event_ids: Set[str] = set()
+        clip_counts: dict[str, int] = {}
 
         s1 = _weighted_shuffle(t1, rng)
         s2 = _weighted_shuffle(t2, rng)

@@ -14,6 +14,7 @@ import aiosqlite
 from app.core.llm import LLMClient
 from app.core.llm.prompts.voiceover_semantic import CHUNK_SYSTEM_PROMPT, FINAL_SYSTEM_PROMPT
 from app.core.llm.response_utils import extract_json_object, is_llm_unauthorized_error
+from app.core.auto_edit_v2.template_config import get_memory_style_profile, normalize_content_style
 from app.core.auto_edit.voiceover_quick_cut import (
     _clip_has_asr,
     _is_meaningful_text,
@@ -49,49 +50,13 @@ LLM_INPUT_SAFETY_TOKENS = 400
 LLM_OUTPUT_RESERVE_TOKENS_CAP = 2048
 
 DEFAULT_LLM_CONTEXT_TOKENS = 128000
+_GENERIC_MEMORY_STYLE = get_memory_style_profile("generic")
 
 _FILLER = ("嗯", "啊", "呃", "哦", "哎", "就是", "然后", "那个", "这个", "对吧", "好吧")
 _KEYWORDS = (
     "推荐", "好用", "问题", "效果", "优惠", "价格", "重点", "注意", "总结", "建议",
     "产品", "功能", "体验", "对比", "优势", "缺点",
 )
-
-_DEFAULT_MEMORY_TEMPLATE = {
-    "happened_label": "已发生",
-    "open_label": "待展开点",
-    "state_label": "表达状态",
-    "happened_markers": (),
-    "open_markers": ("?", "？", "是否", "到底", "后来", "结果", "但是", "却", "突然"),
-    "state_markers": ("紧张", "害怕", "愤怒", "伤心", "兴奋", "犹豫", "崩溃", "冷静"),
-}
-
-_MEMORY_STYLE_PRESETS: dict[str, dict[str, Any]] = {
-    "generic": _DEFAULT_MEMORY_TEMPLATE,
-    "commentary": {
-        "happened_label": "剧情进展",
-        "open_label": "待回收线索",
-        "state_label": "人物状态",
-        "happened_markers": ("发现", "进入", "决定", "对抗", "反转"),
-        "open_markers": ("真相", "到底", "后来", "为什么", "是否"),
-        "state_markers": ("紧张", "害怕", "愤怒", "伤心", "兴奋", "犹豫", "崩溃", "冷静"),
-    },
-    "ecommerce": {
-        "happened_label": "卖点信息",
-        "open_label": "待说明疑问",
-        "state_label": "购买动机",
-        "happened_markers": ("功能", "效果", "材质", "参数", "对比", "优势"),
-        "open_markers": ("怎么选", "适合", "区别", "是否", "价格", "活动"),
-        "state_markers": ("放心", "省心", "划算", "实用", "省时", "省力"),
-    },
-    "voiceover": {
-        "happened_label": "核心信息",
-        "open_label": "待展开点",
-        "state_label": "表达状态",
-        "happened_markers": ("重点", "总结", "建议", "问题", "方法"),
-        "open_markers": ("接下来", "后面", "为什么", "怎么做", "是否"),
-        "state_markers": ("强调", "提醒", "对比", "建议", "结论"),
-    },
-}
 
 
 @dataclass(frozen=True)
@@ -329,9 +294,8 @@ def _resolve_chapter_count(total_dur: float, cfg: dict[str, Any]) -> int:
 
 
 def _resolve_memory_style(cfg: dict[str, Any]) -> dict[str, Any]:
-    raw = str(cfg.get("content_style") or cfg.get("video_style") or "generic").strip().lower()
-    style_key = raw if raw in _MEMORY_STYLE_PRESETS else "generic"
-    preset = dict(_MEMORY_STYLE_PRESETS[style_key])
+    raw = normalize_content_style(str(cfg.get("content_style") or cfg.get("video_style") or "generic"))
+    preset = get_memory_style_profile(raw)
 
     # 可选自定义覆盖，保证不同业务线都能兼容扩展
     custom = cfg.get("memory_style")
@@ -421,8 +385,8 @@ def _build_chapter_memory(
     states: list[str] = []
     seen: set[str] = set()
 
-    state_markers = tuple(memory_style.get("state_markers") or _DEFAULT_MEMORY_TEMPLATE["state_markers"])
-    clue_markers = tuple(memory_style.get("open_markers") or _DEFAULT_MEMORY_TEMPLATE["open_markers"])
+    state_markers = tuple(memory_style.get("state_markers") or _GENERIC_MEMORY_STYLE["state_markers"])
+    clue_markers = tuple(memory_style.get("open_markers") or _GENERIC_MEMORY_STYLE["open_markers"])
     happened_markers = tuple(memory_style.get("happened_markers") or ())
 
     for u in scored:
@@ -862,7 +826,9 @@ async def build_semantic_voiceover_plan(
             {
                 "id": cw.chapter_id,
                 "title": cw.title,
-                "memory_style": str(cfg.get("content_style") or cfg.get("video_style") or "generic"),
+                "memory_style": normalize_content_style(
+                    str(cfg.get("content_style") or cfg.get("video_style") or "generic")
+                ),
                 "range": [round(cw.start_sec, 2), round(cw.end_sec, 2)],
                 "input_sentence_count": len(chapter_units),
                 "candidate_sentence_count": len(candidate_units),

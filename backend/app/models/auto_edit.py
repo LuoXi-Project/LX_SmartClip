@@ -138,6 +138,32 @@ class AutoEditPlanRequest(BaseModel):
         False,
         description="是否生成可解释中间产物（events/tiers/timeline）用于调试与回放，默认关闭",
     )
+    # Timeline Engine 长视频分批参数（任务级）：前端可按具体视频类型选择预设或手动覆盖
+    # content_style 仅用于命中默认档位；其余字段为空时使用该档位默认值
+    content_style: Optional[Literal["generic", "ecommerce", "voiceover", "commentary"]] = Field(
+        None,
+        description="内容风格档位（任务级），用于推导 events 分批默认参数",
+    )
+    events_max_clips_per_batch: Optional[int] = Field(
+        None,
+        ge=5,
+        description="每批最多 clip 数（任务级覆盖）",
+    )
+    events_max_chars_per_batch: Optional[int] = Field(
+        None,
+        ge=4000,
+        description="每批最多字符数（任务级覆盖）",
+    )
+    events_batch_overlap_clips: Optional[int] = Field(
+        None,
+        ge=0,
+        description="相邻批次重叠 clip 数（任务级覆盖）",
+    )
+    events_max_batches: Optional[int] = Field(
+        None,
+        ge=1,
+        description="最多处理批次数（任务级覆盖）",
+    )
 
 
 class VoiceoverQuickCutRequest(BaseModel):

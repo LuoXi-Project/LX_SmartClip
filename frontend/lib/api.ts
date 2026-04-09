@@ -573,6 +573,12 @@ export interface AutoEditPlanRequestApi {
   use_timeline_engine?: boolean
   /** 调试：生成可解释中间产物（后端可能仅用于日志/落盘） */
   explain?: boolean
+  /** Timeline Engine 长视频参数（任务级） */
+  content_style?: 'generic' | 'ecommerce' | 'voiceover' | 'commentary'
+  events_max_clips_per_batch?: number
+  events_max_chars_per_batch?: number
+  events_batch_overlap_clips?: number
+  events_max_batches?: number
 }
 
 export interface AutoEditSegmentPlanApi {

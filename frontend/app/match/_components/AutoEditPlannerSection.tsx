@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import type { BgmTrack, AutoEditMode } from '@/lib/api'
 import type { AutoPlanStage } from './autoEditTypes'
@@ -38,6 +39,25 @@ export type AutoEditPlannerSectionProps = {
 
   autoUseTimelineEngine: boolean
   onAutoUseTimelineEngineChange: (value: boolean) => void
+  processingProfileLocked?: boolean
+  processingProfileHint?: string
+  autoContentStyle: 'generic' | 'ecommerce' | 'voiceover' | 'commentary'
+  onAutoContentStyleChange: (value: 'generic' | 'ecommerce' | 'voiceover' | 'commentary') => void
+  autoEventsAdvancedEnabled: boolean
+  onAutoEventsAdvancedEnabledChange: (value: boolean) => void
+  autoEventsMaxClipsPerBatch: number | ''
+  onAutoEventsMaxClipsPerBatchChange: (value: number | '') => void
+  autoEventsMaxCharsPerBatch: number | ''
+  onAutoEventsMaxCharsPerBatchChange: (value: number | '') => void
+  autoEventsBatchOverlapClips: number | ''
+  onAutoEventsBatchOverlapClipsChange: (value: number | '') => void
+  autoEventsMaxBatches: number | ''
+  onAutoEventsMaxBatchesChange: (value: number | '') => void
+  recommendedProfile: { clips: number; chars: number; overlap: number; batches: number }
+  estimatedBatches: number
+  estimatedSeconds: number
+  estimatedTotalClips: number
+  onResetAdvancedToRecommended: () => void
 
   autoExplain: boolean
   onAutoExplainChange: (value: boolean) => void
@@ -83,6 +103,25 @@ export function AutoEditPlannerSection({
 
   autoUseTimelineEngine,
   onAutoUseTimelineEngineChange,
+  processingProfileLocked = false,
+  processingProfileHint,
+  autoContentStyle,
+  onAutoContentStyleChange,
+  autoEventsAdvancedEnabled,
+  onAutoEventsAdvancedEnabledChange,
+  autoEventsMaxClipsPerBatch,
+  onAutoEventsMaxClipsPerBatchChange,
+  autoEventsMaxCharsPerBatch,
+  onAutoEventsMaxCharsPerBatchChange,
+  autoEventsBatchOverlapClips,
+  onAutoEventsBatchOverlapClipsChange,
+  autoEventsMaxBatches,
+  onAutoEventsMaxBatchesChange,
+  recommendedProfile,
+  estimatedBatches,
+  estimatedSeconds,
+  estimatedTotalClips,
+  onResetAdvancedToRecommended,
 
   autoExplain,
   onAutoExplainChange,
@@ -94,6 +133,7 @@ export function AutoEditPlannerSection({
   autoPlanStage,
   autoPlanStagePercent,
 }: AutoEditPlannerSectionProps) {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   return (
     <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 space-y-4">
       <p className="text-xs font-semibold text-emerald-300 uppercase tracking-widest flex items-center gap-2">
@@ -206,7 +246,7 @@ export function AutoEditPlannerSection({
                     启用 Timeline Engine（DSL→事件池→Tier→编排→编译回 Plan）
                   </span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
+                <label className="flex items-center gap-2 cursor-pointer select-none hidden">
                   <input
                     type="checkbox"
                     checked={autoExplain}
@@ -219,6 +259,128 @@ export function AutoEditPlannerSection({
                 <p className="text-[11px] text-slate-500 leading-relaxed">
                   默认关闭不影响现有方案生成；开启后后端会优先走新引擎，失败会自动回退旧逻辑。
                 </p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-slate-400">长视频处理档位</label>
+                    {processingProfileLocked ? (
+                      <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                        <p className="text-[12px] text-slate-200">
+                          {processingProfileHint || '已按模板自动匹配处理档位'}
+                        </p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          该档位影响处理速度与覆盖度，不改变文案风格。
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <select
+                          value={autoContentStyle}
+                          onChange={(e) =>
+                            onAutoContentStyleChange(
+                              e.target.value as 'generic' | 'ecommerce' | 'voiceover' | 'commentary'
+                            )
+                          }
+                          disabled={autoLoading || !autoUseTimelineEngine}
+                          className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 disabled:opacity-50"
+                        >
+                          <option value="generic">平衡（通用）</option>
+                          <option value="ecommerce">快速（电商）</option>
+                          <option value="voiceover">平衡（口播）</option>
+                          <option value="commentary">精细（影视）</option>
+                        </select>
+                        <p className="text-[11px] text-slate-500">影响处理速度与覆盖度，不改变文案风格。</p>
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-5 flex items-center gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={autoEventsAdvancedEnabled}
+                        onChange={(e) => onAutoEventsAdvancedEnabledChange(e.target.checked)}
+                        disabled={autoLoading || !autoUseTimelineEngine}
+                        className="rounded border-slate-600 bg-slate-900 text-cyan-500 focus:ring-cyan-500/40 disabled:opacity-50"
+                      />
+                      <span className="text-[12px] text-slate-300">启用高级参数覆盖</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setAdvancedOpen((v) => !v)}
+                      disabled={autoLoading || !autoUseTimelineEngine}
+                      className="text-[11px] text-slate-300 border border-slate-700 rounded-md px-2 py-1 disabled:opacity-50"
+                    >
+                      {advancedOpen ? '收起高级' : '展开高级'}
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/35 px-3 py-2 space-y-1">
+                  <p className="text-[11px] text-slate-300">
+                    预计处理：约 {estimatedBatches} 批，预计耗时 {estimatedSeconds} 秒（基于 {estimatedTotalClips} 个 clips）
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    推荐参数：clips={recommendedProfile.clips} / chars={recommendedProfile.chars} / overlap=
+                    {recommendedProfile.overlap} / batches={recommendedProfile.batches}
+                  </p>
+                </div>
+                {advancedOpen && (
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="sm:col-span-2 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+                      <p className="text-[11px] text-slate-400">高级调优会影响速度/稳定性，建议先用推荐值。</p>
+                      <button
+                        type="button"
+                        onClick={onResetAdvancedToRecommended}
+                        disabled={autoLoading || !autoUseTimelineEngine}
+                        className="text-[11px] text-cyan-200 border border-cyan-500/40 rounded-md px-2 py-1 disabled:opacity-50"
+                      >
+                        一键恢复推荐值
+                      </button>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-400">每批 clips 上限（&gt;=5）</label>
+                      <input
+                        type="number"
+                        min={5}
+                        value={autoEventsMaxClipsPerBatch}
+                        onChange={(e) => onAutoEventsMaxClipsPerBatchChange(e.target.value ? Number(e.target.value) : '')}
+                        disabled={autoLoading || !autoUseTimelineEngine || !autoEventsAdvancedEnabled}
+                        className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-400">每批字符上限（&gt;=4000）</label>
+                      <input
+                        type="number"
+                        min={4000}
+                        value={autoEventsMaxCharsPerBatch}
+                        onChange={(e) => onAutoEventsMaxCharsPerBatchChange(e.target.value ? Number(e.target.value) : '')}
+                        disabled={autoLoading || !autoUseTimelineEngine || !autoEventsAdvancedEnabled}
+                        className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-400">批次重叠 clips（&gt;=0）</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={autoEventsBatchOverlapClips}
+                        onChange={(e) => onAutoEventsBatchOverlapClipsChange(e.target.value ? Number(e.target.value) : '')}
+                        disabled={autoLoading || !autoUseTimelineEngine || !autoEventsAdvancedEnabled}
+                        className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-400">最多批次数（&gt;=1）</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={autoEventsMaxBatches}
+                        onChange={(e) => onAutoEventsMaxBatchesChange(e.target.value ? Number(e.target.value) : '')}
+                        disabled={autoLoading || !autoUseTimelineEngine || !autoEventsAdvancedEnabled}
+                        className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

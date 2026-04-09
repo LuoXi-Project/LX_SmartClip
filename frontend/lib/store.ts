@@ -55,6 +55,14 @@ export interface MatchPageState {
   autoUseTimelineEngine: boolean
   /** 调试开关：生成可解释中间产物 */
   autoExplain: boolean
+  /** Timeline Engine 任务级参数预设（命中后端默认档位） */
+  autoContentStyle: 'generic' | 'ecommerce' | 'voiceover' | 'commentary'
+  /** 是否启用高级参数覆盖 */
+  autoEventsAdvancedEnabled: boolean
+  autoEventsMaxClipsPerBatch: number | ''
+  autoEventsMaxCharsPerBatch: number | ''
+  autoEventsBatchOverlapClips: number | ''
+  autoEventsMaxBatches: number | ''
   /** 链接复刻：已确认的模板引导（注入手动匹配文案 / 一键成片诉求） */
   replicaTemplateGuide: string
   /** 链接复刻：模板类型，驱动一键成片模板预设 */
@@ -85,6 +93,12 @@ export interface MatchPageState {
   setAutoBgmTrackFilename: (name: string) => void
   setAutoUseTimelineEngine: (v: boolean) => void
   setAutoExplain: (v: boolean) => void
+  setAutoContentStyle: (v: 'generic' | 'ecommerce' | 'voiceover' | 'commentary') => void
+  setAutoEventsAdvancedEnabled: (v: boolean) => void
+  setAutoEventsMaxClipsPerBatch: (v: number | '') => void
+  setAutoEventsMaxCharsPerBatch: (v: number | '') => void
+  setAutoEventsBatchOverlapClips: (v: number | '') => void
+  setAutoEventsMaxBatches: (v: number | '') => void
   setReplicaTemplateGuide: (v: string) => void
   setReplicaTemplateType: (v: 'short_video' | 'film_commentary' | 'scene_story' | '') => void
   setAutoPlans: (plans: AutoEditPlanApi[]) => void
@@ -123,6 +137,12 @@ export type MatchPersistedSlice = Pick<
   | 'autoBgmTrackFilename'
   | 'autoUseTimelineEngine'
   | 'autoExplain'
+  | 'autoContentStyle'
+  | 'autoEventsAdvancedEnabled'
+  | 'autoEventsMaxClipsPerBatch'
+  | 'autoEventsMaxCharsPerBatch'
+  | 'autoEventsBatchOverlapClips'
+  | 'autoEventsMaxBatches'
   | 'replicaTemplateGuide'
   | 'replicaTemplateType'
   | 'autoPlans'
@@ -234,6 +254,12 @@ export const useMatchStore = create<MatchPageState>()(
       autoBgmTrackFilename: '',
       autoUseTimelineEngine: false,
       autoExplain: false,
+      autoContentStyle: 'generic',
+      autoEventsAdvancedEnabled: false,
+      autoEventsMaxClipsPerBatch: '',
+      autoEventsMaxCharsPerBatch: '',
+      autoEventsBatchOverlapClips: '',
+      autoEventsMaxBatches: '',
       replicaTemplateGuide: '',
       replicaTemplateType: '',
       autoPlans: [] as AutoEditPlanApi[],
@@ -265,6 +291,12 @@ export const useMatchStore = create<MatchPageState>()(
       setAutoBgmTrackFilename: (autoBgmTrackFilename) => set({ autoBgmTrackFilename }),
       setAutoUseTimelineEngine: (autoUseTimelineEngine) => set({ autoUseTimelineEngine }),
       setAutoExplain: (autoExplain) => set({ autoExplain }),
+      setAutoContentStyle: (autoContentStyle) => set({ autoContentStyle }),
+      setAutoEventsAdvancedEnabled: (autoEventsAdvancedEnabled) => set({ autoEventsAdvancedEnabled }),
+      setAutoEventsMaxClipsPerBatch: (autoEventsMaxClipsPerBatch) => set({ autoEventsMaxClipsPerBatch }),
+      setAutoEventsMaxCharsPerBatch: (autoEventsMaxCharsPerBatch) => set({ autoEventsMaxCharsPerBatch }),
+      setAutoEventsBatchOverlapClips: (autoEventsBatchOverlapClips) => set({ autoEventsBatchOverlapClips }),
+      setAutoEventsMaxBatches: (autoEventsMaxBatches) => set({ autoEventsMaxBatches }),
       setReplicaTemplateGuide: (replicaTemplateGuide) => set({ replicaTemplateGuide }),
       setReplicaTemplateType: (replicaTemplateType) => set({ replicaTemplateType }),
       setAutoPlans: (autoPlans) => set({ autoPlans }),
@@ -325,6 +357,12 @@ export const useMatchStore = create<MatchPageState>()(
         autoBgmTrackFilename: state.autoBgmTrackFilename,
         autoUseTimelineEngine: state.autoUseTimelineEngine,
         autoExplain: state.autoExplain,
+        autoContentStyle: state.autoContentStyle,
+        autoEventsAdvancedEnabled: state.autoEventsAdvancedEnabled,
+        autoEventsMaxClipsPerBatch: state.autoEventsMaxClipsPerBatch,
+        autoEventsMaxCharsPerBatch: state.autoEventsMaxCharsPerBatch,
+        autoEventsBatchOverlapClips: state.autoEventsBatchOverlapClips,
+        autoEventsMaxBatches: state.autoEventsMaxBatches,
         replicaTemplateGuide: state.replicaTemplateGuide,
         replicaTemplateType: state.replicaTemplateType,
         autoPlans: state.autoPlans,
@@ -352,6 +390,12 @@ export const useMatchStore = create<MatchPageState>()(
           autoNumPlans: 3,
           autoUseTimelineEngine: false,
           autoExplain: false,
+          autoContentStyle: 'generic',
+          autoEventsAdvancedEnabled: false,
+          autoEventsMaxClipsPerBatch: '',
+          autoEventsMaxCharsPerBatch: '',
+          autoEventsBatchOverlapClips: '',
+          autoEventsMaxBatches: '',
           autoPlans: [],
           autoRealizeDownloads: {},
           autoExpandedPlanIds: [],
@@ -391,6 +435,19 @@ export const useMatchStore = create<MatchPageState>()(
         if (typeof merged.autoBgmTrackFilename !== 'string') merged.autoBgmTrackFilename = ''
         if (typeof merged.autoUseTimelineEngine !== 'boolean') merged.autoUseTimelineEngine = false
         if (typeof merged.autoExplain !== 'boolean') merged.autoExplain = false
+        if (
+          merged.autoContentStyle !== 'generic' &&
+          merged.autoContentStyle !== 'ecommerce' &&
+          merged.autoContentStyle !== 'voiceover' &&
+          merged.autoContentStyle !== 'commentary'
+        ) {
+          merged.autoContentStyle = 'generic'
+        }
+        if (typeof merged.autoEventsAdvancedEnabled !== 'boolean') merged.autoEventsAdvancedEnabled = false
+        if (typeof merged.autoEventsMaxClipsPerBatch !== 'number' && merged.autoEventsMaxClipsPerBatch !== '') merged.autoEventsMaxClipsPerBatch = ''
+        if (typeof merged.autoEventsMaxCharsPerBatch !== 'number' && merged.autoEventsMaxCharsPerBatch !== '') merged.autoEventsMaxCharsPerBatch = ''
+        if (typeof merged.autoEventsBatchOverlapClips !== 'number' && merged.autoEventsBatchOverlapClips !== '') merged.autoEventsBatchOverlapClips = ''
+        if (typeof merged.autoEventsMaxBatches !== 'number' && merged.autoEventsMaxBatches !== '') merged.autoEventsMaxBatches = ''
         if (typeof merged.replicaTemplateGuide !== 'string') merged.replicaTemplateGuide = ''
         if (typeof (merged as any).replicaTemplateType !== 'string') (merged as any).replicaTemplateType = ''
         return mergeLegacyAutoEditCache(merged) as MatchPersistedSlice
@@ -427,6 +484,19 @@ export const useMatchStore = create<MatchPageState>()(
           if (typeof state.autoBgmTrackFilename !== 'string') state.autoBgmTrackFilename = ''
           if (typeof state.autoUseTimelineEngine !== 'boolean') state.autoUseTimelineEngine = false
           if (typeof state.autoExplain !== 'boolean') state.autoExplain = false
+          if (
+            state.autoContentStyle !== 'generic' &&
+            state.autoContentStyle !== 'ecommerce' &&
+            state.autoContentStyle !== 'voiceover' &&
+            state.autoContentStyle !== 'commentary'
+          ) {
+            state.autoContentStyle = 'generic'
+          }
+          if (typeof state.autoEventsAdvancedEnabled !== 'boolean') state.autoEventsAdvancedEnabled = false
+          if (typeof state.autoEventsMaxClipsPerBatch !== 'number' && state.autoEventsMaxClipsPerBatch !== '') state.autoEventsMaxClipsPerBatch = ''
+          if (typeof state.autoEventsMaxCharsPerBatch !== 'number' && state.autoEventsMaxCharsPerBatch !== '') state.autoEventsMaxCharsPerBatch = ''
+          if (typeof state.autoEventsBatchOverlapClips !== 'number' && state.autoEventsBatchOverlapClips !== '') state.autoEventsBatchOverlapClips = ''
+          if (typeof state.autoEventsMaxBatches !== 'number' && state.autoEventsMaxBatches !== '') state.autoEventsMaxBatches = ''
           if (typeof state.replicaTemplateGuide !== 'string') state.replicaTemplateGuide = ''
           if (typeof (state as any).replicaTemplateType !== 'string') (state as any).replicaTemplateType = ''
         }

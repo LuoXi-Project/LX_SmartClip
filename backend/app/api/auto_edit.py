@@ -27,7 +27,12 @@ from app.core.auto_edit_v2.plan_compile import (
     build_v0_timelines_from_context,
     compile_timeline_to_plan,
 )
-from app.core.auto_edit_v2.template_config import list_templates, normalize_template_preset
+from app.core.auto_edit_v2.template_config import (
+    get_long_video_events_profile,
+    list_templates,
+    normalize_content_style,
+    normalize_template_preset,
+)
 from app.core.auto_edit_v2.dsl_generation import call_llm_for_strategy_dsl
 from app.core.auto_edit_v2.events_generation import call_llm_for_events_all
 from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batches
@@ -64,6 +69,34 @@ router = APIRouter(prefix="/api/auto-edit", tags=["auto-edit"])
 _PLAN_STREAM_SESSIONS: Dict[str, AutoEditPlanRequest] = {}
 _PLAN_STREAM_CREATED_AT: Dict[str, float] = {}
 _PLAN_STREAM_EXPIRE_SEC = 10 * 60
+
+# TODO：后续可将这组任务参数抽成独立结构，避免散落在 request/cfg
+def _load_timeline_long_video_cfg(req: AutoEditPlanRequest, cfg: dict) -> None:
+    """
+    为 auto_edit_v2 注入长视频参数（任务级）：
+    - 先按请求里的 content_style 命中默认档位
+    - 再用请求里的显式字段覆盖
+    不再读取设置页中的 llm_events_*，避免把不同视频任务绑死在全局配置上。
+    """
+    content_style = normalize_content_style(getattr(req, "content_style", None) or "generic")
+    cfg["content_style"] = content_style
+    defaults = get_long_video_events_profile(content_style)
+    cfg["events_max_clips_per_batch"] = max(
+        5,
+        int(getattr(req, "events_max_clips_per_batch", None) or defaults["events_max_clips_per_batch"]),
+    )
+    cfg["events_max_chars_per_batch"] = max(
+        4000,
+        int(getattr(req, "events_max_chars_per_batch", None) or defaults["events_max_chars_per_batch"]),
+    )
+    cfg["events_batch_overlap_clips"] = max(
+        0,
+        int(getattr(req, "events_batch_overlap_clips", None) or defaults["events_batch_overlap_clips"]),
+    )
+    cfg["events_max_batches"] = max(
+        1,
+        int(getattr(req, "events_max_batches", None) or defaults["events_max_batches"]),
+    )
 
 
 async def _expand_timeline_with_llm_copy_if_needed(
@@ -353,6 +386,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 default_temperature=0.7,
                 default_max_tokens=20480,
             )
+            _load_timeline_long_video_cfg(req, cfg)
             logger.info("auto_edit 启用新引擎：正在读取上下文")
             video_names = await _load_video_names(db, req.video_ids)
             video_title, video_description = _build_video_meta_for_plan(
@@ -552,9 +586,9 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
                         await LLMConfig.read_config(db, "llm_max_context_tokens", "128000")
                     )
                     # 长视频兼容参数：内容画像 + 记忆模板 + 分章/锚点
-                    llm_cfg["content_style"] = (
+                    llm_cfg["content_style"] = normalize_content_style(
                         await LLMConfig.read_config(db, "llm_content_style", "generic")
-                    ).strip() or "generic"
+                    )
                     llm_cfg["chapter_target_sec"] = int(
                         await LLMConfig.read_config(db, "llm_chapter_target_sec", "150")
                     )
@@ -658,6 +692,7 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         default_temperature=0.7,
                         default_max_tokens=20480,
                     )
+                    _load_timeline_long_video_cfg(req, cfg)
                     yield _build_sse_event("progress", {"stage": "context", "message": "正在构建素材上下文"})
                     video_names = await _load_video_names(db, req.video_ids)
                     video_title, video_description = _build_video_meta_for_plan(

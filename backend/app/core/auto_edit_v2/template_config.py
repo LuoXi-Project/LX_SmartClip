@@ -3,6 +3,13 @@ from __future__ import annotations
 from typing import Dict, List, Literal, Optional, TypedDict
 
 TemplatePresetId = str
+ContentStyleId = Literal["generic", "ecommerce", "voiceover", "commentary"]
+CONTENT_STYLE_IDS: tuple[str, ...] = ("generic", "ecommerce", "voiceover", "commentary")
+
+
+def normalize_content_style(style: Optional[str]) -> str:
+    s = (style or "generic").strip().lower()
+    return s if s in CONTENT_STYLE_IDS else "generic"
 
 
 class TemplateSlotSpec(TypedDict):
@@ -153,4 +160,81 @@ def get_template_style_hint(preset: TemplatePresetId) -> Dict[str, object]:
     """
     tdef = TEMPLATES[preset]
     return {"pace": tdef["pace"], "tone": tdef["tone"], "structure": get_template_role_sequence(preset)}
+
+
+def get_long_video_events_profile(content_style: Optional[str]) -> Dict[str, int]:
+    """
+    auto_edit_v2 长视频分批默认档位（按内容类型）。
+    """
+    style = normalize_content_style(content_style)
+    presets: Dict[str, Dict[str, int]] = {
+        "ecommerce": {
+            "events_max_clips_per_batch": 28,
+            "events_max_chars_per_batch": 20000,
+            "events_batch_overlap_clips": 2,
+            "events_max_batches": 18,
+        },
+        "voiceover": {
+            "events_max_clips_per_batch": 24,
+            "events_max_chars_per_batch": 17000,
+            "events_batch_overlap_clips": 3,
+            "events_max_batches": 20,
+        },
+        "commentary": {
+            "events_max_clips_per_batch": 20,
+            "events_max_chars_per_batch": 15000,
+            "events_batch_overlap_clips": 4,
+            "events_max_batches": 24,
+        },
+        "generic": {
+            "events_max_clips_per_batch": 25,
+            "events_max_chars_per_batch": 18000,
+            "events_batch_overlap_clips": 2,
+            "events_max_batches": 16,
+        },
+    }
+    return dict(presets.get(style, presets["generic"]))
+
+
+def get_memory_style_profile(content_style: Optional[str]) -> Dict[str, object]:
+    """
+    语义快剪（voiceover_semantic）记忆模板档位。
+    字段保持通用命名，便于不同业务风格复用。
+    """
+    style = normalize_content_style(content_style)
+    presets: Dict[str, Dict[str, object]] = {
+        "generic": {
+            "happened_label": "已发生",
+            "open_label": "待展开点",
+            "state_label": "表达状态",
+            "happened_markers": [],
+            "open_markers": ["?", "？", "是否", "到底", "后来", "结果", "但是", "却", "突然"],
+            "state_markers": ["紧张", "害怕", "愤怒", "伤心", "兴奋", "犹豫", "崩溃", "冷静"],
+        },
+        "commentary": {
+            "happened_label": "剧情进展",
+            "open_label": "待回收线索",
+            "state_label": "人物状态",
+            "happened_markers": ["发现", "进入", "决定", "对抗", "反转"],
+            "open_markers": ["真相", "到底", "后来", "为什么", "是否"],
+            "state_markers": ["紧张", "害怕", "愤怒", "伤心", "兴奋", "犹豫", "崩溃", "冷静"],
+        },
+        "ecommerce": {
+            "happened_label": "卖点信息",
+            "open_label": "待说明疑问",
+            "state_label": "购买动机",
+            "happened_markers": ["功能", "效果", "材质", "参数", "对比", "优势"],
+            "open_markers": ["怎么选", "适合", "区别", "是否", "价格", "活动"],
+            "state_markers": ["放心", "省心", "划算", "实用", "省时", "省力"],
+        },
+        "voiceover": {
+            "happened_label": "核心信息",
+            "open_label": "待展开点",
+            "state_label": "表达状态",
+            "happened_markers": ["重点", "总结", "建议", "问题", "方法"],
+            "open_markers": ["接下来", "后面", "为什么", "怎么做", "是否"],
+            "state_markers": ["强调", "提醒", "对比", "建议", "结论"],
+        },
+    }
+    return dict(presets.get(style, presets["generic"]))
 

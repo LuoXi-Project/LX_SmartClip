@@ -25,6 +25,25 @@ export type AutoEditPanelProps = {
   onAutoBgmTrackFilenameChange: (value: string) => void
   autoUseTimelineEngine: boolean
   onAutoUseTimelineEngineChange: (value: boolean) => void
+  processingProfileLocked?: boolean
+  processingProfileHint?: string
+  autoContentStyle: 'generic' | 'ecommerce' | 'voiceover' | 'commentary'
+  onAutoContentStyleChange: (value: 'generic' | 'ecommerce' | 'voiceover' | 'commentary') => void
+  autoEventsAdvancedEnabled: boolean
+  onAutoEventsAdvancedEnabledChange: (value: boolean) => void
+  autoEventsMaxClipsPerBatch: number | ''
+  onAutoEventsMaxClipsPerBatchChange: (value: number | '') => void
+  autoEventsMaxCharsPerBatch: number | ''
+  onAutoEventsMaxCharsPerBatchChange: (value: number | '') => void
+  autoEventsBatchOverlapClips: number | ''
+  onAutoEventsBatchOverlapClipsChange: (value: number | '') => void
+  autoEventsMaxBatches: number | ''
+  onAutoEventsMaxBatchesChange: (value: number | '') => void
+  recommendedProfile: { clips: number; chars: number; overlap: number; batches: number }
+  estimatedBatches: number
+  estimatedSeconds: number
+  estimatedTotalClips: number
+  onResetAdvancedToRecommended: () => void
   autoExplain: boolean
   onAutoExplainChange: (value: boolean) => void
   autoLoading: boolean
@@ -63,6 +82,25 @@ export function AutoEditPanel({
   onAutoBgmTrackFilenameChange,
   autoUseTimelineEngine,
   onAutoUseTimelineEngineChange,
+  processingProfileLocked = false,
+  processingProfileHint,
+  autoContentStyle,
+  onAutoContentStyleChange,
+  autoEventsAdvancedEnabled,
+  onAutoEventsAdvancedEnabledChange,
+  autoEventsMaxClipsPerBatch,
+  onAutoEventsMaxClipsPerBatchChange,
+  autoEventsMaxCharsPerBatch,
+  onAutoEventsMaxCharsPerBatchChange,
+  autoEventsBatchOverlapClips,
+  onAutoEventsBatchOverlapClipsChange,
+  autoEventsMaxBatches,
+  onAutoEventsMaxBatchesChange,
+  recommendedProfile,
+  estimatedBatches,
+  estimatedSeconds,
+  estimatedTotalClips,
+  onResetAdvancedToRecommended,
   autoExplain,
   onAutoExplainChange,
   autoLoading,
@@ -141,6 +179,25 @@ export function AutoEditPanel({
         onAutoBgmTrackFilenameChange={onAutoBgmTrackFilenameChange}
         autoUseTimelineEngine={autoUseTimelineEngine}
         onAutoUseTimelineEngineChange={onAutoUseTimelineEngineChange}
+        processingProfileLocked={processingProfileLocked}
+        processingProfileHint={processingProfileHint}
+        autoContentStyle={autoContentStyle}
+        onAutoContentStyleChange={onAutoContentStyleChange}
+        autoEventsAdvancedEnabled={autoEventsAdvancedEnabled}
+        onAutoEventsAdvancedEnabledChange={onAutoEventsAdvancedEnabledChange}
+        autoEventsMaxClipsPerBatch={autoEventsMaxClipsPerBatch}
+        onAutoEventsMaxClipsPerBatchChange={onAutoEventsMaxClipsPerBatchChange}
+        autoEventsMaxCharsPerBatch={autoEventsMaxCharsPerBatch}
+        onAutoEventsMaxCharsPerBatchChange={onAutoEventsMaxCharsPerBatchChange}
+        autoEventsBatchOverlapClips={autoEventsBatchOverlapClips}
+        onAutoEventsBatchOverlapClipsChange={onAutoEventsBatchOverlapClipsChange}
+        autoEventsMaxBatches={autoEventsMaxBatches}
+        onAutoEventsMaxBatchesChange={onAutoEventsMaxBatchesChange}
+        recommendedProfile={recommendedProfile}
+        estimatedBatches={estimatedBatches}
+        estimatedSeconds={estimatedSeconds}
+        estimatedTotalClips={estimatedTotalClips}
+        onResetAdvancedToRecommended={onResetAdvancedToRecommended}
         autoExplain={autoExplain}
         onAutoExplainChange={onAutoExplainChange}
         onGeneratePlans={onGeneratePlans}

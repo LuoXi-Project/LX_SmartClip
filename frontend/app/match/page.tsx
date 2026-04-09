@@ -46,6 +46,35 @@ function normalizeAutoPlanStage(stage?: string): AutoPlanStage {
   return 'planning'
 }
 
+function mapTemplatePresetToContentStyle(
+  preset: string
+): 'generic' | 'ecommerce' | 'voiceover' | 'commentary' {
+  if (preset.includes('film') || preset.includes('scene')) return 'commentary'
+  if (preset.includes('ecommerce') || preset.includes('marketing')) return 'ecommerce'
+  if (preset.includes('short') || preset.includes('voiceover')) return 'voiceover'
+  return 'generic'
+}
+
+function contentStyleLabel(style: 'generic' | 'ecommerce' | 'voiceover' | 'commentary'): string {
+  if (style === 'ecommerce') return '电商'
+  if (style === 'voiceover') return '口播'
+  if (style === 'commentary') return '影视'
+  return '通用'
+}
+
+function getRecommendedEventsProfile(style: 'generic' | 'ecommerce' | 'voiceover' | 'commentary') {
+  if (style === 'ecommerce') {
+    return { clips: 28, chars: 20000, overlap: 2, batches: 18 }
+  }
+  if (style === 'voiceover') {
+    return { clips: 24, chars: 17000, overlap: 3, batches: 20 }
+  }
+  if (style === 'commentary') {
+    return { clips: 20, chars: 15000, overlap: 4, batches: 24 }
+  }
+  return { clips: 25, chars: 18000, overlap: 2, batches: 16 }
+}
+
 export default function MatchPage() {
   const {
     segments,
@@ -91,6 +120,18 @@ export default function MatchPage() {
     setAutoUseTimelineEngine,
     autoExplain,
     setAutoExplain,
+    autoContentStyle,
+    setAutoContentStyle,
+    autoEventsAdvancedEnabled,
+    setAutoEventsAdvancedEnabled,
+    autoEventsMaxClipsPerBatch,
+    setAutoEventsMaxClipsPerBatch,
+    autoEventsMaxCharsPerBatch,
+    setAutoEventsMaxCharsPerBatch,
+    autoEventsBatchOverlapClips,
+    setAutoEventsBatchOverlapClips,
+    autoEventsMaxBatches,
+    setAutoEventsMaxBatches,
     replicaTemplateGuide,
     setReplicaTemplateGuide,
     setReplicaTemplateType,
@@ -209,6 +250,35 @@ export default function MatchPage() {
     () => videos.filter((v) => v.status === 'done' && v.total_clips > 0),
     [videos]
   )
+  const selectedOrAllDoneVideos = useMemo(
+    () =>
+      selectedVideoIds.length > 0
+        ? doneVideos.filter((v) => selectedVideoIds.includes(v.id))
+        : doneVideos,
+    [doneVideos, selectedVideoIds]
+  )
+  const estimatedTotalClips = useMemo(
+    () => selectedOrAllDoneVideos.reduce((sum, v) => sum + Number(v.total_clips || 0), 0),
+    [selectedOrAllDoneVideos]
+  )
+  const templateModeEnabled = mode === 'template' || autoTemplateEnabled
+  const effectiveContentStyle = templateModeEnabled
+    ? mapTemplatePresetToContentStyle(templatePreset || '')
+    : autoContentStyle
+  const recommendedProfile = getRecommendedEventsProfile(effectiveContentStyle)
+  const effectiveEventsMaxClipsPerBatch =
+    autoEventsAdvancedEnabled && typeof autoEventsMaxClipsPerBatch === 'number'
+      ? Math.max(5, autoEventsMaxClipsPerBatch)
+      : recommendedProfile.clips
+  const effectiveEventsMaxBatches =
+    autoEventsAdvancedEnabled && typeof autoEventsMaxBatches === 'number'
+      ? Math.max(1, autoEventsMaxBatches)
+      : recommendedProfile.batches
+  const estimatedBatches = Math.min(
+    effectiveEventsMaxBatches,
+    Math.max(1, Math.ceil(Math.max(1, estimatedTotalClips) / Math.max(5, effectiveEventsMaxClipsPerBatch)))
+  )
+  const estimatedSeconds = Math.max(20, 10 + estimatedBatches * 18)
 
   useEffect(() => {
     const valid = new Set(doneVideos.map((v) => v.id))
@@ -502,11 +572,16 @@ export default function MatchPage() {
     appendAutoPlanLog('已开始生成方案')
     appendAutoPlanLog('正在创建 SSE 规划会话...')
     try {
+      appendAutoPlanLog(
+        `本次配置：${templateModeEnabled ? `模板=${templatePreset || '未选'}` : '自由剪辑'}；处理档位=${contentStyleLabel(
+          effectiveContentStyle
+        )}${templateModeEnabled ? '（模板自动映射）' : '（手动）'}；高级覆盖=${autoEventsAdvancedEnabled ? '开启' : '关闭'}`
+      )
       const payload = {
         video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id),
         user_prompt: rawUserPrompt,
         mode: autoMode,
-        template_preset: mode === 'template' || autoTemplateEnabled ? templatePreset : undefined,
+        template_preset: templateModeEnabled ? templatePreset : undefined,
         target_duration_sec: typeof autoTargetDuration === 'number' ? autoTargetDuration : undefined,
         num_plans: autoNumPlans,
         allow_cross_video: true,
@@ -515,6 +590,23 @@ export default function MatchPage() {
         bgm_policy: autoBgmPlanPolicy,
         use_timeline_engine: autoUseTimelineEngine,
         explain: autoUseTimelineEngine ? autoExplain : false,
+        content_style: autoUseTimelineEngine ? effectiveContentStyle : undefined,
+        events_max_clips_per_batch:
+          autoUseTimelineEngine && autoEventsAdvancedEnabled && typeof autoEventsMaxClipsPerBatch === 'number'
+            ? autoEventsMaxClipsPerBatch
+            : undefined,
+        events_max_chars_per_batch:
+          autoUseTimelineEngine && autoEventsAdvancedEnabled && typeof autoEventsMaxCharsPerBatch === 'number'
+            ? autoEventsMaxCharsPerBatch
+            : undefined,
+        events_batch_overlap_clips:
+          autoUseTimelineEngine && autoEventsAdvancedEnabled && typeof autoEventsBatchOverlapClips === 'number'
+            ? autoEventsBatchOverlapClips
+            : undefined,
+        events_max_batches:
+          autoUseTimelineEngine && autoEventsAdvancedEnabled && typeof autoEventsMaxBatches === 'number'
+            ? autoEventsMaxBatches
+            : undefined,
       }
       const session = await autoEditApi.createPlanSession(payload)
       setAutoPlanStage('connecting')
@@ -762,6 +854,37 @@ export default function MatchPage() {
               onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
               autoUseTimelineEngine={autoUseTimelineEngine}
               onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+              processingProfileLocked={mode === 'template' || autoTemplateEnabled}
+              processingProfileHint={
+                mode === 'template' || autoTemplateEnabled
+                  ? `已按模板自动匹配长视频处理档位：${contentStyleLabel(
+                      mapTemplatePresetToContentStyle(templatePreset || '')
+                    )}（可在高级参数中覆盖批处理细项）`
+                  : undefined
+              }
+              autoContentStyle={autoContentStyle}
+              onAutoContentStyleChange={setAutoContentStyle}
+              autoEventsAdvancedEnabled={autoEventsAdvancedEnabled}
+              onAutoEventsAdvancedEnabledChange={setAutoEventsAdvancedEnabled}
+              autoEventsMaxClipsPerBatch={autoEventsMaxClipsPerBatch}
+              onAutoEventsMaxClipsPerBatchChange={setAutoEventsMaxClipsPerBatch}
+              autoEventsMaxCharsPerBatch={autoEventsMaxCharsPerBatch}
+              onAutoEventsMaxCharsPerBatchChange={setAutoEventsMaxCharsPerBatch}
+              autoEventsBatchOverlapClips={autoEventsBatchOverlapClips}
+              onAutoEventsBatchOverlapClipsChange={setAutoEventsBatchOverlapClips}
+              autoEventsMaxBatches={autoEventsMaxBatches}
+              onAutoEventsMaxBatchesChange={setAutoEventsMaxBatches}
+              recommendedProfile={recommendedProfile}
+              estimatedBatches={estimatedBatches}
+              estimatedSeconds={estimatedSeconds}
+              estimatedTotalClips={estimatedTotalClips}
+              onResetAdvancedToRecommended={() => {
+                setAutoEventsAdvancedEnabled(true)
+                setAutoEventsMaxClipsPerBatch(recommendedProfile.clips)
+                setAutoEventsMaxCharsPerBatch(recommendedProfile.chars)
+                setAutoEventsBatchOverlapClips(recommendedProfile.overlap)
+                setAutoEventsMaxBatches(recommendedProfile.batches)
+              }}
               autoExplain={autoExplain}
               onAutoExplainChange={setAutoExplain}
               autoLoading={autoLoading}
@@ -814,6 +937,30 @@ export default function MatchPage() {
                 onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
                 autoUseTimelineEngine={autoUseTimelineEngine}
                 onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+                processingProfileLocked={false}
+                autoContentStyle={autoContentStyle}
+                onAutoContentStyleChange={setAutoContentStyle}
+                autoEventsAdvancedEnabled={autoEventsAdvancedEnabled}
+                onAutoEventsAdvancedEnabledChange={setAutoEventsAdvancedEnabled}
+                autoEventsMaxClipsPerBatch={autoEventsMaxClipsPerBatch}
+                onAutoEventsMaxClipsPerBatchChange={setAutoEventsMaxClipsPerBatch}
+                autoEventsMaxCharsPerBatch={autoEventsMaxCharsPerBatch}
+                onAutoEventsMaxCharsPerBatchChange={setAutoEventsMaxCharsPerBatch}
+                autoEventsBatchOverlapClips={autoEventsBatchOverlapClips}
+                onAutoEventsBatchOverlapClipsChange={setAutoEventsBatchOverlapClips}
+                autoEventsMaxBatches={autoEventsMaxBatches}
+                onAutoEventsMaxBatchesChange={setAutoEventsMaxBatches}
+                recommendedProfile={recommendedProfile}
+                estimatedBatches={estimatedBatches}
+                estimatedSeconds={estimatedSeconds}
+                estimatedTotalClips={estimatedTotalClips}
+                onResetAdvancedToRecommended={() => {
+                  setAutoEventsAdvancedEnabled(true)
+                  setAutoEventsMaxClipsPerBatch(recommendedProfile.clips)
+                  setAutoEventsMaxCharsPerBatch(recommendedProfile.chars)
+                  setAutoEventsBatchOverlapClips(recommendedProfile.overlap)
+                  setAutoEventsMaxBatches(recommendedProfile.batches)
+                }}
                 autoExplain={autoExplain}
                 onAutoExplainChange={setAutoExplain}
                 autoLoading={autoLoading}

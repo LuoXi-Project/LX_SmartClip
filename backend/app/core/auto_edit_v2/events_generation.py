@@ -19,7 +19,13 @@ from app.models.auto_edit_timeline import ClipEventsBatch
 logger = logging.getLogger(__name__)
 
 
-def split_context_into_batches(context: str, *, max_clips_per_batch: int = 25) -> List[str]:
+def split_context_into_batches(
+    context: str,
+    *,
+    max_clips_per_batch: int = 25,
+    max_chars_per_batch: int = 18000,
+    overlap_clips: int = 2,
+) -> List[str]:
     """
     把 _build_video_context_with_recall() 生成的长文本按 clip 聚合并分批。
     约定：上下文里每个 clip 信息行包含形如 [clip_id=XXX]。
@@ -42,17 +48,22 @@ def split_context_into_batches(context: str, *, max_clips_per_batch: int = 25) -
 
     # blocks 按 clip 计数切 batch
     batches: List[str] = []
-    buf: list[str] = []
-    cnt = 0
+    buf_blocks: list[list[str]] = []
+    buf_chars = 0
     for b in blocks:
-        if cnt >= max_clips_per_batch and buf:
-            batches.append("\n".join(buf).strip())
-            buf = []
-            cnt = 0
-        buf.extend(b)
-        cnt += 1
-    if buf:
-        batches.append("\n".join(buf).strip())
+        b_chars = len("\n".join(b))
+        reach_clip_limit = len(buf_blocks) >= max_clips_per_batch
+        reach_char_limit = (buf_chars + b_chars) > max_chars_per_batch if buf_blocks else False
+        if (reach_clip_limit or reach_char_limit) and buf_blocks:
+            batches.append("\n".join(ln for blk in buf_blocks for ln in blk).strip())
+            # 为长视频保留小重叠窗口，减少跨批断裂
+            carry = buf_blocks[-max(0, overlap_clips) :] if overlap_clips > 0 else []
+            buf_blocks = list(carry)
+            buf_chars = sum(len("\n".join(x)) for x in buf_blocks)
+        buf_blocks.append(b)
+        buf_chars += b_chars
+    if buf_blocks:
+        batches.append("\n".join(ln for blk in buf_blocks for ln in blk).strip())
     return [b for b in batches if b]
 
 
@@ -117,21 +128,36 @@ async def call_llm_for_events_all(
     template_preset: str | None = None,
 ) -> List[ClipEventsBatch]:
     logger.info("auto_edit 启用新引擎：正在分割上下文为批次")
-    batches = split_context_into_batches(context, max_clips_per_batch=max_clips_per_batch)
-    logger.info("auto_edit 启用新引擎：正在分割上下文为批次完成")
-    if max_batches and len(batches) > max_batches:
-        batches = batches[:max_batches]
+    # 长视频参数：优先读配置，未配置回退函数默认
+    cfg_max_clips = int(cfg.get("events_max_clips_per_batch") or max_clips_per_batch)
+    cfg_max_batches = int(cfg.get("events_max_batches") or max_batches)
+    cfg_max_chars = int(cfg.get("events_max_chars_per_batch") or 18000)
+    cfg_overlap = int(cfg.get("events_batch_overlap_clips") or 2)
+    batches = split_context_into_batches(
+        context,
+        max_clips_per_batch=max(5, cfg_max_clips),
+        max_chars_per_batch=max(4000, cfg_max_chars),
+        overlap_clips=max(0, cfg_overlap),
+    )
+    logger.info("auto_edit 启用新引擎：分割上下文为批次完成，批次数量：%d", len(batches))
+    if cfg_max_batches and len(batches) > cfg_max_batches:
+        batches = batches[:cfg_max_batches]
 
     out: List[ClipEventsBatch] = []
     for i, bctx in enumerate(batches, 1):
         bid = f"b_{i:03d}"
-        out.append(
-            await call_llm_for_events_batch(
-                cfg=cfg,
-                batch_id=bid,
-                batch_context=bctx,
-                template_preset=template_preset,
-            )
+        batch = await call_llm_for_events_batch(
+            cfg=cfg,
+            batch_id=bid,
+            batch_context=bctx,
+            template_preset=template_preset,
         )
+        for ev in batch.events:
+            tags = list(getattr(ev, "tags", []) or [])
+            marker = f"batch:{bid}"
+            if marker not in tags:
+                tags.append(marker)
+            ev.tags = tags
+        out.append(batch)
     return out
 

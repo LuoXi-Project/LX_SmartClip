@@ -178,6 +178,7 @@ export default function MatchPage() {
     setTemplatePreset(mapReplicaTypeToPreset(useMatchStore.getState().replicaTemplateType))
     setTemplatePresetSource('replica')
     setMatchMode('auto')
+    window.scrollTo({ top: 0, behavior: 'auto' })
     toast.success('已切换至「一键成片」：请在剪辑诉求中补充主题后生成方案')
   }
 

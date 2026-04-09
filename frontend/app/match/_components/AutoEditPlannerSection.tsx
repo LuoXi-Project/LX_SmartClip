@@ -131,9 +131,9 @@ export function AutoEditPlannerSection({
 
       {!hideLlmPlannerUi && (
         <>
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid sm:grid-cols-3 gap-4">
             <div className="space-y-2">
-              <label className="text-xs text-slate-300 flex items-center justify-between">
+              <label className="h-5 text-xs text-slate-300 flex items-center justify-between">
                 目标时长（秒）
                 <span className="text-[11px] text-slate-500">10 - 600</span>
               </label>
@@ -147,7 +147,7 @@ export function AutoEditPlannerSection({
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs text-slate-300">候选方案数量</label>
+              <label className="h-5 text-xs text-slate-300 flex items-center">候选方案数量</label>
               <select
                 value={autoNumPlans}
                 onChange={(e) => onAutoNumPlansChange(Number(e.target.value))}
@@ -161,7 +161,7 @@ export function AutoEditPlannerSection({
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-xs text-slate-300">成片模式</label>
+              <label className="h-5 text-xs text-slate-300 flex items-center">成片模式</label>
               <select
                 value={autoMode}
                 onChange={(e) => onAutoModeChange(e.target.value as AutoEditMode)}
@@ -174,7 +174,7 @@ export function AutoEditPlannerSection({
             </div>
 
             <AutoEditBgmMixPanel
-              wrapperClassName="space-y-2 sm:col-span-2"
+              wrapperClassName="space-y-2 sm:col-span-3"
               bgmTracks={bgmTracks}
               bgmListError={bgmListError}
               autoBgmMixEnabled={autoBgmMixEnabled}
@@ -188,7 +188,7 @@ export function AutoEditPlannerSection({
               emptyBgmHintPrefix="曲库暂无曲目时仍可勾选「自动」尝试扫描服务端目录；也可到"
             />
 
-            <div className="space-y-2 sm:col-span-2">
+            <div className="space-y-2 sm:col-span-3">
               <label className="text-xs text-slate-300 flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400/90" />
                 新引擎（事件级时间轴）

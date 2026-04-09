@@ -38,7 +38,7 @@ class EdgeTTS(ITTS):
         _rate = rate or self.default_rate
         _volume = volume or self.default_volume
 
-        logger.info("TTS 合成: voice=%s rate=%s volume=%s text_len=%d", _voice, _rate, _volume, len(text))
+        logger.info("TTS 合成: 说话人=%s 语速=%s 音量=%s 合成文本长度=%d 合成内容: %s", _voice, _rate, _volume, len(text), text[:100])
 
         async def _call_tts():
             communicate = edge_tts.Communicate(text=text, voice=_voice, rate=_rate, volume=_volume)

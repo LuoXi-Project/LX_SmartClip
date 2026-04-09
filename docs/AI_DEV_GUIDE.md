@@ -16,12 +16,18 @@
 ### 前端（`frontend/`）
 
 - 页面入口：
-  - `app/layout.tsx`：全局布局、全局组件挂载点。
+  - `app/layout.tsx`：全局布局、导航、`LicenseGate`、`AIChatPanel`。
   - `app/page.tsx`：首页与基础健康检查入口。
-  - `app/library/page.tsx`：素材库（上传、检索、重命名、删除）。
-  - `app/process/page.tsx`：素材处理流程可视化（WebSocket 实时状态）。
-  - `app/match/page.tsx`：智能剪辑主工作台（手动匹配/自动成片/模板模式）。
+  - `app/library/page.tsx`：素材库（上传、列表、删除等）。
+  - `app/process/page.tsx`：素材处理流程可视化（WebSocket / 任务进度）。
+  - `app/search/page.tsx`：素材检索（对接 `/api/search`）。
+  - `app/match/page.tsx`：智能剪辑主工作台（手动匹配、自动成片、字幕、导出等）。
+  - `app/tts/page.tsx`：TTS 配音。
+  - `app/bgm/page.tsx`：BGM 曲库。
   - `app/settings/page.tsx`：系统配置管理。
+  - `app/logs/page.tsx`：运行日志查看。
+  - `app/license/page.tsx`：卡密 / 授权。
+  - `app/about/page.tsx`：关于与支持。
 - 核心基础层：
   - `lib/api.ts`：前后端契约中心（REST + WS + SSE + 类型定义）。
   - `lib/store.ts`：全局状态中心（Zustand + persist + migrate）。
@@ -35,11 +41,14 @@
   - `app/main.py`：FastAPI 初始化、路由挂载、中间件、静态资源挂载、SPA fallback。
   - `start_backend.py`：开发/打包态启动逻辑（端口选择、日志、浏览器打开）。
 - API 层（`app/api/`）：
-  - `videos.py`：视频上传/列表/改名/删除/处理触发。
-  - `process.py`：处理流水线（split -> frames -> asr -> vlm -> embed）。
-  - `match.py`：智能匹配入口（召回+排序）。
-  - `auto_edit.py`：自动成片（plan/session/realize）。
-  - `subtitle.py`、`tts.py`、`bgm.py`、`config.py`：字幕/TTS/BGM/配置。
+  - `videos.py`、`clips.py`：视频与片段（上传、切分、流、元数据）。
+  - `process.py`：处理流水线 + `/api/process-jobs` 任务态与 WS。
+  - `match.py`、`search.py`：匹配与语义检索。
+  - `auto_edit.py`：自动成片（plan/session/stream/realize 等）。
+  - `subtitle.py`、`tts.py`、`bgm.py`、`export.py`：字幕、TTS、BGM、工程导出。
+  - `chat.py`、`copy_gen.py`：对话与文案生成。
+  - `replica.py`、`license.py`、`logs.py`：复刻模板、卡密、日志。
+  - `config.py`：配置与 `POST /models` 代理。
 - 核心能力层（`app/core/`）：
   - `splitter.py`：视频切分、抽帧、音频提取。
   - `matcher.py`：匹配核心逻辑。
@@ -143,9 +152,9 @@
 ## 9. 建议维护的长期文档（AI 连续开发必备）
 
 - `docs/AI_DEV_GUIDE.md`（本文件）：架构和开发入口，保持最新。
-- `docs/CHANGELOG_AI.md`（建议新增）：记录每次 AI 变更的影响范围、回滚点、验证结果。
-- `docs/API_CONTRACT.md`（建议新增）：前后端字段与错误码的单一事实源。
-- `docs/TROUBLESHOOTING.md`（建议新增）：沉淀已踩过的坑与可复用排错流程。
+- 根目录 `CHECKLIST.md`、`PROJECT_SUMMARY.md`、`QUICKSTART.md`：阶段清单与快速上手。
+- `memory-bank/progress.md`：进度与按模块整理的接口索引（新增路由时建议同步）。
+- 可选新增：`docs/CHANGELOG_AI.md`、`docs/API_CONTRACT.md`、`docs/TROUBLESHOOTING.md`（按团队需要再建，避免与 `progress.md` 重复）。
 
 ## 10. 给后续 AI 的约束建议（可直接复制到任务提示词）
 
@@ -155,3 +164,6 @@
 4. 涉及自动成片改动，必须验证：plan 生成、预览渲染、realize 导出三个阶段。
 5. 提交前至少完成一条主流程自测，并记录到变更说明。
 
+---
+
+**最后更新：** 2026-04-09

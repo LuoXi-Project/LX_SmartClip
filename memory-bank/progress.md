@@ -1,105 +1,83 @@
-# LX_SmartClip 开发进度记录
+# LX SmartClip 开发进度记录
 
-## 当前阶段
-Phase 0-8 已完成，Phase 9（TTS 配音）准备开始。
+> 与仓库同步的进度快照。接口以 `backend/app/api/*.py` 为准。
 
----
+## 当前阶段（摘要）
 
-## 已完成工作
-
-### Phase 0：环境搭建与项目骨架（✅ 完成）
-- FastAPI 后端初始化（`/health`、CORS、lifespan）
-- Next.js 14 前端初始化（TypeScript + Tailwind + Zustand + Axios）
-- 前后端联通（首页健康检查）
-
-### Phase 1：数据库基础层（✅ 完成）
-- SQLite 三表：`videos`、`clips`、`config`
-- 配置管理接口：`GET /api/config`、`PATCH /api/config`
-
-### Phase 2：视频上传与管理（✅ 完成）
-- `POST /api/videos/upload`
-- `GET /api/videos`
-- `DELETE /api/videos/{id}`
-- 前端素材库页面 `/library`
-
-### Phase 3：视频切分（✅ 完成）
-- `app/core/splitter.py`：音频提取、固定时长切分、镜头切分、抽帧
-- `app/api/clips.py`：
-  - `POST /api/videos/{id}/extract-audio`
-  - `POST /api/videos/{id}/split`
-  - `POST /api/videos/{id}/extract-frames`
-  - `GET /api/videos/{id}/clips`
-
-### Phase 4：ASR 语音识别（✅ 完成）
-- `app/core/asr/base.py` + `app/core/asr/whisper_asr.py`
-- `app/api/asr.py`：
-  - `POST /api/videos/{id}/process-asr`
-  - `GET /api/asr/info`
-
-### Phase 5：VLM 视觉描述（✅ 完成）
-- `app/core/vlm/base.py` + `app/core/vlm/openai_vlm.py`
-- `app/api/vlm.py`：
-  - `POST /api/videos/{id}/process-vlm`
-  - `GET /api/vlm/info`
-
-### Phase 6：向量化与入库（✅ 完成）
-- `app/core/vector_db/base.py` + `app/core/vector_db/faiss_db.py`
-- `app/core/embedder.py`
-- `app/api/embed.py`：
-  - `POST /api/videos/{id}/process-embed`
-
-### Phase 7：全素材处理整合（✅ 完成）
-- `app/api/process.py`：
-  - `POST /api/videos/{id}/process`
-  - `WS /api/videos/{id}/process-ws`
-- 前端处理页面：`/process`
-
-### Phase 8：三级匹配引擎（✅ 完成）
-- `app/core/rag.py`：RAG 初筛（Embedding + FAISS）
-- `app/core/llm/base.py` + `app/core/llm/openai_llm.py`：LLM 精排
-- `app/core/matcher.py`：初筛 + 精排 + 推荐
-- `app/api/match.py`：
-  - `POST /api/match`
-- 前端匹配页面：`/match`
-- 导航新增“文案匹配”入口
-- 配置新增：`llm_model`、`match_top_k`、`match_top_n`
+- **原始 Phase 0–11：** 已完成（基础管线、匹配、TTS、导出、设置）。  
+- **扩展能力：** 检索、对话、文案生成、字幕、自动剪辑、BGM、复刻模板、卡密、日志、任务化 process-jobs 等已并入主线。  
+- **Phase 12：** 端到端测试与统一错误/容错策略 — 进行中 / 待加强。
 
 ---
 
-## 当前已实现接口一览
+## 模块与路由（按前缀）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/health` | 健康检查 |
-| GET | `/api/config` | 获取全部配置 |
-| PATCH | `/api/config` | 更新单条配置 |
-| POST | `/api/videos/upload` | 上传视频 |
-| GET | `/api/videos` | 视频列表 |
-| DELETE | `/api/videos/{id}` | 删除视频 |
-| POST | `/api/videos/{id}/split` | 切分视频 |
-| POST | `/api/videos/{id}/extract-audio` | 提取音频 |
-| POST | `/api/videos/{id}/extract-frames` | 批量抽帧 |
-| GET | `/api/videos/{id}/clips` | 片段列表 |
-| POST | `/api/videos/{id}/process-asr` | ASR 批量处理 |
-| POST | `/api/videos/{id}/process-vlm` | VLM 批量处理 |
-| POST | `/api/videos/{id}/process-embed` | Embedding 入库 |
-| POST | `/api/videos/{id}/process` | 一键全流程处理 |
-| WS | `/api/videos/{id}/process-ws` | 实时进度推送 |
-| POST | `/api/match` | 文案匹配（三级匹配引擎） |
+| 前缀 | 模块文件 | 说明 |
+|------|-----------|------|
+| `/health` | `main.py` | 健康检查 |
+| `/api/config` | `config.py` | 配置读写；`POST /models` 代理模型列表 |
+| `/api/license` | `license.py` | 卡密状态、激活、解绑 |
+| `/api/videos` | `videos.py` | 上传、列表、流/缩略图、URL 导入、重编码、高光等 |
+| `/api/videos` | `clips.py` | 切分、抽帧、音频、片段 CRUD/流 |
+| `/api/videos` | `asr.py` / `vlm.py` / `embed.py` | 分步 ASR / VLM / 嵌入 |
+| `/api/videos` | `process.py` | 一键处理、取消、兼容 WS；`POST .../process-jobs` |
+| `/api/process-jobs` | `process.py`（jobs_router） | 任务查询、取消、任务级 WS |
+| `/api/match` | `match.py` | 文案匹配 |
+| `/api/search` | `search.py` | 语义检索、高光浏览 |
+| `/api/tts` | `tts.py` | 合成、音色列表、音频文件 |
+| `/api/export` | `export.py` | 工程 ZIP |
+| `/api/chat` | `chat.py` | 对话补全 |
+| `/api/copy-gen` | `copy_gen.py` | 文案生成 |
+| `/api/subtitle` | `subtitle.py` | 字幕生成、烧录、导出、下载 |
+| `/api/auto-edit` | `auto_edit.py` | 模板、计划、流式会话、快剪、实现 |
+| `/api/bgm` | `bgm.py` | 曲库 CRUD |
+| `/api/replica` | `replica.py` | 模板摄入、生成、确认、列表 |
+| `/api/logs` | `logs.py` | 运行日志 |
 
----
-
-## 下一步：Phase 9 — TTS 配音
-
-**优先级：** 🔴 高
-
-**任务：**
-1. `app/core/tts/base.py` + `app/core/tts/edge_tts_impl.py`
-2. `POST /api/tts/synthesize`
-3. `GET /api/tts/voices`
-4. 前端配音与导出工作流联调
+**统计：** `app/api` 下 HTTP/WS 路由装饰器约 **60+**（含 WebSocket）。
 
 ---
 
-**最后更新：** 2026-03-23
-**状态：** ✅ Phase 0-8 完成，Phase 9 准备开始
+## 数据库表（`init_db.py`）
+
+| 表 | 用途 |
+|----|------|
+| `videos` | 视频元数据与状态 |
+| `clips` | 片段与 ASR/VLM 等字段 |
+| `config` | 全局配置（`license_card` 等对前端配置接口隐藏） |
+| `replica_templates` | 复刻模板草稿与确认态 |
+| `process_tasks` | 处理任务状态与进度 JSON |
+
+向量索引：由 `core/vector_db`（FAISS 等）与 storage 侧文件配合，不单表名 `clip_embeddings`。
+
+---
+
+## 前端页面（`frontend/app`）
+
+| 路径 | 文件 |
+|------|------|
+| `/` | `page.tsx` |
+| `/library` | `library/page.tsx` |
+| `/process` | `process/page.tsx` |
+| `/search` | `search/page.tsx` |
+| `/match` | `match/page.tsx` |
+| `/tts` | `tts/page.tsx` |
+| `/bgm` | `bgm/page.tsx` |
+| `/settings` | `settings/page.tsx` |
+| `/logs` | `logs/page.tsx` |
+| `/license` | `license/page.tsx` |
+| `/about` | `about/page.tsx` |
+
+全局布局与导航：`layout.tsx`（含 `LicenseGate`、`AIChatPanel`）。
+
+---
+
+## 下一步（Phase 12 建议）
+
+1. 为核心链路增加可重复执行的自动化测试（上传 → 处理 → 匹配 → 导出最小路径）。  
+2. 梳理对外错误模型：鉴权失败、第三方 AI 超时/限额、磁盘与 FFmpeg 失败等。  
+3. 文档：保持本文件与 `CHECKLIST.md`、`PROJECT_SUMMARY.md` 同频更新。
+
+---
+
+**最后更新：** 2026-04-09

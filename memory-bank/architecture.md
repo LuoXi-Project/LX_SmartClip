@@ -1,232 +1,141 @@
 # LX_SmartClip 架构说明
 
-> 本文档描述项目每个文件/目录的职责，供后续开发者快速定位代码。
+> 描述目录职责与请求链路，便于快速定位代码。接口清单以 [progress.md](./progress.md) 为准。
 
 ---
 
-## 项目根目录结构
+## 仓库顶层
 
 ```
 LX_SmartClip/
-├── backend/          # Python 后端（FastAPI）
-├── memory-bank/      # 项目文档（需求、架构、进度、实施计划）
-├── venv/             # Python 虚拟环境（不提交 git）
-└── .gitignore
+├── backend/           # FastAPI 应用
+├── frontend/          # Next.js 14（App Router）
+├── memory-bank/       # 设计、进度、本架构说明
+├── docs/              # 专题文档（策略、AI 维护手册等）
+├── scripts/           # 构建/发布脚本（如有）
+└── CHECKLIST.md / PROJECT_SUMMARY.md / QUICKSTART.md
 ```
 
 ---
 
-## backend/ 目录
+## backend/
 
 ```
 backend/
-├── app/              # FastAPI 应用主包
-├── data/             # SQLite 数据库文件（运行时生成，不提交 git）
-│   └── smartclip.db  # 主数据库：元数据 + 配置（向量表后续加入）
-├── verify_db.py      # Phase 1 验证脚本（开发阶段用，可删除）
-└── requirements.txt  # Python 依赖清单
+├── app/
+│   ├── main.py              # FastAPI 入口：路由、CORS、License 中间件、storage 挂载、静态前端、404 兜底
+│   ├── api/                 # 路由层（仅 HTTP/WS 编排）
+│   ├── core/                # 业务与 AI 实现
+│   ├── db/                  # SQLite 连接、init_db、migrate_db
+│   ├── models/              # Pydantic 请求/响应模型
+│   ├── middleware/          # 授权等
+│   └── utils/               # 日志、路径、FFprobe 等工具
+├── data/                    # smartclip.db（运行时生成，通常不提交）
+├── storage/                 # 视频、音频、帧、索引文件等（通常不提交）
+└── requirements.txt
 ```
 
-### requirements.txt
-核心依赖版本声明。当前已安装：`fastapi`、`uvicorn[standard]`、`pydantic>=2.0`、`python-multipart`、`aiosqlite`。后续 Phase 会追加 `ffmpeg-python`、`scenedetect`、`openai`、`edge-tts`、`llama-index`、`faiss-cpu` 等。
+### `app/main.py`（要点）
+
+1. `lifespan`：`init_db()`、`init_blocking_pool()` / 关闭时 `shutdown_blocking_pool()`。  
+2. 中间件：`LicenseMiddleware`、`CORSMiddleware`（当前 `allow_origins` 偏宽松，生产可按需收紧）。  
+3. 挂载路由（节选）：`config`、`videos`、`clips`、`asr`、`vlm`、`embed`、`process` + `process-jobs`、`match`、`search`、`tts`、`export`、`chat`、`copy_gen`、`subtitle`、`auto_edit`、`bgm`、`replica`、`license`、`logs`。  
+4. 静态资源：`/storage` → `backend/storage`；若存在 `app/static/frontend/index.html`，则挂载整站前端并配合 SPA fallback。
+
+### `app/api/` — 路由模块一览
+
+| 文件 | 前缀 / 说明 |
+|------|-------------|
+| `config.py` | `/api/config` |
+| `license.py` | `/api/license` |
+| `videos.py` | `/api/videos` |
+| `clips.py` | `/api/videos`（片段、切分、流） |
+| `asr.py` / `vlm.py` / `embed.py` | `/api/videos`（分步处理） |
+| `process.py` | `/api/videos`（一键处理、取消、WS）；`jobs_router` → `/api/process-jobs` |
+| `match.py` | `/api/match` |
+| `search.py` | `/api/search` |
+| `tts.py` | `/api/tts` |
+| `export.py` | `/api/export` |
+| `chat.py` | `/api/chat` |
+| `copy_gen.py` | `/api/copy-gen` |
+| `subtitle.py` | `/api/subtitle` |
+| `auto_edit.py` | `/api/auto-edit` |
+| `bgm.py` | `/api/bgm` |
+| `replica.py` | `/api/replica` |
+| `logs.py` | `/api/logs` |
+
+各文件内路径为相对上述 `prefix` 的子路径；WebSocket 见 `process.py` 等。
+
+### `app/db/`
+
+- `database.py`：`get_db_conn()`、`get_db()`（异步上下文）。  
+- `init_db.py`：建表、`DEFAULT_CONFIG` 灌入；含 `replica_templates`、`process_tasks` 及历史迁移逻辑。  
+
+**表（核心）：**
+
+| 表名 | 用途 |
+|------|------|
+| `videos` | 视频元数据、状态、时长等 |
+| `clips` | 片段路径、时间轴、ASR/VLM 文本等 |
+| `config` | 全局配置键值（部分 key 不对 `/api/config` 暴露） |
+| `replica_templates` | 复刻模板 JSON 与状态 |
+| `process_tasks` | 处理任务进度与结束态 |
+
+向量检索：由 `core/vector_db`（如 FAISS）与磁盘索引文件配合，具体路径由实现写入 `storage`。
+
+### `app/core/` — 能力分层（目录级）
+
+| 区域 | 职责 |
+|------|------|
+| `splitter.py` | 切分、抽帧、音频 |
+| `asr/` | ASR 抽象与 Whisper/OpenAI 等实现 |
+| `vlm/` | 视觉描述 |
+| `embedder.py` | 文本向量 |
+| `vector_db/` | FAISS / sqlite-vss 等 |
+| `rag.py`、`matcher.py` | 召回与精排 |
+| `llm/` | 大模型调用与各类 prompt |
+| `tts/` | TTS 抽象与多提供商 |
+| `subtitle/` | 字幕时间线、SRT、烧录 |
+| `auto_edit/`、`auto_edit_v2/` | 自动剪辑规划与 DSL |
+| `bgm/` | BGM 选择与混音相关逻辑 |
+| `license.py` | 授权校验 |
+| `blocking_pool.py` | 阻塞任务线程池 |
+| `metrics/` | 如 token 统计等 |
 
 ---
 
-## backend/app/ — 应用主包
+## frontend/
 
-```
-app/
-├── main.py           # FastAPI 应用入口
-├── api/              # 路由层（HTTP 接口）
-├── core/             # 业务逻辑层（AI 模块、素材处理）
-├── db/               # 数据库层（连接管理、建表、初始化）
-└── __init__.py
-```
-
-### app/main.py
-**职责：** FastAPI 应用的唯一入口，负责：
-1. 创建 `FastAPI` 实例（title、version）
-2. 注册 `lifespan` 钩子：服务启动时自动调用 `init_db()` 建表并写入默认配置
-3. 注册 CORS 中间件（允许来自 `http://localhost:3000` 的跨域请求，为前端 Next.js 预留）
-4. 注册各业务路由（当前：`config_router`）
-5. 提供 `GET /health` 健康检查接口
-
-**启动命令：**
-```bash
-# 在 backend/ 目录下
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
+- `app/`：页面与布局（`layout.tsx` 内全局导航、`LicenseGate`、`AIChatPanel`）。  
+- `lib/api.ts`：前后端契约（优先于此处对齐类型）。  
+- `lib/store.ts`：Zustand 持久化状态。  
+- `lib/runtime-config.ts`：API Base URL 等运行时策略。
 
 ---
 
-## backend/app/api/ — 路由层
+## memory-bank/
 
-路由层只负责 HTTP 请求/响应处理：参数校验、调用业务逻辑、返回结果。不含业务逻辑。
-
-```
-api/
-├── config.py         # 全局配置 CRUD 接口
-└── __init__.py
-```
-
-### api/config.py
-**职责：** 全局配置的读写接口。
-
-| 接口 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| `get_config` | GET | `/api/config` | 返回所有配置项（key → {value, type, label, options}） |
-| `update_config` | PATCH | `/api/config` | 更新单条配置，接收 `{key, value}`，key 不存在返回 404 |
-
-**数据模型：** `ConfigUpdate(key: str, value: str)`
-
-**设计说明：**
-- PATCH 接口先查询 key 是否存在（404 友好提示），再执行 UPDATE，避免静默失败
-- 所有配置值均以字符串存储，前端根据 `type` 字段决定渲染方式（number/select/string）
-- `options` 字段为 JSON 字符串，前端解析后渲染下拉选项
-
-**后续新增文件（按 Phase）：**
-- `videos.py`（Phase 2）：视频上传、列表、删除
-- `clips.py`（Phase 3）：片段管理、切分触发
-- `match.py`（Phase 8）：三级匹配接口
-- `tts.py`（Phase 9）：TTS 配音接口
-- `export.py`（Phase 10）：导出接口
+| 文件 | 用途 |
+|------|------|
+| `design-document.md` | 产品与设计 |
+| `implementation-plan.md` | 阶段计划（里程碑表已更新） |
+| `progress.md` | **进度与接口索引（推荐常更新）** |
+| `tech-stack.md` | 技术栈说明 |
+| `architecture.md` | 本文件 |
+| `PHASE*_SUMMARY.md` 等 | 历史阶段小结 |
 
 ---
 
-## backend/app/db/ — 数据库层
+## 数据流（简化）
 
 ```
-db/
-├── database.py       # 连接管理
-├── init_db.py        # 建表 + 默认数据初始化
-└── __init__.py
-```
-
-### db/database.py
-**职责：** 提供数据库连接的两种方式。
-
-```python
-DB_PATH  # 绝对路径，基于 __file__ 计算，指向 backend/data/smartclip.db
-
-get_db_conn() -> aiosqlite.Connection
-# 返回裸连接，row_factory 设为 aiosqlite.Row（支持按列名访问）
-# 调用方必须在 finally 中调用 db.close()
-# 适合：简单路由函数
-
-get_db() -> AsyncGenerator[aiosqlite.Connection, None]
-# 异步生成器，自动管理连接生命周期
-# 适合：FastAPI Depends 依赖注入（推荐后续路由使用）
-```
-
-**路径策略：** `DB_PATH` 使用 `os.path.abspath(__file__ + ../../data/smartclip.db)` 计算，与工作目录无关，保证任意位置启动都能找到正确路径。
-
-### db/init_db.py
-**职责：** 数据库结构初始化，服务启动时由 `main.py` lifespan 调用。
-
-**建表（均为 `CREATE TABLE IF NOT EXISTS`，幂等）：**
-
-| 表名 | 核心字段 | 用途 |
-|------|----------|------|
-| `videos` | id, name, file_path, duration, total_clips, split_mode, status, upload_at | 原始视频元数据 |
-| `clips` | id, video_id, clip_path, start_time, end_time, duration, asr_text, vlm_description, tags | 切分后的视频片段 |
-| `config` | key, value, type, label, options | 全局配置（前端配置页直接读写） |
-
-**默认配置（`INSERT OR IGNORE`，幂等，不覆盖已有值）：**
-11 条默认配置项，涵盖：切分模式、场景阈值、固定时长、向量维度、TopK、VLM/ASR/TTS 服务参数。
-
-**注意：** `videos.status` 字段已预建（`pending/processing/done/error`），为 Phase 7 素材处理状态追踪预留，当前 Phase 不使用。
-
----
-
-## backend/app/core/ — 业务逻辑层
-
-```
-core/
-└── __init__.py       # 当前为空，后续 Phase 填充
-```
-
-**后续将按 Phase 新增（均含抽象基类 + 具体实现）：**
-
-| 文件/目录 | Phase | 职责 |
-|-----------|-------|------|
-| `splitter.py` | 3 | 视频切分（镜头识别 / 固定时长）、抽帧、音频提取 |
-| `asr/base.py` | 4 | ASR 抽象接口 `IASR` |
-| `asr/whisper_asr.py` | 4 | Whisper 本地 ASR 实现 |
-| `vlm/base.py` | 5 | VLM 抽象接口 `IVLM` |
-| `vlm/openai_vlm.py` | 5 | OpenAI 兼容 VLM 实现 |
-| `tts/base.py` | 9 | TTS 抽象接口 `ITTS` |
-| `tts/edge_tts_impl.py` | 9 | edge-tts 实现 |
-| `llm/base.py` | 8 | LLM 抽象接口 `ILLM` |
-| `llm/openai_llm.py` | 8 | OpenAI 兼容 LLM 实现（用于精排） |
-| `vector_db.py` | 6 | 向量库抽象 `IVectorDB` + FAISS 实现 |
-| `embedder.py` | 6 | Embedding 生成（调用 OpenAI Embedding API） |
-| `rag.py` | 8 | RAG 初筛（LlamaIndex + IVectorDB） |
-| `matcher.py` | 8 | 三级匹配引擎（RAG初筛 → LLM精排 → 返回候选） |
-
-**抽象层设计原则：** 所有 AI 服务（ASR/VLM/TTS/LLM/向量库）均定义抽象基类，具体实现通过工厂函数或配置项选择。替换服务商只需修改配置，不改业务代码。
-
----
-
-## memory-bank/ — 项目文档
-
-```
-memory-bank/
-├── projectbrief.md          # 项目简介（如有）
-├── design-document.md       # 产品设计文档（最终极完善版）
-├── implementation-plan.md   # 分阶段实施计划（Phase 0~12）
-├── tech-stack.md            # 技术栈详细说明
-├── architecture.md          # 本文件：架构说明，每个文件的职责
-├── progress.md              # 开发进度记录，每完成一个 Phase 更新
-└── feature-implementation/  # 功能实现细节（按需新增）
-```
-
-**规范：** 每完成一个 Phase，必须更新 `progress.md`（记录完成内容、验证结果、技术决策）；有架构变化时更新本文件（`architecture.md`）。
-
----
-
-## 数据流总览
-
-```
-用户上传视频
-    │
-    ▼
-POST /api/videos/upload
-    │  写入 videos 表
-    ▼
-POST /api/videos/{id}/process  （一键处理，Phase 7）
-    │
-    ├─► splitter.py      → 切分片段，写入 clips 表
-    ├─► splitter.py      → 抽帧，存 storage/frames/
-    ├─► splitter.py      → 提取音频，存 storage/audio/
-    ├─► WhisperASR       → 转写文本，写入 clips.asr_text
-    ├─► OpenAIVLM        → 生成描述，写入 clips.vlm_description
-    └─► embedder.py      → 生成向量，写入 clip_embeddings 表
-
-用户输入文案
-    │
-    ▼
-POST /api/match
-    │
-    ├─► RAGSearcher      → 向量检索 TOP12 候选片段
-    ├─► OpenAILLM        → 精排，输出 TOP5 推荐
-    └─► 返回 {recommended, candidates}
-
-用户确认片段
-    │
-    ▼
-POST /api/tts/synthesize  → edge-tts 生成配音
-    │
-    ▼
-POST /api/export          → ZIP（project.json + audio.mp3）
+上传 → POST /api/videos/upload → videos 表 + storage
+处理 → POST /api/videos/{id}/process-jobs 或 WS → process_tasks + 流水线
+      → clips 更新 + ASR/VLM/向量索引落盘
+匹配 → POST /api/match → 召回 + LLM → 返回候选
+导出 → TTS / subtitle / auto-edit realize → ZIP 或成片文件
 ```
 
 ---
 
-## 当前已实现接口一览
-
-| 方法 | 路径 | 状态 | 说明 |
-|------|------|------|------|
-| GET | `/health` | ✅ | 健康检查 |
-| GET | `/api/config` | ✅ | 获取全部配置 |
-| PATCH | `/api/config` | ✅ | 更新单条配置 |
-
+**最后更新：** 2026-04-09

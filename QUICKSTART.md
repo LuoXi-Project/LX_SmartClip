@@ -2,30 +2,25 @@
 
 ## 项目概览
 
-LX SmartClip 是一个本地轻量化 AI 智能素材匹配剪辑工具。
+LX SmartClip（洛曦智剪）是本地轻量化 **AI 智能素材剪辑** 工具：入库、多模式切分、ASR + VLM、向量检索与 LLM 精排、TTS、字幕与自动剪辑辅助、工程导出等。前后端可分开开发；也可将前端静态导出放到 `backend/app/static/frontend` 由同一进程托管（见 `backend/app/main.py`）。
 
-**核心功能：**
-- 批量素材入库
-- 多模式切分（镜头识别 / 固定时长）
-- 多模态理解（ASR + VLM）
-- 三级精准匹配（RAG 初筛 → LLM 精排 → 人工选择）
-- TTS 配音
-- 工程文件导出
+**核心能力（已实现）：**
 
----
+- 素材：上传 / URL 导入 / 管理 / 检索 / 处理流水线  
+- 匹配：`/api/match` + 工作台 `/match`（含自动成片、字幕、导出等模块）  
+- 生成：TTS、文案生成、对话、字幕烧录、自动剪辑计划与实现、BGM、复刻模板  
+- 系统：设置页、日志、可选卡密授权  
 
-## 环境要求
+**环境要求**
 
-- Python >= 3.10
-- Node.js >= 18
-- FFmpeg（系统已安装）
-- Git
+- Python >= 3.10  
+- Node.js >= 18  
+- FFmpeg（已在 PATH 中）  
+- Git  
 
 ---
 
 ## 后端启动
-
-### 1. 创建虚拟环境
 
 ```bash
 cd backend
@@ -36,165 +31,114 @@ venv\Scripts\activate
 
 # macOS/Linux
 source venv/bin/activate
-```
 
-### 2. 安装依赖
-
-```bash
 pip install -r requirements.txt
-```
-
-### 3. 启动服务
-
-```bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-**验证：** 访问 `http://localhost:8000/health`，应返回 `{"status": "ok"}`
+**验证：** 打开 `http://127.0.0.1:8000/health`，应返回 `{"status":"ok"}`。
 
 ---
 
 ## 前端启动
 
-### 1. 安装依赖
-
 ```bash
 cd frontend
 npm install
-```
-
-### 2. 启动开发服务器
-
-```bash
 npm run dev
 ```
 
-**验证：** 访问 `http://localhost:3000`，应看到首页
+**验证：** 打开 `http://localhost:3000`。
+
+前端默认通过 `lib/runtime-config.ts` / 环境变量指向后端 API；开发时一般为 `http://127.0.0.1:8000`。
 
 ---
 
-## 功能验证
-
-### 1. 后端健康检查
+## 功能验证（curl 示例）
 
 ```bash
-curl http://localhost:8000/health
-# 期望返回：{"status": "ok"}
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/config
+curl -X POST http://127.0.0.1:8000/api/videos/upload -F "file=@test.mp4"
+curl http://127.0.0.1:8000/api/videos
 ```
 
-### 2. 获取配置
-
-```bash
-curl http://localhost:8000/api/config
-# 期望返回：包含所有配置项的 JSON
-```
-
-### 3. 上传视频
-
-```bash
-curl -X POST http://localhost:8000/api/videos/upload \
-  -F "file=@test.mp4"
-# 期望返回：{"id": "xxx", "name": "test.mp4", "upload_at": "..."}
-```
-
-### 4. 获取视频列表
-
-```bash
-curl http://localhost:8000/api/videos
-# 期望返回：视频列表数组
-```
+完整接口列表见 `memory-bank/progress.md`。
 
 ---
 
-## 前端页面
+## 前端路由一览
 
-### 首页 (`/`)
-- 系统状态显示
-- 功能特性介绍
-- 开始使用按钮
-
-### 素材库 (`/library`)
-- 视频上传（拖拽 / 点击）
-- 视频卡片列表
-- 删除功能
-- 状态显示
+| 路径 | 说明 |
+|------|------|
+| `/` | 首页 |
+| `/library` | 素材库 |
+| `/process` | 素材处理与进度 |
+| `/search` | 素材检索 |
+| `/match` | 智能剪辑 |
+| `/tts` | TTS 配音 |
+| `/bgm` | BGM 音乐库 |
+| `/settings` | 系统设置 |
+| `/logs` | 运行日志 |
+| `/license` | 卡密 / 授权 |
+| `/about` | 关于与支持 |
 
 ---
 
-## 项目结构
+## 仓库目录（精简）
 
 ```
 LX_SmartClip/
 ├── backend/
 │   ├── app/
-│   │   ├── api/              # 路由层
-│   │   │   ├── config.py     # 配置接口
-│   │   │   └── videos.py     # 视频接口
-│   │   ├── core/             # 业务逻辑层（待实现）
-│   │   ├── db/               # 数据库层
-│   │   │   ├── database.py   # 连接管理
-│   │   │   └── init_db.py    # 建表初始化
-│   │   └── main.py           # 应用入口
-│   ├── data/                 # SQLite 数据库（运行时生成）
-│   ├── storage/              # 视频/音频/帧存储（运行时生成）
-│   └── requirements.txt      # Python 依赖
-│
+│   │   ├── main.py           # 入口：路由、CORS、静态资源、SPA 兜底
+│   │   ├── api/              # HTTP/WS 路由（videos、clips、process、match、…）
+│   │   ├── core/             # 业务与 AI 实现
+│   │   ├── db/               # SQLite 连接与 init/migrate
+│   │   ├── middleware/       # 授权等
+│   │   └── static/frontend/  # 可选：Next 静态导出产物（发布）
+│   ├── data/                 # smartclip.db（默认不提交）
+│   └── storage/              # 视频、音频、帧等产物（默认不提交）
 ├── frontend/
-│   ├── app/
-│   │   ├── page.tsx          # 首页
-│   │   ├── library/
-│   │   │   └── page.tsx      # 素材库页面
-│   │   ├── layout.tsx        # 根布局
-│   │   └── globals.css       # 全局样式
-│   ├── lib/
-│   │   ├── api.ts            # API 客户端
-│   │   └── store.ts          # 状态管理
-│   ├── package.json
-│   └── tsconfig.json
-│
-└── memory-bank/              # 项目文档
-    ├── design-document.md    # 产品设计文档
-    ├── architecture.md       # 架构说明
-    ├── implementation-plan.md # 实施计划
-    └── tech-stack.md         # 技术栈说明
+│   ├── app/                  # 页面与组件
+│   └── lib/                  # api、store、runtime-config
+├── memory-bank/              # 设计、架构、进度、实施计划
+├── docs/                     # 专题文档与策略说明
+├── CHECKLIST.md
+├── PROJECT_SUMMARY.md
+└── QUICKSTART.md
 ```
 
 ---
 
 ## 常见问题
 
-### Q: 后端无法启动？
-A: 确保 Python >= 3.10，虚拟环境已激活，依赖已安装。
+**Q: 后端无法启动？**  
+A: 确认 Python 版本、虚拟环境已激活、`pip install -r requirements.txt` 成功；若端口占用可换端口启动 uvicorn。
 
-### Q: 前端无法连接后端？
-A: 检查后端是否运行在 `http://localhost:8000`，CORS 配置是否正确。
+**Q: 前端连不上 API？**  
+A: 确认后端已监听 `127.0.0.1:8000`；检查前端 `.env.local` 或 `NEXT_PUBLIC_*` 与 `lib/runtime-config.ts`。
 
-### Q: 上传视频失败？
-A: 检查文件格式是否支持（mp4, mov, avi, mkv, webm, mpeg），文件大小是否合理。
+**Q: 上传失败？**  
+A: 确认格式在支持列表内（如 mp4 / mov / avi / mkv / webm / mpeg 等，以 `videos` 路由校验为准），磁盘与 `backend/storage` 可写。
 
-### Q: 数据库文件在哪里？
-A: 在 `backend/data/smartclip.db`
+**Q: 数据库与文件在哪？**  
+A: 数据库 `backend/data/smartclip.db`；上传与中间产物多在 `backend/storage/`。
 
-### Q: 上传的视频存储在哪里？
-A: 在 `backend/storage/videos/` 目录
+**Q: CORS 报错？**  
+A: 当前后端对开发较宽松（见 `main.py` 中 `CORSMiddleware`）。若仍有问题，核对浏览器访问的前端源与 API 地址是否一致。
 
----
-
-## 下一步开发
-
-详见 `memory-bank/implementation-plan.md`
-
-当前优先级：
-1. Phase 3：视频切分（FFmpeg + PySceneDetect）
-2. Phase 4-5：ASR + VLM 处理
-3. Phase 6-8：向量化 + 三级匹配
-4. Phase 9-12：TTS、导出、设置、测试
+**Q: 卡密 / LICENSE_REQUIRED？**  
+A: 部分接口受 `LicenseMiddleware` 约束，需在 `/license` 页或 `/api/license` 完成激活（具体策略见 `backend/app/core/license.py`）。
 
 ---
 
-## 技术支持
+## 下一步（开发维护）
 
-遇到问题？检查以下文件：
-- 架构说明：`memory-bank/architecture.md`
-- 设计文档：`memory-bank/design-document.md`
-- 实施计划：`memory-bank/implementation-plan.md`
+- 阶段清单：[CHECKLIST.md](./CHECKLIST.md)  
+- 接口与进度：[memory-bank/progress.md](./memory-bank/progress.md)  
+- AI/人类共读维护手册：[docs/AI_DEV_GUIDE.md](./docs/AI_DEV_GUIDE.md)  
+
+---
+
+**最后更新：** 2026-04-09

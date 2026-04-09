@@ -39,8 +39,8 @@ BUFFER_SEC = 0.08
 # 兼容旧实现的字符级退化切批（当 token 预算异常时使用）
 MAX_CHUNK_BODY_CHARS = 9000
 
-# token 估算：粗略按 1 token ≈ 4 个字符（中文为主时可适当偏大/偏小，这里用于“切批预算”，不要求极准）
-TOKENS_PER_CHAR = 1 / 4
+# token 估算：默认按 1 token ≈ 4 个字符；可由设置页透传覆盖
+DEFAULT_TOKENS_PER_CHAR = 1 / 4
 LLM_INPUT_SAFETY_TOKENS = 400
 LLM_OUTPUT_RESERVE_TOKENS_CAP = 2048
 
@@ -181,9 +181,10 @@ def chunk_units_by_budget(units: List[SentenceUnit]) -> List[List[SentenceUnit]]
     return chunks
 
 
-def _estimate_tokens(s: str) -> int:
+def _estimate_tokens(s: str, *, tokens_per_char: float = DEFAULT_TOKENS_PER_CHAR) -> int:
     # 至少返回 1，避免空字符串导致预算计算异常
-    return max(1, int(len(s) * TOKENS_PER_CHAR))
+    tpc = tokens_per_char if tokens_per_char > 0 else DEFAULT_TOKENS_PER_CHAR
+    return max(1, int(len(s) * tpc))
 
 
 def chunk_units_by_token_budget(
@@ -193,6 +194,8 @@ def chunk_units_by_token_budget(
     system_prompt: str,
     user_prefix: str,
     output_reserve_tokens: int,
+    tokens_per_char: float = DEFAULT_TOKENS_PER_CHAR,
+    input_safety_tokens: int = LLM_INPUT_SAFETY_TOKENS,
 ) -> List[List[SentenceUnit]]:
     """
     根据“上下文输入预算”将句子单元切批。
@@ -206,11 +209,12 @@ def chunk_units_by_token_budget(
         return []
 
     ctx = max(1, int(context_tokens))
-    sys_t = _estimate_tokens(system_prompt)
-    prefix_t = _estimate_tokens(user_prefix)
+    sys_t = _estimate_tokens(system_prompt, tokens_per_char=tokens_per_char)
+    prefix_t = _estimate_tokens(user_prefix, tokens_per_char=tokens_per_char)
     out_r = max(1, int(output_reserve_tokens))
+    in_safe = max(1, int(input_safety_tokens))
 
-    body_budget = ctx - sys_t - prefix_t - out_r - LLM_INPUT_SAFETY_TOKENS
+    body_budget = ctx - sys_t - prefix_t - out_r - in_safe
     # 极端情况下预算为负：退化到小批处理
     if body_budget <= 0:
         return [units[i : i + max(3, MIN_UNITS_PER_CHUNK)] for i in range(0, len(units), max(3, MIN_UNITS_PER_CHUNK))]
@@ -221,7 +225,7 @@ def chunk_units_by_token_budget(
 
     def _line_tokens(u: SentenceUnit) -> int:
         line = f"{u.sid}\t{u.abs_start:.2f}\t{u.abs_start + u.dur:.2f}\t{u.text}"
-        return _estimate_tokens(line)
+        return _estimate_tokens(line, tokens_per_char=tokens_per_char)
 
     for u in units:
         lt = _line_tokens(u)
@@ -262,6 +266,7 @@ async def _llm_keep_for_chunk(
     chunk: List[SentenceUnit],
     chunk_index: int,
     chunk_total: int,
+    max_tokens: int,
 ) -> Set[str]:
     valid = {u.sid for u in chunk}
     lines = []
@@ -277,7 +282,7 @@ async def _llm_keep_for_chunk(
     raw = await llm.chat(
         [{"role": "system", "content": sys}, {"role": "user", "content": user}],
         temperature=0.25,
-        max_tokens=20480,
+        max_tokens=max_tokens,
     )
     return _parse_keep_json(raw, valid)
 
@@ -325,6 +330,7 @@ async def _llm_keep_for_final_chunk(
     chunk: List[SentenceUnit],
     chunk_index: int,
     chunk_total: int,
+    max_tokens: int,
 ) -> Set[str]:
     """
     最终合并阶段：从所有候选句子里选出最终 keep。
@@ -347,7 +353,7 @@ async def _llm_keep_for_final_chunk(
     raw = await llm.chat(
         [{"role": "system", "content": sys}, {"role": "user", "content": user}],
         temperature=0.2,
-        max_tokens=20480,
+        max_tokens=max_tokens,
     )
     return _parse_keep_json(raw, valid)
 
@@ -360,6 +366,18 @@ async def build_semantic_voiceover_plan(
     video_title_hint: str | None,
     video_ids_order: Optional[List[str]] = None,
 ) -> Plan:
+    def _cfg_int(name: str, default: int) -> int:
+        try:
+            return int(cfg.get(name) or default)
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _cfg_float(name: str, default: float) -> float:
+        try:
+            return float(cfg.get(name) or default)
+        except (TypeError, ValueError):
+            return float(default)
+
     units = flatten_sentence_units(list(clip_groups))
     if not units:
         return Plan(
@@ -379,8 +397,11 @@ async def build_semantic_voiceover_plan(
             ),
         )
 
-    context_tokens = int(cfg.get("context_tokens") or DEFAULT_LLM_CONTEXT_TOKENS)
-    llm_output_reserve = min(int(cfg.get("max_tokens") or 20480), LLM_OUTPUT_RESERVE_TOKENS_CAP)
+    context_tokens = max(1, _cfg_int("context_tokens", DEFAULT_LLM_CONTEXT_TOKENS))
+    llm_max_tokens = max(1, _cfg_int("max_tokens", 8192))
+    llm_output_reserve = min(max(1, _cfg_int("output_reserve_tokens", llm_max_tokens)), LLM_OUTPUT_RESERVE_TOKENS_CAP)
+    tokens_per_char = _cfg_float("tokens_per_char", DEFAULT_TOKENS_PER_CHAR)
+    input_safety_tokens = max(1, _cfg_int("input_safety_tokens", LLM_INPUT_SAFETY_TOKENS))
 
     user_prefix_for_chunk = (
         "【用户诉求】\n"
@@ -393,7 +414,7 @@ async def build_semantic_voiceover_plan(
         api_key=cfg["api_key"],
         model=cfg["model"],
         temperature=float(cfg.get("temperature") or 0.3),
-        max_tokens=int(cfg.get("max_tokens") or 8192),
+        max_tokens=llm_max_tokens,
         timeout=3600.0,
     )
 
@@ -404,12 +425,15 @@ async def build_semantic_voiceover_plan(
         system_prompt=CHUNK_SYSTEM_PROMPT,
         user_prefix=user_prefix_for_chunk,
         output_reserve_tokens=llm_output_reserve,
+        tokens_per_char=tokens_per_char,
+        input_safety_tokens=input_safety_tokens,
     )
     logger.info(
-        "voiceover semantic stage1: %d sentences, %d chunk(s), context_tokens=%d",
+        "voiceover semantic stage1: %d sentences, %d chunk(s), context_tokens=%d, tokens_per_char=%.4f",
         len(units),
         len(chunks),
         context_tokens,
+        tokens_per_char,
     )
 
     sem = asyncio.Semaphore(3)
@@ -422,6 +446,7 @@ async def build_semantic_voiceover_plan(
                 chunk=ch,
                 chunk_index=i,
                 chunk_total=len(chunks),
+                max_tokens=llm_max_tokens,
             )
 
     results = await asyncio.gather(*[_one(i, ch) for i, ch in enumerate(chunks)], return_exceptions=True)
@@ -473,6 +498,8 @@ async def build_semantic_voiceover_plan(
         system_prompt=FINAL_SYSTEM_PROMPT,
         user_prefix=user_prefix_for_final,
         output_reserve_tokens=llm_output_reserve,
+        tokens_per_char=tokens_per_char,
+        input_safety_tokens=input_safety_tokens,
     )
     logger.info(
         "voiceover semantic stage2 final: candidate=%d, final_chunk(s)=%d",
@@ -488,6 +515,7 @@ async def build_semantic_voiceover_plan(
                 chunk=ch,
                 chunk_index=i,
                 chunk_total=len(final_chunks),
+                max_tokens=llm_max_tokens,
             )
 
     first_stage2_error: Exception | None = None

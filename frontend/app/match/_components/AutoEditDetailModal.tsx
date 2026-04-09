@@ -1,6 +1,6 @@
 'use client'
 
-import type { Dispatch, SetStateAction } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import type { ClipMetaByClip, SelectedPreviewState } from './autoEditTypes'
 import { fmt } from './types'
@@ -33,6 +33,26 @@ export function AutoEditDetailModal({
   setSelectedPreview,
 }: AutoEditDetailModalProps) {
   if (!detailPlan) return null
+  const [viewMode, setViewMode] = useState<'detail' | 'copy'>('detail')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'ok' | 'fail'>('idle')
+  const segments = (detailDraft?.segments ?? detailPlan.plan.segments) ?? []
+  const mergedCopyText = useMemo(() => {
+    return segments
+      .map((s) => s.subtitle?.text?.trim())
+      .filter((txt): txt is string => Boolean(txt))
+      .join('\n')
+  }, [segments])
+
+  useEffect(() => {
+    setViewMode('detail')
+    setCopyStatus('idle')
+  }, [detailPlan.plan.plan_id])
+
+  useEffect(() => {
+    if (copyStatus === 'idle') return
+    const timer = window.setTimeout(() => setCopyStatus('idle'), 1500)
+    return () => window.clearTimeout(timer)
+  }, [copyStatus])
 
   return (
     <div
@@ -72,17 +92,41 @@ export function AutoEditDetailModal({
               在这里的修改会覆盖当前方案，并在点击“一键成片”时生效（只影响本次候选方案，不影响重新生成）。
             </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setDetailEditMode((v) => !v)}
-                className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
-                  detailEditMode
-                    ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-200'
-                    : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:bg-slate-950/70'
-                }`}
-              >
-                {detailEditMode ? '退出编辑' : '进入编辑'}
-              </button>
+              <div className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-950/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('detail')}
+                  className={`text-[11px] rounded-md px-2 py-1 transition-colors ${
+                    viewMode === 'detail'
+                      ? 'bg-cyan-500/20 text-cyan-200'
+                      : 'text-slate-300 hover:bg-slate-900/70'
+                  }`}
+                >
+                  段落明细
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('copy')}
+                  className={`text-[11px] rounded-md px-2 py-1 transition-colors ${
+                    viewMode === 'copy' ? 'bg-cyan-500/20 text-cyan-200' : 'text-slate-300 hover:bg-slate-900/70'
+                  }`}
+                >
+                  文案速览
+                </button>
+              </div>
+              {viewMode === 'detail' && (
+                <button
+                  type="button"
+                  onClick={() => setDetailEditMode((v) => !v)}
+                  className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
+                    detailEditMode
+                      ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-200'
+                      : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:bg-slate-950/70'
+                  }`}
+                >
+                  {detailEditMode ? '退出编辑' : '进入编辑'}
+                </button>
+              )}
               <button
                 type="button"
                 disabled={!detailDraft}
@@ -126,10 +170,43 @@ export function AutoEditDetailModal({
             </p>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
-            <p className="text-[11px] text-slate-400">段落明细（字幕/音频/片段选择）</p>
-            <div className="mt-2 space-y-2">
-              {((detailDraft?.segments ?? detailPlan.plan.segments) ?? []).map((s, segIdx) => {
+          {viewMode === 'copy' ? (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] text-slate-400">文案速览（仅字幕文本）</p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!mergedCopyText.trim()) return
+                    try {
+                      await navigator.clipboard.writeText(mergedCopyText)
+                      setCopyStatus('ok')
+                    } catch {
+                      setCopyStatus('fail')
+                    }
+                  }}
+                  disabled={!mergedCopyText.trim()}
+                  className="text-[11px] rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-2 py-1 text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
+                >
+                  {copyStatus === 'ok' ? '复制成功' : copyStatus === 'fail' ? '复制失败' : '复制全文案'}
+                </button>
+              </div>
+              <textarea
+                value={mergedCopyText}
+                readOnly
+                rows={16}
+                className="mt-2 w-full rounded-lg bg-slate-950/60 border border-slate-700 px-3 py-2 text-xs leading-5 text-slate-100 outline-none"
+                placeholder="当前方案没有可用字幕文案。"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                共 {segments.length} 段，含文案 {segments.filter((s) => s.subtitle?.text?.trim()).length} 段。
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <p className="text-[11px] text-slate-400">段落明细（字幕/音频/片段选择）</p>
+              <div className="mt-2 space-y-2">
+                {segments.map((s, segIdx) => {
                 const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id || ''
                 const cm = clipId ? clipMetaByClip[clipId] : undefined
                 // 字幕详情需要显示“方案标注”的句子级绝对时间；
@@ -331,9 +408,10 @@ export function AutoEditDetailModal({
                     </div>
                   </div>
                 )
-              })}
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

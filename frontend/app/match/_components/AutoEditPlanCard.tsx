@@ -154,8 +154,7 @@ export function AutoEditPlanCard({
               clipDuration != null &&
               clipDuration > 0 &&
               rawStart >= -eps &&
-              rawEnd > rawStart &&
-              windowDur <= clipDuration + eps
+              rawEnd > rawStart
             let mappedStart = rawStart
             let mappedEnd = rawEnd
             if (canMapByClip && clipDuration != null) {

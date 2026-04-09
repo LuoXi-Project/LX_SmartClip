@@ -70,7 +70,7 @@ async def call_llm_for_events_batch(
         api_key=cfg["api_key"],
         model=cfg["model"],
         temperature=0.2,
-        max_tokens=min(int(cfg.get("max_tokens") or 20480), 8192),
+        max_tokens=int(cfg.get("max_tokens") or 20480),
         timeout=3600,
     )
     messages = [

@@ -495,6 +495,8 @@ def burn_to_mp4(
             norm_render_opts = dict(render_opts or {})
             norm_render_opts["clip_acodec"] = "aac"
             concat_codec_args = _build_render_codec_args(norm_render_opts)
+            # normalize 分支会重建 codec 参数，这里再次兜底避免 -c:v copy 与 -vf 冲突。
+            concat_codec_args = _force_video_reencode(concat_codec_args, render_opts=norm_render_opts)
 
         _run_ffmpeg(
             [

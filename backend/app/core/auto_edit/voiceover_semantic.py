@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence, Set
@@ -35,6 +36,9 @@ logger = logging.getLogger(__name__)
 MIN_UNITS_PER_CHUNK = 6
 MERGE_GAP_SEC = 0.25
 BUFFER_SEC = 0.08
+DEFAULT_CHAPTER_TARGET_SEC = 150.0
+MIN_CHAPTERS = 3
+MAX_CHAPTERS = 10
 
 # 兼容旧实现的字符级退化切批（当 token 预算异常时使用）
 MAX_CHUNK_BODY_CHARS = 9000
@@ -51,6 +55,43 @@ _KEYWORDS = (
     "推荐", "好用", "问题", "效果", "优惠", "价格", "重点", "注意", "总结", "建议",
     "产品", "功能", "体验", "对比", "优势", "缺点",
 )
+
+_DEFAULT_MEMORY_TEMPLATE = {
+    "happened_label": "已发生",
+    "open_label": "待展开点",
+    "state_label": "表达状态",
+    "happened_markers": (),
+    "open_markers": ("?", "？", "是否", "到底", "后来", "结果", "但是", "却", "突然"),
+    "state_markers": ("紧张", "害怕", "愤怒", "伤心", "兴奋", "犹豫", "崩溃", "冷静"),
+}
+
+_MEMORY_STYLE_PRESETS: dict[str, dict[str, Any]] = {
+    "generic": _DEFAULT_MEMORY_TEMPLATE,
+    "commentary": {
+        "happened_label": "剧情进展",
+        "open_label": "待回收线索",
+        "state_label": "人物状态",
+        "happened_markers": ("发现", "进入", "决定", "对抗", "反转"),
+        "open_markers": ("真相", "到底", "后来", "为什么", "是否"),
+        "state_markers": ("紧张", "害怕", "愤怒", "伤心", "兴奋", "犹豫", "崩溃", "冷静"),
+    },
+    "ecommerce": {
+        "happened_label": "卖点信息",
+        "open_label": "待说明疑问",
+        "state_label": "购买动机",
+        "happened_markers": ("功能", "效果", "材质", "参数", "对比", "优势"),
+        "open_markers": ("怎么选", "适合", "区别", "是否", "价格", "活动"),
+        "state_markers": ("放心", "省心", "划算", "实用", "省时", "省力"),
+    },
+    "voiceover": {
+        "happened_label": "核心信息",
+        "open_label": "待展开点",
+        "state_label": "表达状态",
+        "happened_markers": ("重点", "总结", "建议", "问题", "方法"),
+        "open_markers": ("接下来", "后面", "为什么", "怎么做", "是否"),
+        "state_markers": ("强调", "提醒", "对比", "建议", "结论"),
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -71,6 +112,15 @@ class SentenceUnit:
     @property
     def abs_start(self) -> float:
         return self.clip_base + self.st_rel
+
+
+@dataclass(frozen=True)
+class ChapterWindow:
+    chapter_id: str
+    title: str
+    start_sec: float
+    end_sec: float
+    units: tuple[SentenceUnit, ...]
 
 
 def _heuristic_score(text: str) -> float:
@@ -258,6 +308,211 @@ def _parse_keep_json(raw: str, valid_ids: Set[str]) -> Set[str]:
     return out
 
 
+def _resolve_chapter_count(total_dur: float, cfg: dict[str, Any]) -> int:
+    raw = cfg.get("chapter_count")
+    if raw is not None:
+        try:
+            n = int(raw)
+            if n > 0:
+                return min(MAX_CHAPTERS, max(1, n))
+        except Exception:
+            pass
+    target = DEFAULT_CHAPTER_TARGET_SEC
+    try:
+        target = float(cfg.get("chapter_target_sec") or DEFAULT_CHAPTER_TARGET_SEC)
+    except Exception:
+        target = DEFAULT_CHAPTER_TARGET_SEC
+    target = max(60.0, target)
+    auto_n = int(max(1.0, round(total_dur / target)))
+    # 长视频至少按 3 章处理，降低跨章节丢失概率
+    return min(MAX_CHAPTERS, max(MIN_CHAPTERS, auto_n))
+
+
+def _resolve_memory_style(cfg: dict[str, Any]) -> dict[str, Any]:
+    raw = str(cfg.get("content_style") or cfg.get("video_style") or "generic").strip().lower()
+    style_key = raw if raw in _MEMORY_STYLE_PRESETS else "generic"
+    preset = dict(_MEMORY_STYLE_PRESETS[style_key])
+
+    # 可选自定义覆盖，保证不同业务线都能兼容扩展
+    custom = cfg.get("memory_style")
+    if isinstance(custom, dict):
+        for k in (
+            "happened_label",
+            "open_label",
+            "state_label",
+            "happened_markers",
+            "open_markers",
+            "state_markers",
+        ):
+            if k in custom and custom[k]:
+                preset[k] = custom[k]
+    return preset
+
+
+def _build_chapter_windows(
+    units: List[SentenceUnit],
+    *,
+    chapter_count: int,
+) -> List[ChapterWindow]:
+    if not units:
+        return []
+    st = min(u.abs_start for u in units)
+    et = max(u.abs_start + u.dur for u in units)
+    total = max(1e-6, et - st)
+    chapter_count = max(1, int(chapter_count))
+    span = total / chapter_count
+    windows: List[ChapterWindow] = []
+    for i in range(chapter_count):
+        cst = st + i * span
+        cet = et if i == chapter_count - 1 else (st + (i + 1) * span)
+        subset = [
+            u for u in units
+            if (u.abs_start + u.dur) > cst and u.abs_start < cet
+        ]
+        if not subset:
+            continue
+        windows.append(
+            ChapterWindow(
+                chapter_id=f"ch_{i + 1:02d}",
+                title=f"第{i + 1}章",
+                start_sec=cst,
+                end_sec=cet,
+                units=tuple(subset),
+            )
+        )
+    return windows
+
+
+
+def _compact_text(s: str, *, max_len: int = 42) -> str:
+    t = " ".join((s or "").split())
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 1] + "…"
+
+
+def _build_chapter_memory(
+    kept_units: List[SentenceUnit],
+    memory_style: dict[str, Any],
+    *,
+    happened_max_points: int = 4,
+    clue_max_points: int = 3,
+    state_max_points: int = 3,
+) -> str:
+    """
+    结构化章节记忆：
+    - 已发生：本章核心事件
+    - 待回收线索：疑问句/未完结表达
+    - 人物状态：情绪或状态描述
+    """
+    happened_label = str(memory_style.get("happened_label") or "已发生")
+    open_label = str(memory_style.get("open_label") or "待展开点")
+    state_label = str(memory_style.get("state_label") or "表达状态")
+    if not kept_units:
+        return f"【{happened_label}】\n- （暂无）\n【{open_label}】\n- （暂无）\n【{state_label}】\n- （暂无）"
+
+    scored = sorted(
+        kept_units,
+        key=lambda u: (_heuristic_score(u.text), u.dur),
+        reverse=True,
+    )
+    happened: list[str] = []
+    clues: list[str] = []
+    states: list[str] = []
+    seen: set[str] = set()
+
+    state_markers = tuple(memory_style.get("state_markers") or _DEFAULT_MEMORY_TEMPLATE["state_markers"])
+    clue_markers = tuple(memory_style.get("open_markers") or _DEFAULT_MEMORY_TEMPLATE["open_markers"])
+    happened_markers = tuple(memory_style.get("happened_markers") or ())
+
+    for u in scored:
+        text = _compact_text(u.text, max_len=36)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+
+        if len(clues) < clue_max_points and any(m in text for m in clue_markers):
+            clues.append(f"- {text}")
+        if len(states) < state_max_points and any(m in text for m in state_markers):
+            states.append(f"- {text}")
+        if len(happened) < happened_max_points and (not happened_markers or any(m in text for m in happened_markers)):
+            happened.append(f"- {text}")
+
+        if (
+            len(happened) >= happened_max_points
+            and len(clues) >= clue_max_points
+            and len(states) >= state_max_points
+        ):
+            break
+
+    if not happened:
+        # 未命中业务 marker 时，退回通用高分句兜底
+        for u in scored[:happened_max_points]:
+            happened.append(f"- {_compact_text(u.text, max_len=36)}")
+        if not happened:
+            happened = ["- （暂无）"]
+    if not clues:
+        clues = ["- （暂无）"]
+    if not states:
+        states = ["- （暂无）"]
+
+    return (
+        f"【{happened_label}】\n"
+        + "\n".join(happened)
+        + f"\n【{open_label}】\n"
+        + "\n".join(clues)
+        + f"\n【{state_label}】\n"
+        + "\n".join(states)
+    )
+
+
+def _pick_chapter_opening_anchors(
+    chapter_units: List[SentenceUnit],
+    current_kept: Set[str],
+    continuity_memory: str,
+    *,
+    min_anchor_count: int,
+) -> Set[str]:
+    """
+    章节首句锚点约束：在章节前段补入可承接上文记忆的 1~N 句。
+    """
+    if min_anchor_count <= 0 or not chapter_units:
+        return set()
+
+    # 只在章节前段挑选，避免“锚点”跑到章节中后部
+    head_pool = sorted(chapter_units, key=lambda u: u.abs_start)[: max(8, min(20, len(chapter_units)))]
+
+    # 用上文记忆抽取关键词做轻量相似度打分
+    memory_keywords = {
+        tk
+        for tk in re.split(r"[^0-9A-Za-z\u4e00-\u9fff]+", continuity_memory)
+        if len(tk) >= 2 and tk != "暂无"
+    }
+
+    def _anchor_score(u: SentenceUnit) -> float:
+        t = u.text or ""
+        overlap = sum(1 for tk in memory_keywords if tk in t)
+        # 越靠前越有利
+        pos_bonus = max(0.0, 3.0 - (u.abs_start - head_pool[0].abs_start) * 0.2)
+        return overlap * 3.0 + _heuristic_score(t) * 0.2 + pos_bonus
+
+    ranked = sorted(head_pool, key=_anchor_score, reverse=True)
+    anchors: Set[str] = set()
+
+    # 优先保留已入选的前段句子作为锚点
+    for u in ranked:
+        if u.sid in current_kept:
+            anchors.add(u.sid)
+            if len(anchors) >= min_anchor_count:
+                return anchors
+
+    # 不足则从前段高分句补齐，保证有承接开头
+    for u in ranked:
+        anchors.add(u.sid)
+        if len(anchors) >= min_anchor_count:
+            break
+    return anchors
+
 
 async def _llm_keep_for_chunk(
     *,
@@ -267,6 +522,9 @@ async def _llm_keep_for_chunk(
     chunk_index: int,
     chunk_total: int,
     max_tokens: int,
+    chapter_title: str,
+    chapter_range: str,
+    continuity_memory: str,
 ) -> Set[str]:
     valid = {u.sid for u in chunk}
     lines = []
@@ -275,7 +533,9 @@ async def _llm_keep_for_chunk(
     body = "\n".join(lines)
     sys = CHUNK_SYSTEM_PROMPT
     user = (
+        f"【章节】{chapter_title}（{chapter_range}）\n"
         f"【批次】第 {chunk_index + 1}/{chunk_total} 批（长素材已自动分块处理，避免上下文溢出）\n\n"
+        f"【上文记忆】\n{continuity_memory}\n\n"
         f"【用户诉求】\n{user_prompt.strip()}\n\n"
         f"【本批句子】\n{body}"
     )
@@ -331,6 +591,9 @@ async def _llm_keep_for_final_chunk(
     chunk_index: int,
     chunk_total: int,
     max_tokens: int,
+    chapter_title: str,
+    chapter_range: str,
+    continuity_memory: str,
 ) -> Set[str]:
     """
     最终合并阶段：从所有候选句子里选出最终 keep。
@@ -346,7 +609,9 @@ async def _llm_keep_for_final_chunk(
     sys = FINAL_SYSTEM_PROMPT
     # 给模型一个明确的阶段说明，减少它把这个步骤当作“又来粗筛一遍”的误解
     user = (
+        f"【章节】{chapter_title}（{chapter_range}）\n"
         f"【合并阶段】第 {chunk_index + 1}/{chunk_total} 批（候选句子来自前面批次 union，需最终筛选并保持连贯）\n\n"
+        f"【上文记忆】\n{continuity_memory}\n\n"
         f"【用户诉求】\n{user_prompt.strip()}\n\n"
         f"【所有候选句子】\n{body}"
     )
@@ -357,7 +622,7 @@ async def _llm_keep_for_final_chunk(
     )
     return _parse_keep_json(raw, valid)
 
-
+# 构建智能快剪计划
 async def build_semantic_voiceover_plan(
     *,
     clip_groups: Sequence[Sequence[aiosqlite.Row]],
@@ -402,6 +667,8 @@ async def build_semantic_voiceover_plan(
     llm_output_reserve = min(max(1, _cfg_int("output_reserve_tokens", llm_max_tokens)), LLM_OUTPUT_RESERVE_TOKENS_CAP)
     tokens_per_char = _cfg_float("tokens_per_char", DEFAULT_TOKENS_PER_CHAR)
     input_safety_tokens = max(1, _cfg_int("input_safety_tokens", LLM_INPUT_SAFETY_TOKENS))
+    chapter_anchor_min = max(0, _cfg_int("chapter_anchor_min", 1))
+    memory_style = _resolve_memory_style(cfg)
 
     user_prefix_for_chunk = (
         "【用户诉求】\n"
@@ -418,141 +685,194 @@ async def build_semantic_voiceover_plan(
         timeout=3600.0,
     )
 
-    # 第 1 阶段：分批筛选候选句子（由用户提示词驱动）
-    chunks = chunk_units_by_token_budget(
+    vo = video_ids_order or []
+    order_map = {str(vid): i for i, vid in enumerate(vo)}
+    id_order = {u.sid: i for i, u in enumerate(units)}
+    ordered_units = sorted(
         units,
-        context_tokens=context_tokens,
-        system_prompt=CHUNK_SYSTEM_PROMPT,
-        user_prefix=user_prefix_for_chunk,
-        output_reserve_tokens=llm_output_reserve,
-        tokens_per_char=tokens_per_char,
-        input_safety_tokens=input_safety_tokens,
+        key=lambda u: (order_map.get(u.video_id, 10**9), u.abs_start, id_order[u.sid]),
     )
+    total_speech = _total_speech_duration(ordered_units)
+    chapter_count = _resolve_chapter_count(total_speech, cfg)
+    chapter_windows = _build_chapter_windows(ordered_units, chapter_count=chapter_count)
+    if not chapter_windows:
+        chapter_windows = [
+            ChapterWindow(
+                chapter_id="ch_01",
+                title="第1章",
+                start_sec=min(u.abs_start for u in ordered_units),
+                end_sec=max(u.abs_start + u.dur for u in ordered_units),
+                units=tuple(ordered_units),
+            )
+        ]
+
     logger.info(
-        "voiceover semantic stage1: %d sentences, %d chunk(s), context_tokens=%d, tokens_per_char=%.4f",
-        len(units),
-        len(chunks),
-        context_tokens,
-        tokens_per_char,
+        "voiceover semantic long-video mode: units=%d, speech=%.1fs, chapters=%d",
+        len(ordered_units),
+        total_speech,
+        len(chapter_windows),
     )
 
     sem = asyncio.Semaphore(3)
+    final_kept: Set[str] = set()
+    chapter_meta: list[dict[str, Any]] = []
+    continuity_memory = _build_chapter_memory([], memory_style)
 
-    async def _one(i: int, ch: List[SentenceUnit]) -> Set[str]:
-        async with sem:
-            return await _llm_keep_for_chunk(
-                llm=llm,
-                user_prompt=user_prompt,
-                chunk=ch,
-                chunk_index=i,
-                chunk_total=len(chunks),
-                max_tokens=llm_max_tokens,
-            )
-
-    results = await asyncio.gather(*[_one(i, ch) for i, ch in enumerate(chunks)], return_exceptions=True)
-    kept_stage1: Set[str] = set()
-    first_stage1_error: Exception | None = None
-    for r in results:
-        if isinstance(r, Exception):
-            logger.warning("智能快剪分块 LLM 失败: %s", r)
-            if is_llm_unauthorized_error(r):
-                raise RuntimeError(f"LLM 鉴权失败：{r}")
-            if first_stage1_error is None:
-                first_stage1_error = r
-            continue
-        kept_stage1 |= r
-
-    if not kept_stage1:
-        if first_stage1_error is not None:
-            raise RuntimeError(f"智能快剪失败（LLM 分块阶段异常）：{first_stage1_error}")
-        logger.warning("智能快剪：LLM 未返回有效 keep，使用启发式兜底")
-        scored = sorted(units, key=lambda u: _heuristic_score(u.text), reverse=True)
-        # 不限制保留比例：兜底只保证“能剪”
-        kept_stage1 = set()
-        total = 0.0
-        for u in scored[:80]:
-            kept_stage1.add(u.sid)
-            total += u.dur
-            if len(kept_stage1) >= 10 and total >= 20.0:
-                break
-
-    # 第 2 阶段：合并候选句子后做最终筛选（仍由用户提示词驱动）
-    id_order = {u.sid: i for i, u in enumerate(units)}
-    kept_units = [u for u in units if u.sid in kept_stage1]
-
-    # 兼容：kept_stage1 用于 stage2 候选；最终 kept 在 stage2 得出
-    vo = video_ids_order or []
-    order_map = {str(vid): i for i, vid in enumerate(vo)}
-    kept_units.sort(key=lambda u: (order_map.get(u.video_id, 10**9), u.abs_start, id_order[u.sid]))
-
-    candidate_units = kept_units
-
-    user_prefix_for_final = (
-        "【用户诉求】\n"
-        + (user_prompt.strip() if user_prompt else "")
-        + "\n\n【所有候选句子】\n"
-    )
-    final_chunks = chunk_units_by_token_budget(
-        candidate_units,
-        context_tokens=context_tokens,
-        system_prompt=FINAL_SYSTEM_PROMPT,
-        user_prefix=user_prefix_for_final,
-        output_reserve_tokens=llm_output_reserve,
-        tokens_per_char=tokens_per_char,
-        input_safety_tokens=input_safety_tokens,
-    )
-    logger.info(
-        "voiceover semantic stage2 final: candidate=%d, final_chunk(s)=%d",
-        len(candidate_units),
-        len(final_chunks),
-    )
-
-    async def _final_one(i: int, ch: List[SentenceUnit]) -> Set[str]:
-        async with sem:
-            return await _llm_keep_for_final_chunk(
-                llm=llm,
-                user_prompt=user_prompt,
-                chunk=ch,
-                chunk_index=i,
-                chunk_total=len(final_chunks),
-                max_tokens=llm_max_tokens,
-            )
-
-    first_stage2_error: Exception | None = None
-    if not final_chunks:
-        final_kept: Set[str] = set()
-    else:
-        final_results = await asyncio.gather(
-            *[_final_one(i, ch) for i, ch in enumerate(final_chunks)], return_exceptions=True
+    for cw in chapter_windows:
+        chapter_units = list(cw.units)
+        chapter_range = f"{cw.start_sec:.1f}s-{cw.end_sec:.1f}s"
+        chapter_prefix_for_chunk = (
+            f"【章节】{cw.title}（{chapter_range}）\n"
+            + user_prefix_for_chunk
         )
-        final_kept = set()
-        for r in final_results:
+        chunks = chunk_units_by_token_budget(
+            chapter_units,
+            context_tokens=context_tokens,
+            system_prompt=CHUNK_SYSTEM_PROMPT,
+            user_prefix=chapter_prefix_for_chunk,
+            output_reserve_tokens=llm_output_reserve,
+            tokens_per_char=tokens_per_char,
+            input_safety_tokens=input_safety_tokens,
+        )
+        logger.info(
+            "voiceover semantic stage1: %s units=%d chunk(s)=%d",
+            cw.chapter_id,
+            len(chapter_units),
+            len(chunks),
+        )
+
+        async def _one(i: int, ch: List[SentenceUnit]) -> Set[str]:
+            async with sem:
+                return await _llm_keep_for_chunk(
+                    llm=llm,
+                    user_prompt=user_prompt,
+                    chunk=ch,
+                    chunk_index=i,
+                    chunk_total=len(chunks),
+                    max_tokens=llm_max_tokens,
+                    chapter_title=cw.title,
+                    chapter_range=chapter_range,
+                    continuity_memory=continuity_memory,
+                )
+
+        results = await asyncio.gather(*[_one(i, ch) for i, ch in enumerate(chunks)], return_exceptions=True)
+        kept_stage1: Set[str] = set()
+        first_stage1_error: Exception | None = None
+        for r in results:
             if isinstance(r, Exception):
-                logger.warning("智能快剪合并阶段 LLM 失败: %s", r)
+                logger.warning("智能快剪分块 LLM 失败(%s): %s", cw.chapter_id, r)
                 if is_llm_unauthorized_error(r):
                     raise RuntimeError(f"LLM 鉴权失败：{r}")
-                if first_stage2_error is None:
-                    first_stage2_error = r
+                if first_stage1_error is None:
+                    first_stage1_error = r
                 continue
-            final_kept |= r
+            kept_stage1 |= r
 
-    if not final_kept:
-        # stage2 空结果：若此前出现异常则直接抛给前端
-        # （否则可能是“可用句子太少/模型输出空”的正常情况）
-        if first_stage2_error is not None:
-            raise RuntimeError(f"智能快剪失败（LLM 合并阶段异常）：{first_stage2_error}")
-        logger.warning("智能快剪：合并阶段未返回有效 keep，使用启发式兜底")
-        scored = sorted(candidate_units, key=lambda u: _heuristic_score(u.text), reverse=True)
-        final_kept = set()
-        total = 0.0
-        for u in scored[:80]:
-            final_kept.add(u.sid)
-            total += u.dur
-            if len(final_kept) >= 10 and total >= 20.0:
-                break
+        if not kept_stage1:
+            if first_stage1_error is not None:
+                raise RuntimeError(f"智能快剪失败（LLM 分块阶段异常）：{first_stage1_error}")
+            logger.warning("智能快剪：%s stage1 空结果，使用启发式兜底", cw.chapter_id)
+            scored = sorted(chapter_units, key=lambda u: _heuristic_score(u.text), reverse=True)
+            kept_stage1 = set()
+            total = 0.0
+            for u in scored[:40]:
+                kept_stage1.add(u.sid)
+                total += u.dur
+                if len(kept_stage1) >= 6 and total >= 12.0:
+                    break
 
-    kept_units = [u for u in units if u.sid in final_kept]
-    kept_units.sort(key=lambda u: (order_map.get(u.video_id, 10**9), u.abs_start, id_order[u.sid]))
+        candidate_units = [u for u in chapter_units if u.sid in kept_stage1]
+        chapter_prefix_for_final = (
+            f"【章节】{cw.title}（{chapter_range}）\n"
+            + "【用户诉求】\n"
+            + (user_prompt.strip() if user_prompt else "")
+            + "\n\n【所有候选句子】\n"
+        )
+        final_chunks = chunk_units_by_token_budget(
+            candidate_units,
+            context_tokens=context_tokens,
+            system_prompt=FINAL_SYSTEM_PROMPT,
+            user_prefix=chapter_prefix_for_final,
+            output_reserve_tokens=llm_output_reserve,
+            tokens_per_char=tokens_per_char,
+            input_safety_tokens=input_safety_tokens,
+        )
+        logger.info(
+            "voiceover semantic stage2: %s candidate=%d final_chunk(s)=%d",
+            cw.chapter_id,
+            len(candidate_units),
+            len(final_chunks),
+        )
+
+        async def _final_one(i: int, ch: List[SentenceUnit]) -> Set[str]:
+            async with sem:
+                return await _llm_keep_for_final_chunk(
+                    llm=llm,
+                    user_prompt=user_prompt,
+                    chunk=ch,
+                    chunk_index=i,
+                    chunk_total=len(final_chunks),
+                    max_tokens=llm_max_tokens,
+                    chapter_title=cw.title,
+                    chapter_range=chapter_range,
+                    continuity_memory=continuity_memory,
+                )
+
+        chapter_final_kept: Set[str] = set()
+        first_stage2_error: Exception | None = None
+        if final_chunks:
+            final_results = await asyncio.gather(
+                *[_final_one(i, ch) for i, ch in enumerate(final_chunks)], return_exceptions=True
+            )
+            for r in final_results:
+                if isinstance(r, Exception):
+                    logger.warning("智能快剪合并阶段 LLM 失败(%s): %s", cw.chapter_id, r)
+                    if is_llm_unauthorized_error(r):
+                        raise RuntimeError(f"LLM 鉴权失败：{r}")
+                    if first_stage2_error is None:
+                        first_stage2_error = r
+                    continue
+                chapter_final_kept |= r
+
+        if not chapter_final_kept:
+            if first_stage2_error is not None:
+                raise RuntimeError(f"智能快剪失败（LLM 合并阶段异常）：{first_stage2_error}")
+            logger.warning("智能快剪：%s stage2 空结果，使用启发式兜底", cw.chapter_id)
+            scored = sorted(candidate_units, key=lambda u: _heuristic_score(u.text), reverse=True)
+            total = 0.0
+            for u in scored[:40]:
+                chapter_final_kept.add(u.sid)
+                total += u.dur
+                if len(chapter_final_kept) >= 6 and total >= 12.0:
+                    break
+
+        # 章节首句锚点约束：确保章节开头存在承接上文的句子
+        anchor_ids = _pick_chapter_opening_anchors(
+            chapter_units,
+            chapter_final_kept,
+            continuity_memory,
+            min_anchor_count=chapter_anchor_min,
+        )
+        chapter_final_kept |= anchor_ids
+
+        final_kept |= chapter_final_kept
+        chapter_kept_units = [u for u in chapter_units if u.sid in chapter_final_kept]
+        continuity_memory = _build_chapter_memory(chapter_kept_units, memory_style)
+        chapter_meta.append(
+            {
+                "id": cw.chapter_id,
+                "title": cw.title,
+                "memory_style": str(cfg.get("content_style") or cfg.get("video_style") or "generic"),
+                "range": [round(cw.start_sec, 2), round(cw.end_sec, 2)],
+                "input_sentence_count": len(chapter_units),
+                "candidate_sentence_count": len(candidate_units),
+                "kept_sentence_count": len(chapter_final_kept),
+                "anchor_sentence_count": len(anchor_ids),
+                "continuity_memory": continuity_memory,
+            }
+        )
+
+    kept_units = [u for u in ordered_units if u.sid in final_kept]
 
     merged_groups = _merge_units_to_segments(kept_units)
     segments: List[SegmentPlan] = []
@@ -591,9 +911,9 @@ async def build_semantic_voiceover_plan(
     vt = (video_title_hint or "").strip()
     title = f"口播快剪（智能）· {vt}" if vt else "口播快剪（智能）"
     summary = (
-        f"智能快剪：分 {len(chunks)} 批筛选候选句子，"
-        f"合并阶段保留 {len(final_kept)}/{len(units)} 条句子；"
-        f"成片约 {total_sec:.1f}s（已按 LLM 上下文预算分批与最终合并）。"
+        f"智能快剪（长视频模式）：按 {len(chapter_windows)} 章分治筛选，"
+        f"最终保留 {len(final_kept)}/{len(units)} 条句子；"
+        f"成片约 {total_sec:.1f}s（按上下文预算切批并分章合并）。"
     )
     return Plan(
         plan_id=uuid.uuid4().hex[:8],
@@ -604,6 +924,7 @@ async def build_semantic_voiceover_plan(
         mode="original",
         target_duration_sec=None,
         estimated_duration_sec=round(total_sec, 2) if total_sec > 0 else None,
+        chapters=chapter_meta or None,
         segments=segments,
         bgm=BGMPlan(enabled=False),
         constraints=None,

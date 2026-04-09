@@ -551,6 +551,31 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
                     llm_cfg["context_tokens"] = int(
                         await LLMConfig.read_config(db, "llm_max_context_tokens", "128000")
                     )
+                    # 长视频兼容参数：内容画像 + 记忆模板 + 分章/锚点
+                    llm_cfg["content_style"] = (
+                        await LLMConfig.read_config(db, "llm_content_style", "generic")
+                    ).strip() or "generic"
+                    llm_cfg["chapter_target_sec"] = int(
+                        await LLMConfig.read_config(db, "llm_chapter_target_sec", "150")
+                    )
+                    llm_cfg["chapter_anchor_min"] = int(
+                        await LLMConfig.read_config(db, "llm_chapter_anchor_min", "1")
+                    )
+                    memory_style_raw = (
+                        await LLMConfig.read_config(db, "llm_memory_style", "")
+                    ).strip()
+                    if memory_style_raw:
+                        try:
+                            memory_style = json.loads(memory_style_raw)
+                            if isinstance(memory_style, dict):
+                                llm_cfg["memory_style"] = memory_style
+                            else:
+                                logger.warning(
+                                    "llm_memory_style 不是对象，忽略该配置: %s",
+                                    type(memory_style).__name__,
+                                )
+                        except Exception:
+                            logger.warning("llm_memory_style JSON 解析失败，忽略该配置")
                 except ValueError as ve:
                     raise HTTPException(
                         status_code=400,

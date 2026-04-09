@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import apiClient, { connectProcessJobWebSocket, processJobsApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
@@ -41,8 +42,13 @@ const PAGE_SIZE = 9
 const ACTIVE_TASK_KEY = 'smartclip:process:activeTask'
 
 export default function ProcessPage() {
+  const searchParams = useSearchParams()
+  const videoFromUrl = (searchParams.get('video') ?? '').trim()
+
   const [videos, setVideos] = useState<Video[]>([])
   const [selId, setSelId] = useState('')
+  const [taskHydrated, setTaskHydrated] = useState(false)
+  const appliedUrlVideoIdRef = useRef('')
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
@@ -54,6 +60,21 @@ export default function ProcessPage() {
   const [activeTaskId, setActiveTaskId] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+
+  /** 关闭 WS 但不触发旧 handler（避免 replace/unmount 时 onclose 误把 running 置 false） */
+  const closeWsQuietly = () => {
+    const w = wsRef.current
+    if (!w) return
+    w.onmessage = null
+    w.onclose = null
+    w.onerror = null
+    try {
+      w.close()
+    } catch {
+      /* noop */
+    }
+    wsRef.current = null
+  }
 
   useEffect(() => {
     const loadAllVideos = async () => {
@@ -129,7 +150,7 @@ export default function ProcessPage() {
   }
 
   const bindTaskSocket = (taskId: string) => {
-    wsRef.current?.close()
+    closeWsQuietly()
     const ws = connectProcessJobWebSocket(taskId)
     wsRef.current = ws
     ws.onmessage = (e) => {
@@ -165,13 +186,14 @@ export default function ProcessPage() {
         // noop
       }
     }
-    ws.onerror = () => setRunning(false)
-    ws.onclose = () => setRunning(false)
   }
 
   useEffect(() => {
     const taskId = localStorage.getItem(ACTIVE_TASK_KEY)
-    if (!taskId) return
+    if (!taskId) {
+      setTaskHydrated(true)
+      return () => closeWsQuietly()
+    }
     processJobsApi.get(taskId)
       .then((snapshot) => {
         persistActiveTask(snapshot.id)
@@ -180,14 +202,31 @@ export default function ProcessPage() {
         if (snapshot.status === 'done' || snapshot.status === 'cancelled' || snapshot.status === 'error') persistActiveTask('')
       })
       .catch(() => persistActiveTask(''))
-    return () => wsRef.current?.close()
+      .finally(() => setTaskHydrated(true))
+    return () => closeWsQuietly()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    appliedUrlVideoIdRef.current = ''
+  }, [videoFromUrl])
 
   const filteredVideos = useMemo(() => {
     const q = search.trim().toLowerCase()
     return q ? videos.filter((v) => v.name.toLowerCase().includes(q)) : videos
   }, [videos, search])
+
+  useEffect(() => {
+    if (!taskHydrated || loading || !videoFromUrl || running) return
+    if (activeTaskId) return
+    if (!videos.some((v) => v.id === videoFromUrl)) return
+    if (appliedUrlVideoIdRef.current === videoFromUrl) return
+
+    appliedUrlVideoIdRef.current = videoFromUrl
+    setSelId(videoFromUrl)
+    const idx = filteredVideos.findIndex((v) => v.id === videoFromUrl)
+    if (idx >= 0) setPage(Math.floor(idx / PAGE_SIZE) + 1)
+  }, [taskHydrated, loading, videoFromUrl, running, activeTaskId, videos, filteredVideos])
 
   const totalPages = Math.max(1, Math.ceil(filteredVideos.length / PAGE_SIZE))
   const pagedVideos = filteredVideos.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -215,7 +254,7 @@ export default function ProcessPage() {
   }
 
   const handleStart = async () => {
-    if (!selId || running) return
+    if (!selId || running || activeTaskId) return
     setSteps(blank())
     setRunning(true)
     setDone(false)
@@ -252,13 +291,14 @@ export default function ProcessPage() {
   const handleStop = () => {
     if (!activeTaskId) return
     void processJobsApi.cancel(activeTaskId).catch(() => {})
-    wsRef.current?.close()
+    closeWsQuietly()
     persistActiveTask('')
     setRunning(false)
     setDone(false)
     normalizeRunningStepsAsStopped()
   }
   const selVideo = videos.find((v) => v.id === selId)
+  const selectionLocked = running || !!activeTaskId
   const pct = Math.round(STEPS.filter((s) => ['done', 'skip'].includes(steps[s.key].status)).length / STEPS.length * 100)
 
   return (
@@ -275,10 +315,15 @@ export default function ProcessPage() {
       <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
 
         <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">选择视频</h2>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">选择视频</h2>
+              {selectionLocked && (
+                <p className="text-[11px] text-amber-500/90 mt-1">处理进行中，无法切换其它视频；请先停止任务后再选择。</p>
+              )}
+            </div>
             {!loading && videos.length > 0 && (
-              <span className="text-xs text-slate-600">
+              <span className="shrink-0 text-xs text-slate-600">
                 {search ? `${filteredVideos.length} / ${videos.length}` : videos.length} 个视频
               </span>
             )}
@@ -315,7 +360,7 @@ export default function ProcessPage() {
             <>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {pagedVideos.map((v) => (
-                  <button key={v.id} disabled={running} onClick={() => !running && setSelId(v.id)}
+                  <button key={v.id} disabled={selectionLocked} onClick={() => !selectionLocked && setSelId(v.id)}
                     className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                       selId === v.id ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'border-slate-700 bg-slate-800/40 hover:border-slate-500'
                     }`}>
@@ -357,12 +402,15 @@ export default function ProcessPage() {
         </section>
 
         <section className="flex items-center gap-3">
-          <button onClick={handleStart} disabled={!selId || running}
+          <button onClick={handleStart} disabled={!selId || selectionLocked}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors">
-            {running ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理</>}
+            {selectionLocked ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理</>}
           </button>
-          {running && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
-          {selVideo && !running && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
+          {activeTaskId && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
+          {selVideo && selectionLocked && (
+            <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo.name}</span></span>
+          )}
+          {selVideo && !selectionLocked && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
           <button
             onClick={() => setResultOpen(true)}
             disabled={!selId}
@@ -372,7 +420,7 @@ export default function ProcessPage() {
           </button>
         </section>
 
-        {(running || done) && (
+        {(running || done || !!activeTaskId) && (
           <section className="space-y-1.5">
             <div className="flex justify-between text-xs text-slate-400"><span>总进度</span><span>{pct}%</span></div>
             <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">

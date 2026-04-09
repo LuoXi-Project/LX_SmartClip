@@ -93,3 +93,12 @@ class Embedder:
             "provider": "openai",
             "model": self.model,
         }
+
+    def close(self) -> None:
+        """显式关闭底层 HTTP 客户端（在短生命周期子进程中可避免退出阶段挂起）。"""
+        try:
+            close_fn = getattr(self.client, "close", None)
+            if callable(close_fn):
+                close_fn()
+        except Exception:
+            pass

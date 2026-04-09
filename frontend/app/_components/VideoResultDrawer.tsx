@@ -479,7 +479,7 @@ export function VideoResultDrawer({
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />
                                   )}
-                                  重跑 ASR
+                                  重跑 ASR+Embed
                                 </button>
                                 <button
                                   type="button"
@@ -523,15 +523,7 @@ export function VideoResultDrawer({
                                   )}
                                   重跑 Embed
                                 </button>
-                                <button
-                                  type="button"
-                                  title="创建任务并跳转到素材处理页查看进度"
-                                  disabled={!!reprocessBusyId || !curVideoId}
-                                  onClick={() => void enqueueClipReprocess(c.id, 'asr_vlm', true)}
-                                  className="text-xs px-2 py-1 rounded-md border border-slate-600 bg-slate-900/50 text-slate-400 hover:border-slate-500 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                >
-                                  去处理页
-                                </button>
+                                
                                 <button
                                   onClick={() => saveClip(c.id)}
                                   disabled={!canSave}

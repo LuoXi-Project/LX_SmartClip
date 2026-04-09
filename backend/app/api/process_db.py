@@ -1,11 +1,27 @@
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from fastapi import WebSocket
 from app.db.database import get_db_conn
 from .process_shared import now_iso, _task_subscribers
 
 logger = logging.getLogger(__name__)
+
+STALE_RUNNING_TASK_SEC = 10 * 60
+
+
+def _parse_iso_dt(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        v = str(s).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(v)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
 
 
 async def read_config(db, key: str, default: str = "") -> str:
@@ -39,6 +55,23 @@ async def get_clips(video_id: str):
             "SELECT id, clip_path, asr_text, vlm_description FROM clips "
             "WHERE video_id = ? ORDER BY start_time",
             (video_id,),
+        )
+        return await cursor.fetchall()
+    finally:
+        await db.close()
+
+
+async def get_clips_by_ids_for_video(video_id: str, clip_ids: list[str]):
+    """按 id 列表返回属于该视频的切片行（顺序按 start_time），用于 clip_ids 归属校验。"""
+    if not clip_ids:
+        return []
+    placeholders = ",".join("?" * len(clip_ids))
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            f"SELECT id, clip_path, asr_text, vlm_description FROM clips "
+            f"WHERE video_id = ? AND id IN ({placeholders}) ORDER BY start_time",
+            (video_id, *clip_ids),
         )
         return await cursor.fetchall()
     finally:
@@ -94,7 +127,34 @@ def row_to_task_payload(row) -> dict:
 async def create_task(video_id: str) -> dict:
     running = await get_running_task_for_video(video_id)
     if running:
-        return row_to_task_payload(running)
+        try:
+            updated_raw = running["updated_at"]
+        except Exception:
+            updated_raw = None
+        updated_dt = _parse_iso_dt(updated_raw)
+        if updated_dt is not None:
+            age_sec = (datetime.now(timezone.utc) - updated_dt).total_seconds()
+            if age_sec > STALE_RUNNING_TASK_SEC:
+                now = now_iso()
+                db = await get_db_conn()
+                try:
+                    await db.execute(
+                        "UPDATE process_tasks SET status = 'error', error_message = ?, updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?",
+                        ("STALE_TASK_REPLACED", now, now, running["id"]),
+                    )
+                    await db.commit()
+                finally:
+                    await db.close()
+                logger.warning(
+                    "检测到僵尸任务并替换: video_id=%s old_task_id=%s age_sec=%.0f",
+                    video_id,
+                    running["id"],
+                    age_sec,
+                )
+            else:
+                return row_to_task_payload(running)
+        else:
+            return row_to_task_payload(running)
     task_id = str(uuid.uuid4())
     now = now_iso()
     db = await get_db_conn()

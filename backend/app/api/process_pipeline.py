@@ -61,6 +61,7 @@ async def _step_with_timeout_retries(
     run: Callable[[], Awaitable[T]],
     *,
     max_attempts: int = PIPELINE_STEP_MAX_ATTEMPTS,
+    timeout_sec: float = PIPELINE_STEP_TIMEOUT_SEC,
 ) -> T | None:
     """对单片段单步重试：单次超时/进程强杀由 run() 内 killable 任务抛出 TimeoutError。"""
     last_err: BaseException | None = None
@@ -79,7 +80,7 @@ async def _step_with_timeout_retries(
                 step_label,
                 attempt,
                 max_attempts,
-                PIPELINE_STEP_TIMEOUT_SEC,
+                timeout_sec,
             )
         except Exception as e:
             last_err = e
@@ -103,12 +104,21 @@ async def _step_with_timeout_retries(
     return None
 
 
-async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id: str | None = None):
-    """执行全素材处理（按片段流水线并发）：split -> (frames||asr) -> vlm -> embed"""
+async def run_pipeline(
+    video_id: str,
+    reporter,
+    skip_steps: list = None,
+    task_id: str | None = None,
+    clip_ids_filter: frozenset[str] | None = None,
+):
+    """执行全素材处理（按片段流水线并发）：split -> (frames||asr) -> vlm -> embed
+
+    clip_ids_filter: 仅在不重新切分时生效；只处理这些 clip id（须已通过 API 校验归属）。"""
     skip_steps = skip_steps or []
 
     video = await get_video(video_id)
     if not video:
+        logger.error("run_pipeline: video_id=%s 视频不存在", video_id)
         raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
     cancel_event_for(video_id).clear()
@@ -167,6 +177,9 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
         embedding_base_url = await read_config(db, "embedding_base_url", "https://api.openai.com/v1")
         embedding_api_key = await read_config(db, "embedding_api_key", "")
         embedding_model = await read_config(db, "embedding_model", "text-embedding-3-small")
+        embedding_timeout_sec = float(await read_config(db, "embedding_timeout_sec", "120"))
+        if embedding_timeout_sec <= 0:
+            embedding_timeout_sec = 120.0
     finally:
         await db.close()
 
@@ -221,6 +234,8 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
         await reporter.send("split", "skip", "跳过视频切分")
 
     clips_rows = await get_clips(video_id) if not do_split else []
+    if not do_split and clip_ids_filter:
+        clips_rows = [r for r in clips_rows if r["id"] in clip_ids_filter]
     total_clips = len(clips_rows)
     do_frames = "extract_frames" not in skip_steps
     do_asr = "asr" not in skip_steps
@@ -234,6 +249,8 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
         await reporter.send("extract_frames", "skip", "跳过图帧提取")
 
     whisper_inprocess_transcribe = os.environ.get("SMARTCLIP_WHISPER_INPROCESS_TRANSCRIBE", "").strip().lower() in ("1", "true", "yes")
+    # TODO: 是否在主进程线程中执行 Embedding，非主进程情况下会卡死，待修复
+    embed_inprocess = os.environ.get("SMARTCLIP_EMBED_INPROCESS", "1").strip().lower() in ("1", "true", "yes")
 
     asr_instance = None
     if do_asr:
@@ -290,10 +307,15 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
             do_embed = False
             await reporter.send("embed", "skip", "Embedding API Key 未配置，跳过向量入库")
         else:
-            await reporter.send("embed", "running", "开始生成 Embedding 并入库...")
+            mode = "主进程线程" if embed_inprocess else "子进程"
+            await reporter.send("embed", "running", f"开始生成 Embedding 并入库（{mode}，单片段超时 {int(embedding_timeout_sec)}s）...")
             try:
                 embedder = Embedder(base_url=embedding_base_url, api_key=embedding_api_key, model=embedding_model)
                 vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
+                if embed_inprocess:
+                    logger.warning(
+                        "SMARTCLIP_EMBED_INPROCESS=1：Embedding 在主进程线程执行；超时后线程可能继续运行直至底层请求返回"
+                    )
             except Exception as e:
                 do_embed = False
                 await reporter.send("embed", "error", f"Embedding 初始化失败: {e}")
@@ -315,7 +337,13 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
         _ensure_step_start(step)
         if total > 0 and done >= total:
             _ensure_step_end(step)
-        await reporter.send(step, "running", f"{message_prefix} {done}/{total} 完成", {"current": done, "total": total, "processed": success, "metrics": _metrics_snapshot()})
+        # done 表示“已处理数量”，success 表示“成功数量”；避免在失败/超时场景误以为已成功
+        await reporter.send(
+            step,
+            "running",
+            f"{message_prefix} {done}/{total} 已处理（成功 {success}）",
+            {"current": done, "total": total, "processed": success, "metrics": _metrics_snapshot()},
+        )
 
     async def _load_frame_paths(clip_path: str):
         clip_name = os.path.splitext(os.path.basename(clip_path))[0]
@@ -529,19 +557,58 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
                 await check_cancel(video_id)
                 if do_embed and embedder is not None and vector_db is not None:
                     if do_asr:
+                        logger.info("片段 %s Embedding 等待 ASR 完成...", item["id"])
                         await item["asr_ready"].wait()
                     text = f'{item["asr_text"]} {item["vlm_description"]}'.strip()
                     if text:
+                        # 该日志与 WS 进度用于判断：是否已进入 embedding 外部调用、卡在哪个 clip
+                        try:
+                            async with progress_lock:
+                                await reporter.send(
+                                    "embed",
+                                    "running",
+                                    f"Embedding 正在处理片段 {item['id']}（已处理 {emb_done}/{total_clips}）",
+                                    {"current": emb_done, "total": total_clips, "inflight_clip_id": item["id"], "metrics": _metrics_snapshot()},
+                                )
+                        except Exception:
+                            pass
+                        logger.info(
+                            "片段 %s Embedding 开始：len=%d model=%s",
+                            item["id"],
+                            len(text),
+                            embedding_model,
+                        )
                         async def _run_embed():
                             await check_cancel(video_id)
+                            if embed_inprocess:
+                                # 与 /process-embed 同路径：主进程线程调用，便于复现/对齐自测
+                                usage_box: dict[str, Any] = {}
+
+                                def _do_embed_sync():
+                                    def _on_usage(u):
+                                        usage_box["usage"] = u
+
+                                    emb_vec = embedder.embed(text, on_usage=_on_usage)
+                                    u = usage_box.get("usage")
+                                    u_dict = u.to_dict() if isinstance(u, TokenUsage) else None
+                                    return {"embedding": emb_vec, "usage": u_dict}
+
+                                return await asyncio.wait_for(asyncio.to_thread(_do_embed_sync), timeout=embedding_timeout_sec)
                             return await run_killable_target(
                                 _PIPELINE_ISOLATED,
                                 "isolated_embed_text",
                                 (embedding_base_url, embedding_api_key, embedding_model, text),
-                                timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                                timeout_sec=embedding_timeout_sec,
                             )
 
-                        raw_emb = await _step_with_timeout_retries(item["id"], "Embedding", _run_embed)
+                        t_embed0 = time.perf_counter()
+                        raw_emb = await _step_with_timeout_retries(
+                            item["id"],
+                            "Embedding",
+                            _run_embed,
+                            timeout_sec=embedding_timeout_sec,
+                        )
+                        t_embed_ms = int((time.perf_counter() - t_embed0) * 1000)
                         if raw_emb is not None:
                             embedding = raw_emb["embedding"]
                             usage_dict = raw_emb.get("usage")
@@ -552,7 +619,14 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
                                 metrics_errors.append("embed_usage_merge_error")
                             async with vector_db_lock:
                                 vector_db.add_embedding(item["id"], embedding)
+                            logger.info("片段 %s Embedding 写入完成：%dms", item["id"], t_embed_ms)
                             ok = True
+                        else:
+                            logger.warning("片段 %s Embedding 失败/超时：%dms", item["id"], t_embed_ms)
+                    else:
+                        logger.info("片段 %s Embedding 跳过：无可用文本（asr+vlm 为空）", item["id"])
+                else:
+                    logger.info("片段 %s Embedding 跳过：do_embed=%s embedder=%s vector_db=%s", item["id"], do_embed, bool(embedder), bool(vector_db))
             except ProcessCancelled:
                 raise
             except Exception as e:

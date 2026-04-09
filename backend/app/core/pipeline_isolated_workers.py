@@ -94,7 +94,14 @@ def isolated_embed_text(base_url: str, api_key: str, model: str, text: str) -> d
     def on_usage(u):
         box["usage"] = u
 
-    vec = emb.embed(text, on_usage=on_usage)
-    u = box.get("usage")
-    u_dict = u.to_dict() if isinstance(u, TokenUsage) else None
-    return {"embedding": vec, "usage": u_dict}
+    try:
+        vec = emb.embed(text, on_usage=on_usage)
+        u = box.get("usage")
+        u_dict = u.to_dict() if isinstance(u, TokenUsage) else None
+        return {"embedding": vec, "usage": u_dict}
+    finally:
+        # 避免短生命周期子进程在 HTTP 连接清理阶段异常挂起
+        try:
+            emb.close()
+        except Exception:
+            pass

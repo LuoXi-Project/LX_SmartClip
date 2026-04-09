@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus } from 'lucide-react'
-import { API_BASE_URL, clipsApi, type AsrSegmentJson, type ClipResult } from '@/lib/api'
+import { useRouter } from 'next/navigation'
+import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw } from 'lucide-react'
+import { API_BASE_URL, clipsApi, processJobsApi, type AsrSegmentJson, type ClipResult } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 
 type VideoOption = { id: string; name: string }
@@ -68,6 +69,19 @@ function safeStr(v: string | null | undefined) {
   return (v ?? '').toString()
 }
 
+function apiDetailMessage(e: unknown): string {
+  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (d != null && typeof d === 'object') {
+    try {
+      return JSON.stringify(d)
+    } catch {
+      return '请求失败'
+    }
+  }
+  return '请求失败'
+}
+
 export function VideoResultDrawer({
   open,
   onClose,
@@ -75,6 +89,7 @@ export function VideoResultDrawer({
   videoOptions,
   title = '处理结果',
 }: VideoResultDrawerProps) {
+  const router = useRouter()
   const initialVideoId = useMemo(() => {
     const v = (videoId || '').trim()
     if (v) return v
@@ -91,6 +106,7 @@ export function VideoResultDrawer({
   const [playerMode, setPlayerMode] = useState<'video' | 'clip'>('video')
 
   const [editing, setEditing] = useState<Record<string, EditState>>({})
+  const [reprocessBusyId, setReprocessBusyId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -268,6 +284,41 @@ export function VideoResultDrawer({
     }
   }
 
+  const enqueueClipReprocess = async (
+    clipId: string,
+    preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only',
+    navigateToProcess: boolean,
+  ) => {
+    if (!curVideoId || reprocessBusyId) return
+    const skip_steps =
+      preset === 'asr_only'
+        ? (['split', 'extract_frames', 'vlm'] as const)
+        : preset === 'vlm_only'
+          ? (['split', 'asr'] as const)
+          : preset === 'embed_only'
+            ? (['split', 'extract_frames', 'asr', 'vlm'] as const)
+            : (['split'] as const)
+    setReprocessBusyId(clipId)
+    try {
+      await processJobsApi.create(curVideoId, {
+        skip_steps: [...skip_steps],
+        clip_ids: [clipId],
+      })
+      if (navigateToProcess) {
+        router.push(`/process?video=${encodeURIComponent(curVideoId)}`)
+        onClose()
+      } else {
+        window.alert(
+          '已创建重跑任务（已默认更新向量）。请到「素材处理」页查看进度；完成后可点击左侧列表刷新本页数据。',
+        )
+      }
+    } catch (e: unknown) {
+      window.alert(apiDetailMessage(e))
+    } finally {
+      setReprocessBusyId(null)
+    }
+  }
+
   if (!open) return null
 
   const playerSrc =
@@ -413,9 +464,74 @@ export function VideoResultDrawer({
                             {fmt(c.start_time || 0)}-{fmt(c.end_time || 0)}
                           </button>
                           <div className="min-w-0 flex-1 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-500 truncate">{c.id}</span>
-                              <div className="ml-auto flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs text-slate-500 truncate max-w-[200px]">{c.id}</span>
+                              <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end">
+                                <button
+                                  type="button"
+                                  title="仅对本片段重新识别 ASR（不切分，默认同步入库向量）"
+                                  disabled={!!reprocessBusyId || !curVideoId}
+                                  onClick={() => void enqueueClipReprocess(c.id, 'asr_only', false)}
+                                  className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-amber-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
+                                >
+                                  {reprocessBusyId === c.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  )}
+                                  重跑 ASR
+                                </button>
+                                <button
+                                  type="button"
+                                  title="对本片段重跑 VLM + Embed（不切分，保证检索一致）"
+                                  disabled={!!reprocessBusyId || !curVideoId}
+                                  onClick={() => void enqueueClipReprocess(c.id, 'vlm_only', false)}
+                                  className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-cyan-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
+                                >
+                                  {reprocessBusyId === c.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  )}
+                                  重跑 VLM+Embed
+                                </button>
+                                <button
+                                  type="button"
+                                  title="本片段 ASR + VLM + Embed 重跑（不切分）"
+                                  disabled={!!reprocessBusyId || !curVideoId}
+                                  onClick={() => void enqueueClipReprocess(c.id, 'asr_vlm', false)}
+                                  className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-indigo-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
+                                >
+                                  {reprocessBusyId === c.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  )}
+                                  ASR+VLM+Embed
+                                </button>
+                                <button
+                                  type="button"
+                                  title="仅对本片段重跑 Embed（不切分）"
+                                  disabled={!!reprocessBusyId || !curVideoId}
+                                  onClick={() => void enqueueClipReprocess(c.id, 'embed_only', false)}
+                                  className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-emerald-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
+                                >
+                                  {reprocessBusyId === c.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  )}
+                                  重跑 Embed
+                                </button>
+                                <button
+                                  type="button"
+                                  title="创建任务并跳转到素材处理页查看进度"
+                                  disabled={!!reprocessBusyId || !curVideoId}
+                                  onClick={() => void enqueueClipReprocess(c.id, 'asr_vlm', true)}
+                                  className="text-xs px-2 py-1 rounded-md border border-slate-600 bg-slate-900/50 text-slate-400 hover:border-slate-500 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  去处理页
+                                </button>
                                 <button
                                   onClick={() => saveClip(c.id)}
                                   disabled={!canSave}

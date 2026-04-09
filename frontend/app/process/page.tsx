@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import apiClient, { connectProcessJobWebSocket, processJobsApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
-import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
 const STEPS = [
@@ -57,6 +57,9 @@ export default function ProcessPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [resultOpen, setResultOpen] = useState(false)
+  const [recoverOpen, setRecoverOpen] = useState(false)
+  /** 默认 true：重跑 ASR/VLM 后同步写入向量；关闭则 skip embed（检索可能不一致） */
+  const [syncVectorOnRecover, setSyncVectorOnRecover] = useState(true)
   const [activeTaskId, setActiveTaskId] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -270,6 +273,37 @@ export default function ProcessPage() {
     }
   }
 
+  const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only'): string[] => {
+    let base: string[]
+    if (preset === 'asr_only') base = ['split', 'extract_frames', 'vlm']
+    else if (preset === 'vlm_only') base = ['split', 'asr']
+    else if (preset === 'embed_only') base = ['split', 'extract_frames', 'asr', 'vlm']
+    else base = ['split']
+    // 约束：重跑 VLM 时必须同步更新向量，否则语义检索不一致；embed_only 也必须跑 embed。
+    if (preset === 'vlm_only' || preset === 'asr_vlm' || preset === 'embed_only') return base
+    // 仅重跑 ASR 才允许选择是否 skip embed（高级选项）
+    return syncVectorOnRecover ? base : [...base, 'embed']
+  }
+
+  const handleRecoverStart = async (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only') => {
+    if (!selId || running || activeTaskId) return
+    const v = videos.find((x) => x.id === selId)
+    if (!v || v.total_clips <= 0) return
+    setSteps(blank())
+    setRunning(true)
+    setDone(false)
+    setFinalMetrics(null)
+    try {
+      const created = await processJobsApi.create(selId, { skip_steps: recoverSkipSteps(preset) })
+      persistActiveTask(created.task_id)
+      const snapshot = await processJobsApi.get(created.task_id)
+      applyTaskSnapshot(snapshot)
+      bindTaskSocket(created.task_id)
+    } catch {
+      setRunning(false)
+    }
+  }
+
   const fmtMs = (ms?: unknown) => {
     const n = typeof ms === 'number' ? ms : (typeof ms === 'string' ? Number(ms) : NaN)
     if (!Number.isFinite(n) || n < 0) return '-'
@@ -299,6 +333,7 @@ export default function ProcessPage() {
   }
   const selVideo = videos.find((v) => v.id === selId)
   const selectionLocked = running || !!activeTaskId
+  const canRecover = Boolean(selId && selVideo && selVideo.total_clips > 0 && !selectionLocked && !activeTaskId)
   const pct = Math.round(STEPS.filter((s) => ['done', 'skip'].includes(steps[s.key].status)).length / STEPS.length * 100)
 
   return (
@@ -401,7 +436,7 @@ export default function ProcessPage() {
           )}
         </section>
 
-        <section className="flex items-center gap-3">
+        <section className="flex flex-wrap items-center gap-3">
           <button onClick={handleStart} disabled={!selId || selectionLocked}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors">
             {selectionLocked ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理</>}
@@ -412,6 +447,15 @@ export default function ProcessPage() {
           )}
           {selVideo && !selectionLocked && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
           <button
+            type="button"
+            onClick={() => setRecoverOpen((o) => !o)}
+            disabled={!selId}
+            className="flex items-center gap-1 px-3 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 text-slate-300 text-sm rounded-lg transition-colors"
+          >
+            {recoverOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            恢复 / 重跑
+          </button>
+          <button
             onClick={() => setResultOpen(true)}
             disabled={!selId}
             className="ml-auto px-4 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 text-sm rounded-lg transition-colors"
@@ -419,6 +463,62 @@ export default function ProcessPage() {
             查看处理结果/纠错
           </button>
         </section>
+
+        {recoverOpen && (
+          <section className="rounded-lg border border-slate-800 bg-slate-900/40 px-5 py-4 space-y-3">
+            <p className="text-xs text-slate-400">
+              针对<strong className="text-slate-300">已切片的素材</strong>，跳过切分并重跑 ASR / VLM / Embed（全片段）。需在「素材库」中已有片段（total_clips &gt; 0）。
+            </p>
+            <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={syncVectorOnRecover}
+                onChange={(e) => setSyncVectorOnRecover(e.target.checked)}
+                className="rounded border-slate-600"
+              />
+              重跑 ASR 后同步更新向量检索（推荐；取消则 skip embed，语义检索可能仍是旧文本；VLM 重跑默认必带 embed）
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!canRecover}
+                onClick={() => void handleRecoverStart('asr_only')}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-amber-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                重跑 ASR + Embed（全片段）
+              </button>
+              <button
+                type="button"
+                disabled={!canRecover}
+                onClick={() => void handleRecoverStart('vlm_only')}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-cyan-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                重跑 VLM + Embed（全片段）
+              </button>
+              <button
+                type="button"
+                disabled={!canRecover}
+                onClick={() => void handleRecoverStart('asr_vlm')}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                重跑 ASR + VLM + Embed（不切分）
+              </button>
+              <button
+                type="button"
+                disabled={!canRecover}
+                onClick={() => void handleRecoverStart('embed_only')}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                重跑 Embed（全片段）
+              </button>
+            </div>
+            {!canRecover && selId && (
+              <p className="text-[11px] text-amber-500/90">
+                {selectionLocked ? '当前有任务进行中，请先停止后再试。' : (selVideo?.total_clips ?? 0) <= 0 ? '该视频尚无切片，请先「开始处理」完成切分，或使用已完成切片的素材。' : ''}
+              </p>
+            )}
+          </section>
+        )}
 
         {(running || done || !!activeTaskId) && (
           <section className="space-y-1.5">

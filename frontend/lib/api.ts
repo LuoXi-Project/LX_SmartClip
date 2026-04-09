@@ -54,15 +54,22 @@ const WS_BASE_URL = typeof window !== 'undefined'
   ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
   : 'ws://localhost:8000'
 
+export interface ProcessJobCreateBody {
+  skip_steps?: string[]
+  clip_ids?: string[] | null
+}
+
 export function createProcessWebSocket(
   videoId: string,
-  skipSteps: string[] = []
+  skipSteps: string[] = [],
+  clipIds?: string[] | null,
 ): WebSocket {
   const ws = new WebSocket(`${WS_BASE_URL}/api/videos/${videoId}/process-ws`)
   ws.addEventListener('open', () => {
-    // 后端会等待首条 JSON（包含 skip_steps）后再进入处理流程。
-    // 即便为空数组，也必须主动发送，避免“开始后无响应，断开后才开始”。
-    ws.send(JSON.stringify({ skip_steps: skipSteps }))
+    // 后端会等待首条 JSON（包含 skip_steps / optionally clip_ids）后再进入处理流程。
+    const payload: ProcessJobCreateBody = { skip_steps: skipSteps }
+    if (clipIds != null && clipIds.length > 0) payload.clip_ids = clipIds
+    ws.send(JSON.stringify(payload))
   })
   return ws
 }
@@ -85,8 +92,11 @@ export function connectProcessJobWebSocket(taskId: string): WebSocket {
 }
 
 export const processJobsApi = {
-  create: (videoId: string) =>
-    apiClient.post<unknown, { task_id: string; video_id: string; status: string; stream_url: string }>(`/api/videos/${videoId}/process-jobs`),
+  create: (videoId: string, body?: ProcessJobCreateBody) =>
+    apiClient.post<unknown, { task_id: string; video_id: string; status: string; stream_url: string }>(
+      `/api/videos/${videoId}/process-jobs`,
+      body ?? {},
+    ),
   get: (taskId: string) =>
     apiClient.get<unknown, ProcessTaskSnapshot>(`/api/process-jobs/${taskId}`),
   cancel: (taskId: string) =>

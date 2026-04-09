@@ -2,8 +2,12 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 from fastapi import HTTPException
+from app.core.asr.types import ASRSegment, ASRTranscript
 from app.core.embedder import Embedder
+from app.core.killable_subprocess import run_killable_target
 from app.core.metrics.token_usage import TokenAccumulator, TokenUsage
 from app.core.splitter import StopRequested
 from app.core.vector_db.faiss_db import FaissVectorDB
@@ -26,6 +30,77 @@ from .process_shared import (
     parse_positive_int,
     splitter,
 )
+
+# 单片段单步（抽帧/ASR/VLM/Embedding）上限：短切片下一般远小于此值；超时则子进程 terminate/kill 或抛出后重试
+PIPELINE_STEP_TIMEOUT_SEC = 600.0
+# 共尝试次数：首次 + 3 次重试，仍失败则跳过该片段改步骤
+PIPELINE_STEP_MAX_ATTEMPTS = 4
+
+# multiprocessing 子进程入口（app.core.pipeline_isolated_workers 内顶层函数）
+_PIPELINE_ISOLATED = "app.core.pipeline_isolated_workers"
+
+T = TypeVar("T")
+
+
+def _transcript_from_payload(d: dict[str, Any]) -> ASRTranscript:
+    segs: list[ASRSegment] = []
+    for s in d.get("segments") or []:
+        try:
+            t = (s.get("text") or "").strip()
+            if not t:
+                continue
+            segs.append(ASRSegment(start=float(s["start"]), end=float(s["end"]), text=t))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return ASRTranscript(text=(d.get("text") or "").strip(), segments=tuple(segs))
+
+
+async def _step_with_timeout_retries(
+    clip_id: str,
+    step_label: str,
+    run: Callable[[], Awaitable[T]],
+    *,
+    max_attempts: int = PIPELINE_STEP_MAX_ATTEMPTS,
+) -> T | None:
+    """对单片段单步重试：单次超时/进程强杀由 run() 内 killable 任务抛出 TimeoutError。"""
+    last_err: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await run()
+        except asyncio.CancelledError:
+            raise
+        except ProcessCancelled:
+            raise
+        except TimeoutError as e:
+            last_err = e
+            logger.warning(
+                "片段 %s %s 超时 (第 %d/%d 次, 限制 %.0fs)",
+                clip_id,
+                step_label,
+                attempt,
+                max_attempts,
+                PIPELINE_STEP_TIMEOUT_SEC,
+            )
+        except Exception as e:
+            last_err = e
+            logger.warning(
+                "片段 %s %s 失败 (第 %d/%d 次): %s",
+                clip_id,
+                step_label,
+                attempt,
+                max_attempts,
+                e,
+            )
+        if attempt < max_attempts:
+            await asyncio.sleep(min(2 ** (attempt - 1), 30))
+    logger.error(
+        "片段 %s %s 已达 %d 次尝试仍失败，跳过该步骤: %s",
+        clip_id,
+        step_label,
+        max_attempts,
+        last_err,
+    )
+    return None
 
 
 async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id: str | None = None):
@@ -158,21 +233,33 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
     else:
         await reporter.send("extract_frames", "skip", "跳过图帧提取")
 
+    whisper_inprocess_transcribe = os.environ.get("SMARTCLIP_WHISPER_INPROCESS_TRANSCRIBE", "").strip().lower() in ("1", "true", "yes")
+
     asr_instance = None
     if do_asr:
         try:
             if asr_provider == "openai":
-                await reporter.send("asr", "running", f"使用 OpenAI ASR ({asr_openai_model}) 开始语音识别...")
-                from app.core.asr.openai_asr import OpenAIASR
-
-                asr_instance = OpenAIASR(
-                    base_url=asr_base_url, api_key=asr_api_key, model=asr_openai_model, language=asr_language
-                )
+                await reporter.send("asr", "running", f"使用 OpenAI ASR ({asr_openai_model}) 开始语音识别（子进程，可强杀超时）...")
+                if not (asr_api_key or "").strip():
+                    do_asr = False
+                    await reporter.send("asr", "error", "OpenAI ASR 未配置 API Key")
+                else:
+                    asr_instance = None
             else:
-                await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 开始语音识别...")
-                from app.core.asr.whisper_asr import WhisperASR
+                if whisper_inprocess_transcribe:
+                    await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 主进程线程识别（仅提音频走可杀子进程）...")
+                    from app.core.asr.whisper_asr import WhisperASR
 
-                asr_instance = await loop.run_in_executor(None, lambda: WhisperASR(asr_model, language=asr_language or None))
+                    asr_instance = await loop.run_in_executor(None, lambda: WhisperASR(asr_model, language=asr_language or None))
+                    logger.warning(
+                        "SMARTCLIP_WHISPER_INPROCESS_TRANSCRIBE=1：Whisper 转写在主进程线程中执行，wait_for 超时后仍可能长期占用线程"
+                    )
+                else:
+                    await reporter.send("asr", "running", f"使用 Whisper ({asr_model}) 子进程识别（可强杀超时，每片段会加载模型）...")
+                    asr_instance = None
+                    logger.info(
+                        "本地 Whisper 每片段在独立子进程中识别；若需单进程复用模型可设 SMARTCLIP_WHISPER_INPROCESS_TRANSCRIBE=1（更快但超时有线程滞留风险）"
+                    )
         except Exception as e:
             do_asr = False
             await reporter.send("asr", "error", f"ASR 初始化失败: {e}")
@@ -267,16 +354,37 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
             ok = False
             try:
                 await check_cancel(video_id)
-                frame_paths = item["frame_paths"]
-                if not frame_paths:
-                    if do_frames:
-                        frame_paths = await loop.run_in_executor(None, splitter.extract_frames, item["clip_path"], frame_fps, frame_target_pixels)
-                    elif do_vlm:
-                        frame_paths = await _load_frame_paths(item["clip_path"])
-                        if not frame_paths:
-                            frame_paths = await loop.run_in_executor(None, splitter.extract_frames, item["clip_path"], frame_fps, frame_target_pixels)
-                item["frame_paths"] = frame_paths or []
-                ok = bool(item["frame_paths"])
+
+                async def _run_frames():
+                    await check_cancel(video_id)
+                    fp = item["frame_paths"]
+                    if not fp:
+                        if do_frames:
+                            fp = await run_killable_target(
+                                _PIPELINE_ISOLATED,
+                                "isolated_extract_frames",
+                                (item["clip_path"], frame_fps, frame_target_pixels),
+                                timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                            )
+                        elif do_vlm:
+                            fp = await _load_frame_paths(item["clip_path"])
+                            if not fp:
+                                fp = await run_killable_target(
+                                    _PIPELINE_ISOLATED,
+                                    "isolated_extract_frames",
+                                    (item["clip_path"], frame_fps, frame_target_pixels),
+                                    timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                                )
+                    return fp or []
+
+                frame_paths = await _step_with_timeout_retries(item["id"], "抽帧", _run_frames)
+                if frame_paths is not None:
+                    item["frame_paths"] = frame_paths
+                    ok = bool(frame_paths)
+                else:
+                    item["frame_paths"] = []
+            except ProcessCancelled:
+                raise
             except Exception as e:
                 logger.warning("片段 %s 抽帧失败: %s", item["id"], e)
             finally:
@@ -300,12 +408,44 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
             ok = False
             try:
                 await check_cancel(video_id)
-                audio_path = await loop.run_in_executor(None, splitter.extract_audio, item["clip_path"], True)
-                tr = await loop.run_in_executor(None, asr_instance.transcribe_detailed, audio_path)
-                seg_json = json.dumps(tr.segments_as_dicts(), ensure_ascii=False) if tr.segments else None
-                await update_clip_asr(item["id"], tr.text, seg_json)
-                item["asr_text"] = (tr.text or "").strip()
-                ok = True
+
+                async def _run_asr():
+                    await check_cancel(video_id)
+                    if asr_provider == "openai":
+                        payload = await run_killable_target(
+                            _PIPELINE_ISOLATED,
+                            "isolated_openai_asr_clip",
+                            (item["clip_path"], True, asr_base_url, asr_api_key, asr_openai_model, asr_language),
+                            timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                        )
+                        return _transcript_from_payload(payload)
+                    if whisper_inprocess_transcribe:
+                        audio_path = await run_killable_target(
+                            _PIPELINE_ISOLATED,
+                            "isolated_extract_audio",
+                            (item["clip_path"], True),
+                            timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                        )
+                        return await asyncio.wait_for(
+                            loop.run_in_executor(None, asr_instance.transcribe_detailed, audio_path),
+                            timeout=PIPELINE_STEP_TIMEOUT_SEC,
+                        )
+                    payload = await run_killable_target(
+                        _PIPELINE_ISOLATED,
+                        "isolated_whisper_asr_clip",
+                        (item["clip_path"], True, asr_model, asr_language or None),
+                        timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                    )
+                    return _transcript_from_payload(payload)
+
+                tr = await _step_with_timeout_retries(item["id"], "ASR", _run_asr)
+                if tr is not None:
+                    seg_json = json.dumps(tr.segments_as_dicts(), ensure_ascii=False) if tr.segments else None
+                    await update_clip_asr(item["id"], tr.text, seg_json)
+                    item["asr_text"] = (tr.text or "").strip()
+                    ok = True
+            except ProcessCancelled:
+                raise
             except Exception as e:
                 logger.warning("片段 %s ASR 失败: %s", item["id"], e)
             finally:
@@ -333,29 +473,38 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
                     if frame_paths:
                         frame_times_sec = splitter.frame_timestamps_in_clip(item["clip_path"], len(frame_paths))
 
-                        def _call_vlm(fp, ts):
-                            box: dict[str, object] = {"usage": None, "est": 0}
+                        async def _run_vlm():
+                            await check_cancel(video_id)
+                            return await run_killable_target(
+                                _PIPELINE_ISOLATED,
+                                "isolated_vlm_generate",
+                                (
+                                    vlm_base_url,
+                                    vlm_model,
+                                    vlm_api_key,
+                                    frame_paths,
+                                    frame_times_sec,
+                                    vlm_max_images,
+                                    vlm_context_length,
+                                ),
+                                timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                            )
 
-                            def _on_usage(u: TokenUsage | None, est: int):
-                                box["usage"] = u
-                                box["est"] = int(est or 0)
-
-                            desc = vlm_instance.generate_description(fp, ts, vlm_max_images, vlm_context_length, on_usage=_on_usage)
-                            return desc, box
-
-                        description, usage_box = await loop.run_in_executor(None, lambda fp=frame_paths, ts=frame_times_sec: _call_vlm(fp, ts))
-                        try:
-                            usage = usage_box.get("usage")
-                            est = int(usage_box.get("est") or 0)
-                            if usage is None or isinstance(usage, TokenUsage):
+                        raw_vlm = await _step_with_timeout_retries(item["id"], "VLM", _run_vlm)
+                        if raw_vlm is not None:
+                            description = raw_vlm.get("description") or ""
+                            usage_dict = raw_vlm.get("usage")
+                            usage = TokenUsage(**usage_dict) if usage_dict else None
+                            est = int(raw_vlm.get("est") or 0)
+                            try:
                                 vlm_tokens.add_call(usage, estimated_total_tokens=est)
-                            else:
-                                metrics_errors.append("vlm_usage_type_error")
-                        except Exception:
-                            metrics_errors.append("vlm_usage_merge_error")
-                        item["vlm_description"] = (description or "").strip()
-                        await update_clip_field(item["id"], "vlm_description", item["vlm_description"])
-                        ok = True
+                            except Exception:
+                                metrics_errors.append("vlm_usage_merge_error")
+                            item["vlm_description"] = description.strip()
+                            await update_clip_field(item["id"], "vlm_description", item["vlm_description"])
+                            ok = True
+            except ProcessCancelled:
+                raise
             except Exception as e:
                 logger.warning("片段 %s VLM 失败: %s", item["id"], e)
             finally:
@@ -383,27 +532,29 @@ async def run_pipeline(video_id: str, reporter, skip_steps: list = None, task_id
                         await item["asr_ready"].wait()
                     text = f'{item["asr_text"]} {item["vlm_description"]}'.strip()
                     if text:
-                        def _call_embed(inp: str):
-                            box: dict[str, object] = {"usage": None}
+                        async def _run_embed():
+                            await check_cancel(video_id)
+                            return await run_killable_target(
+                                _PIPELINE_ISOLATED,
+                                "isolated_embed_text",
+                                (embedding_base_url, embedding_api_key, embedding_model, text),
+                                timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                            )
 
-                            def _on_usage(u: TokenUsage | None):
-                                box["usage"] = u
-
-                            vec = embedder.embed(inp, on_usage=_on_usage)
-                            return vec, box
-
-                        embedding, usage_box = await loop.run_in_executor(None, lambda t=text: _call_embed(t))
-                        try:
-                            usage = usage_box.get("usage")
-                            if usage is None or isinstance(usage, TokenUsage):
+                        raw_emb = await _step_with_timeout_retries(item["id"], "Embedding", _run_embed)
+                        if raw_emb is not None:
+                            embedding = raw_emb["embedding"]
+                            usage_dict = raw_emb.get("usage")
+                            usage = TokenUsage(**usage_dict) if usage_dict else None
+                            try:
                                 embed_tokens.add_call(usage)
-                            else:
-                                metrics_errors.append("embed_usage_type_error")
-                        except Exception:
-                            metrics_errors.append("embed_usage_merge_error")
-                        async with vector_db_lock:
-                            vector_db.add_embedding(item["id"], embedding)
-                        ok = True
+                            except Exception:
+                                metrics_errors.append("embed_usage_merge_error")
+                            async with vector_db_lock:
+                                vector_db.add_embedding(item["id"], embedding)
+                            ok = True
+            except ProcessCancelled:
+                raise
             except Exception as e:
                 logger.warning("片段 %s Embedding 失败: %s", item["id"], e)
             finally:

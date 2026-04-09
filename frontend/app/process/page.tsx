@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import apiClient, { connectProcessJobWebSocket, processJobsApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
+import apiClient, { connectProcessJobWebSocket, processJobsApi, videosApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
@@ -60,6 +60,8 @@ export default function ProcessPage() {
   const [recoverOpen, setRecoverOpen] = useState(false)
   /** 默认 true：重跑 ASR/VLM 后同步写入向量；关闭则 skip embed（检索可能不一致） */
   const [syncVectorOnRecover, setSyncVectorOnRecover] = useState(true)
+  const [statusUpdating, setStatusUpdating] = useState(false)
+  const [statusFixMsg, setStatusFixMsg] = useState('')
   const [activeTaskId, setActiveTaskId] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -304,6 +306,21 @@ export default function ProcessPage() {
     }
   }
 
+  const handleManualStatusFix = async (status: Video['status']) => {
+    if (!selId || selectionLocked || statusUpdating) return
+    setStatusUpdating(true)
+    setStatusFixMsg('')
+    try {
+      await videosApi.updateStatus(selId, status)
+      setVideos((prev) => prev.map((v) => (v.id === selId ? { ...v, status } : v)))
+      setStatusFixMsg(`状态已更新为「${{ pending: '待处理', processing: '处理中', done: '已完成', error: '错误' }[status]}」`)
+    } catch {
+      setStatusFixMsg('状态更新失败，请稍后重试。')
+    } finally {
+      setStatusUpdating(false)
+    }
+  }
+
   const fmtMs = (ms?: unknown) => {
     const n = typeof ms === 'number' ? ms : (typeof ms === 'string' ? Number(ms) : NaN)
     if (!Number.isFinite(n) || n < 0) return '-'
@@ -453,7 +470,7 @@ export default function ProcessPage() {
             className="flex items-center gap-1 px-3 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 text-slate-300 text-sm rounded-lg transition-colors"
           >
             {recoverOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            恢复 / 重跑
+            恢复 / 重跑 / 状态修改
           </button>
           <button
             onClick={() => setResultOpen(true)}
@@ -511,6 +528,50 @@ export default function ProcessPage() {
               >
                 重跑 Embed（全片段）
               </button>
+            </div>
+            <div className="pt-2 border-t border-slate-800/80 space-y-2">
+              <p className="text-xs text-slate-400">
+                重跑后若素材状态未自动同步，可在这里手动修正：
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!selId || selectionLocked || statusUpdating}
+                  onClick={() => void handleManualStatusFix('pending')}
+                  className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  设为待处理
+                </button>
+                <button
+                  type="button"
+                  disabled={!selId || selectionLocked || statusUpdating}
+                  onClick={() => void handleManualStatusFix('processing')}
+                  className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-amber-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  设为处理中
+                </button>
+                <button
+                  type="button"
+                  disabled={!selId || selectionLocked || statusUpdating}
+                  onClick={() => void handleManualStatusFix('done')}
+                  className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  设为已完成
+                </button>
+                <button
+                  type="button"
+                  disabled={!selId || selectionLocked || statusUpdating}
+                  onClick={() => void handleManualStatusFix('error')}
+                  className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-red-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  设为错误
+                </button>
+              </div>
+              {statusFixMsg && (
+                <p className={`text-[11px] ${statusFixMsg.includes('失败') ? 'text-red-400/90' : 'text-emerald-400/90'}`}>
+                  {statusFixMsg}
+                </p>
+              )}
             </div>
             {!canRecover && selId && (
               <p className="text-[11px] text-amber-500/90">

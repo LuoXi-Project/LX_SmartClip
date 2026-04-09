@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw } from 'lucide-react'
 import { API_BASE_URL, clipsApi, processJobsApi, type AsrSegmentJson, type ClipResult } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
+import { useToast } from '@/components/ui/toast-provider'
 
 type VideoOption = { id: string; name: string }
 
@@ -90,6 +91,7 @@ export function VideoResultDrawer({
   title = '处理结果',
 }: VideoResultDrawerProps) {
   const router = useRouter()
+  const toast = useToast()
   const initialVideoId = useMemo(() => {
     const v = (videoId || '').trim()
     if (v) return v
@@ -308,12 +310,12 @@ export function VideoResultDrawer({
         router.push(`/process?video=${encodeURIComponent(curVideoId)}`)
         onClose()
       } else {
-        window.alert(
+        toast.success(
           '已创建重跑任务（已默认更新向量）。请到「素材处理」页查看进度；完成后可点击左侧列表刷新本页数据。',
         )
       }
     } catch (e: unknown) {
-      window.alert(apiDetailMessage(e))
+      toast.error(apiDetailMessage(e))
     } finally {
       setReprocessBusyId(null)
     }

@@ -229,6 +229,8 @@ export const videosApi = {
   }) => apiClient.post<unknown, { id: string; name: string; file_path: string; thumbnail_path: string | null }>(`/api/videos/${id}/reencode`, payload),
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
   rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),
+  updateStatus: (id: string, status: Video['status']) =>
+    apiClient.patch<unknown, { id: string; status: Video['status'] }>(`/api/videos/${id}`, { status }),
   process: (id: string) => apiClient.post(`/api/videos/${id}/process`),
   processCancel: (id: string) =>
     apiClient.post<unknown, { ok: boolean; video_id: string }>(`/api/videos/${id}/process-cancel`),

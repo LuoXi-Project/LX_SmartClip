@@ -7,6 +7,11 @@ class RenamePayload(BaseModel):
     name: str
 
 
+class UpdateVideoPayload(BaseModel):
+    name: Optional[str] = None
+    status: Optional[Literal["pending", "processing", "done", "error"]] = None
+
+
 class ImportVideoByUrlPayload(BaseModel):
     url: str = Field(..., min_length=5, description="要下载的视频链接（由 yt-dlp 处理）")
     title: Optional[str] = Field(None, description="可选：导入后素材名称")

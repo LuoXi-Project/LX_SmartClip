@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
-from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, RenamePayload
+from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, UpdateVideoPayload
 
 from app.db.database import get_db_conn
 from app.utils.bin_paths import ffmpeg_bin
@@ -406,9 +406,12 @@ async def stream_video(video_id: str):
 
 
 @router.patch("/{video_id}")
-async def rename_video(video_id: str, payload: RenamePayload):
-    name = payload.name.strip()
-    if not name:
+async def update_video(video_id: str, payload: UpdateVideoPayload):
+    name = payload.name.strip() if isinstance(payload.name, str) else None
+    status = payload.status
+    if not name and not status:
+        raise HTTPException(status_code=400, detail="至少提供一个可更新字段（name/status）")
+    if payload.name is not None and not name:
         logger.error(f"视频名称不能为空: {video_id}")
         raise HTTPException(status_code=400, detail="名称不能为空")
 
@@ -421,15 +424,21 @@ async def rename_video(video_id: str, payload: RenamePayload):
         if row is None:
             logger.error(f"视频不存在: {video_id}")
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
-
-        await db.execute(
-            "UPDATE videos SET name = ? WHERE id = ?", (name, video_id)
-        )
+        updates = []
+        params = []
+        if name:
+            updates.append("name = ?")
+            params.append(name)
+        if status:
+            updates.append("status = ?")
+            params.append(status)
+        params.append(video_id)
+        await db.execute(f"UPDATE videos SET {', '.join(updates)} WHERE id = ?", params)
         await db.commit()
     finally:
         await db.close()
 
-    return {"id": video_id, "name": name}
+    return {"id": video_id, "name": name, "status": status}
 
 
 @router.delete("/{video_id}")

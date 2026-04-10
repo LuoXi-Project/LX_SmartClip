@@ -93,16 +93,46 @@ DEFAULT_CONFIG = [
     ("quiet_split", "true", "select", "安静切分（减少日志/进度输出）", '["true","false"]'),
     # 切分/转码输出参数（FFmpeg）
     ("clip_container", "mp4", "select", "切分输出格式（容器）", '["mp4","mov","mkv","webm"]'),
-    ("clip_vcodec", "libx264", "select", "视频编码器", '["libx264","libx265","libvpx-vp9","copy"]'),
+    ("clip_vcodec", "libx264", "select", "视频编码器", '["libx264","libx265","h264_nvenc","hevc_nvenc","libvpx-vp9","copy"]'),
     ("clip_acodec", "aac", "select", "音频编码器", '["aac","libopus","copy"]'),
     ("clip_preset", "veryfast", "select", "编码 preset（速度/质量）", '["ultrafast","superfast","veryfast","faster","fast","medium","slow","slower","veryslow"]'),
-    ("clip_crf", "23", "number", "视频 CRF（0~51，越小越清晰）", None),
+    ("clip_crf", "18", "number", "视频质量参数（x264/x265=CRF，NVENC=CQ，0~51 越小越清晰）", None),
     ("clip_video_bitrate_kbps", "0", "number", "视频码率（kbps，0=使用 CRF）", None),
     ("clip_audio_bitrate_kbps", "128", "number", "音频码率（kbps）", None),
+    ("clip_g", "48", "number", "GOP 长度（关键帧间隔）", None),
+    ("clip_keyint_min", "48", "number", "最小关键帧间隔（x264/x265）", None),
+    ("clip_sc_threshold", "0", "number", "场景切换阈值（x264/x265，0=关闭自动插入）", None),
     ("clip_fps", "0", "number", "输出帧率（fps，0=跟随源）", None),
     ("clip_scale_width", "0", "number", "输出宽度（px，0=不限制）", None),
     ("clip_scale_height", "0", "number", "输出高度（px，0=不限制）", None),
     ("clip_pix_fmt", "yuv420p", "select", "像素格式（兼容性）", '["yuv420p","yuv422p","yuv444p"]'),
+    # 成片导出（字幕烧录 / 原声成片）：与切片分离，禁止 stream copy，保证时间轴一致
+    ("export_container", "mp4", "select", "成片输出格式（容器）", '["mp4","mov","mkv","webm"]'),
+    (
+        "export_vcodec",
+        "libx264",
+        "select",
+        "成片视频编码器",
+        '["libx264","libx265","h264_nvenc","hevc_nvenc","libvpx-vp9"]',
+    ),
+    ("export_acodec", "aac", "select", "成片音频编码器", '["aac","libopus"]'),
+    (
+        "export_preset",
+        "medium",
+        "select",
+        "成片编码 preset（速度/质量）",
+        '["ultrafast","superfast","veryfast","faster","fast","medium","slow","slower","veryslow"]',
+    ),
+    ("export_crf", "20", "number", "成片视频 CRF（0~51）", None),
+    ("export_video_bitrate_kbps", "0", "number", "成片视频码率（kbps，0=使用 CRF）", None),
+    ("export_audio_bitrate_kbps", "192", "number", "成片音频码率（kbps）", None),
+    ("export_g", "48", "number", "成片 GOP 长度（关键帧间隔）", None),
+    ("export_keyint_min", "48", "number", "成片最小关键帧间隔（x264/x265）", None),
+    ("export_sc_threshold", "0", "number", "成片场景切换阈值（x264/x265）", None),
+    ("export_fps", "0", "number", "成片输出帧率（0=跟随源）", None),
+    ("export_scale_width", "0", "number", "成片输出宽度（px，0=不限制）", None),
+    ("export_scale_height", "0", "number", "成片输出高度（px，0=不限制）", None),
+    ("export_pix_fmt", "yuv420p", "select", "成片像素格式", '["yuv420p","yuv422p","yuv444p"]'),
     ("vector_dimension", "1536", "number", "向量维度", None),
     ("top_k", "12", "number", "召回数量 top_k", None),
     ("vlm_provider", "openai", "select", "视觉模型提供商", '["openai"]'),
@@ -216,5 +246,17 @@ async def init_db():
         await db.execute(
             "UPDATE config SET options = ? WHERE key = 'split_mode'",
             ('["scene","fixed","hybrid"]',),
+        )
+        await db.execute(
+            "UPDATE config SET options = ? WHERE key = 'clip_vcodec'",
+            ('["libx264","libx265","h264_nvenc","hevc_nvenc","libvpx-vp9","copy"]',),
+        )
+        await db.execute(
+            "UPDATE config SET options = ? WHERE key = 'export_vcodec'",
+            ('["libx264","libx265","h264_nvenc","hevc_nvenc","libvpx-vp9"]',),
+        )
+        # 兼容旧库：将历史默认 clip_crf=23 升级到 18（用户自定义值不改）
+        await db.execute(
+            "UPDATE config SET value = '18' WHERE key = 'clip_crf' AND COALESCE(TRIM(value), '') IN ('', '23')",
         )
         await db.commit()

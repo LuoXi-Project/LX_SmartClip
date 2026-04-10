@@ -49,7 +49,7 @@ async def _get_config_value(db, key: str, default: str) -> str:
 
 
 async def _load_render_opts(db) -> dict:
-    """读取烧录渲染参数（来源 config 表，不在路由层硬编码默认值）。"""
+    """读取切片/预处理用 FFmpeg 参数（可含 copy，追求速度）。"""
     keys = [
         "clip_vcodec",
         "clip_acodec",
@@ -57,11 +57,38 @@ async def _load_render_opts(db) -> dict:
         "clip_crf",
         "clip_video_bitrate_kbps",
         "clip_audio_bitrate_kbps",
+        "clip_g",
+        "clip_keyint_min",
+        "clip_sc_threshold",
         "clip_fps",
         "clip_scale_width",
         "clip_scale_height",
         "clip_pix_fmt",
         "clip_container",
+    ]
+    opts = {}
+    for key in keys:
+        opts[key] = await _get_config_value(db, key, "")
+    return opts
+
+
+async def _load_export_render_opts(db) -> dict:
+    """读取成片导出专用参数（最终 concat+烧录；与切片分离）。"""
+    keys = [
+        "export_vcodec",
+        "export_acodec",
+        "export_preset",
+        "export_crf",
+        "export_video_bitrate_kbps",
+        "export_audio_bitrate_kbps",
+        "export_g",
+        "export_keyint_min",
+        "export_sc_threshold",
+        "export_fps",
+        "export_scale_width",
+        "export_scale_height",
+        "export_pix_fmt",
+        "export_container",
     ]
     opts = {}
     for key in keys:
@@ -154,6 +181,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         ) as cur:
             rows = await cur.fetchall()
         render_opts = await _load_render_opts(db)
+        export_render_opts = await _load_export_render_opts(db)
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -175,6 +203,9 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         tts_audio_dir=TTS_AUDIO_DIR,
         fonts_dir=_FONTS_DIR,
         render_opts=render_opts,
+        export_render_opts=export_render_opts,
+        render_mode="tts",
+        export_backend=getattr(req, "export_backend", "ffmpeg"),
         output_dir=_BURNED_VIDEOS_DIR,
     )
 
@@ -214,6 +245,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         ) as cur:
             rows = await cur.fetchall()
         render_opts = await _load_render_opts(db)
+        export_render_opts = await _load_export_render_opts(db)
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -236,6 +268,20 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         if not raw_ids and getattr(seg, "clip_id", None):
             raw_ids = [seg.clip_id]
         group_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
+        trims = getattr(seg, "clip_trims", None)
+        if trims and group_ids:
+            by_cid: dict[str, float] = {}
+            for t in trims:
+                try:
+                    by_cid[str(t.clip_id)] = float(t.duration_sec)
+                except Exception:
+                    continue
+            total_tr = 0.0
+            for cid in group_ids:
+                total_tr += float(by_cid.get(cid, clip_dur.get(cid, 5.0)))
+            if total_tr > 0:
+                seg_durs.append(total_tr)
+                continue
         total = sum(clip_dur.get(cid, 5.0) for cid in group_ids)
         if total <= 0:
             total = 5.0
@@ -255,6 +301,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
                 # 原声导出时也需要把用户/规划阶段的时长与裁剪偏移传给 burn_to_mp4
                 duration_sec=getattr(seg, "duration_sec", None),
                 clip_start_sec=getattr(seg, "clip_start_sec", None),
+                clip_trims=getattr(seg, "clip_trims", None),
                 tts_filename=None,
             )
         )
@@ -270,8 +317,11 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         tts_audio_dir=TTS_AUDIO_DIR,
         fonts_dir=_FONTS_DIR,
         render_opts=render_opts,
+        export_render_opts=export_render_opts,
+        render_mode="original",
         output_dir=_BURNED_VIDEOS_DIR,
         normalize_audio=req.normalize_audio,
+        export_backend=getattr(req, "export_backend", "ffmpeg"),
     )
 
     if not saved_path or not os.path.exists(saved_path):

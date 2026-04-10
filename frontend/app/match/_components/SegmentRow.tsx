@@ -9,18 +9,21 @@ import {
   Mic,
   MicOff,
   Play,
+  Scissors,
   Search,
   Trash2,
   Volume2,
 } from 'lucide-react'
 import type { MatchClip } from '@/lib/api'
 import type { Segment } from './types'
+import { trimIsCustom } from './clipTrim'
 import { ClipCard } from './ClipCard'
 
 export function SegmentRow({
   seg, index, segmentCount = 0, onReorder,
   onTextChange, onRemove, onMatch, onToggleSelect,
   onTts, onPlayAudio, onStopAudio, playingAudio, onPreview, onToggleExpand,
+  onOpenClipInOut,
   dragHandleProps,
 }: {
   seg: Segment; index: number
@@ -37,6 +40,8 @@ export function SegmentRow({
   playingAudio: boolean
   onPreview: (clip: MatchClip) => void
   onToggleExpand: () => void
+  /** 打开主选素材出入点（单选时可用） */
+  onOpenClipInOut?: () => void
   /** 拖动手柄（仅手动匹配段落排序） */
   dragHandleProps?: HTMLAttributes<HTMLDivElement> & { draggable?: boolean }
 }) {
@@ -44,6 +49,11 @@ export function SegmentRow({
   const canDown = segmentCount > 0 && index < segmentCount - 1
   const primaryId = seg.selectedClipIds?.[0] ?? ''
   const chosen = primaryId ? (seg.clips.find((c) => c.clip_id === primaryId) ?? null) : null
+  const trimCustom =
+    (seg.selectedClipIds ?? []).some((id) => {
+      const c = seg.clips.find((x) => x.clip_id === id)
+      return c ? trimIsCustom(seg, c) : false
+    })
   const selectedCount = seg.selectedClipIds?.length ?? 0
   const orderIndexOf = (clipId: string) => (seg.selectedClipIds?.indexOf(clipId) ?? -1)
 
@@ -173,6 +183,25 @@ export function SegmentRow({
         )}
 
         {/* TTS bar — only when a clip is chosen */}
+        {chosen && onOpenClipInOut && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenClipInOut}
+              title="预览并设置各勾选素材的出入点，可在窗口内切换片段"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-600 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/50 hover:bg-slate-800 transition-colors"
+            >
+              <Scissors className="w-3.5 h-3.5 shrink-0" />
+              出入点预览
+              {trimCustom ? (
+                <span className="text-[10px] font-medium text-amber-400/90">已裁剪</span>
+              ) : null}
+            </button>
+            {(seg.selectedClipIds?.length ?? 0) > 1 ? (
+              <span className="text-[10px] text-slate-600">多选时在窗口顶部切换素材分别编辑</span>
+            ) : null}
+          </div>
+        )}
         {chosen && (
           <div className="flex items-center gap-3 rounded-xl bg-slate-900/40 border border-slate-800 px-3 py-2.5">
             <Volume2 className="w-4 h-4 text-slate-500 shrink-0" />

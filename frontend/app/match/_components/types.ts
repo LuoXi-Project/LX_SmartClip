@@ -3,6 +3,9 @@ import { API_BASE_URL } from '@/lib/runtime-config'
 export type { SubtitleStyle, ExportMode } from '@/lib/subtitle-types'
 export { DEFAULT_SUBTITLE_STYLE } from '@/lib/subtitle-types'
 
+/** 片段文件内使用区间（秒），相对该 clip 文件起点；导出时写入 clip_start_sec / duration_sec */
+export type ClipTrimRange = { inSec: number; outSec: number }
+
 export interface Segment {
   id: string
   text: string
@@ -10,6 +13,8 @@ export interface Segment {
   chosenIdx: number
   /** 已按勾选顺序记录的 clip_id 列表（第一个为当前展示/主选） */
   selectedClipIds: string[]
+  /** 按 clip_id 记录出入点；仅「单选素材」时参与成片，多选拼接暂不用 */
+  clipTrimByClipId?: Record<string, ClipTrimRange>
   ttsFilename: string | null
   ttsLoading: boolean
   ttsError: string

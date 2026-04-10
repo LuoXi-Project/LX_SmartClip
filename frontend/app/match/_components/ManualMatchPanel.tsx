@@ -36,6 +36,8 @@ export type ManualMatchPanelProps = {
   playingSegId: string | null
   onPreview: (clip: MatchClip) => void
   onToggleExpand: (segId: string) => void
+  /** 打开段落主选素材的出入点预览 */
+  onOpenClipInOut?: (segId: string) => void
   /** 复刻模板向导：用于自动注入到文案生成提示词前缀 */
   replicaTemplateGuide?: string
 }
@@ -67,6 +69,7 @@ export function ManualMatchPanel({
   playingSegId,
   onPreview,
   onToggleExpand,
+  onOpenClipInOut,
   replicaTemplateGuide,
 }: ManualMatchPanelProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -239,6 +242,7 @@ export function ManualMatchPanel({
                 playingAudio={playingSegId === seg.id}
                 onPreview={onPreview}
                 onToggleExpand={() => onToggleExpand(seg.id)}
+                onOpenClipInOut={onOpenClipInOut ? () => onOpenClipInOut(seg.id) : undefined}
                 dragHandleProps={{
                   draggable: true,
                   onDragStart: (e) => {

@@ -7,6 +7,14 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class ClipTrimPart(BaseModel):
+    """单条素材在切片文件内的使用区间（与前端出入点一致）。"""
+
+    clip_id: str
+    clip_start_sec: float = 0.0
+    duration_sec: float
+
+
 class SubtitleSegmentInput(BaseModel):
     copy_text: str
     clip_id: str
@@ -18,6 +26,8 @@ class SubtitleSegmentInput(BaseModel):
     # 可控时长：当用户在前端手动调整段落时长时使用（单位秒）。
     # 注：对 TTS 段落如强制缩短会截断音频；对非 TTS 段落会裁剪视频输出以对齐字幕时间轴。
     duration_sec: Optional[float] = None
+    # 多选素材时每条 clip 的入点与使用时长；存在时优先于单段的 clip_start_sec/duration_sec。
+    clip_trims: Optional[List[ClipTrimPart]] = None
 
 
 class SubtitleStyle(BaseModel):
@@ -68,6 +78,7 @@ class BurnSubtitleRequest(BaseModel):
     srt_content: str
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     project_name: Optional[str] = "smartclip_subtitled"
+    export_backend: Optional[str] = "ffmpeg"  # ffmpeg | moviepy
 
 
 class ExportOriginalRequest(BaseModel):
@@ -84,4 +95,5 @@ class ExportOriginalRequest(BaseModel):
     project_name: Optional[str] = "smartclip_original"
     include_subtitle: bool = True
     normalize_audio: bool = True
+    export_backend: Optional[str] = "ffmpeg"  # ffmpeg | moviepy
 

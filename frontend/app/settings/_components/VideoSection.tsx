@@ -59,13 +59,30 @@ const PARAM_HINTS: Record<string, string> = {
   clip_vcodec: '视频编码器：兼容性优先选 libx264；copy 表示尽量不转码（但浏览器可能无法播放）',
   clip_acodec: '音频编码器：mp4 常用 aac；webm 常用 libopus；copy 表示不转码',
   clip_preset: '编码速度/压缩效率权衡（仅 x264/x265 有效），越慢通常越省码率',
-  clip_crf: '恒定质量模式：越小越清晰但文件更大（仅在未指定视频码率时使用）',
+  clip_crf: '质量参数：x264/x265 使用 CRF，NVENC 使用 CQ；越小越清晰（仅在未指定视频码率时使用）',
   clip_video_bitrate_kbps: '指定视频码率（kbps）。>0 时优先使用码率模式并忽略 CRF',
   clip_audio_bitrate_kbps: '指定音频码率（kbps）',
+  clip_g: 'GOP 长度（关键帧间隔），常用 48（24fps≈2 秒）',
+  clip_keyint_min: '最小关键帧间隔（x264/x265 有效），通常与 GOP 一致',
+  clip_sc_threshold: '场景切换阈值（x264/x265 有效），0 表示关闭自动场景切换关键帧',
   clip_fps: '强制输出帧率（0=跟随源视频）',
   clip_scale_width: '强制输出宽度（0=不限制；可只填宽或高，另一边自动等比）',
   clip_scale_height: '强制输出高度（0=不限制；可只填宽或高，另一边自动等比）',
   clip_pix_fmt: '像素格式。yuv420p 兼容性最好（尤其浏览器播放）',
+  export_container: '成片文件容器（字幕烧录、原声成片最终文件）',
+  export_vcodec: '成片视频编码：必须为实际编码器（无 copy），避免 concat 时间戳导致音画不同步',
+  export_acodec: '成片音频编码：必须为实际编码器（无 copy）',
+  export_preset: '成片 x264/x265 的编码速度与压缩权衡',
+  export_crf: '成片恒定质量；数值越小越清晰（未指定视频码率时生效）',
+  export_video_bitrate_kbps: '成片视频码率（kbps）；>0 时优先码率模式并忽略 CRF',
+  export_audio_bitrate_kbps: '成片音频码率（kbps）',
+  export_g: '成片 GOP 长度（关键帧间隔）',
+  export_keyint_min: '成片最小关键帧间隔（x264/x265 有效）',
+  export_sc_threshold: '成片场景切换阈值（x264/x265 有效）',
+  export_fps: '成片强制帧率（0=跟随源）',
+  export_scale_width: '成片输出宽度（0=不限制）',
+  export_scale_height: '成片输出高度（0=不限制）',
+  export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
 }
 
 export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSaveGroup }: Props) {
@@ -76,6 +93,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const [sceneHybridAdvOpen, setSceneHybridAdvOpen] = useState(currentMode === 'scene' || currentMode === 'hybrid')
   const [frameExtractionOpen, setFrameExtractionOpen] = useState(true)
   const [cutPerfOpen, setCutPerfOpen] = useState(true)
+  const [exportEncOpen, setExportEncOpen] = useState(true)
 
   useEffect(() => {
     setSceneHybridAdvOpen(currentMode === 'scene' || currentMode === 'hybrid')
@@ -107,6 +125,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const FRAME_KEYS = ['frame_fps', 'frame_concurrency', 'frame_target_pixels']
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
+  const EXPORT_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('export_'))
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -210,14 +229,25 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
           </SettingsDetails>
         )}
 
-        {/* output encoding */}
+        {/* 切片/预处理编码（可与成片不同） */}
         {renderFields(CLIP_BASIC_KEYS)}
         {CLIP_ADV_KEYS.some((k) => config[k]) && (
           <SettingsDetails
-            title="输出编码高级参数"
-            hint="兼容性/体积/速度可调"
+            title="切片与预处理编码"
+            hint="切分输出与成片前的片段处理；可选用 copy 换速度（多片段拼接时仍可能重编码）"
           >
             {renderFields(CLIP_ADV_KEYS)}
+          </SettingsDetails>
+        )}
+
+        {EXPORT_KEYS.some((k) => config[k]) && (
+          <SettingsDetails
+            title="成片导出编码"
+            hint="字幕烧录与原声成片的最终输出；仅提供实际编码器，保证时间轴一致"
+            open={exportEncOpen}
+            onOpenChange={setExportEncOpen}
+          >
+            {renderFields(EXPORT_KEYS)}
           </SettingsDetails>
         )}
 

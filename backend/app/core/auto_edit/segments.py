@@ -76,6 +76,7 @@ def merge_contiguous_subtitle_segments(
             tts_filename=None,
             clip_start_sec=a.clip_start_sec,
             duration_sec=da + db,
+            clip_trims=None,
         )
 
     out: List[SubtitleSegmentInput] = []
@@ -276,6 +277,7 @@ async def segments_from_plan(
                 tts_filename=tts_filename,
                 duration_sec=resolved_duration,
                 clip_start_sec=resolved_clip_start,
+                clip_trims=None,
             )
         )
 

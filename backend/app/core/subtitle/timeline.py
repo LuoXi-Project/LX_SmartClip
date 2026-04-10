@@ -88,6 +88,25 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
             logger.info("字幕时长[TTS] %s=%.3f秒", seg.tts_filename, tts_d)
             continue
 
+        trims = getattr(seg, "clip_trims", None)
+        if trims:
+            raw_ids = list(getattr(seg, "clip_ids", None) or [])
+            if not raw_ids and getattr(seg, "clip_id", None):
+                raw_ids = [seg.clip_id]
+            group_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
+            by_cid: dict[str, float] = {}
+            for t in trims:
+                try:
+                    by_cid[str(getattr(t, "clip_id", "") or "")] = float(getattr(t, "duration_sec", 0) or 0)
+                except Exception:
+                    continue
+            total_tr = 0.0
+            for cid in group_ids:
+                total_tr += float(by_cid.get(cid, clip_durations.get(cid, 5.0)))
+            durs.append(max(total_tr, 0.05))
+            srcs.append("clip_trims")
+            continue
+
         durs.append(clip_durations.get(seg.clip_id, 5.0))
         srcs.append("clip")
     source = srcs[0] if len(set(srcs)) == 1 else "mixed"

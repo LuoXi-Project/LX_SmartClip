@@ -7,6 +7,8 @@ import {
 } from 'lucide-react'
 import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditBgmPlanApi } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
+import { ClipInOutDialog } from './_components/ClipInOutDialog'
+import { buildClipTrimsForApi } from './_components/clipTrim'
 import { PreviewModal } from './_components/ClipCard'
 import { ExportSidebar } from './_components/ExportSidebar'
 import { MatchPageHeader } from './_components/MatchPageHeader'
@@ -161,6 +163,7 @@ export default function MatchPage() {
   const [videoSearch, setVideoSearch] = useState('')
   const [videoPage, setVideoPage] = useState(1)
   const [previewClip, setPreviewClip] = useState<MatchClip | null>(null)
+  const [clipInOutSegId, setClipInOutSegId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegId, setPlayingSegId] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -297,7 +300,10 @@ export default function MatchPage() {
   const handleVideoSearch = (val: string) => { setVideoSearch(val); setVideoPage(1) }
 
   function makeSeg(id: string, text = ''): Segment {
-    return { id, text, clips: [], chosenIdx: 0, selectedClipIds: [], ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false }
+    return {
+      id, text, clips: [], chosenIdx: 0, selectedClipIds: [], clipTrimByClipId: {},
+      ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false,
+    }
   }
   function patchSeg(id: string, p: Partial<Segment>) {
     setMatchSegments(useMatchStore.getState().segments.map((s) => s.id === id ? { ...s, ...p } : s))
@@ -403,6 +409,18 @@ export default function MatchPage() {
   }
 
   const readySegs = segments.filter((s) => s.clips.length > 0)
+
+  const clipInOutSeg = useMemo(() => {
+    if (!clipInOutSegId) return undefined
+    return segments.find((s) => s.id === clipInOutSegId)
+  }, [clipInOutSegId, segments])
+
+  useEffect(() => {
+    if (!clipInOutSegId) return
+    const s = segments.find((x) => x.id === clipInOutSegId)
+    if (!s || (s.selectedClipIds?.length ?? 0) === 0) setClipInOutSegId(null)
+  }, [segments, clipInOutSegId])
+
   const firstReadyClipId = useMemo(() => {
     const first = segments.find((s) => s.clips.length > 0)
     if (!first) return ''
@@ -430,11 +448,18 @@ export default function MatchPage() {
     setGeneratingSrt(true); setSrtError('')
     try {
       const segsInput = readySegs
-        .map((s) => ({
-          copy_text: s.text,
-          clip_id: (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? '',
-          tts_filename: s.ttsFilename ?? undefined,
-        }))
+        .map((s) => {
+          const clip_id = (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? ''
+          const clip_ids = (s.selectedClipIds?.length ? s.selectedClipIds : [clip_id]).filter(Boolean) as string[]
+          const clip_trims = buildClipTrimsForApi(s, clip_ids)
+          return {
+            copy_text: s.text,
+            clip_id,
+            clip_ids: clip_ids.length > 1 ? clip_ids : undefined,
+            tts_filename: s.ttsFilename ?? undefined,
+            ...(clip_trims.length ? { clip_trims } : {}),
+          }
+        })
         .filter((s) => s.clip_id)
       const res = await subtitleApi.generate({ segments: segsInput, style: subtitleStyle, use_tts_timing: true })
       setSrtEntries(res.entries); setTimingSource(res.timing_source)
@@ -462,11 +487,14 @@ export default function MatchPage() {
         const segsInput = readySegs
           .map((s) => {
             const clip_ids = buildSegmentClipIds(s)
+            const cid = clip_ids[0] ?? ''
+            const clip_trims = buildClipTrimsForApi(s, clip_ids)
             return {
               copy_text: s.text,
-              clip_id: clip_ids[0] ?? '',
+              clip_id: cid,
               clip_ids,
               tts_filename: s.ttsFilename ?? undefined,
+              ...(clip_trims.length ? { clip_trims } : {}),
             }
           })
           .filter((s) => s.clip_id)
@@ -487,12 +515,14 @@ export default function MatchPage() {
         const segsInput = exportSegs
           .map((s) => {
             const clip_ids = s.selectedClipIds
+            const cid = clip_ids[0] ?? ''
+            const clip_trims = buildClipTrimsForApi(s, clip_ids)
             return {
               copy_text: s.text,
-              clip_id: clip_ids[0] ?? '',
+              clip_id: cid,
               clip_ids,
-              // 原声模式：不使用/不传 TTS
               tts_filename: undefined,
+              ...(clip_trims.length ? { clip_trims } : {}),
             }
           })
           .filter((s) => s.clip_id)
@@ -1062,6 +1092,7 @@ export default function MatchPage() {
                   if (!seg) return
                   patchSeg(seg.id, { expanded: !seg.expanded })
                 }}
+                onOpenClipInOut={setClipInOutSegId}
               />
             </>
           )}
@@ -1112,6 +1143,17 @@ export default function MatchPage() {
         </div>
       </div>
       {previewClip && <PreviewModal clip={previewClip} onClose={() => setPreviewClip(null)} />}
+      <ClipInOutDialog
+        open={Boolean(clipInOutSegId && clipInOutSeg && (clipInOutSeg.selectedClipIds?.length ?? 0) > 0)}
+        segment={clipInOutSeg ?? null}
+        onClose={() => setClipInOutSegId(null)}
+        onSave={(trims) => {
+          if (!clipInOutSegId) return
+          const seg = useMatchStore.getState().segments.find((s) => s.id === clipInOutSegId)
+          if (!seg) return
+          patchSeg(seg.id, { clipTrimByClipId: { ...(seg.clipTrimByClipId ?? {}), ...trims } })
+        }}
+      />
       <VideoResultDrawer
         open={resultOpen}
         onClose={() => setResultOpen(false)}

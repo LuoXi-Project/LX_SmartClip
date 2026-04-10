@@ -312,11 +312,23 @@ export interface SubtitleStyleApi {
   max_chars_per_line?: number
 }
 
+export interface SubtitleClipTrimPart {
+  clip_id: string
+  clip_start_sec?: number
+  duration_sec: number
+}
+
 export interface SubtitleSegmentInput {
   copy_text: string
   clip_id: string
   clip_ids?: string[]
   tts_filename?: string
+  /** 从 clip 文件起点算起的入点（秒），与 duration_sec 联用 */
+  clip_start_sec?: number
+  /** 使用的片段时长（秒）= 出点 − 入点 */
+  duration_sec?: number
+  /** 多素材时每条的入点与使用时长，顺序与 clip_ids 一致 */
+  clip_trims?: SubtitleClipTrimPart[]
 }
 
 export interface GenerateSRTRequest {

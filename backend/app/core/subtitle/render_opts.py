@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import logging
+from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+def _to_int(opts: Dict[str, str], key: str, default: int) -> int:
+    try:
+        return int(float((opts.get(key) or "").strip() or default))
+    except Exception:
+        return default
+
+
+def _to_float(opts: Dict[str, str], key: str, default: float) -> float:
+    try:
+        return float((opts.get(key) or "").strip() or default)
+    except Exception:
+        return default
+
+
+def build_render_codec_args(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """根据配置构建编码参数，避免硬编码渲染质量。"""
+    opts = render_opts or {}
+    vcodec = (opts.get("clip_vcodec") or "libx264").strip()
+    acodec = (opts.get("clip_acodec") or "aac").strip()
+    preset = (opts.get("clip_preset") or "veryfast").strip()
+    pix_fmt = (opts.get("clip_pix_fmt") or "yuv420p").strip()
+    crf = _to_int(opts, "clip_crf", 18)
+    v_bitrate_kbps = _to_int(opts, "clip_video_bitrate_kbps", 0)
+    a_bitrate_kbps = _to_int(opts, "clip_audio_bitrate_kbps", 128)
+    gop = _to_int(opts, "clip_g", 48)
+    keyint_min = _to_int(opts, "clip_keyint_min", 48)
+    sc_threshold = _to_int(opts, "clip_sc_threshold", 0)
+
+    args: List[str] = ["-c:v", vcodec]
+    if vcodec in ("libx264", "libx265", "h264_nvenc", "hevc_nvenc") and preset:
+        args += ["-preset", preset]
+    if v_bitrate_kbps > 0:
+        args += ["-b:v", f"{v_bitrate_kbps}k"]
+    elif crf >= 0 and vcodec in ("libx264", "libx265"):
+        args += ["-crf", str(crf)]
+    elif crf >= 0 and vcodec in ("h264_nvenc", "hevc_nvenc"):
+        # NVENC 不支持 CRF，使用 CQ 做质量控制。
+        args += ["-rc", "vbr", "-cq", str(crf)]
+    if gop > 0 and vcodec in ("libx264", "libx265", "h264_nvenc", "hevc_nvenc"):
+        args += ["-g", str(gop)]
+    if keyint_min > 0 and vcodec in ("libx264", "libx265"):
+        args += ["-keyint_min", str(keyint_min)]
+    if sc_threshold >= 0 and vcodec in ("libx264", "libx265"):
+        args += ["-sc_threshold", str(sc_threshold)]
+    if pix_fmt:
+        args += ["-pix_fmt", pix_fmt]
+
+    args += ["-c:a", acodec]
+    if a_bitrate_kbps > 0 and acodec != "copy":
+        args += ["-b:a", f"{a_bitrate_kbps}k"]
+    return args
+
+
+def force_video_reencode(codec_args: List[str], render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """
+    当存在视频滤镜（如 ass/subtitles）时，不能使用 -c:v copy。
+    若配置为 copy，这里回退到默认可用编码参数。
+    """
+    next_args = list(codec_args)
+    try:
+        v_idx = next_args.index("-c:v")
+    except ValueError:
+        return next_args
+    if v_idx + 1 >= len(next_args):
+        return next_args
+    if (next_args[v_idx + 1] or "").strip().lower() != "copy":
+        return next_args
+
+    fallback_opts = dict(render_opts or {})
+    fallback_opts["clip_vcodec"] = "libx264"
+    fallback_opts.setdefault("clip_preset", "veryfast")
+    fallback_opts.setdefault("clip_crf", "18")
+    fallback_opts.setdefault("clip_g", "48")
+    fallback_opts.setdefault("clip_keyint_min", "48")
+    fallback_opts.setdefault("clip_sc_threshold", "0")
+    fallback_opts.setdefault("clip_pix_fmt", "yuv420p")
+    fallback_codec_args = build_render_codec_args(fallback_opts)
+    logger.warning("检测到视频滤镜 + clip_vcodec=copy，已自动回退为 libx264 重编码")
+    return fallback_codec_args
+
+
+def build_extra_video_filters(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """根据配置构建额外视频滤镜（缩放/帧率）。"""
+    opts = render_opts or {}
+    fps = _to_float(opts, "clip_fps", 0.0)
+    scale_w = _to_int(opts, "clip_scale_width", 0)
+    scale_h = _to_int(opts, "clip_scale_height", 0)
+
+    filters: List[str] = []
+    if scale_w > 0 or scale_h > 0:
+        sw = scale_w if scale_w > 0 else -2
+        sh = scale_h if scale_h > 0 else -2
+        filters.append(f"scale={sw}:{sh}:flags=lanczos")
+    if fps > 0:
+        filters.append(f"fps={fps}")
+    return filters
+
+
+EXPORT_FLAT_TO_CLIP_SHAPE: List[Tuple[str, str]] = [
+    ("export_vcodec", "clip_vcodec"),
+    ("export_acodec", "clip_acodec"),
+    ("export_preset", "clip_preset"),
+    ("export_crf", "clip_crf"),
+    ("export_video_bitrate_kbps", "clip_video_bitrate_kbps"),
+    ("export_audio_bitrate_kbps", "clip_audio_bitrate_kbps"),
+    ("export_g", "clip_g"),
+    ("export_keyint_min", "clip_keyint_min"),
+    ("export_sc_threshold", "clip_sc_threshold"),
+    ("export_fps", "clip_fps"),
+    ("export_scale_width", "clip_scale_width"),
+    ("export_scale_height", "clip_scale_height"),
+    ("export_pix_fmt", "clip_pix_fmt"),
+    ("export_container", "clip_container"),
+]
+
+
+def final_render_opts_from_export(
+    export_render_opts: Optional[Dict[str, str]],
+    clip_fallback: Optional[Dict[str, str]],
+) -> Dict[str, str]:
+    """成片扁平配置 export_* → 与 build_render_codec_args 一致的 clip_* 形；空项回落到切片配置。"""
+    fb = dict(clip_fallback or {})
+    ex = dict(export_render_opts or {})
+    out: Dict[str, str] = {}
+    for ek, ck in EXPORT_FLAT_TO_CLIP_SHAPE:
+        v = (ex.get(ek) or "").strip()
+        out[ck] = v if v else (fb.get(ck) or "")
+    return out
+
+
+def sanitize_no_stream_copy(opts: Dict[str, str]) -> Dict[str, str]:
+    """将 video/audio 的 stream copy 改为实际编码器（滤镜与 copy 不能同时使用；成片时间线也需重编码）。"""
+    fixed = dict(opts)
+    vc = (fixed.get("clip_vcodec") or "libx264").strip().lower()
+    if vc == "copy":
+        fixed["clip_vcodec"] = "libx264"
+    ac = (fixed.get("clip_acodec") or "aac").strip().lower()
+    if ac == "copy":
+        fixed["clip_acodec"] = "aac"
+    return fixed
+
+
+def to_int(opts: Dict[str, str], key: str, default: int) -> int:
+    return _to_int(opts, key, default)
+

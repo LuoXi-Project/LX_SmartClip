@@ -184,15 +184,17 @@ export function ClipInOutDialog({
   }
 
   const onInSlider = (v: number) => {
-    setInSec(v)
-    seek(v)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec: v, outSec } }))
+    const nextIn = clamp(v, 0, outSec - MIN_SPAN)
+    setInSec(nextIn)
+    seek(nextIn)
+    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec: nextIn, outSec } }))
   }
 
   const onOutSlider = (v: number) => {
-    setOutSec(v)
-    seek(v)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec, outSec: v } }))
+    const nextOut = clamp(v, inSec + MIN_SPAN, dur)
+    setOutSec(nextOut)
+    seek(nextOut)
+    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec, outSec: nextOut } }))
   }
 
   const resetFull = () => {
@@ -355,9 +357,9 @@ export function ClipInOutDialog({
                 <input
                   type="range"
                   min={0}
-                  max={Math.max(0, outSec - MIN_SPAN)}
+                  max={Math.max(0, dur - MIN_SPAN)}
                   step={0.02}
-                  value={clamp(inSec, 0, outSec - MIN_SPAN)}
+                  value={clamp(inSec, 0, dur - MIN_SPAN)}
                   onChange={(e) => onInSlider(Number(e.target.value))}
                   className="w-full accent-amber-500"
                 />
@@ -366,10 +368,10 @@ export function ClipInOutDialog({
                 <span className="text-cyan-200/90">出点 {fmt(outSec)}</span>
                 <input
                   type="range"
-                  min={inSec + MIN_SPAN}
+                  min={MIN_SPAN}
                   max={dur}
                   step={0.02}
-                  value={clamp(outSec, inSec + MIN_SPAN, dur)}
+                  value={clamp(outSec, MIN_SPAN, dur)}
                   onChange={(e) => onOutSlider(Number(e.target.value))}
                   className="w-full accent-cyan-500"
                 />

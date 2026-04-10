@@ -130,6 +130,48 @@ def _pick_fallback_clip(
     return chosen.id
 
 
+def _resolve_plan_window_for_clip(
+    seg: SegmentPlan,
+    clip: Optional[ClipCandidate],
+    eps_sec: float = 0.05,
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    将 segment 的时间窗映射到主 clip 内，返回 (clip_start_sec, duration_sec)。
+
+    优先语义：
+    1) 方案全片绝对时间窗（与 clip 全片区间求交）
+    2) clip 内相对时间窗（start/end 落在 clip.duration 内）
+    """
+    if clip is None:
+        return None, None
+
+    raw_start = float(seg.start_time_sec or 0.0)
+    raw_end = float(seg.end_time_sec or raw_start)
+    if raw_end <= raw_start + eps_sec:
+        return None, None
+
+    # 语义 1：按全片时间轴求交，避免“整段 clip 拼接”导致时长溢出
+    overlap_start = max(raw_start, float(clip.start_time))
+    overlap_end = min(raw_end, float(clip.end_time))
+    if overlap_end > overlap_start + eps_sec:
+        clip_start = max(0.0, overlap_start - float(clip.start_time))
+        duration = max(0.0, overlap_end - overlap_start)
+        return clip_start, duration
+
+    # 语义 2：兼容 clip 内相对时间（例如 0~3.2）
+    clip_duration = max(0.0, float(clip.duration or 0.0))
+    if clip_duration <= eps_sec:
+        return None, None
+    if raw_start >= -eps_sec and raw_end > raw_start and raw_end <= clip_duration + eps_sec:
+        clip_start = min(max(raw_start, 0.0), clip_duration)
+        clipped_end = min(max(raw_end, clip_start), clip_duration)
+        duration = max(0.0, clipped_end - clip_start)
+        if duration > eps_sec:
+            return clip_start, duration
+
+    return None, None
+
+
 async def segments_from_plan(
     plan: Plan,
     valid_clip_ids: Set[str],
@@ -183,6 +225,7 @@ async def segments_from_plan(
             return tts_res.filename
 
     tts_filenames = await asyncio.gather(*[_maybe_tts(seg) for seg in plan.segments])
+    candidate_by_id: Dict[str, ClipCandidate] = {c.id: c for c in all_candidates}
 
     seg_inputs: List[SubtitleSegmentInput] = []
     for seg, tts_filename in zip(plan.segments, tts_filenames):
@@ -207,14 +250,32 @@ async def segments_from_plan(
             logger.warning("segment %s 缺少可用 clip，跳过", seg.id)
             continue
 
+        clip_candidate = candidate_by_id.get(primary_clip)
+        window_clip_start, window_duration = _resolve_plan_window_for_clip(seg, clip_candidate)
+        explicit_override_duration = (
+            float(seg.override_duration_sec) if seg.override_duration_sec else None
+        )
+        resolved_duration = (
+            window_duration if window_duration is not None else explicit_override_duration
+        )
+        resolved_clip_start = (
+            window_clip_start
+            if window_clip_start is not None
+            else (
+                float(seg.clip_start_offset_sec)
+                if getattr(seg, "clip_start_offset_sec", None) is not None
+                else None
+            )
+        )
+
         seg_inputs.append(
             SubtitleSegmentInput(
                 copy_text=seg.subtitle.text if seg.subtitle and seg.subtitle.text else "",
                 clip_id=primary_clip,
                 clip_ids=selected_valid or group_valid or [primary_clip],
                 tts_filename=tts_filename,
-                duration_sec=float(seg.override_duration_sec) if seg.override_duration_sec else None,
-                clip_start_sec=float(seg.clip_start_offset_sec) if getattr(seg, "clip_start_offset_sec", None) is not None else None,
+                duration_sec=resolved_duration,
+                clip_start_sec=resolved_clip_start,
             )
         )
 

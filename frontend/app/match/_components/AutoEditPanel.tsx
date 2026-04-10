@@ -129,7 +129,7 @@ export function AutoEditPanel({
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [detailDraft, setDetailDraft] = useState<AutoEditPlanApi | null>(null)
   const [selectedPreview, setSelectedPreview] = useState<SelectedPreviewState | null>(null)
-  /** 与后端 clips 表一致；成片 realize 按整段 clip 拼接，不裁方案里的时间窗 */
+  /** clip 元数据用于预览与详情展示；成片裁剪由后端按方案时间窗处理 */
   const clipMetaByClip = useAutoEditClipMetaByPlans(autoPlans)
   const { bgmTracks, bgmListError } = useAutoEditBgmTracks()
 

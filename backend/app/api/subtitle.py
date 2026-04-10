@@ -96,6 +96,12 @@ async def _load_export_render_opts(db) -> dict:
     return opts
 
 
+async def _load_export_backend(db) -> str:
+    v = (await _get_config_value(db, "export_backend", "moviepy")) or "moviepy"
+    v = v.strip().lower()
+    return v if v in ("ffmpeg", "moviepy") else "moviepy"
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -182,6 +188,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
             rows = await cur.fetchall()
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
+        export_backend_cfg = await _load_export_backend(db)
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -205,7 +212,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         render_opts=render_opts,
         export_render_opts=export_render_opts,
         render_mode="tts",
-        export_backend=getattr(req, "export_backend", "ffmpeg"),
+        export_backend=(req.export_backend or export_backend_cfg),
         output_dir=_BURNED_VIDEOS_DIR,
     )
 
@@ -246,6 +253,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
             rows = await cur.fetchall()
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
+        export_backend_cfg = await _load_export_backend(db)
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -321,7 +329,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         render_mode="original",
         output_dir=_BURNED_VIDEOS_DIR,
         normalize_audio=req.normalize_audio,
-        export_backend=getattr(req, "export_backend", "ffmpeg"),
+        export_backend=(req.export_backend or export_backend_cfg),
     )
 
     if not saved_path or not os.path.exists(saved_path):

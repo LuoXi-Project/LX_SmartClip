@@ -109,6 +109,13 @@ DEFAULT_CONFIG = [
     # 成片导出（字幕烧录 / 原声成片）：与切片分离，禁止 stream copy，保证时间轴一致
     ("export_container", "mp4", "select", "成片输出格式（容器）", '["mp4","mov","mkv","webm"]'),
     (
+        "export_backend",
+        "moviepy",
+        "select",
+        "成片导出后端（ffmpeg/moviepy）",
+        '["moviepy","ffmpeg"]',
+    ),
+    (
         "export_vcodec",
         "libx264",
         "select",

@@ -227,7 +227,9 @@ def compose_final_video_moviepy(
             "codec": "libx264",
             "audio_codec": "aac",
             "preset": (final_render_opts.get("clip_preset") or "").strip() or "veryfast",
-            "threads": None,
+            # 让 ffmpeg 自动选择线程数（通常等价于用满可用核）。
+            # 注意：若 MoviePy 侧“供帧”成为瓶颈，CPU 依然可能吃不满。
+            "threads": 0,
             "logger": None,
         }
         if v_bitrate > 0:
@@ -249,7 +251,7 @@ def compose_final_video_moviepy(
                 pass
 
     logger.info("MoviePy 拼接完成: %s", concat_path)
-    
+
     # 2) 单文件阶段：烧字幕 + 额外滤镜 + 编码参数（复用现有 ffmpeg 管线）。
     extra_filters = build_extra_video_filters(final_render_opts)
 

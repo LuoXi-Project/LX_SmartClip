@@ -357,6 +357,7 @@ export interface BurnSubtitleRequest {
   srt_content: string
   style?: SubtitleStyleApi
   project_name?: string
+  export_backend?: 'ffmpeg' | 'moviepy'
 }
 
 export interface BurnSubtitleResponse {
@@ -370,6 +371,7 @@ export interface ExportOriginalRequest {
   project_name?: string
   include_subtitle?: boolean
   normalize_audio?: boolean
+  export_backend?: 'ffmpeg' | 'moviepy'
 }
 
 export const subtitleApi = {

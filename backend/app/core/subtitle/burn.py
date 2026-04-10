@@ -40,7 +40,7 @@ def burn_to_mp4(
     render_opts: Optional[Dict[str, str]] = None,
     export_render_opts: Optional[Dict[str, str]] = None,
     render_mode: str = "auto",
-    export_backend: str = "ffmpeg",  # ffmpeg | moviepy
+    export_backend: str = "moviepy",  # ffmpeg | moviepy
     normalize_audio: bool = False,
     output_dir: str = None,
 ) -> tuple:
@@ -105,11 +105,9 @@ def burn_to_mp4(
             d = float(probe_duration(p, log_on_failure=True) or 0.0)
             logger.info("mode=%s seg=%d final_seg_dur=%.3f path=%s", mode, i, d, p)
 
-        backend = (export_backend or "ffmpeg").strip().lower()
+        backend = (export_backend or "moviepy").strip().lower()
         if backend not in ("ffmpeg", "moviepy"):
-            backend = "ffmpeg"
-
-        backend = "moviepy"
+            backend = "moviepy"
 
         if backend == "moviepy":
             out_path = compose_final_video_moviepy(

@@ -168,6 +168,7 @@ export default function MatchPage() {
   const [playingSegId, setPlayingSegId] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
+  const [exportBackend, setExportBackend] = useState<'moviepy' | 'ffmpeg'>('moviepy')
   const [globalMatching, setGlobalMatching] = useState(false)
   const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
   const [timingSource, setTimingSource] = useState('')
@@ -184,6 +185,19 @@ export default function MatchPage() {
   const [autoRealizeMsg, setAutoRealizeMsg] = useState('')
   const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null)
   const [autoPlanElapsedSec, setAutoPlanElapsedSec] = useState(0)
+
+  // 与系统设置保持一致：导出默认后端由 /api/config 控制
+  useEffect(() => {
+    apiClient
+      .get<unknown, Record<string, { value?: string }>>('/api/config')
+      .then((cfg) => {
+        const v = String(cfg?.export_backend?.value ?? '').trim().toLowerCase()
+        if (v === 'ffmpeg' || v === 'moviepy') setExportBackend(v)
+      })
+      .catch(() => {
+        // 忽略：保持默认 moviepy
+      })
+  }, [])
   const [autoPlanStage, setAutoPlanStage] = useState<AutoPlanStage>('idle')
 
   const autoPlanStagePercent: Record<AutoPlanStage, number> = {
@@ -503,6 +517,7 @@ export default function MatchPage() {
           srt_content: currentSrt,
           style: subtitleStyle,
           project_name: projectName,
+          export_backend: exportBackend,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
@@ -532,6 +547,7 @@ export default function MatchPage() {
           project_name: projectName,
           include_subtitle: subtitleEnabled,
           normalize_audio: true,
+          export_backend: exportBackend,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')

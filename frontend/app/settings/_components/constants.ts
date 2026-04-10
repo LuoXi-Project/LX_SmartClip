@@ -77,6 +77,7 @@ export const VIDEO_KEYS = [
   'clip_pix_fmt',
   // 成片导出（烧录 / 原声成片）
   'export_container',
+  'export_backend',
   'export_vcodec',
   'export_acodec',
   'export_preset',

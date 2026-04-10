@@ -78,7 +78,7 @@ class BurnSubtitleRequest(BaseModel):
     srt_content: str
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     project_name: Optional[str] = "smartclip_subtitled"
-    export_backend: Optional[str] = "ffmpeg"  # ffmpeg | moviepy
+    export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
 
 
 class ExportOriginalRequest(BaseModel):
@@ -95,5 +95,5 @@ class ExportOriginalRequest(BaseModel):
     project_name: Optional[str] = "smartclip_original"
     include_subtitle: bool = True
     normalize_audio: bool = True
-    export_backend: Optional[str] = "ffmpeg"  # ffmpeg | moviepy
+    export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
 

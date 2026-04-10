@@ -166,6 +166,8 @@ export default function MatchPage() {
   const [clipInOutSegId, setClipInOutSegId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegId, setPlayingSegId] = useState<string | null>(null)
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0)
+  const [audioDuration, setAudioDuration] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
   const [exportBackend, setExportBackend] = useState<'moviepy' | 'ffmpeg'>('moviepy')
@@ -407,10 +409,34 @@ export default function MatchPage() {
 
   function playAudio(segId: string, filename: string) {
     audioRef.current?.pause()
-    const audio = new Audio(audioSrc(filename)); audioRef.current = audio; setPlayingSegId(segId)
-    audio.play(); audio.onended = () => setPlayingSegId(null); audio.onerror = () => setPlayingSegId(null)
+    const audio = new Audio(audioSrc(filename))
+    audioRef.current = audio
+    setPlayingSegId(segId)
+    setAudioCurrentTime(0)
+    setAudioDuration(0)
+
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => setAudioDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+    audio.ontimeupdate = () => setAudioCurrentTime(audio.currentTime || 0)
+    audio.onended = () => { setPlayingSegId(null); setAudioCurrentTime(0) }
+    audio.onerror = () => { setPlayingSegId(null); setAudioCurrentTime(0); setAudioDuration(0) }
+    audio.play()
   }
-  function stopAudio() { audioRef.current?.pause(); audioRef.current = null; setPlayingSegId(null) }
+  function stopAudio() {
+    audioRef.current?.pause()
+    audioRef.current = null
+    setPlayingSegId(null)
+    setAudioCurrentTime(0)
+    setAudioDuration(0)
+  }
+
+  function seekAudio(t: number) {
+    const a = audioRef.current
+    if (!a) return
+    const next = Math.max(0, Math.min(Number.isFinite(a.duration) ? a.duration : audioDuration, t))
+    a.currentTime = next
+    setAudioCurrentTime(next)
+  }
 
   function buildSegmentClipIds(seg: Segment): string[] {
     const primary = seg.selectedClipIds?.[0] || seg.clips[seg.chosenIdx]?.clip_id
@@ -1119,7 +1145,13 @@ export default function MatchPage() {
                   if (seg?.ttsFilename) playAudio(segId, seg.ttsFilename)
                 }}
                 onStopAudio={stopAudio}
+                onSeekAudio={(segId, t) => {
+                  if (playingSegId !== segId) return
+                  seekAudio(t)
+                }}
                 playingSegId={playingSegId}
+                audioCurrentTime={audioCurrentTime}
+                audioDuration={audioDuration}
                 onPreview={setPreviewClip}
                 replicaTemplateGuide={replicaTemplateGuide || undefined}
                 onToggleExpand={(segId) => {

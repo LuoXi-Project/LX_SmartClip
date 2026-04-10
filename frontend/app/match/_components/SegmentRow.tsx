@@ -22,7 +22,15 @@ import { ClipCard } from './ClipCard'
 export function SegmentRow({
   seg, index, segmentCount = 0, onReorder,
   onTextChange, onRemove, onMatch, onToggleSelect,
-  onTts, onPlayAudio, onStopAudio, playingAudio, onPreview, onToggleExpand,
+  onTts,
+  onPlayAudio,
+  onStopAudio,
+  onSeekAudio,
+  playingAudio,
+  audioCurrentTime = 0,
+  audioDuration = 0,
+  onPreview,
+  onToggleExpand,
   onOpenClipInOut,
   dragHandleProps,
 }: {
@@ -37,7 +45,10 @@ export function SegmentRow({
   onTts: () => void
   onPlayAudio: () => void
   onStopAudio: () => void
+  onSeekAudio?: (timeSeconds: number) => void
   playingAudio: boolean
+  audioCurrentTime?: number
+  audioDuration?: number
   onPreview: (clip: MatchClip) => void
   onToggleExpand: () => void
   /** 打开主选素材出入点（单选时可用） */
@@ -56,6 +67,13 @@ export function SegmentRow({
     })
   const selectedCount = seg.selectedClipIds?.length ?? 0
   const orderIndexOf = (clipId: string) => (seg.selectedClipIds?.indexOf(clipId) ?? -1)
+
+  const fmtTime = (s: number) => {
+    if (!Number.isFinite(s) || s < 0) return '0:00'
+    const m = Math.floor(s / 60)
+    const ss = Math.floor(s % 60).toString().padStart(2, '0')
+    return `${m}:${ss}`
+  }
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-[#0e1017] overflow-hidden">
@@ -212,6 +230,23 @@ export function SegmentRow({
                   ? <p className="text-xs text-emerald-400 font-medium">✓ 配音已合成</p>
                   : <p className="text-xs text-slate-500">尚未合成配音</p>}
             </div>
+            {seg.ttsFilename && playingAudio && audioDuration > 0 ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="hidden sm:inline text-[10px] tabular-nums text-slate-500 w-[72px] text-right">
+                  {fmtTime(audioCurrentTime)} / {fmtTime(audioDuration)}
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={audioDuration}
+                  step={0.05}
+                  value={Math.min(Math.max(audioCurrentTime, 0), audioDuration)}
+                  onChange={(e) => onSeekAudio?.(Number(e.target.value))}
+                  className="w-28 sm:w-36 md:w-44 accent-violet-500"
+                  aria-label="配音时间轴"
+                />
+              </div>
+            ) : null}
             {seg.ttsFilename && (
               playingAudio
                 ? (

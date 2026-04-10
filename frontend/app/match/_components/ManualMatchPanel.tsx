@@ -33,7 +33,10 @@ export type ManualMatchPanelProps = {
   onSynthesiseTts: (segId: string) => void
   onPlayAudio: (segId: string) => void
   onStopAudio: () => void
+  onSeekAudio?: (segId: string, timeSeconds: number) => void
   playingSegId: string | null
+  audioCurrentTime?: number
+  audioDuration?: number
   onPreview: (clip: MatchClip) => void
   onToggleExpand: (segId: string) => void
   /** 打开段落主选素材的出入点预览 */
@@ -66,7 +69,10 @@ export function ManualMatchPanel({
   onSynthesiseTts,
   onPlayAudio,
   onStopAudio,
+  onSeekAudio,
   playingSegId,
+  audioCurrentTime = 0,
+  audioDuration = 0,
   onPreview,
   onToggleExpand,
   onOpenClipInOut,
@@ -239,7 +245,10 @@ export function ManualMatchPanel({
                 onTts={() => onSynthesiseTts(seg.id)}
                 onPlayAudio={() => onPlayAudio(seg.id)}
                 onStopAudio={onStopAudio}
+                onSeekAudio={onSeekAudio ? (t) => onSeekAudio(seg.id, t) : undefined}
                 playingAudio={playingSegId === seg.id}
+                audioCurrentTime={playingSegId === seg.id ? audioCurrentTime : 0}
+                audioDuration={playingSegId === seg.id ? audioDuration : 0}
                 onPreview={onPreview}
                 onToggleExpand={() => onToggleExpand(seg.id)}
                 onOpenClipInOut={onOpenClipInOut ? () => onOpenClipInOut(seg.id) : undefined}

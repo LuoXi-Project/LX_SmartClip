@@ -25,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/process" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材处理</Link>
             <Link href="/search" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材检索</Link>
             <Link href="/match" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">智能剪辑</Link>
+            <Link href="/summary" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">视频总结</Link>
             <Link href="/tts" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">TTS 配音</Link>
             <Link href="/bgm" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">BGM 音乐库</Link>
             <Link href="/logs" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">日志</Link>

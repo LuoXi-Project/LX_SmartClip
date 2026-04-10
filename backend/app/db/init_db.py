@@ -78,6 +78,64 @@ CREATE TABLE IF NOT EXISTS process_tasks (
 );
 """
 
+CREATE_SUMMARY_TEMPLATES = """
+CREATE TABLE IF NOT EXISTS summary_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    system_prompt TEXT NOT NULL,
+    user_prompt_template TEXT NOT NULL,
+    output_schema_hint TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+CREATE_VIDEO_SUMMARIES = """
+CREATE TABLE IF NOT EXISTS video_summaries (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'done',
+    input_fingerprint TEXT,
+    summary_json TEXT,
+    summary_markdown TEXT,
+    prompt_snapshot_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (video_id) REFERENCES videos(id),
+    FOREIGN KEY (template_id) REFERENCES summary_templates(id)
+);
+"""
+
+CREATE_VIDEO_SUMMARY_VERSIONS = """
+CREATE TABLE IF NOT EXISTS video_summary_versions (
+    id TEXT PRIMARY KEY,
+    summary_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    content_json TEXT,
+    content_markdown TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (summary_id) REFERENCES video_summaries(id)
+);
+"""
+
+CREATE_VIDEO_SUMMARY_SECTIONS = """
+CREATE TABLE IF NOT EXISTS video_summary_sections (
+    id TEXT PRIMARY KEY,
+    summary_id TEXT NOT NULL,
+    section_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'done',
+    content_json TEXT,
+    content_markdown TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (summary_id) REFERENCES video_summaries(id)
+);
+"""
+
 DEFAULT_CONFIG = [
     ("split_mode", "scene", "select", "分割模式", '["scene","fixed","hybrid"]'),
     ("fixed_duration", "10", "number", "固定分割时长（秒）", None),
@@ -224,6 +282,71 @@ DEFAULT_CONFIG = [
     ("license_card", "", "string", "卡密", None),
 ]
 
+DEFAULT_SUMMARY_TEMPLATES = [
+    (
+        "default_general",
+        "通用视频总结（推荐）",
+        "适用于大多数视频：给出总览、分章节、重点、金句、行动项。",
+        "你是专业内容分析与总结助手。你擅长把口播/对白与画面信息整理为结构化总结。输出必须真实、可追溯、避免编造。",
+        "\n".join(
+            [
+                "请基于提供的视频内容进行总结。",
+                "",
+                "【用户目标】",
+                "{{user_goal}}",
+                "",
+                "【总结方式】",
+                "- 先对超长内容按片段窗口做“分段摘要（StageA）”，再合并成“最终总结（StageB）”。",
+                "- 对关键结论标注依据（尽量引用片段时间范围或原句/画面描述）。",
+                "",
+                "【输出要求】",
+                "- 以 JSON 输出，严格匹配 schema_hint。",
+                "- 不要输出多余解释，不要使用 Markdown code fence。",
+                "",
+                "【偏好/约束（可选）】",
+                "{{extra_instructions}}",
+            ]
+        ),
+        "\n".join(
+            [
+                "{",
+                '  "title": "string",',
+                '  "overview": "string",',
+                '  "chapters": [',
+                "    {",
+                '      "title": "string",',
+                '      "summary": "string",',
+                '      "key_points": ["string"],',
+                '      "evidence": ["string"]',
+                "    }",
+                "  ],",
+                '  "key_points": ["string"],',
+                '  "highlights": ["string"],',
+                '  "quotes": ["string"],',
+                '  "action_items": ["string"],',
+                '  "tags": ["string"]',
+                "}",
+            ]
+        ),
+    ),
+    (
+        "default_asr_only",
+        "仅基于字幕/ASR 总结",
+        "适用于口播/访谈类；忽略画面描述，只用台词做结构化总结。",
+        "你是专业内容分析与总结助手。只基于字幕/ASR 进行总结，禁止凭空补充画面信息。",
+        "{{base_user_prompt}}",
+        "{{base_schema_hint}}",
+    ),
+    (
+        "default_vlm_only",
+        "仅基于画面/VLM 总结",
+        "适用于无对白/画面为主；只用视觉描述做结构化总结。",
+        "你是专业内容分析与总结助手。只基于画面/VLM 描述进行总结，禁止臆测台词/对白。",
+        "{{base_user_prompt}}",
+        "{{base_schema_hint}}",
+    ),
+]
+
 
 async def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -233,6 +356,10 @@ async def init_db():
         await db.execute(CREATE_REPLICA_TEMPLATES)
         await db.execute(CREATE_CONFIG)
         await db.execute(CREATE_PROCESS_TASKS)
+        await db.execute(CREATE_SUMMARY_TEMPLATES)
+        await db.execute(CREATE_VIDEO_SUMMARIES)
+        await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
+        await db.execute(CREATE_VIDEO_SUMMARY_SECTIONS)
 
         # 兼容旧库：replica_templates 补列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）
         try:
@@ -248,6 +375,27 @@ async def init_db():
             await db.execute(
                 "INSERT OR IGNORE INTO config (key, value, type, label, options) VALUES (?,?,?,?,?)",
                 (key, value, type_, label, options),
+            )
+
+        # 默认总结模板（幂等）
+        # 注意：这里使用“模板内占位符”做复用，真正写入库时会在插入前展开
+        from datetime import datetime
+
+        now = datetime.now().isoformat(timespec="seconds")
+        base_user_prompt = next(t[4] for t in DEFAULT_SUMMARY_TEMPLATES if t[0] == "default_general")
+        base_schema_hint = next(t[5] for t in DEFAULT_SUMMARY_TEMPLATES if t[0] == "default_general")
+
+        for tid, name, desc, sys_p, user_p, schema_hint in DEFAULT_SUMMARY_TEMPLATES:
+            sys_prompt = (sys_p or "").replace("{{base_user_prompt}}", base_user_prompt).replace("{{base_schema_hint}}", base_schema_hint)
+            user_prompt = (user_p or "").replace("{{base_user_prompt}}", base_user_prompt).replace("{{base_schema_hint}}", base_schema_hint)
+            out_schema = (schema_hint or "").replace("{{base_schema_hint}}", base_schema_hint)
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO summary_templates
+                (id, name, description, system_prompt, user_prompt_template, output_schema_hint, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (tid, name, desc, sys_prompt, user_prompt, out_schema, now, now),
             )
         # 兼容旧库：补全分割模式可选项与混合模式参数
         await db.execute(

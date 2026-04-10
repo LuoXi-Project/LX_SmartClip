@@ -395,6 +395,83 @@ export const copyGenApi = {
     }),
 }
 
+// 视频总结
+export type SummaryMode = 'asr' | 'vlm' | 'asr_vlm'
+
+export interface SummaryTemplate {
+  id: string
+  name: string
+  description?: string | null
+  system_prompt: string
+  user_prompt_template: string
+  output_schema_hint?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SummaryGenerateRequest {
+  video_id: string
+  mode: SummaryMode
+  template_id: string
+  user_goal: string
+  extra_instructions?: string
+  chunk_max_chars?: number
+  chunk_overlap_chars?: number
+  max_chunks?: number
+  prompt_vars?: Record<string, any>
+}
+
+export interface VideoSummary {
+  id: string
+  video_id: string
+  template_id: string
+  mode: SummaryMode
+  status: string
+  input_fingerprint?: string | null
+  summary_json?: any | null
+  summary_markdown?: string | null
+  prompt_snapshot_json?: any | null
+  created_at: string
+  updated_at: string
+}
+
+export interface VideoSummarySection {
+  id: string
+  summary_id: string
+  section_key: 'overview' | 'chapters' | 'highlights' | string
+  status: string
+  content_json?: any | null
+  content_markdown?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const summaryApi = {
+  templates: () => apiClient.get<unknown, SummaryTemplate[]>('/api/summary/templates'),
+  generate: (payload: SummaryGenerateRequest) => apiClient.post<unknown, VideoSummary>('/api/summary/generate', payload),
+  generateStream: (payload: SummaryGenerateRequest): Promise<Response> =>
+    fetch(`${API_BASE_URL}/api/summary/generate-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  latest: (videoId: string, params?: { template_id?: string; mode?: SummaryMode }) =>
+    apiClient.get<unknown, VideoSummary | null>(`/api/summary/videos/${videoId}/latest`, { params }),
+  sections: (summaryId: string) =>
+    apiClient.get<unknown, { summary_id: string; sections: VideoSummarySection[] }>(`/api/summary/${summaryId}/sections`),
+  regenerateSection: (summaryId: string, sectionKey: 'overview' | 'chapters' | 'highlights') =>
+    apiClient.post<unknown, {
+      summary_id: string
+      section_key: string
+      section_json: any
+      summary_markdown: string
+      summary_json: any
+      updated_at: string
+    }>(`/api/summary/${summaryId}/sections/${sectionKey}/regenerate`),
+  update: (summaryId: string, payload: { summary_json?: any; summary_markdown?: string; source?: 'user' | 'llm' }) =>
+    apiClient.patch<unknown, VideoSummary>(`/api/summary/${summaryId}`, payload),
+}
+
 export interface ReplicaIngestResponse {
   video_id: string
   name: string

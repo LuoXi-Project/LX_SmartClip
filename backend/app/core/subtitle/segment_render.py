@@ -357,7 +357,11 @@ def render_tts_segment(
 ) -> str:
     from fastapi import HTTPException
 
-    tts_path = os.path.join(tts_audio_dir, os.path.basename(getattr(seg, "tts_filename", "")))
+    name = str(getattr(seg, "tts_filename", "") or "").strip()
+    if not name:
+        raise HTTPException(400, f"TTS 文件名为空: seg_{seg_idx + 1}，请先合成配音")
+
+    tts_path = os.path.join(tts_audio_dir, os.path.basename(name))
     if not os.path.isfile(tts_path):
         raise HTTPException(400, f"TTS 音频不存在: seg_{seg_idx + 1}")
 

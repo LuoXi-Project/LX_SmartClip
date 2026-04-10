@@ -176,6 +176,7 @@ export default function MatchPage() {
   const [timingSource, setTimingSource] = useState('')
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
+  const [strictUseClientSrt, setStrictUseClientSrt] = useState(false)
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
   const [resultOpen, setResultOpen] = useState(false)
   const [replicaTemplateRefreshSignal, setReplicaTemplateRefreshSignal] = useState(0)
@@ -200,6 +201,11 @@ export default function MatchPage() {
         // 忽略：保持默认 moviepy
       })
   }, [])
+
+  const showStrictSrtToggle = exportMode === 'subtitle' && subtitleEnabled
+  useEffect(() => {
+    if (!showStrictSrtToggle && strictUseClientSrt) setStrictUseClientSrt(false)
+  }, [showStrictSrtToggle, strictUseClientSrt])
   const [autoPlanStage, setAutoPlanStage] = useState<AutoPlanStage>('idle')
 
   const autoPlanStagePercent: Record<AutoPlanStage, number> = {
@@ -557,6 +563,7 @@ export default function MatchPage() {
           style: subtitleStyle,
           project_name: projectName,
           export_backend: exportBackend,
+          strict_use_client_srt: strictUseClientSrt,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
@@ -1164,6 +1171,8 @@ export default function MatchPage() {
             entries={isAutoLikeMode(mode) ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
             subtitleEnabled={subtitleEnabled}
             onSubtitleEnabledChange={setSubtitleEnabled}
+            strictUseClientSrt={showStrictSrtToggle ? strictUseClientSrt : undefined}
+            onStrictUseClientSrtChange={showStrictSrtToggle ? setStrictUseClientSrt : undefined}
             timingSource={isAutoLikeMode(mode) ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
             previewVideoSize={previewVideoSize}
             srtError={srtError}

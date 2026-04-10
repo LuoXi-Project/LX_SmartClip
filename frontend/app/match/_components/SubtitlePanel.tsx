@@ -11,11 +11,23 @@ interface Props {
   entries?: SRTEntry[]
   enabled: boolean
   onToggle: (v: boolean) => void
+  strictUseClientSrt?: boolean
+  onStrictUseClientSrtChange?: (v: boolean) => void
   timingSource?: string
   previewVideoSize?: { width: number; height: number } | null
 }
 
-export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, timingSource, previewVideoSize }: Props) {
+export function SubtitlePanel({
+  style,
+  onChange,
+  entries,
+  enabled,
+  onToggle,
+  strictUseClientSrt,
+  onStrictUseClientSrtChange,
+  timingSource,
+  previewVideoSize,
+}: Props) {
   const [open, setOpen] = useState(false)
 
   function patch(k: keyof SubtitleStyle, v: SubtitleStyle[typeof k]) {
@@ -63,6 +75,18 @@ export function SubtitlePanel({ style, onChange, entries, enabled, onToggle, tim
           }`}>
             {timingSource === 'tts' ? '⏱ TTS时长' : timingSource === 'mixed' ? '⏱ 混合时长' : '⏱ 视频时长'}
           </span>
+        )}
+        {typeof strictUseClientSrt === 'boolean' && onStrictUseClientSrtChange && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onStrictUseClientSrtChange(!strictUseClientSrt) }}
+            className="ml-1 flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 hover:bg-slate-800/60 transition-colors"
+            title="开启后：导出成片时严格使用当前 SRT，不再自动按 TTS 时长兜底重排"
+          >
+            <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] transition-colors ${
+              strictUseClientSrt ? 'bg-cyan-600 border-cyan-600 text-white' : 'border-slate-600 text-transparent'
+            }`}>✓</span>
+            <span className="text-[10px] text-slate-400">严格SRT</span>
+          </button>
         )}
         <div className="flex-1" />
         {/* enable toggle */}

@@ -358,6 +358,8 @@ export interface BurnSubtitleRequest {
   style?: SubtitleStyleApi
   project_name?: string
   export_backend?: 'ffmpeg' | 'moviepy'
+  /** 完全按传入 srt_content 烧录；不做 TTS 对齐兜底重建 */
+  strict_use_client_srt?: boolean
 }
 
 export interface BurnSubtitleResponse {

@@ -10,6 +10,8 @@ type MatchSubtitleWorkspaceProps = {
   entries: SRTEntry[]
   subtitleEnabled: boolean
   onSubtitleEnabledChange: (v: boolean) => void
+  strictUseClientSrt?: boolean
+  onStrictUseClientSrtChange?: (v: boolean) => void
   timingSource: string
   previewVideoSize: { width: number; height: number } | null
   srtError: string
@@ -27,6 +29,8 @@ export function MatchSubtitleWorkspace({
   entries,
   subtitleEnabled,
   onSubtitleEnabledChange,
+  strictUseClientSrt,
+  onStrictUseClientSrtChange,
   timingSource,
   previewVideoSize,
   srtError,
@@ -40,6 +44,8 @@ export function MatchSubtitleWorkspace({
         entries={entries}
         enabled={subtitleEnabled}
         onToggle={onSubtitleEnabledChange}
+        strictUseClientSrt={strictUseClientSrt}
+        onStrictUseClientSrtChange={onStrictUseClientSrtChange}
         timingSource={timingSource}
         previewVideoSize={previewVideoSize}
       />

@@ -26,7 +26,12 @@ from app.models.subtitle import (
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
 from app.core.subtitle.srt import build_srt, parse_srt
-from app.core.subtitle.timeline import resolve_durations, rule_timeline, rule_timeline_equal_units
+from app.core.subtitle.timeline import (
+    resolve_durations,
+    rule_timeline,
+    rule_timeline_equal_units,
+    rule_timeline_weighted_chars,
+)
 from app.core.subtitle.burn import burn_to_mp4
 
 logger = logging.getLogger(__name__)
@@ -139,7 +144,11 @@ async def generate_srt(req: GenerateSRTRequest):
     durs, src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, req.use_tts_timing)
 
     # 一键成片默认走规则法，确保字幕与配音时长完全可控，避免 LLM 对齐偏差。
-    raw_entries = rule_timeline(req.segments, durs, max_chars)
+    # 启用 TTS timing 时：段内按字数权重分配时长，更贴近匀速配音。
+    if req.use_tts_timing:
+        raw_entries = rule_timeline_weighted_chars(req.segments, durs, max_chars)
+    else:
+        raw_entries = rule_timeline(req.segments, durs, max_chars)
 
     logger.warning(f"raw_entries: {raw_entries}")
 
@@ -196,27 +205,69 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     }
     clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
 
-    # 兜底一致性：一键成片场景下，字幕应与 TTS 音频“强绑定”。
-    # 若前端传来的 srt_content 与当前 segments 的 TTS 总时长明显不一致，说明可能拿错/过期/被编辑过，
-    # 此时在烧录阶段按 TTS 时长重新生成时间轴，避免“语音正常但字幕漂移/错内容”。
+    # 兜底一致性：一键成片场景下，字幕默认与 TTS 音频“强绑定”。
+    # 若前端传来的 srt_content 与当前 segments 的 TTS 时长/结构不一致（过期/编辑导致），
+    # 则在烧录阶段按 TTS 时长重新生成时间轴，确保最终成片字幕对齐配音。
+    #
+    # 若 strict_use_client_srt=True：完全按传入 SRT 烧录（不做任何校验/重建）。
     srt_entries = parse_srt(req.srt_content or "")
     try:
+        if getattr(req, "strict_use_client_srt", False):
+            raise RuntimeError("strict_use_client_srt enabled; skip rebuild")
+
         tts_durs, _src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, use_tts=True)
         expected_total = float(sum(float(x or 0.0) for x in tts_durs) or 0.0)
-        srt_total = float(max((e.get("end", 0.0) for e in srt_entries), default=0.0) or 0.0)
-        # 允许少量误差（毫秒级 rounding、编码容器差异），超过阈值则重建
-        if expected_total > 0.1 and abs(expected_total - srt_total) > 0.35:
+
+        def _needs_rebuild(entries: list, *, expected_total_sec: float) -> bool:
+            if expected_total_sec <= 0.1:
+                return False
+            if not entries:
+                return True
+
+            # 基础合法性检查
+            last_end = 0.0
+            for e in entries:
+                try:
+                    st = float(e.get("start", 0.0) or 0.0)
+                    ed = float(e.get("end", 0.0) or 0.0)
+                except Exception:
+                    return True
+                if st < -0.001 or ed <= st:
+                    return True
+                if st + 0.001 < last_end:
+                    return True
+                last_end = max(last_end, ed)
+
+            srt_total = float(max((e.get("end", 0.0) for e in entries), default=0.0) or 0.0)
+            # 更严格的阈值：生成/烧录两端都按 ffprobe(TTS) 取时长，理论上差值应很小
+            if abs(expected_total_sec - srt_total) > 0.15:
+                return True
+            # 覆盖不足也重建（避免字幕提前结束）
+            if srt_total + 0.10 < expected_total_sec:
+                return True
+            # 若字幕明显超出音频，也重建（避免尾部“空字幕”）
+            if srt_total - expected_total_sec > 0.20:
+                return True
+            return False
+
+        if _needs_rebuild(srt_entries, expected_total_sec=expected_total):
             max_chars = req.style.max_chars_per_line if req.style else 20
-            rebuilt_entries = rule_timeline(req.segments, tts_durs, max_chars)
-            rebuilt_srt = build_srt([{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries])
+            rebuilt_entries = rule_timeline_weighted_chars(req.segments, tts_durs, max_chars)
+            rebuilt_srt = build_srt(
+                [{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries]
+            )
             logger.warning(
-                "检测到 srt_content 与 TTS 总时长不一致，烧录阶段已按 TTS 重新生成时间轴: srt=%.3fs expected_tts=%.3fs",
-                srt_total,
+                "烧录阶段已按 TTS 重建时间轴: srt=%.3fs expected_tts=%.3fs",
+                float(max((e.get("end", 0.0) for e in srt_entries), default=0.0) or 0.0),
                 expected_total,
             )
             srt_entries = parse_srt(rebuilt_srt)
     except Exception as e:
-        logger.warning("烧录阶段校验/重建字幕时间轴失败，继续使用原 srt_content: %s", e)
+        # strict_use_client_srt 会主动走到这里：属于预期行为，不输出 warning 降噪。
+        if getattr(req, "strict_use_client_srt", False):
+            logger.info("strict_use_client_srt=True，烧录阶段跳过字幕时间轴校验/重建")
+        else:
+            logger.warning("烧录阶段校验/重建字幕时间轴失败，继续使用原 srt_content: %s", e)
 
     logger.info("烧录: %d 段, %d 条字幕", len(req.segments), len(srt_entries))
 

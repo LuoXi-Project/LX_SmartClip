@@ -117,6 +117,65 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
 # 规则法时间轴
 # ---------------------------------------------------------------------------
 
+_WEIGHT_CHAR_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]")
+
+
+def _text_weight_chars(text: str) -> int:
+    """
+    用“可发音字符”的粗略数量作为时长权重：中文汉字 + 英文/数字。
+    目的是在“匀速 TTS”场景下，让长句获得更长展示时长。
+    """
+    t = (text or "").strip()
+    if not t:
+        return 1
+    n = len(_WEIGHT_CHAR_RE.findall(t))
+    return n if n > 0 else 1
+
+
+def _allocate_durations_by_weight(
+    total_dur: float,
+    weights: list[int],
+    *,
+    min_unit_dur: float = 0.18,
+) -> list[float]:
+    """
+    将 total_dur 按 weights 分配到 N 条，保证：
+    - 每条 >= min_unit_dur（总时长不足时自动回退到 total_dur / N）
+    - 总和精确等于 total_dur（最后一条吸收浮点残差）
+    """
+    n = len(weights)
+    if n <= 0:
+        return []
+    if n == 1:
+        return [float(total_dur)]
+
+    total = float(total_dur or 0.0)
+    if total <= 0:
+        # 兜底：保持与旧逻辑一致
+        return [0.0 for _ in range(n)]
+
+    min_d = float(min_unit_dur or 0.0)
+    if min_d <= 0:
+        min_d = 0.0
+    if min_d * n > total:
+        min_d = total / n
+
+    base = [min_d for _ in range(n)]
+    remain = total - (min_d * n)
+
+    wsum = float(sum(max(1, int(w or 1)) for w in weights))
+    if remain > 0 and wsum > 0:
+        extras = [remain * (max(1, int(w or 1)) / wsum) for w in weights]
+        out = [base[i] + extras[i] for i in range(n)]
+    else:
+        out = base
+
+    # 吸收浮点残差，保证精确铺满段落
+    diff = total - sum(out)
+    out[-1] += diff
+    return out
+
+
 def rule_timeline(segments, durations: list[float], max_chars: int = 20) -> list:
     """
     基于规则将文案拆分到时间轴：优先整句/换行，过长再在句内标点处断行，无标点则按字数强切；时长按条数均分。
@@ -146,6 +205,56 @@ def rule_timeline(segments, durations: list[float], max_chars: int = 20) -> list
                 {"clip_id": seg.clip_id, "start": round(cs, 3), "end": round(ce, 3), "text": chunk}
             )
         t += dur
+    return entries
+
+
+def rule_timeline_weighted_chars(
+    segments,
+    durations: list[float],
+    max_chars: int = 20,
+    *,
+    min_unit_dur: float = 0.18,
+) -> list:
+    """
+    规则法时间轴（按字数权重分配时长）：
+    - 切分规则与 rule_timeline 一致
+    - 段落总时长由 durations 决定（常来自 TTS 音频时长）
+    - 段内每条字幕时长按“可发音字符数”加权分配，更贴近匀速 TTS
+    返回 [{clip_id, start, end, text}, ...]
+    """
+    entries: list[dict] = []
+    t = 0.0
+    mc = int(max_chars or 0)
+    for seg, dur in zip(segments, durations):
+        seg_dur = float(dur or 0.0)
+        text = (getattr(seg, "copy_text", "") or "").strip()
+        if not text:
+            t += seg_dur
+            continue
+
+        units = split_text_units_by_sentence_and_newline(text)
+        chunks = _expand_units_with_char_limit(units, mc) if mc > 0 else [u.strip() for u in units if u.strip()]
+        if not chunks:
+            t += seg_dur
+            continue
+
+        weights = [_text_weight_chars(c) for c in chunks]
+        dlist = _allocate_durations_by_weight(seg_dur, weights, min_unit_dur=min_unit_dur)
+        ss = t
+        cur = ss
+        for i, chunk in enumerate(chunks):
+            start = cur
+            end = ss + seg_dur if i == len(chunks) - 1 else (cur + float(dlist[i] or 0.0))
+            entries.append(
+                {
+                    "clip_id": seg.clip_id,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "text": chunk,
+                }
+            )
+            cur = end
+        t += seg_dur
     return entries
 
 

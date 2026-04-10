@@ -79,6 +79,9 @@ class BurnSubtitleRequest(BaseModel):
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     project_name: Optional[str] = "smartclip_subtitled"
     export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
+    # 默认：成片阶段会按 TTS 校验并在必要时重建时间轴，确保最终对齐配音。
+    # 若用户已在前端手动微调时间轴并希望“完全按传入 SRT 烧录”，则置为 True。
+    strict_use_client_srt: bool = False
 
 
 class ExportOriginalRequest(BaseModel):

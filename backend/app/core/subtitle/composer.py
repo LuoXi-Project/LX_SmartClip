@@ -78,6 +78,7 @@ def compose_final_video(
         concat_list = os.path.join(tmp, "concat.txt")
         write_concat_list(seg_paths, concat_list)
         if not normalize_audio:
+            logger.info(f"FFmpeg concat+copy 参数: {concat_codec_args}")
             run_ffmpeg(
                 [
                     "-fflags",
@@ -100,6 +101,7 @@ def compose_final_video(
             )
             return out_path
         a_bitrate = to_int(final_render_opts, "clip_audio_bitrate_kbps", 192)
+        logger.info("FFmpeg concat+copy_v+encode_a 完成")
         run_ffmpeg(
             [
                 "-fflags",
@@ -124,6 +126,7 @@ def compose_final_video(
             ],
             desc="concat+copy_v+encode_a",
         )
+        logger.info("FFmpeg concat+copy_v+encode_a 完成")
         return out_path
 
     # 慢路径：规格不一致或需要字幕/缩放 → filter_complex concat，逐路按需 scale / resample。
@@ -204,6 +207,7 @@ def compose_final_video_moviepy(
         except Exception as e:  # pragma: no cover
             raise RuntimeError(f"MoviePy 导入失败：{e}")
 
+    logger.info(f"MoviePy 拼接开始: {seg_paths}")
     clips = []
     final_clip = None
     try:
@@ -289,6 +293,7 @@ def compose_final_video_moviepy(
                     wf.write(rf.read())
         return out_path
 
+    logger.info(f"FFmpeg moviepy_concat+burn 参数: {concat_codec_args}")
     run_ffmpeg(
         [
             "-i",
@@ -309,5 +314,6 @@ def compose_final_video_moviepy(
         ],
         desc="moviepy_concat+burn",
     )
+    logger.info("FFmpeg moviepy_concat+burn 完成")
     return out_path
 

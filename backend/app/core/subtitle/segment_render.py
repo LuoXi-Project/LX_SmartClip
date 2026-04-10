@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Dict, List, Optional, Tuple
 
-from app.utils.ffprobe_utils import probe_duration, probe_keyframes_times
+from app.utils.ffprobe_utils import probe_duration, probe_keyframes_times, probe_video_dimensions
 
 from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
 from .render_opts import (
@@ -15,6 +15,13 @@ from .render_opts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _make_even(x: int, *, min_v: int = 2) -> int:
+    x = int(x)
+    if x < min_v:
+        x = min_v
+    return x if (x % 2 == 0) else (x - 1)
 
 
 def _is_near_keyframe(ts: float, keyframes: List[float], *, threshold_sec: float = 0.04) -> bool:
@@ -76,15 +83,23 @@ def materialize_clip_paths_for_group(
     seg_idx: int,
     render_opts: Optional[Dict[str, str]],
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
+    materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
 ) -> Tuple[List[str], float]:
     """
     按顺序处理 clip 组：必要时逐段 ffmpeg 裁剪，返回 concat 用的路径列表与总视频时长。
     """
     trim_map = _trim_map_from_seg(seg, clip_ids)
-    seg_filter_parts = build_extra_video_filters(render_opts)
+    # 优化1（最重要）：提前统一尺寸/SAR，避免后续 filter_complex 对每路反复 scale。
+    # 这里固定输出到 1920x1080 + setsar=1（像素方形）。
+    # 若上层还配置了额外滤镜（如 fps），继续追加；但避免重复 scale。
+    base_norm_filters = ["scale=1920:1080", "setsar=1"]
+    extra_filters = build_extra_video_filters(render_opts)
+    extra_filters = [f for f in extra_filters if not (f or "").strip().lower().startswith("scale=")]
+    seg_filter_parts = [*base_norm_filters, *extra_filters]
     seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
 
     kf_cache = keyframe_cache if keyframe_cache is not None else {}
+    mat_cache = materialize_cache if materialize_cache is not None else {}
     paths_out: List[str] = []
     total_dur = 0.0
     for j, (cid, info) in enumerate(zip(clip_ids, infos)):
@@ -104,11 +119,28 @@ def materialize_clip_paths_for_group(
             start, span = 0.0, src_total
 
         need_trim = start > 0.001 or (span + 0.02) < (src_total - start - 0.001)
-        if not need_trim:
+        # 即便不裁剪，只要尺寸不一致也先 materialize 成统一规格，便于后续 concat demuxer/copy。
+        # 已是目标尺寸时可直通（节省一次重编码）；SAR 这里不探测，依赖绝大多数素材已为 1:1。
+        w, h = probe_video_dimensions(src_path, default=(1920, 1080), logger_=logger)
+        need_norm = (w, h) != (1920, 1080)
+
+        if not need_trim and not need_norm:
             paths_out.append(src_path)
             piece_dur = src_total
         else:
-            trim_tmp = os.path.join(tmp, f"seg_{seg_idx:03d}_p{j:02d}_trim.mp4")
+            tmp_name = "trim" if need_trim else "norm"
+            # cache key：相同输入 + 相同裁剪参数 + 相同视频滤镜 → 复用同一个预处理文件（跨 seg）
+            # 注意：这里不把 seg_idx/j 写入 key，避免同素材重复引用时重复编码。
+            vf_key = ",".join(seg_filter_parts)
+            cache_key = f"{src_path}|{tmp_name}|{start:.3f}|{span:.3f}|vf={vf_key}"
+            cached = mat_cache.get(cache_key)
+            if cached and os.path.isfile(cached[0]):
+                paths_out.append(cached[0])
+                piece_dur = cached[1] if cached[1] > 0.05 else (span if need_trim else src_total)
+                total_dur += max(piece_dur, 0.05)
+                continue
+
+            trim_tmp = os.path.join(tmp, f"seg_{seg_idx:03d}_p{j:02d}_{tmp_name}.mp4")
             end = start + span
 
             # 只有“纯裁剪”（不带视频滤镜）才可能安全 stream copy。
@@ -141,7 +173,7 @@ def materialize_clip_paths_for_group(
                             "+faststart",
                             trim_tmp,
                         ],
-                        desc=f"pretrim(copy) clip {cid} seg{seg_idx + 1}",
+                        desc=f"pretrim(copy) clip {cid} seg{(int(seg_idx) + 1)}",
                     )
                     did_copy = True
                 # 情况2：轻微偏移 → 先试 copy，失败/异常再回退重编码
@@ -163,7 +195,7 @@ def materialize_clip_paths_for_group(
                                 "+faststart",
                                 trim_tmp,
                             ],
-                            desc=f"pretrim(try_copy) clip {cid} seg{seg_idx + 1}",
+                            desc=f"pretrim(try_copy) clip {cid} seg{(int(seg_idx) + 1)}",
                         )
                         did_copy = True
                     except Exception:
@@ -175,26 +207,27 @@ def materialize_clip_paths_for_group(
                 seg_codec_args = build_render_codec_args(trim_opts)
                 if seg_filter_parts:
                     seg_codec_args = force_video_reencode(seg_codec_args, render_opts=trim_opts)
+                logger.info(f"FFmpeg pretrim(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 参数: {seg_codec_args}")
                 run_ffmpeg(
                     [
                         "-i",
                         src_path,
-                        "-ss",
-                        f"{start:.3f}",
-                        "-t",
-                        f"{span:.3f}",
+                        # 不裁剪时不要带 -ss/-t，避免不必要的 seek/精度差异
+                        *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
                         *seg_vf_args,
                         *seg_codec_args,
                         "-movflags",
                         "+faststart",
                         trim_tmp,
                     ],
-                    desc=f"pretrim(encode) clip {cid} seg{seg_idx + 1}",
+                    desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
                 )
+                logger.info(f"FFmpeg pre{tmp_name}(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 完成")
 
             paths_out.append(trim_tmp)
             probed = float(probe_duration(trim_tmp, log_on_failure=True) or 0.0)
-            piece_dur = probed if probed > 0.05 else span
+            piece_dur = probed if probed > 0.05 else (span if need_trim else src_total)
+            mat_cache[cache_key] = (trim_tmp, piece_dur)
 
         total_dur += max(piece_dur, 0.05)
 
@@ -209,7 +242,7 @@ def collect_segment_sources(seg, clip_map: dict, seg_idx: int) -> Tuple[List[str
         raw_ids = [seg.clip_id]
     clip_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
     if not clip_ids:
-        raise HTTPException(400, f"片段缺少 clip_id: seg_{seg_idx + 1}")
+        raise HTTPException(400, f"片段缺少 clip_id: seg_{(int(seg_idx) + 1)}")
     infos: List[dict] = []
     for cid in clip_ids:
         info = clip_map.get(cid)
@@ -245,6 +278,7 @@ def render_original_segment(
     seg_idx,
     render_opts,
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
+    materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
 ) -> str:
     seg_out = os.path.join(tmp, f"seg_{seg_idx:03d}.mp4")
 
@@ -256,6 +290,7 @@ def render_original_segment(
         seg_idx=seg_idx,
         render_opts=render_opts,
         keyframe_cache=keyframe_cache,
+        materialize_cache=materialize_cache,
     )
 
     desired_dur = resolve_desired_dur(seg)
@@ -288,7 +323,7 @@ def render_original_segment(
                     "+faststart",
                     seg_out,
                 ],
-                desc=f"original seg {seg_idx+1} (concat+copy)",
+                desc=f"original seg {(int(seg_idx) + 1)} (concat+copy)",
             )
             return seg_out
         except Exception:
@@ -338,7 +373,7 @@ def render_original_segment(
             "+faststart",
             seg_out,
         ],
-        desc=f"original seg {seg_idx+1}",
+        desc=f"original seg {(int(seg_idx) + 1)}",
     )
 
     return seg_out
@@ -354,16 +389,37 @@ def render_tts_segment(
     tts_audio_dir,
     render_opts,
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
+    materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
 ) -> str:
     from fastapi import HTTPException
 
+    def _force_audio_reencode(codec_args: List[str], *, acodec: str = "aac", abitrate_kbps: int = 128) -> List[str]:
+        """
+        filter_complex 输出的音频不能 stream copy（-c:a copy）。
+        这里强制将音频编码器改为可用的实际编码器（默认 aac）。
+        """
+        out = list(codec_args)
+        try:
+            a_idx = out.index("-c:a")
+        except ValueError:
+            out += ["-c:a", acodec, "-b:a", f"{abitrate_kbps}k"]
+            return out
+        if a_idx + 1 >= len(out):
+            out += [acodec]
+        else:
+            out[a_idx + 1] = acodec
+        # 确保有 -b:a（若后续已存在则不重复添加）
+        if "-b:a" not in out:
+            out += ["-b:a", f"{abitrate_kbps}k"]
+        return out
+
     name = str(getattr(seg, "tts_filename", "") or "").strip()
     if not name:
-        raise HTTPException(400, f"TTS 文件名为空: seg_{seg_idx + 1}，请先合成配音")
+        raise HTTPException(400, f"TTS 文件名为空: seg_{(int(seg_idx) + 1)}，请先合成配音")
 
     tts_path = os.path.join(tts_audio_dir, os.path.basename(name))
     if not os.path.isfile(tts_path):
-        raise HTTPException(400, f"TTS 音频不存在: seg_{seg_idx + 1}")
+        raise HTTPException(400, f"TTS 音频不存在: seg_{(int(seg_idx) + 1)}")
 
     seg_out = os.path.join(tmp, f"seg_{seg_idx:03d}.mp4")
 
@@ -375,55 +431,103 @@ def render_tts_segment(
         seg_idx=seg_idx,
         render_opts=render_opts,
         keyframe_cache=keyframe_cache,
+        materialize_cache=materialize_cache,
     )
+
+    if not paths_group:
+        raise HTTPException(400, f"分段 seg_{(int(seg_idx) + 1)} 没有可用视频素材")
 
     audio_dur = float(probe_duration(tts_path) or 0.0)
     if audio_dur <= 0:
         raise HTTPException(400, "TTS 音频无效")
 
+    # 如果视频总时长短于配音时长：重复追加第一个素材直到覆盖，然后再 trim 精准裁剪。
+    # 这样实现“复制拼接”，不需要 loop/tpad。
+    durs = [float(probe_duration(p) or 0.0) for p in paths_group]
+    base_video_dur = sum(max(0.0, d) for d in durs)
+    first_dur = max(0.0, durs[0] if durs else 0.0)
+    if base_video_dur > 0 and base_video_dur < audio_dur and first_dur > 0:
+        need = audio_dur - base_video_dur
+        # 至少补 1 段；上限防止异常时长导致无限膨胀
+        extra_n = int(need // first_dur) + 2
+        extra_n = max(1, min(200, extra_n))
+        paths_group = [*paths_group, *([paths_group[0]] * extra_n)]
+
+    # concat 要求所有输入视频参数一致（分辨率/SAR 等），否则会报
+    # "Input link parameters ... do not match ..."。
     seg_codec_args = force_video_reencode(build_render_codec_args(render_opts), render_opts=render_opts)
+    seg_codec_args = _force_audio_reencode(seg_codec_args, acodec="aac", abitrate_kbps=128)
 
-    cmd = []
-    for p in paths_group:
-        cmd += ["-i", p]
-    cmd += ["-i", tts_path]
+    # 优化2：尽量避免 filter_complex concat，优先 concat demuxer。
+    # 前提是输入视频规格一致（分辨率/编码参数/SAR 等）。我们已在 materialize 阶段统一到 1920x1080 + SAR=1，成功率很高。
+    concat_list = os.path.join(tmp, f"seg_{seg_idx:03d}_vconcat.txt")
+    write_concat_list(paths_group, concat_list)
+    try:
+        logger.info(f"FFmpeg tts(seg concat demuxer) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
+        run_ffmpeg(
+            [
+                "-fflags",
+                "+genpts",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_list,
+                "-i",
+                tts_path,
+                # 只取拼接后的 video + 独立 tts audio
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                # 精准控制总时长为音频时长；视频将被重编码（避免关键帧限制）
+                "-t",
+                f"{audio_dur:.3f}",
+                "-shortest",
+                *seg_codec_args,
+                "-movflags",
+                "+faststart",
+                seg_out,
+            ],
+            desc=f"tts seg {(int(seg_idx) + 1)} (concat demuxer)",
+        )
+    except Exception:
+        # fallback：仍走 filter_complex concat，但不再做多路 scale/pad（尺寸/SAR 已在 materialize 统一）
+        cmd = []
+        for p in paths_group:
+            cmd += ["-i", p]
+        cmd += ["-i", tts_path]
 
-    filter_parts = []
-    concat_inputs = []
+        filter_parts = []
+        concat_inputs = []
+        for i in range(len(paths_group)):
+            filter_parts.append(f"[{i}:v]setsar=1,setpts=PTS-STARTPTS[v{i}]")
+            concat_inputs.append(f"[v{i}]")
+        filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(paths_group)}:v=1:a=0[vcat]")
+        filter_parts.append(f"[vcat]trim=0:{audio_dur},setpts=PTS-STARTPTS[vout]")
+        filter_parts.append(f"[{len(paths_group)}:a]atrim=0:{audio_dur},asetpts=PTS-STARTPTS[aout]")
+        filter_complex = ";".join(filter_parts)
 
-    # 👉 视频拼接（无音频）
-    for i in range(len(paths_group)):
-        filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
-        concat_inputs.append(f"[v{i}]")
+        logger.info(f"FFmpeg tts(seg fallback filter_complex) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
+        run_ffmpeg(
+            [
+                *cmd,
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "[vout]",
+                "-map",
+                "[aout]",
+                *seg_codec_args,
+                "-movflags",
+                "+faststart",
+                seg_out,
+            ],
+            desc=f"tts seg {(int(seg_idx) + 1)} (fallback filter_complex)",
+        )
 
-    filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(paths_group)}:v=1:a=0[vcat]")
-
-    # 👉 无限循环 + 精准裁剪（替代 stream_loop）
-    filter_parts.append(
-        f"[vcat]loop=loop=-1:size=999999:start=0," f"trim=0:{audio_dur},setpts=PTS-STARTPTS[vout]"
-    )
-
-    # 👉 音频裁剪
-    filter_parts.append(f"[{len(paths_group)}:a]atrim=0:{audio_dur},asetpts=PTS-STARTPTS[aout]")
-
-    filter_complex = ";".join(filter_parts)
-
-    run_ffmpeg(
-        [
-            *cmd,
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[vout]",
-            "-map",
-            "[aout]",
-            *seg_codec_args,
-            "-movflags",
-            "+faststart",
-            seg_out,
-        ],
-        desc=f"tts seg {seg_idx+1}",
-    )
+    logger.info(f"FFmpeg tts 剪辑片段 {(int(seg_idx) + 1)} 完成")
 
     return seg_out
 

@@ -486,9 +486,28 @@ export default function MatchPage() {
 
   async function handleExport() {
     if (exporting) return
-    setExporting(true); setExportError('')
     const projectName = globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
     try {
+      // 一键成片（配音 + 字幕烧录）：先在前端拦截未完成配音，避免后端因缺音频报错
+      if (exportMode === 'subtitle') {
+        const needTtsSegs = readySegs
+        const missingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename)
+        const loadingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && s.ttsLoading)
+        const failedTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && !!s.ttsError)
+
+        if (missingTtsSegs.length > 0) {
+          const tip =
+            loadingTtsSegs.length > 0
+              ? `还有 ${missingTtsSegs.length} 段配音未就绪（${loadingTtsSegs.length} 段合成中），请等待配音完成后再导出。`
+              : failedTtsSegs.length > 0
+                ? `还有 ${missingTtsSegs.length} 段配音未就绪（${failedTtsSegs.length} 段合成失败），请先重新合成配音后再导出。`
+                : `还有 ${missingTtsSegs.length} 段未生成配音，请先完成配音合成后再导出。`
+          toast.info(tip)
+          return
+        }
+      }
+
+      setExporting(true); setExportError('')
       if (exportMode === 'zip') {
         const clipIds = readySegs
           .map((s) => (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id))

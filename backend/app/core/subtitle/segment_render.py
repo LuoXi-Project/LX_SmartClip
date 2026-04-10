@@ -41,36 +41,29 @@ def _nearest_keyframe_distance(ts: float, keyframes: List[float]) -> float:
     return min(abs(t - kf) for kf in keyframes)
 
 
-def _trim_map_from_seg(seg, clip_ids: List[str]) -> Dict[str, Tuple[float, float]]:
-    """clip_id -> (start_sec, span_sec)。无 clip_trims 时回退单段 clip_start_sec/duration_sec。"""
-    out: Dict[str, Tuple[float, float]] = {}
+def _trim_list_from_seg(seg, clip_ids: List[str]) -> Optional[List[Tuple[float, float]]]:
+    """
+    clip_trims 存在时，返回与 clip_ids **同长度/同顺序**的 (start_sec, span_sec) 列表。
+
+    不能用 dict[clip_id]->(...)：会丢顺序/丢重复（同一 clip_id 多段不同入点/时长）。
+    若 clip_trims 不存在或长度与 clip_ids 不一致，返回 None 由上层走回退逻辑。
+    """
     parts = getattr(seg, "clip_trims", None) or []
+    if not parts:
+        return None
+
+    out: List[Tuple[float, float]] = []
     for p in parts:
         try:
-            cid = str(getattr(p, "clip_id", None) or "")
-            if not cid:
-                continue
             st = float(getattr(p, "clip_start_sec", None) or 0.0)
             sp = float(getattr(p, "duration_sec", None) or 0.0)
-            if sp > 0.05:
-                out[cid] = (max(0.0, st), sp)
         except Exception:
-            continue
-    if not out and len(clip_ids) == 1:
-        cid = clip_ids[0]
-        cs = getattr(seg, "clip_start_sec", None)
-        ds = getattr(seg, "duration_sec", None)
-        try:
-            st = float(cs) if cs is not None else 0.0
-            st = max(0.0, st)
-        except Exception:
-            st = 0.0
-        try:
-            sp = float(ds) if ds is not None else None
-        except Exception:
-            sp = None
-        if sp is not None and sp > 0.05:
-            out[cid] = (st, sp)
+            st, sp = 0.0, 0.0
+        out.append((max(0.0, st), max(0.0, sp)))
+
+    # clip_ids 在 clip_trims 分支下应与 parts 一一对应；若不一致说明上游数据不一致，返回 None 交由上层处理。
+    if len(out) != len(clip_ids):
+        return None
     return out
 
 
@@ -84,11 +77,12 @@ def materialize_clip_paths_for_group(
     render_opts: Optional[Dict[str, str]],
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
     materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
+    force_materialize: bool = False,
 ) -> Tuple[List[str], float]:
     """
     按顺序处理 clip 组：必要时逐段 ffmpeg 裁剪，返回 concat 用的路径列表与总视频时长。
     """
-    trim_map = _trim_map_from_seg(seg, clip_ids)
+    trim_list = _trim_list_from_seg(seg, clip_ids)
     # 优化1（最重要）：提前统一尺寸/SAR，避免后续 filter_complex 对每路反复 scale。
     # 这里固定输出到 1920x1080 + setsar=1（像素方形）。
     # 若上层还配置了额外滤镜（如 fps），继续追加；但避免重复 scale。
@@ -111,11 +105,14 @@ def materialize_clip_paths_for_group(
         if src_total <= 0.05:
             src_total = 0.05
 
-        if cid in trim_map:
-            start, span = trim_map[cid]
+        if trim_list is not None:
+            start, span = trim_list[j]
+            if span <= 0.05:
+                start, span = 0.0, src_total
             start = max(0.0, min(start, src_total - 0.05))
             span = min(max(0.05, span), max(0.05, src_total - start))
         else:
+            # 无 clip_trims：默认使用整段素材（单素材段落的 clip_start_sec/duration_sec 由上层/其它路径控制）
             start, span = 0.0, src_total
 
         need_trim = start > 0.001 or (span + 0.02) < (src_total - start - 0.001)
@@ -124,7 +121,7 @@ def materialize_clip_paths_for_group(
         w, h = probe_video_dimensions(src_path, default=(1920, 1080), logger_=logger)
         need_norm = (w, h) != (1920, 1080)
 
-        if not need_trim and not need_norm:
+        if (not force_materialize) and (not need_trim) and (not need_norm):
             paths_out.append(src_path)
             piece_dur = src_total
         else:
@@ -225,8 +222,14 @@ def materialize_clip_paths_for_group(
                 logger.info(f"FFmpeg pre{tmp_name}(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 完成")
 
             paths_out.append(trim_tmp)
-            probed = float(probe_duration(trim_tmp, log_on_failure=True) or 0.0)
-            piece_dur = probed if probed > 0.05 else (span if need_trim else src_total)
+            # 对“裁剪片段”，优先使用期望 span 作为时长来源：
+            # - ffprobe/容器 metadata 偶发不准会导致后续 TTS 段“补齐判断”失效，从而生成视频短、音频长的坏文件
+            # - span 已在上面按源文件总长做过 clamp，足够可信
+            if need_trim:
+                piece_dur = float(span)
+            else:
+                probed = float(probe_duration(trim_tmp, log_on_failure=True) or 0.0)
+                piece_dur = probed if probed > 0.05 else src_total
             mat_cache[cache_key] = (trim_tmp, piece_dur)
 
         total_dur += max(piece_dur, 0.05)
@@ -237,25 +240,22 @@ def materialize_clip_paths_for_group(
 def collect_segment_sources(seg, clip_map: dict, seg_idx: int) -> Tuple[List[str], List[dict]]:
     from fastapi import HTTPException
 
-    # 重要：若携带 clip_trims，说明上层明确指定了该段使用哪些素材及其裁剪参数。
-    # 此时应优先以 clip_trims 中出现的 clip_id 序列作为素材来源，避免 seg.clip_ids（可能是历史匹配结果）覆盖用户选择。
-    raw_ids: List[str] = []
+    # 强约束：只要 clip_trims 存在，就“只能使用 clip_trims 指定的素材顺序与出入点”。
+    # 绝不能回退到 clip_ids（匹配组）或 clip_id（单素材），否则会混入用户未选中的素材。
     trims = getattr(seg, "clip_trims", None) or []
     if trims:
-        for t in trims:
-            try:
-                cid = str(getattr(t, "clip_id", "") or "")
-            except Exception:
-                cid = ""
-            if cid:
-                raw_ids.append(cid)
-
-    if not raw_ids:
+        clip_ids: List[str] = []
+        for ti, t in enumerate(trims, 1):
+            cid = str(getattr(t, "clip_id", "") or "").strip()
+            if not cid:
+                raise HTTPException(400, f"clip_trims 第 {ti} 条缺少 clip_id: seg_{(int(seg_idx) + 1)}")
+            clip_ids.append(cid)
+    else:
         raw_ids = list(getattr(seg, "clip_ids", None) or [])
         if not raw_ids and getattr(seg, "clip_id", None):
             raw_ids = [seg.clip_id]
+        clip_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
 
-    clip_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
     if not clip_ids:
         raise HTTPException(400, f"片段缺少 clip_id: seg_{(int(seg_idx) + 1)}")
     infos: List[dict] = []
@@ -264,6 +264,27 @@ def collect_segment_sources(seg, clip_map: dict, seg_idx: int) -> Tuple[List[str
         if not info or not os.path.isfile(info["path"] or ""):
             raise HTTPException(404, f"片段不存在: {cid}")
         infos.append(info)
+
+    if trims:
+        try:
+            trims_brief = [
+                {
+                    "clip_id": str(getattr(t, "clip_id", "") or ""),
+                    "start": float(getattr(t, "clip_start_sec", 0.0) or 0.0),
+                    "dur": float(getattr(t, "duration_sec", 0.0) or 0.0),
+                }
+                for t in trims
+            ]
+        except Exception:
+            trims_brief = ["<unprintable clip_trims>"]
+        logger.info(
+            "seg_%d sources=%s (clip_trims=True) trims=%s",
+            int(seg_idx) + 1,
+            clip_ids,
+            trims_brief,
+        )
+    else:
+        logger.info("seg_%d sources=%s (clip_trims=False)", int(seg_idx) + 1, clip_ids)
     return clip_ids, infos
 
 
@@ -306,6 +327,7 @@ def render_original_segment(
         render_opts=render_opts,
         keyframe_cache=keyframe_cache,
         materialize_cache=materialize_cache,
+        force_materialize=False,
     )
 
     desired_dur = resolve_desired_dur(seg)
@@ -447,6 +469,8 @@ def render_tts_segment(
         render_opts=render_opts,
         keyframe_cache=keyframe_cache,
         materialize_cache=materialize_cache,
+        # TTS 模式后续用 concat demuxer 拼接，必须确保每段输入规格尽量一致，否则容易生成“容器时长很长但后半段读不到帧”的坏文件。
+        force_materialize=True,
     )
 
     if not paths_group:

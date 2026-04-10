@@ -438,15 +438,8 @@ export default function MatchPage() {
     setAudioCurrentTime(next)
   }
 
-  function buildSegmentClipIds(seg: Segment): string[] {
-    const primary = seg.selectedClipIds?.[0] || seg.clips[seg.chosenIdx]?.clip_id
-    const ordered = [
-      ...(primary ? [primary] : []),
-      ...(seg.selectedClipIds ?? []),
-      ...seg.clips.map((c) => c.clip_id),
-    ]
-    return Array.from(new Set(ordered.filter(Boolean)))
-  }
+  // 注：历史实现曾把候选 clips 全部拼进 clip_ids，导致导出混入“未选素材”。
+  // 现在一键成片/字幕烧录只使用 selectedClipIds（见 handleExport 内 exportMode==='subtitle' 分支）。
 
   const readySegs = segments.filter((s) => s.clips.length > 0)
 
@@ -545,13 +538,14 @@ export default function MatchPage() {
         const currentSrt = subtitleEnabled ? await generateSrt() : ''
         const segsInput = readySegs
           .map((s) => {
-            const clip_ids = buildSegmentClipIds(s)
-            const cid = clip_ids[0] ?? ''
+            // 一键成片（TTS+字幕）必须严格使用“用户勾选的素材”顺序，不能把候选列表混入导出。
+            const cid = (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? ''
+            const clip_ids = (s.selectedClipIds?.length ? s.selectedClipIds : [cid]).filter(Boolean) as string[]
             const clip_trims = buildClipTrimsForApi(s, clip_ids)
             return {
               copy_text: s.text,
               clip_id: cid,
-              clip_ids,
+              clip_ids: clip_ids.length > 1 ? clip_ids : undefined,
               tts_filename: s.ttsFilename ?? undefined,
               ...(clip_trims.length ? { clip_trims } : {}),
             }

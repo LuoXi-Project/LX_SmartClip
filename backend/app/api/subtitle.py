@@ -194,7 +194,30 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
         for r in rows
     }
-    srt_entries = parse_srt(req.srt_content)
+    clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
+
+    # 兜底一致性：一键成片场景下，字幕应与 TTS 音频“强绑定”。
+    # 若前端传来的 srt_content 与当前 segments 的 TTS 总时长明显不一致，说明可能拿错/过期/被编辑过，
+    # 此时在烧录阶段按 TTS 时长重新生成时间轴，避免“语音正常但字幕漂移/错内容”。
+    srt_entries = parse_srt(req.srt_content or "")
+    try:
+        tts_durs, _src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, use_tts=True)
+        expected_total = float(sum(float(x or 0.0) for x in tts_durs) or 0.0)
+        srt_total = float(max((e.get("end", 0.0) for e in srt_entries), default=0.0) or 0.0)
+        # 允许少量误差（毫秒级 rounding、编码容器差异），超过阈值则重建
+        if expected_total > 0.1 and abs(expected_total - srt_total) > 0.35:
+            max_chars = req.style.max_chars_per_line if req.style else 20
+            rebuilt_entries = rule_timeline(req.segments, tts_durs, max_chars)
+            rebuilt_srt = build_srt([{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries])
+            logger.warning(
+                "检测到 srt_content 与 TTS 总时长不一致，烧录阶段已按 TTS 重新生成时间轴: srt=%.3fs expected_tts=%.3fs",
+                srt_total,
+                expected_total,
+            )
+            srt_entries = parse_srt(rebuilt_srt)
+    except Exception as e:
+        logger.warning("烧录阶段校验/重建字幕时间轴失败，继续使用原 srt_content: %s", e)
+
     logger.info("烧录: %d 段, %d 条字幕", len(req.segments), len(srt_entries))
 
     # 生成唯一的项目名，避免文件覆盖

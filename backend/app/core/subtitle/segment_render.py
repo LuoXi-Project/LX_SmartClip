@@ -237,9 +237,24 @@ def materialize_clip_paths_for_group(
 def collect_segment_sources(seg, clip_map: dict, seg_idx: int) -> Tuple[List[str], List[dict]]:
     from fastapi import HTTPException
 
-    raw_ids = list(getattr(seg, "clip_ids", None) or [])
-    if not raw_ids and getattr(seg, "clip_id", None):
-        raw_ids = [seg.clip_id]
+    # 重要：若携带 clip_trims，说明上层明确指定了该段使用哪些素材及其裁剪参数。
+    # 此时应优先以 clip_trims 中出现的 clip_id 序列作为素材来源，避免 seg.clip_ids（可能是历史匹配结果）覆盖用户选择。
+    raw_ids: List[str] = []
+    trims = getattr(seg, "clip_trims", None) or []
+    if trims:
+        for t in trims:
+            try:
+                cid = str(getattr(t, "clip_id", "") or "")
+            except Exception:
+                cid = ""
+            if cid:
+                raw_ids.append(cid)
+
+    if not raw_ids:
+        raw_ids = list(getattr(seg, "clip_ids", None) or [])
+        if not raw_ids and getattr(seg, "clip_id", None):
+            raw_ids = [seg.clip_id]
+
     clip_ids = list(dict.fromkeys([cid for cid in raw_ids if cid]))
     if not clip_ids:
         raise HTTPException(400, f"片段缺少 clip_id: seg_{(int(seg_idx) + 1)}")
@@ -423,7 +438,7 @@ def render_tts_segment(
 
     seg_out = os.path.join(tmp, f"seg_{seg_idx:03d}.mp4")
 
-    paths_group, _ = materialize_clip_paths_for_group(
+    paths_group, source_total_after = materialize_clip_paths_for_group(
         seg=seg,
         clip_ids=clip_ids,
         infos=infos,
@@ -443,15 +458,31 @@ def render_tts_segment(
 
     # 如果视频总时长短于配音时长：重复追加第一个素材直到覆盖，然后再 trim 精准裁剪。
     # 这样实现“复制拼接”，不需要 loop/tpad。
-    durs = [float(probe_duration(p) or 0.0) for p in paths_group]
-    base_video_dur = sum(max(0.0, d) for d in durs)
-    first_dur = max(0.0, durs[0] if durs else 0.0)
-    if base_video_dur > 0 and base_video_dur < audio_dur and first_dur > 0:
+    # 这里必须“强保证”视频 >= 音频，否则 ffmpeg 会以 shortest 截断音频导致字幕后半段错位。
+    # 早期实现按首段时长估算可能因 probe 失败而不补足；这里改为按“整组素材”重复补齐，更稳。
+    base_video_dur = float(source_total_after or 0.0)
+    if base_video_dur <= 0.05:
+        # 兜底：逐个 probe（可能较慢，但尽量正确）
+        durs = [float(probe_duration(p) or 0.0) for p in paths_group]
+        base_video_dur = sum(max(0.0, d) for d in durs)
+
+    if base_video_dur <= 0.05:
+        raise HTTPException(400, f"分段 seg_{(int(seg_idx) + 1)} 视频时长无效，无法对齐 TTS")
+
+    need_pad_sec = 0.0
+    if base_video_dur + 0.02 < audio_dur:
+        import math
+
         need = audio_dur - base_video_dur
-        # 至少补 1 段；上限防止异常时长导致无限膨胀
-        extra_n = int(need // first_dur) + 2
-        extra_n = max(1, min(200, extra_n))
-        paths_group = [*paths_group, *([paths_group[0]] * extra_n)]
+        # 重复“整组素材”，避免依赖单段 probe；上限防止异常音频时长导致无限膨胀
+        rep = int(math.ceil(need / base_video_dur)) + 1
+        rep = max(1, min(200, rep))
+        paths_group = [*paths_group, *([*paths_group] * rep)]
+        # 仍然给出 pad 兜底（concat/探测误差/编码尾帧等都会导致视频比预期短一点点）
+        need_pad_sec = max(0.0, audio_dur - (base_video_dur * (rep + 1)))
+    else:
+        # 允许微小误差；若视频仍比音频短，则后续用 tpad 冻帧补齐
+        need_pad_sec = max(0.0, audio_dur - base_video_dur)
 
     # concat 要求所有输入视频参数一致（分辨率/SAR 等），否则会报
     # "Input link parameters ... do not match ..."。
@@ -464,6 +495,11 @@ def render_tts_segment(
     write_concat_list(paths_group, concat_list)
     try:
         logger.info(f"FFmpeg tts(seg concat demuxer) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
+        # 关键：不要让视频长度决定输出长度（-shortest 会截断音频）。
+        # 若视频仍短于音频，用 tpad 冻帧补齐到 audio_dur，确保配音完整输出。
+        vf_pad = []
+        if need_pad_sec > 0.02:
+            vf_pad = ["-vf", f"tpad=stop_mode=clone:stop_duration={need_pad_sec:.3f},setsar=1"]
         run_ffmpeg(
             [
                 "-fflags",
@@ -481,10 +517,10 @@ def render_tts_segment(
                 "0:v:0",
                 "-map",
                 "1:a:0",
+                *vf_pad,
                 # 精准控制总时长为音频时长；视频将被重编码（避免关键帧限制）
                 "-t",
                 f"{audio_dur:.3f}",
-                "-shortest",
                 *seg_codec_args,
                 "-movflags",
                 "+faststart",

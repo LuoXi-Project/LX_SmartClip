@@ -1,13 +1,32 @@
-import { ChevronDown, ChevronUp, Loader2, Mic, MicOff, Play, Search, Trash2, Volume2 } from 'lucide-react'
+import type { HTMLAttributes } from 'react'
+import {
+  ChevronDown,
+  ChevronUp,
+  ChevronsDown,
+  ChevronsUp,
+  GripVertical,
+  Loader2,
+  Mic,
+  MicOff,
+  Play,
+  Search,
+  Trash2,
+  Volume2,
+} from 'lucide-react'
 import type { MatchClip } from '@/lib/api'
 import type { Segment } from './types'
 import { ClipCard } from './ClipCard'
 
 export function SegmentRow({
-  seg, index, onTextChange, onRemove, onMatch, onToggleSelect,
+  seg, index, segmentCount = 0, onReorder,
+  onTextChange, onRemove, onMatch, onToggleSelect,
   onTts, onPlayAudio, onStopAudio, playingAudio, onPreview, onToggleExpand,
+  dragHandleProps,
 }: {
   seg: Segment; index: number
+  /** 段落总数，与 onReorder 一起用于禁用边界按钮 */
+  segmentCount?: number
+  onReorder?: (action: 'up' | 'down' | 'top' | 'bottom') => void
   onTextChange: (t: string) => void
   onRemove: () => void
   onMatch: () => void
@@ -18,7 +37,11 @@ export function SegmentRow({
   playingAudio: boolean
   onPreview: (clip: MatchClip) => void
   onToggleExpand: () => void
+  /** 拖动手柄（仅手动匹配段落排序） */
+  dragHandleProps?: HTMLAttributes<HTMLDivElement> & { draggable?: boolean }
 }) {
+  const canUp = index > 0
+  const canDown = segmentCount > 0 && index < segmentCount - 1
   const primaryId = seg.selectedClipIds?.[0] ?? ''
   const chosen = primaryId ? (seg.clips.find((c) => c.clip_id === primaryId) ?? null) : null
   const selectedCount = seg.selectedClipIds?.length ?? 0
@@ -28,6 +51,18 @@ export function SegmentRow({
     <div className="rounded-2xl border border-slate-800 bg-[#0e1017] overflow-hidden">
       {/* header */}
       <div className="flex items-center gap-3 px-4 py-3 bg-slate-900/60 border-b border-slate-800">
+        {dragHandleProps ? (
+          <div
+            role="button"
+            tabIndex={0}
+            title="拖动排序"
+            aria-label="拖动排序"
+            className="shrink-0 p-0.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none select-none"
+            {...dragHandleProps}
+          >
+            <GripVertical className="w-4 h-4" />
+          </div>
+        ) : null}
         <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs font-bold flex items-center justify-center shrink-0">
           {index + 1}
         </div>
@@ -43,6 +78,46 @@ export function SegmentRow({
             配音就绪
           </span>
         )}
+        {onReorder && segmentCount > 1 ? (
+          <div className="flex items-center gap-0.5 shrink-0 rounded-lg border border-slate-700/80 bg-slate-900/50 p-0.5">
+            <button
+              type="button"
+              title="移至顶部"
+              disabled={!canUp}
+              onClick={() => onReorder('top')}
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+            >
+              <ChevronsUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              title="上移"
+              disabled={!canUp}
+              onClick={() => onReorder('up')}
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              title="下移"
+              disabled={!canDown}
+              onClick={() => onReorder('down')}
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              title="移至底部"
+              disabled={!canDown}
+              onClick={() => onReorder('bottom')}
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+            >
+              <ChevronsDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : null}
         <button onClick={onToggleExpand} className="text-slate-600 hover:text-slate-300 transition-colors">
           {seg.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>

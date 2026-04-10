@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
 import { type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
@@ -19,6 +20,10 @@ export type ManualMatchPanelProps = {
   onMatchAll: () => void
   globalMatching: boolean
   onAddSegment: () => void
+  /** 拖动段落调整顺序：将 fromId 移到 toId 所在位置 */
+  onMoveSegment: (fromId: string, toId: string) => void
+  /** 按钮调整顺序 */
+  onSegmentReorder: (segId: string, action: 'up' | 'down' | 'top' | 'bottom') => void
   segments: Segment[]
   onClearAll: () => void
   onSegmentTextChange: (segId: string, text: string) => void
@@ -48,6 +53,8 @@ export function ManualMatchPanel({
   onMatchAll,
   globalMatching,
   onAddSegment,
+  onMoveSegment,
+  onSegmentReorder,
   segments,
   onClearAll,
   onSegmentTextChange,
@@ -62,6 +69,44 @@ export function ManualMatchPanel({
   onToggleExpand,
   replicaTemplateGuide,
 }: ManualMatchPanelProps) {
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const flashClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dragMime = 'application/x-smartclip-seg-id'
+
+  const flashRow = (id: string) => {
+    if (flashClearRef.current) clearTimeout(flashClearRef.current)
+    setFlashId(id)
+    flashClearRef.current = setTimeout(() => {
+      setFlashId(null)
+      flashClearRef.current = null
+    }, 1100)
+  }
+
+  useEffect(() => () => {
+    if (flashClearRef.current) clearTimeout(flashClearRef.current)
+  }, [])
+
+  /** 拖动靠近视口上下边缘时自动滚动，便于长列表排序 */
+  useEffect(() => {
+    if (!draggingId) return
+    const margin = 88
+    const maxStep = 22
+    const onDragOver = (e: DragEvent) => {
+      const y = e.clientY
+      if (y < margin) {
+        const k = 1 - y / margin
+        window.scrollBy(0, -Math.ceil(maxStep * k))
+      } else if (y > window.innerHeight - margin) {
+        const k = 1 - (window.innerHeight - y) / margin
+        window.scrollBy(0, Math.ceil(maxStep * k))
+      }
+    }
+    document.addEventListener('dragover', onDragOver)
+    return () => document.removeEventListener('dragover', onDragOver)
+  }, [draggingId])
+
   return (
     <>
       <div className="flex flex-wrap items-center gap-4">
@@ -135,28 +180,81 @@ export function ManualMatchPanel({
       </section>
       {segments.length > 0 && (
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">文案段落 · {segments.length} 段</p>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+              文案段落 · {segments.length} 段
+              <span className="ml-2 font-normal normal-case text-slate-600 hidden sm:inline">可拖拽排序，或用每段标题栏箭头</span>
+            </p>
             <button onClick={onClearAll} className="text-xs text-slate-600 hover:text-red-400 transition-colors">
               清空全部
             </button>
           </div>
           {segments.map((seg, i) => (
-            <SegmentRow
+            <div
               key={seg.id}
-              seg={seg}
-              index={i}
-              onTextChange={(text) => onSegmentTextChange(seg.id, text)}
-              onRemove={() => onRemoveSegment(seg.id)}
-              onMatch={() => onMatchSegment(seg.id)}
-              onToggleSelect={(clipId) => onToggleClipSelected(seg.id, clipId)}
-              onTts={() => onSynthesiseTts(seg.id)}
-              onPlayAudio={() => onPlayAudio(seg.id)}
-              onStopAudio={onStopAudio}
-              playingAudio={playingSegId === seg.id}
-              onPreview={onPreview}
-              onToggleExpand={() => onToggleExpand(seg.id)}
-            />
+              className={[
+                'rounded-2xl transition-[opacity,box-shadow] duration-200',
+                draggingId === seg.id ? 'opacity-45' : '',
+                draggingId && draggingId !== seg.id && dropTargetId === seg.id
+                  ? 'ring-2 ring-indigo-400/90 shadow-[0_0_0_1px_rgba(129,140,248,0.35),0_8px_28px_-6px_rgba(99,102,241,0.45)]'
+                  : '',
+                flashId === seg.id
+                  ? 'ring-2 ring-emerald-400 shadow-[0_0_24px_-4px_rgba(52,211,153,0.55)]'
+                  : '',
+              ].join(' ')}
+              onDragOver={(e) => {
+                if (!draggingId || draggingId === seg.id) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                setDropTargetId(seg.id)
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTargetId(null)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                const fromId = e.dataTransfer.getData(dragMime) || e.dataTransfer.getData('text/plain')
+                setDropTargetId(null)
+                setDraggingId(null)
+                if (!fromId || fromId === seg.id) return
+                onMoveSegment(fromId, seg.id)
+                flashRow(fromId)
+              }}
+            >
+              <SegmentRow
+                seg={seg}
+                index={i}
+                segmentCount={segments.length}
+                onReorder={(action) => {
+                  onSegmentReorder(seg.id, action)
+                  flashRow(seg.id)
+                }}
+                onTextChange={(text) => onSegmentTextChange(seg.id, text)}
+                onRemove={() => onRemoveSegment(seg.id)}
+                onMatch={() => onMatchSegment(seg.id)}
+                onToggleSelect={(clipId) => onToggleClipSelected(seg.id, clipId)}
+                onTts={() => onSynthesiseTts(seg.id)}
+                onPlayAudio={() => onPlayAudio(seg.id)}
+                onStopAudio={onStopAudio}
+                playingAudio={playingSegId === seg.id}
+                onPreview={onPreview}
+                onToggleExpand={() => onToggleExpand(seg.id)}
+                dragHandleProps={{
+                  draggable: true,
+                  onDragStart: (e) => {
+                    e.dataTransfer.setData(dragMime, seg.id)
+                    e.dataTransfer.setData('text/plain', seg.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDraggingId(seg.id)
+                    setDropTargetId(null)
+                  },
+                  onDragEnd: () => {
+                    setDraggingId(null)
+                    setDropTargetId(null)
+                  },
+                }}
+              />
+            </div>
           ))}
         </section>
       )}

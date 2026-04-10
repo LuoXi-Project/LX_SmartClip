@@ -310,6 +310,32 @@ export default function MatchPage() {
   }
   function removeSegment(id: string) { setMatchSegments(useMatchStore.getState().segments.filter((s) => s.id !== id)) }
 
+  function moveSegment(fromId: string, toId: string) {
+    if (fromId === toId) return
+    const list = [...useMatchStore.getState().segments]
+    const from = list.findIndex((s) => s.id === fromId)
+    const to = list.findIndex((s) => s.id === toId)
+    if (from < 0 || to < 0) return
+    const [item] = list.splice(from, 1)
+    list.splice(to, 0, item)
+    setMatchSegments(list)
+  }
+
+  function moveSegmentRel(segId: string, action: 'up' | 'down' | 'top' | 'bottom') {
+    const list = [...useMatchStore.getState().segments]
+    const from = list.findIndex((s) => s.id === segId)
+    if (from < 0) return
+    let to = from
+    if (action === 'up') to = Math.max(0, from - 1)
+    else if (action === 'down') to = Math.min(list.length - 1, from + 1)
+    else if (action === 'top') to = 0
+    else if (action === 'bottom') to = list.length - 1
+    if (to === from) return
+    const [item] = list.splice(from, 1)
+    list.splice(to, 0, item)
+    setMatchSegments(list)
+  }
+
   function splitGlobalQuery() {
     if (!globalQuery.trim()) return
     let parts = globalQuery.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
@@ -1014,6 +1040,8 @@ export default function MatchPage() {
                 onMatchAll={matchAll}
                 globalMatching={globalMatching}
                 onAddSegment={() => addSegment()}
+                onMoveSegment={moveSegment}
+                onSegmentReorder={moveSegmentRel}
                 segments={segments}
                 onClearAll={() => setMatchSegments([])}
                 onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}

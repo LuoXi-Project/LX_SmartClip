@@ -1,0 +1,102 @@
+"""视频总结：内置提示词与 schema 常量。"""
+
+# 与 DB 中 INSERT OR IGNORE 的占位行一致；生成流程不读取 summary_templates 正文。
+BUILTIN_TEMPLATE_ID = "user_builtin_note"
+
+# StageA：分段 JSON 结构（与历史 default_general 一致）
+STAGE_A_SCHEMA_HINT = """
+{
+  "title": "string",
+  "overview": "string",
+  "chapters": [
+    {
+      "title": "string",
+      "summary": "string",
+      "key_points": ["string"],
+      "evidence": ["string"]
+    }
+  ],
+  "key_points": ["string"],
+  "highlights": ["string"],
+  "quotes": ["string"],
+  "action_items": ["string"],
+  "tags": ["string"]
+}
+""".strip()
+
+STAGE_A_SYSTEM = """
+你是一个专业的笔记助手。请先把长视频内容按分段窗口提炼为结构化 JSON，严格符合 schema_hint。
+纪律：基于输入总结，禁止编造；数学公式在 JSON 字符串字段中可用 LaTeX；不要输出 JSON 以外的解释文字；不要用 Markdown 代码围栏包裹 JSON。
+""".strip()
+
+STAGE_B_SYSTEM = """
+你是一个专业的笔记助手，擅长将视频转录内容与分段摘要整理成清晰、有条理的中文 Markdown 笔记。
+语言：笔记正文使用中文；专有名词、技术术语、品牌与人名可保留英文。
+输出：只输出最终 Markdown 正文；不要用 ``` 或 markdown 代码围栏包裹全文。
+任务：用户消息中包含「视频分段」原文、可选的用户风格、版式开关，以及 StageA 的 JSON；请合并为单篇完整笔记，满足用户消息中的全部约束。
+""".strip()
+
+# 用户提供的 BASE / 附加块 / 合并说明（segment_text 等占位符在运行时填充）
+BASE_PROMPT = """
+你是一个专业的笔记助手，擅长将视频转录内容整理成清晰、有条理且信息丰富的笔记。
+
+语言要求：
+- 笔记必须使用 **中文** 撰写。
+- 专有名词、技术术语、品牌名称和人名应适当保留 **英文**。
+
+视频标题：
+{video_title}
+
+视频标签：
+{tags}
+
+输出说明：
+- 仅返回最终的 **Markdown 内容**。
+- **不要**将输出包裹在代码块中（不要用 markdown 代码围栏包裹全文）。
+请注意，在生成 Markdown 时，避免将编号标题（如「1. **内容**」）写成有序列表的格式，以免解析错误。
+- 若要加粗并保留编号，可使用「1\\\\. **内容**」（反斜杠转义），或改用「## 1. 内容」作为标题。
+请确保「1. **xxx**」这类行不会被误渲染为有序列表；优先使用「## 1. xxx」。
+
+视频分段（格式：开始时间 - 内容）：
+
+---
+{segment_text}
+---
+
+你的任务：
+根据上面的分段转录内容，生成结构化的笔记，遵循以下原则：
+
+1. **完整信息**：记录尽可能多的相关细节，确保内容全面。
+2. **去除无关内容**：省略广告、填充词、问候语和不相关的言论。
+3. **保留关键细节**：保留重要事实、示例、结论和建议。（若下方「额外重要任务」对格式有更细要求，以该部分为准。）
+4. **可读布局**：必要时使用项目符号，并保持段落简短，增强可读性。（若下方「额外重要任务」对格式有更细要求，以该部分为准。）
+5. 视频中提及的数学公式必须保留，并以 LaTeX 语法形式呈现，适合 Markdown 渲染。
+
+请始终遵循以上规则。
+
+额外重要的任务如下（每一个都必须严格完成）：
+
+""".strip()
+
+PROMPT_LINK = """
+9. **Add time markers**：THIS IS IMPORTANT。对每个主要章节标题（`##`），在该节所依据的内容片段起始时间处追加时间标记：以 `*Content-[mm:ss]` 形式呈现（与正文时间锚点一致）。
+""".strip()
+
+PROMPT_SCREENSHOT = """
+8. **Screenshot placeholders**：若某节涉及**视觉演示、代码 walkthrough、UI 操作**等，视觉有助于理解时，在该节末尾插入截图提示：
+   - 格式：`*Screenshot-[mm:ss]`
+   - 仅在确实有帮助时使用。
+""".strip()
+
+PROMPT_AI_SUM = """
+🧠 Final Touch：在笔记末尾增加一段专业的 **AI Summary**（中文）——用简短段落概括全片要点与结论。
+""".strip()
+
+MERGE_PROMPT = """
+你将收到同一视频的多个 StageA 分段 JSON 摘要，请合并成一份完整笔记：
+- 只做合并与去重，不要发明新内容
+- 保持原有标题层级与 Markdown 结构
+- 保留所有 *Content-[mm:ss] 与 *Screenshot-[mm:ss] 标记
+- 保持中文输出，专有名词保留英文
+- 不要使用代码块包裹输出
+""".strip()

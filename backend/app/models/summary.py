@@ -31,7 +31,10 @@ class SummaryTemplateUpsertRequest(BaseModel):
 class SummaryGenerateRequest(BaseModel):
     video_id: str = Field(..., min_length=1)
     mode: SummaryMode = Field("asr_vlm", description="总结数据来源：asr/vlm/asr_vlm")
-    template_id: str = Field("default_general", description="使用的总结模板 ID")
+    template_id: str = Field(
+        "user_builtin_note",
+        description="内置占位 ID（实际提示词由后端代码注入，不读库）",
+    )
     user_goal: str = Field("通用总结", description="用户目标/用途：如复盘/写文案/提取重点/会议纪要等")
     extra_instructions: str = Field("", description="额外约束/偏好（可选）")
 
@@ -40,7 +43,7 @@ class SummaryGenerateRequest(BaseModel):
     chunk_overlap_chars: int = Field(400, ge=0, le=3000)
     max_chunks: int = Field(30, ge=1, le=200)
 
-    # 提示词注入：允许前端注入额外变量供模板使用
+    # 提示词注入：允许前端注入额外变量供模板使用（如 note_toc、note_time_jump 等）
     prompt_vars: dict[str, Any] = Field(default_factory=dict)
 
 

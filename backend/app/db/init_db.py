@@ -122,20 +122,6 @@ CREATE TABLE IF NOT EXISTS video_summary_versions (
 );
 """
 
-CREATE_VIDEO_SUMMARY_SECTIONS = """
-CREATE TABLE IF NOT EXISTS video_summary_sections (
-    id TEXT PRIMARY KEY,
-    summary_id TEXT NOT NULL,
-    section_key TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'done',
-    content_json TEXT,
-    content_markdown TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (summary_id) REFERENCES video_summaries(id)
-);
-"""
-
 DEFAULT_CONFIG = [
     ("split_mode", "scene", "select", "分割模式", '["scene","fixed","hybrid"]'),
     ("fixed_duration", "10", "number", "固定分割时长（秒）", None),
@@ -284,9 +270,61 @@ DEFAULT_CONFIG = [
 
 DEFAULT_SUMMARY_TEMPLATES = [
     (
+        "default_note_zh",
+        "笔记助手（中文·推荐）",
+        "StageA 分段 JSON 摘要 + StageB 合并为一篇 Markdown；中文为主，支持目录、时间跳转与截图占位等版式开关。",
+        "\n".join(
+            [
+                "你是一个专业的笔记助手，擅长将视频转录内容整理成清晰、有条理且信息丰富的笔记。",
+                "",
+                "语言：笔记内容使用中文；专有名词、技术术语、品牌与人名可保留英文。",
+                "纪律：基于输入总结，禁止编造；数学公式用 LaTeX，便于 Markdown 渲染。",
+                "排版：在 JSON 的字符串字段中可使用 Markdown；避免「1. **标题**」被误解析为有序列表，",
+                "需要编号加粗时用「1\\\\. **标题**」或「## 1. 标题」。",
+                "分阶段任务中请严格输出 JSON，并符合 schema_hint；不要输出多余解释或 Markdown 代码块包裹。",
+            ]
+        ),
+        "\n".join(
+            [
+                "视频标题：{{video_title}}",
+                "视频标签：{{tags}}",
+                "",
+                "【用户目标】",
+                "{{user_goal}}",
+                "",
+                "【偏好/约束（可选）】",
+                "{{extra_instructions}}",
+                "",
+                "说明：先对超长内容做 StageA 分段摘要，再按 overview / chapters / highlights 分块合并；",
+                "字符串字段内可含 Markdown；章节正文中的时间锚点与截图提示见各 Stage 说明。",
+            ]
+        ),
+        "\n".join(
+            [
+                "{",
+                '  "title": "string",',
+                '  "overview": "string",',
+                '  "chapters": [',
+                "    {",
+                '      "title": "string",',
+                '      "summary": "string",',
+                '      "key_points": ["string"],',
+                '      "evidence": ["string"]',
+                "    }",
+                "  ],",
+                '  "key_points": ["string"],',
+                '  "highlights": ["string"],',
+                '  "quotes": ["string"],',
+                '  "action_items": ["string"],',
+                '  "tags": ["string"]',
+                "}",
+            ]
+        ),
+    ),
+    (
         "default_general",
         "通用视频总结（推荐）",
-        "适用于大多数视频：给出总览、分章节、重点、金句、行动项。",
+        "StageA 输出分段 JSON，StageB 合并为整篇 Markdown 笔记。",
         "你是专业内容分析与总结助手。你擅长把口播/对白与画面信息整理为结构化总结。输出必须真实、可追溯、避免编造。",
         "\n".join(
             [
@@ -359,7 +397,11 @@ async def init_db():
         await db.execute(CREATE_SUMMARY_TEMPLATES)
         await db.execute(CREATE_VIDEO_SUMMARIES)
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
-        await db.execute(CREATE_VIDEO_SUMMARY_SECTIONS)
+        # 旧版分块表已废弃，启动时删除（若存在）
+        try:
+            await db.execute("DROP TABLE IF EXISTS video_summary_sections")
+        except Exception:
+            pass
 
         # 兼容旧库：replica_templates 补列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）
         try:
@@ -397,6 +439,24 @@ async def init_db():
                 """,
                 (tid, name, desc, sys_prompt, user_prompt, out_schema, now, now),
             )
+        # 内置「用户自定义风格」占位：实际提示词由 backend/app/api/summary.py 代码注入；满足 video_summaries 外键。
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO summary_templates
+            (id, name, description, system_prompt, user_prompt_template, output_schema_hint, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            """,
+            (
+                "user_builtin_note",
+                "内置·用户自定义风格",
+                "代码内嵌 BASE/MERGE 提示词；总结页已不再选择模板。本条仅满足外键。",
+                "（不使用）",
+                "（不使用）",
+                base_schema_hint,
+                now,
+                now,
+            ),
+        )
         # 兼容旧库：补全分割模式可选项与混合模式参数
         await db.execute(
             "UPDATE config SET options = ? WHERE key = 'split_mode'",

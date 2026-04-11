@@ -25,6 +25,7 @@ from app.models.subtitle import (
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
+from app.utils.paths import ensure_storage_subpath, get_fonts_dir
 from app.core.subtitle.srt import build_srt, parse_srt
 from app.core.subtitle.timeline import (
     resolve_durations,
@@ -38,13 +39,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subtitle", tags=["subtitle"])
 
 TTS_AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(DB_PATH), "tts_audio"))
-# 目录常量（统一以 backend/ 为根）
-_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-_FONTS_DIR = os.path.join(_BACKEND_DIR, "fonts")
 
-# 持久化存储：烧录成品统一放 backend/storage/burned_videos/
-_BURNED_VIDEOS_DIR = os.path.join(_BACKEND_DIR, "storage", "burned_videos")
-os.makedirs(_BURNED_VIDEOS_DIR, exist_ok=True)
+_FONTS_DIR = get_fonts_dir()
+
+# 持久化存储：烧录成品统一放 storage/burned_videos/
+_BURNED_VIDEOS_DIR = ensure_storage_subpath("burned_videos")
 
 
 async def _get_config_value(db, key: str, default: str) -> str:

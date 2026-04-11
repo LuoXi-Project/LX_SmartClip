@@ -11,13 +11,14 @@ from typing import Dict, List, Optional, Tuple
 from app.models.auto_edit import Plan
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import probe_duration
+from app.utils.paths import ensure_storage_subpath, get_writable_backend_root
 
 logger = logging.getLogger(__name__)
 
+_WRITABLE_BACKEND_ROOT = str(get_writable_backend_root())
 
-_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-_BURNED_VIDEOS_DIR = os.path.join(_BACKEND_DIR, "storage", "burned_videos")
-_BGM_LIBRARY_DIR = os.path.join(_BACKEND_DIR, "storage", "bgm")
+_BURNED_VIDEOS_DIR = ensure_storage_subpath("burned_videos")
+_BGM_LIBRARY_DIR = ensure_storage_subpath("bgm")
 _BGM_MANIFEST_PATH = os.path.join(_BGM_LIBRARY_DIR, "bgm_manifest.json")
 _BGM_EXTENSIONS = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
 
@@ -50,8 +51,8 @@ def _resolve_bgm_path(track_id: Optional[str]) -> Optional[str]:
     # 1) 绝对路径
     if os.path.isabs(raw):
         candidates.append(raw)
-    # 2) 相对 backend 根目录
-    candidates.append(os.path.join(_BACKEND_DIR, raw))
+    # 2) 相对可写根目录（源码下即 backend/）
+    candidates.append(os.path.join(_WRITABLE_BACKEND_ROOT, raw))
     # 3) 约定目录 storage/bgm
     candidates.append(os.path.join(_BGM_LIBRARY_DIR, raw))
 

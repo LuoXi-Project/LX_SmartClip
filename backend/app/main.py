@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import os
 import sys
 from app.db.init_db import init_db
+from app.utils.paths import get_storage_root, iter_storage_static_mount_candidates
 from app.core.blocking_pool import init_blocking_pool, shutdown_blocking_pool
 from app.api.config import router as config_router
 from app.api.videos import router as videos_router
@@ -85,7 +86,6 @@ app.include_router(summary_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件
-# __file__ = backend/app/main.py  → dirname = backend/app  → ".." = backend/
 def _runtime_base_dir() -> str:
     # PyInstaller 环境下，资源文件会被解压到 sys._MEIPASS
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -95,12 +95,12 @@ def _runtime_base_dir() -> str:
 
 _base_dir = _runtime_base_dir()
 
-# 兼容源码运行与 PyInstaller --add-data（storage 被放在 bundle 根目录）
-_storage_path_candidates = (
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage")),  # 源码：backend/storage
-    os.path.abspath(os.path.join(_base_dir, "storage")),  # 打包：_MEIPASS/storage
-)
-_storage_path = next((p for p in _storage_path_candidates if os.path.isdir(p)), None)
+# 与业务写入目录一致：优先可写 storage，其次包内只读副本（见 app.utils.paths）
+_storage_path = next((p for p in iter_storage_static_mount_candidates() if os.path.isdir(p)), None)
+if not _storage_path:
+    _sr = get_storage_root()
+    _sr.mkdir(parents=True, exist_ok=True)
+    _storage_path = str(_sr)
 if _storage_path and os.path.isdir(_storage_path):
     print(f"挂载路径:{_storage_path}")
     app.mount("/storage", StaticFiles(directory=_storage_path), name="storage")

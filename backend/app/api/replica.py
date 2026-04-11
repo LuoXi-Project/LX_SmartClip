@@ -26,6 +26,7 @@ from app.models.replica import (
     ReplicaTemplateListResponse,
 )
 from app.utils.ffprobe_utils import probe_duration
+from app.utils.paths import ensure_storage_subpath
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
@@ -33,9 +34,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/replica", tags=["replica"])
 
-_STORAGE_VIDEOS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "storage", "videos")
-)
+_STORAGE_VIDEOS_DIR = ensure_storage_subpath("videos")
 
 _REPLICA_TYPE_DEFAULT = "short_video"
 _STYLE_PROFILE_FALLBACK = "通用"

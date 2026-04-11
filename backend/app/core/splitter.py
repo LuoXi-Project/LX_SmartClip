@@ -10,6 +10,7 @@ import logging
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.bin_paths import ffprobe_bin
 from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe_duration
+from app.utils.paths import get_storage_root
 
 logger = logging.getLogger(__name__)
 _SENTINEL = object()
@@ -39,9 +40,7 @@ class VideoSplitter:
 
     def __init__(self, storage_dir: str = None):
         if storage_dir is None:
-            storage_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "storage")
-            )
+            storage_dir = str(get_storage_root())
         self.storage_dir = storage_dir
         self.clips_dir = os.path.join(storage_dir, "clips")
         self.audio_dir = os.path.join(storage_dir, "audio")

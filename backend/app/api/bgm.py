@@ -8,11 +8,11 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
 from app.models.bgm import BgmTrack, BgmUpdatePayload
+from app.utils.paths import ensure_storage_subpath
 
 router = APIRouter(prefix="/api/bgm", tags=["bgm"])
 
-_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-_BGM_DIR = os.path.join(_BACKEND_DIR, "storage", "bgm")
+_BGM_DIR = ensure_storage_subpath("bgm")
 _BGM_MANIFEST_PATH = os.path.join(_BGM_DIR, "bgm_manifest.json")
 _BGM_EXTS = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
 _WIN_INVALID = '<>:"/\\|?*'

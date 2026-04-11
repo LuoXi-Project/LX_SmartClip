@@ -1,9 +1,7 @@
 import aiosqlite
 import os
 
-DB_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "data", "smartclip.db")
-)
+from app.db.database import DB_PATH
 
 CREATE_VIDEOS = """
 CREATE TABLE IF NOT EXISTS videos (

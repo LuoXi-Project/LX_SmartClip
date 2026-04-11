@@ -11,12 +11,11 @@ import subprocess
 import aiosqlite
 
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.paths import ensure_storage_subpath
 
 logger = logging.getLogger(__name__)
 
-# backend/app/api/summary -> ../../../storage/summary_shots
-_SUMMARY_DIR = os.path.dirname(__file__)
-SUMMARY_SHOTS_ROOT = os.path.abspath(os.path.join(_SUMMARY_DIR, "..", "..", "..", "storage", "summary_shots"))
+SUMMARY_SHOTS_ROOT = ensure_storage_subpath("summary_shots")
 
 # 与 *Content-* 一致：方括号 / 无括号；模型常多写一个收尾 *。先匹配带 [] 的，避免与无括号形式冲突。
 _SCREENSHOT_BRACKET_RE = re.compile(

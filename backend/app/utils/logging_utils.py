@@ -10,6 +10,8 @@ import threading
 from collections import deque
 from typing import Any
 
+from app.utils.paths import get_storage_root
+
 # 与 RotatingFileHandler 使用的 Formatter 一致（见 _build_file_handler）
 _LOG_LINE_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[([^\]]+)\] ([^:]+): (.*)$"
@@ -113,27 +115,21 @@ def memory_handler_for_dictconfig(*_args: Any, **_kwargs: Any) -> MemoryLogHandl
 
 def _resolve_log_dir() -> str:
     """
-    日志落盘目录：
-    - 源码运行：backend/storage/logs
-    - 打包运行：优先尝试 _MEIPASS/storage/logs；失败则退回到当前工作目录 ./storage/logs
+    日志落盘目录：与 `get_storage_root()/logs` 对齐；其次包内副本；最后当前工作目录。
     """
     candidates: list[str] = []
 
-    # 源码：.../backend/app/utils/logging_utils.py -> .../backend/storage/logs
     try:
-        backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        candidates.append(os.path.join(backend_root, "storage", "logs"))
+        candidates.append(str(get_storage_root() / "logs"))
     except Exception:
         pass
 
-    # 打包：_MEIPASS/storage/logs
     try:
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             candidates.append(os.path.join(getattr(sys, "_MEIPASS"), "storage", "logs"))  # type: ignore[attr-defined]
     except Exception:
         pass
 
-    # 最后兜底：当前工作目录
     candidates.append(os.path.abspath(os.path.join(os.getcwd(), "storage", "logs")))
 
     for d in candidates:

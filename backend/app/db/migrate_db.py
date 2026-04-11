@@ -14,9 +14,10 @@
 import asyncio
 import sys
 import os
+from pathlib import Path
 
-# 支持直接运行此脚本
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+# 支持直接运行此脚本：将 `backend/` 加入 path，以便 `import app`（migrate_db 在 backend/app/db/）
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aiosqlite
 from app.db.init_db import (

@@ -1,9 +1,9 @@
 import aiosqlite
-import os
 from typing import AsyncGenerator
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "smartclip.db")
-DB_PATH = os.path.abspath(DB_PATH)
+from app.utils.paths import get_db_path
+
+DB_PATH = get_db_path()
 
 
 async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:

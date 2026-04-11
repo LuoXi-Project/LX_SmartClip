@@ -4,12 +4,10 @@ import os
 import subprocess
 
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.paths import ensure_storage_subpath
 
 
-THUMBNAIL_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "storage", "thumbnails")
-)
-os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+THUMBNAIL_DIR = ensure_storage_subpath("thumbnails")
 
 
 def generate_thumbnail(video_path: str, video_id: str) -> str | None:

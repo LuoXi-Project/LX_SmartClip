@@ -11,6 +11,7 @@ from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, Upd
 
 from app.db.database import get_db_conn
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.paths import ensure_storage_subpath
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
@@ -18,10 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
-STORAGE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "storage", "videos")
-)
-os.makedirs(STORAGE_DIR, exist_ok=True)
+STORAGE_DIR = ensure_storage_subpath("videos")
 
 ALLOWED_CONTENT_TYPES = {
     "video/mp4",

@@ -30,6 +30,7 @@ from .pipeline import (
     prepare_summary_context,
 )
 from .prompts import STAGE_A_SCHEMA_HINT, STAGE_A_SYSTEM, STAGE_B_SYSTEM
+from .screenshots import cleanup_previous_summary_shots_for_video
 from .store import parse_video_summary_row, persist_generated_summary
 from .utils import now_iso, strip_markdown_fences
 
@@ -118,6 +119,7 @@ async def get_latest_summary(
 async def generate_summary(req: SummaryGenerateRequest):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        await cleanup_previous_summary_shots_for_video(db, req.video_id, req.mode)
         try:
             cfg = await LLMConfig.get_llm_params_with_defaults(
                 db,
@@ -160,6 +162,7 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
             yield ("data: " + json.dumps({"type": "status", "message": "开始准备总结..."}, ensure_ascii=False) + "\n\n").encode()
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
+                await cleanup_previous_summary_shots_for_video(db, req.video_id, req.mode)
                 try:
                     cfg = await LLMConfig.get_llm_params_with_defaults(
                         db,

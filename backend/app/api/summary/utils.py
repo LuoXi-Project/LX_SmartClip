@@ -71,20 +71,24 @@ def note_options_instructions(prompt_vars: dict[str, Any] | None) -> str:
     lines: list[str] = []
     if prompt_var_bool(pv, "note_toc", True):
         lines.append(
-            "- **目录**：文首生成目录（TOC），链接到各主要 `##` / `###` 标题。"
+            "- **目录**：文首生成 TOC；每一项为 **文内锚点** `[显示文字](#slug)`，slug 与对应 `##`/`###` 标题在渲染后的锚点 id 一致（GitHub slug 规则），"
+            "**禁止**使用 `http(s)://` 或外链。"
         )
     else:
         lines.append("- **目录**：请勿在文首生成目录（TOC）。")
 
     if prompt_var_bool(pv, "note_time_jump", True):
         lines.append(
-            "- **原片跳转**：使用 `[mm:ss](video-time:秒数)`，秒为从片头起的整数秒；可与 `*Content-[mm:ss]` 一致。"
+            "- **原片跳转**：正文时间跳转使用 `[显示文字](video-time:整数秒)`（秒=从片头起算，可由 mm:ss 换算）；"
+            "章节标题旁可用 `*Content-[mm:ss]`；**禁止** http(s) URL 做时间跳转（前端仅在上方预览播放器内 seek）。"
         )
     else:
-        lines.append("- **原片跳转**：请勿使用 `[mm:ss](video-time:…)` 或可点击时间链接。")
+        lines.append("- **原片跳转**：请勿使用 `video-time:`、`*Content-[*` 或可点击时间链接。")
 
     if prompt_var_bool(pv, "note_screenshot", True):
-        lines.append("- **原片截图位**：需要时使用 `*Screenshot-[mm:ss]`。")
+        lines.append(
+            "- **原片截图**：需要时在节末输出 `*Screenshot-[mm:ss]`；由服务端截取视频帧并写入本地，Markdown 内嵌图片；**勿**自写 `![]()` 网络图。"
+        )
     else:
         lines.append("- **原片截图位**：请勿输出 `*Screenshot-[mm:ss]`。")
 

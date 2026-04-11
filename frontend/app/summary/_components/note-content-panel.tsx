@@ -101,7 +101,11 @@ export function NoteContentPanel({
               ref={previewScrollRef}
               className="flex-1 min-h-[160px] max-h-[min(36vh,380px)] overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3"
             >
-              <SummaryNotePreview markdown={markdown} videoId={videoId || null} />
+              <SummaryNotePreview
+                markdown={markdown}
+                videoId={videoId || null}
+                scrollContainerRef={previewScrollRef}
+              />
             </div>
             <div className="text-[11px] uppercase tracking-wide text-slate-500 shrink-0">Markdown 源码</div>
             <textarea
@@ -114,8 +118,15 @@ export function NoteContentPanel({
             />
           </div>
         ) : noteView === 'preview' ? (
-          <div className="flex-1 overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3 max-h-[min(70vh,720px)]">
-            <SummaryNotePreview markdown={markdown} videoId={videoId || null} />
+          <div
+            ref={previewScrollRef}
+            className="flex-1 overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3 max-h-[min(70vh,720px)]"
+          >
+            <SummaryNotePreview
+              markdown={markdown}
+              videoId={videoId || null}
+              scrollContainerRef={previewScrollRef}
+            />
           </div>
         ) : (
           <textarea

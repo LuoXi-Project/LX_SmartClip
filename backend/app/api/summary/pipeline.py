@@ -19,6 +19,7 @@ from .prompts import (
     PROMPT_AI_SUM,
     PROMPT_LINK,
     PROMPT_SCREENSHOT,
+    PROMPT_TOC,
     STAGE_A_SCHEMA_HINT,
     STAGE_A_SYSTEM,
     STAGE_B_SYSTEM,
@@ -62,6 +63,8 @@ def build_stage_b_user_prompt(
     style_block = "\n\n".join(style_parts)
 
     extras: list[str] = []
+    if prompt_var_bool(prompt_vars, "note_toc", True):
+        extras.append(PROMPT_TOC)
     if prompt_var_bool(prompt_vars, "note_screenshot", True):
         extras.append(PROMPT_SCREENSHOT)
     if prompt_var_bool(prompt_vars, "note_time_jump", True):

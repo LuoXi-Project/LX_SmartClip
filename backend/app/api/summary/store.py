@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import uuid
 from typing import Any
 
@@ -12,7 +14,8 @@ from fastapi import HTTPException
 from app.models.summary import SummaryGenerateRequest, VideoSummary
 
 from .prompts import BUILTIN_TEMPLATE_ID, STAGE_A_SYSTEM, STAGE_B_SYSTEM
-from .utils import fingerprint, now_iso
+from .screenshots import materialize_screenshot_placeholders
+from .utils import fingerprint, now_iso, prompt_var_bool
 
 
 def parse_video_summary_row(d: dict[str, Any]) -> dict[str, Any]:
@@ -66,6 +69,16 @@ async def persist_generated_summary(
         ]
     )
 
+    md_for_store = (final_md or "").rstrip() + "\n"
+    if prompt_var_bool(req.prompt_vars, "note_screenshot", True):
+        cur_vp = await db.execute("SELECT file_path FROM videos WHERE id = ?", (req.video_id,))
+        row_vp = await cur_vp.fetchone()
+        vp = row_vp["file_path"] if row_vp and row_vp["file_path"] else None
+        if vp and os.path.isfile(vp):
+            md_for_store = await asyncio.to_thread(
+                materialize_screenshot_placeholders, md_for_store, vp, summary_id
+            )
+
     await db.execute(
         """
         INSERT INTO video_summaries
@@ -80,7 +93,7 @@ async def persist_generated_summary(
             "done",
             fp,
             json.dumps(summary_json_obj, ensure_ascii=False),
-            final_md,
+            md_for_store,
             json.dumps(prompt_snapshot, ensure_ascii=False),
             now,
             now,
@@ -98,7 +111,7 @@ async def persist_generated_summary(
             1,
             "llm",
             json.dumps(summary_json_obj, ensure_ascii=False),
-            final_md,
+            md_for_store,
             now,
         ),
     )

@@ -238,6 +238,10 @@ type Props = {
   className?: string
   /** 笔记外层可滚动容器；传入后目录 `#锚点` 只在此区域内滚动，不带动整页 */
   scrollContainerRef?: RefObject<HTMLElement | null>
+  /**
+   * 传入后不在本组件内渲染 `<video>`，时间点跳转使用该 ref（由父级放在滚动区外）。
+   */
+  externalVideoRef?: RefObject<HTMLVideoElement | null>
 }
 
 export function SummaryNotePreview({
@@ -245,21 +249,26 @@ export function SummaryNotePreview({
   videoId,
   className = '',
   scrollContainerRef,
+  externalVideoRef,
 }: Props) {
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const internalVideoRef = useRef<HTMLVideoElement>(null)
+  const videoRef = externalVideoRef ?? internalVideoRef
+  const embedVideo = externalVideoRef == null
 
   const seek = useCallback((sec: number) => {
     const el = videoRef.current
     if (!el || !Number.isFinite(sec)) return
     el.currentTime = Math.max(0, sec)
     void el.play().catch(() => {})
-  }, [])
+  }, [videoRef])
 
   const processed = useMemo(() => preprocessNoteMarkdown(markdown), [markdown])
 
-  const streamUrl = videoId
-    ? `${(API_BASE_URL || '').replace(/\/$/, '')}/api/videos/${videoId}/stream`
-    : ''
+  const streamUrl = useMemo(() => {
+    if (!embedVideo || !videoId) return ''
+    const base = (API_BASE_URL || '').replace(/\/$/, '')
+    return `${base}/api/videos/${videoId}/stream`
+  }, [embedVideo, videoId])
 
   const components = useMemo(
     () => ({
@@ -272,7 +281,7 @@ export function SummaryNotePreview({
             <button
               type="button"
               className="inline-flex items-center gap-1 align-middle rounded-md border border-cyan-700/50 bg-cyan-950/40 px-1.5 py-0.5 text-xs font-medium text-cyan-300 hover:border-cyan-500/70 hover:bg-cyan-900/40 hover:text-cyan-200 cursor-pointer"
-              title={`在上方预览中跳转到 ${label}`}
+              title={`跳转到视频 ${label}`}
               aria-label={`跳转到视频 ${label}`}
               onClick={(e) => {
                 e.preventDefault()
@@ -316,7 +325,7 @@ export function SummaryNotePreview({
                 <button
                   type="button"
                   className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-cyan-700/50 bg-cyan-950/40 px-1.5 py-0.5 text-xs font-medium text-cyan-300 hover:border-cyan-500/70 hover:bg-cyan-900/40 hover:text-cyan-200 cursor-pointer"
-                  title={`在上方预览中跳转到 ${time}`}
+                  title={`跳转到视频 ${time}`}
                   aria-label={`跳转到视频 ${time}`}
                   onClick={(e) => {
                     e.preventDefault()
@@ -384,20 +393,25 @@ export function SummaryNotePreview({
 
   return (
     <div className={className}>
-      {streamUrl ? (
-        <video
-          ref={videoRef}
-          src={streamUrl}
-          controls
-          className="w-full max-h-[min(280px,40vh)] rounded-lg border border-slate-800 bg-black object-contain"
-          preload="metadata"
-        />
-      ) : (
-        <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/50 p-6 text-center text-sm text-slate-500">
-          选择素材视频后，此处可预览画面；笔记里带时间点的链接可点击跳转。
+      {embedVideo ? (
+        /* 与外层滚动区 padding 对齐（常见为 px-3），避免长文滚动时视频滚出视区 */
+        <div className="sticky top-0 z-10 -mx-3 px-3 pt-0 pb-3 mb-1 bg-[#0d0f14] border-b border-slate-800/80 shadow-[0_10px_24px_-10px_rgba(0,0,0,0.75)]">
+          {streamUrl ? (
+            <video
+              ref={internalVideoRef}
+              src={streamUrl}
+              controls
+              className="w-full max-h-[min(280px,40vh)] rounded-lg border border-slate-800 bg-black object-contain"
+              preload="metadata"
+            />
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/50 p-6 text-center text-sm text-slate-500">
+              选择素材视频后，此处可预览画面；笔记里带时间点的链接可点击跳转。
+            </div>
+          )}
         </div>
-      )}
-      <div className={`mt-4 ${mdContainer}`}>
+      ) : null}
+      <div className={`${embedVideo ? 'pt-1 ' : ''}${mdContainer}`}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSlug]}

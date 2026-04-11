@@ -40,7 +40,7 @@ export default function SummaryPage() {
   } = useSummaryPage()
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6">
       <SummaryPageHeader
         onLoadLatest={loadLatest}
         onSaveEdits={saveEdits}
@@ -48,8 +48,8 @@ export default function SummaryPage() {
         canSave={!!current?.id}
       />
 
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-[minmax(300px,380px)_minmax(0,1fr)] gap-4 lg:gap-6">
-        <div className="space-y-4 min-w-0">
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] gap-4 lg:gap-6">
+        <div className="space-y-4 min-w-0 lg:h-full">
           <VideoMaterialPanel
             videos={videos}
             videosQuery={videosQuery}
@@ -76,7 +76,7 @@ export default function SummaryPage() {
           <CurrentSummaryMeta current={current} />
         </div>
 
-        <div className="space-y-4 min-w-0">
+        <div className="min-w-0 lg:h-full lg:flex lg:flex-col lg:min-h-0">
           <NoteContentPanel
             notePanelRef={notePanelRef}
             markdownRef={markdownRef}

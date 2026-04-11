@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useRef, type ComponentPropsWithRef, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, type ComponentPropsWithRef, type RefObject } from 'react'
 import { Copy, Eye, FileCode, FileDown } from 'lucide-react'
 import { SummaryNotePreview } from '@/components/summary/summary-note-preview'
+import { API_BASE_URL } from '@/lib/runtime-config'
 
 type NoteContentPanelProps = {
   notePanelRef: ComponentPropsWithRef<'div'>['ref']
@@ -32,6 +33,13 @@ export function NoteContentPanel({
   onExport,
 }: NoteContentPanelProps) {
   const previewScrollRef = useRef<HTMLDivElement>(null)
+  const summaryVideoRef = useRef<HTMLVideoElement>(null)
+
+  const streamUrl = useMemo(() => {
+    if (!videoId) return ''
+    const base = (API_BASE_URL || '').replace(/\/$/, '')
+    return `${base}/api/videos/${videoId}/stream`
+  }, [videoId])
 
   useEffect(() => {
     if (!loading) return
@@ -44,7 +52,7 @@ export function NoteContentPanel({
   return (
     <div
       ref={notePanelRef}
-      className="rounded-xl border border-slate-800 bg-[#0d0f14] p-4 flex flex-col min-h-[520px]"
+      className="rounded-xl border border-slate-800 bg-[#0d0f14] p-4 flex flex-col min-h-[560px] lg:flex-1 lg:min-h-0"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm font-medium text-slate-200">笔记内容</div>
@@ -93,6 +101,22 @@ export function NoteContentPanel({
         {loading ? streamStatus || '生成中…' : '预览中时间点链接可跳转上方视频；截图占位在正文中以引用块展示。'}
       </p>
 
+      <div className="mt-3 shrink-0">
+        {streamUrl ? (
+          <video
+            ref={summaryVideoRef}
+            src={streamUrl}
+            controls
+            className="w-full max-h-[min(280px,40vh)] rounded-lg border border-slate-800 bg-black object-contain"
+            preload="metadata"
+          />
+        ) : (
+          <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/50 p-6 text-center text-sm text-slate-500">
+            选择素材视频后，此处可预览画面；笔记里带时间点的链接可点击跳转。
+          </div>
+        )}
+      </div>
+
       <div className="mt-3 flex-1 min-h-0 flex flex-col">
         {loading ? (
           <div className="flex flex-col gap-3 flex-1 min-h-0">
@@ -105,6 +129,7 @@ export function NoteContentPanel({
                 markdown={markdown}
                 videoId={videoId || null}
                 scrollContainerRef={previewScrollRef}
+                externalVideoRef={summaryVideoRef}
               />
             </div>
             <div className="text-[11px] uppercase tracking-wide text-slate-500 shrink-0">Markdown 源码</div>
@@ -126,6 +151,7 @@ export function NoteContentPanel({
               markdown={markdown}
               videoId={videoId || null}
               scrollContainerRef={previewScrollRef}
+              externalVideoRef={summaryVideoRef}
             />
           </div>
         ) : (

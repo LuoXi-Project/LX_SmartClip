@@ -1,6 +1,6 @@
 'use client'
 
-import type { ComponentPropsWithRef } from 'react'
+import { useEffect, useRef, type ComponentPropsWithRef, type RefObject } from 'react'
 import { Copy, Eye, FileCode, FileDown } from 'lucide-react'
 import { SummaryNotePreview } from '@/components/summary/summary-note-preview'
 
@@ -31,6 +31,16 @@ export function NoteContentPanel({
   onCopy,
   onExport,
 }: NoteContentPanelProps) {
+  const previewScrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!loading) return
+    const wrap = previewScrollRef.current
+    if (wrap) wrap.scrollTop = wrap.scrollHeight
+    const ta = (markdownRef as RefObject<HTMLTextAreaElement | null> | undefined)?.current
+    if (ta) ta.scrollTop = ta.scrollHeight
+  }, [loading, markdown, markdownRef])
+
   return (
     <div
       ref={notePanelRef}
@@ -84,7 +94,26 @@ export function NoteContentPanel({
       </p>
 
       <div className="mt-3 flex-1 min-h-0 flex flex-col">
-        {noteView === 'preview' ? (
+        {loading ? (
+          <div className="flex flex-col gap-3 flex-1 min-h-0">
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 shrink-0">预览</div>
+            <div
+              ref={previewScrollRef}
+              className="flex-1 min-h-[160px] max-h-[min(36vh,380px)] overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3"
+            >
+              <SummaryNotePreview markdown={markdown} videoId={videoId || null} />
+            </div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 shrink-0">Markdown 源码</div>
+            <textarea
+              ref={markdownRef}
+              readOnly
+              value={markdown}
+              className="flex-1 min-h-[160px] max-h-[min(36vh,380px)] w-full rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-sm text-slate-200 font-mono"
+              placeholder="流式输出中…"
+              aria-label="流式 Markdown 源码"
+            />
+          </div>
+        ) : noteView === 'preview' ? (
           <div className="flex-1 overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3 max-h-[min(70vh,720px)]">
             <SummaryNotePreview markdown={markdown} videoId={videoId || null} />
           </div>

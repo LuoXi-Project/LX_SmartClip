@@ -22,7 +22,7 @@ from app.models.summary import (
 )
 
 from .context import load_template
-from .llm import call_llm_json, call_llm_markdown
+from .llm import call_llm_json
 from .pipeline import (
     build_stage_a_user_message,
     build_stage_b_user_prompt,
@@ -31,7 +31,7 @@ from .pipeline import (
 )
 from .prompts import STAGE_A_SCHEMA_HINT, STAGE_A_SYSTEM, STAGE_B_SYSTEM
 from .store import parse_video_summary_row, persist_generated_summary
-from .utils import now_iso
+from .utils import now_iso, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/summary", tags=["summary"])
@@ -197,7 +197,7 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                     user = build_stage_a_user_message(req, schema_hint=schema_hint, chunk=chunk, idx=idx, total=total)
                     stage_a.append(await call_llm_json(llm, system_prompt=sys_prompt, user_prompt=user))
 
-                yield ("data: " + json.dumps({"type": "status", "message": "生成完整 Markdown 笔记..."}, ensure_ascii=False) + "\n\n").encode()
+                yield ("data: " + json.dumps({"type": "status", "message": "生成完整 Markdown 笔记（流式）..."}, ensure_ascii=False) + "\n\n").encode()
                 final_user = build_stage_b_user_prompt(
                     video_title=str(vars_.get("video_title") or ""),
                     tags=str(vars_.get("tags") or ""),
@@ -207,10 +207,21 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                     stage_a=stage_a,
                     prompt_vars=req.prompt_vars,
                 )
-                final_md = await call_llm_markdown(llm, system_prompt=STAGE_B_SYSTEM, user_prompt=final_user)
-                summary_json_obj: dict = {"format": "markdown_note_v1", "stage_a": stage_a}
+                messages = [
+                    {"role": "system", "content": STAGE_B_SYSTEM},
+                    {"role": "user", "content": final_user},
+                ]
+                raw_accum = ""
+                async for delta in llm.chat_stream(messages=messages):
+                    raw_accum += delta
+                    yield (
+                        "data: "
+                        + json.dumps({"type": "markdown", "content": raw_accum}, ensure_ascii=False)
+                        + "\n\n"
+                    ).encode()
 
-                yield ("data: " + json.dumps({"type": "markdown", "content": final_md}, ensure_ascii=False) + "\n\n").encode()
+                final_md = strip_markdown_fences(raw_accum.strip()).strip() + "\n"
+                summary_json_obj: dict = {"format": "markdown_note_v1", "stage_a": stage_a}
 
                 summary = await persist_generated_summary(
                     db,

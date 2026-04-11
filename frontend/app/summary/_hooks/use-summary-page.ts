@@ -107,6 +107,7 @@ export function useSummaryPage() {
       return
     }
     setLoading(true)
+    setMarkdown('')
     setStreamStatus('开始生成...')
     try {
       const payload: SummaryGenerateRequest = {
@@ -156,6 +157,8 @@ export function useSummaryPage() {
           if (d?.type === 'markdown') setMarkdown(String(d.content || ''))
           if (d?.type === 'done' && d.summary) {
             setCurrent(d.summary)
+            const saved = d.summary.summary_markdown
+            if (saved != null && saved !== '') setMarkdown(saved)
             setStreamStatus('生成完成')
             notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }

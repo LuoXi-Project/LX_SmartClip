@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import List, Optional, Any
+from collections.abc import AsyncIterator
+from typing import Any, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -113,6 +116,40 @@ class LLMClient:
             return content.strip()
         except Exception as e:
             logger.error("LLM 调用失败: %s", e)
+            raise
+
+    async def chat_stream(
+        self,
+        messages: List[dict],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        """
+        流式对话：按模型返回顺序产出 content 文本片段（delta）。
+        """
+        temp = temperature if temperature is not None else self.temperature
+        tokens = max_tokens if max_tokens is not None else self.max_tokens
+
+        try:
+            stream = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temp,
+                max_tokens=tokens,
+                stream=True,
+            )
+            async for chunk in stream:
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is None:
+                    continue
+                piece = getattr(delta, "content", None)
+                if isinstance(piece, str) and piece:
+                    yield piece
+        except Exception as e:
+            logger.error("LLM 流式调用失败: %s", e)
             raise
 
     def get_config(self) -> dict:

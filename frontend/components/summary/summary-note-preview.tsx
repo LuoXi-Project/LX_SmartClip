@@ -55,11 +55,23 @@ function scrollElementIntoScrollParent(target: HTMLElement, scrollParent: HTMLEl
   scrollParent.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
 }
 
-/** 去掉标题行末尾的时间/Content 标记，使 slug 与 rehype-slug（标题纯文本）一致 */
+/** 与后端 `screenshots._SCREENSHOT_*_RE` 一致：先 [] 再裸时间码 */
+const SCREENSHOT_BRACKET_PH = /\*Screenshot-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\*?/g
+const SCREENSHOT_RAW_PH = /\*Screenshot-(\d{1,2}:\d{2}(?::\d{2})?)\*?/g
+
+function screenshotPlaceholderToPreviewBlock(_full: string, token: string): string {
+  const t = token.trim()
+  if (!t) return _full
+  return `\n\n> **原片截图** @ \`${t}\`（生成完成后由服务端替换为图片）\n\n`
+}
+
+/** 去掉标题行末尾的时间/Content/Screenshot 标记，使 slug 与 rehype-slug（标题纯文本）一致 */
 export function stripTrailingContentMarkerFromHeadingText(text: string): string {
   let t = text.trim()
-  t = t.replace(/\s*\*Content-\[[^\]]+\]\s*$/i, '')
-  t = t.replace(/\s*\*Content-\d{1,2}:\d{2}(?::\d{2})?\s*$/i, '')
+  t = t.replace(/\s*\*Content-\[[^\]]+\]\*?\s*$/i, '')
+  t = t.replace(/\s*\*Content-\d{1,2}:\d{2}(?::\d{2})?\*?\s*$/i, '')
+  t = t.replace(/\s*\*Screenshot-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\*?\s*$/i, '')
+  t = t.replace(/\s*\*Screenshot-(\d{1,2}:\d{2}(?::\d{2})?)\*?\s*$/i, '')
   t = t.replace(/\s+\[[^\]]+\]\(video-time:\d+\)\s*$/g, '')
   return t.trim()
 }
@@ -132,8 +144,8 @@ function normalizeTocLinkContentMarkers(md: string): string {
       const bracket = m[2]
       const inner = bracket.slice(1, -1)
       const next = inner
-        .replace(/\s*\*Content-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*/gi, ' $1')
-        .replace(/\s*\*Content-(\d{1,2}:\d{2}(?::\d{2})?)\s*/gi, ' $1')
+        .replace(/\s*\*Content-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\*?\s*/gi, ' $1')
+        .replace(/\s*\*Content-(\d{1,2}:\d{2}(?::\d{2})?)\*?\s*/gi, ' $1')
         .replace(/\s+/g, ' ')
         .trim()
       if (next === inner) return line
@@ -197,8 +209,8 @@ function splitTocLabel(text: string): { title: string; time: string | null } {
 }
 
 /**
- * *Content-[mm:ss] 或模型常写的 *Content-mm:ss → video-time 链接（正文内由按钮+播放图标渲染）。
- * 截图由后端替换为图片，此处不处理 *Screenshot-*。
+ * *Content-[mm:ss] / *Content-mm:ss / 模型常写的行尾多一个 * → video-time 链接（**不会**生成截图；截图须用 *Screenshot-*）。
+ * *Screenshot-*：流式/未落盘时占位符易被解析成强调，此处先规范为引用块；已替换的 `![](/storage/...)` 不受影响。
  */
 export function preprocessNoteMarkdown(md: string): string {
   let s = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -210,8 +222,10 @@ export function preprocessNoteMarkdown(md: string): string {
     const sec = timeTokenToSec(t)
     return `[${formatSecondsAsTimecode(sec)}](video-time:${sec})`
   }
-  s = s.replace(/\*Content-\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g, toLink)
-  s = s.replace(/\*Content-(\d{1,2}:\d{2}(?::\d{2})?)/g, toLink)
+  s = s.replace(/\*Content-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\*?/g, toLink)
+  s = s.replace(/\*Content-(\d{1,2}:\d{2}(?::\d{2})?)\*?/g, toLink)
+  s = s.replace(SCREENSHOT_BRACKET_PH, screenshotPlaceholderToPreviewBlock)
+  s = s.replace(SCREENSHOT_RAW_PH, screenshotPlaceholderToPreviewBlock)
   return s
 }
 

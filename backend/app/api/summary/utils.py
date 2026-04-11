@@ -87,7 +87,7 @@ def note_options_instructions(prompt_vars: dict[str, Any] | None) -> str:
 
     if prompt_var_bool(pv, "note_screenshot", True):
         lines.append(
-            "- **原片截图**：需要时在节末输出 `*Screenshot-[mm:ss]`；由服务端截取视频帧并写入本地，Markdown 内嵌图片；**勿**自写 `![]()` 网络图。"
+            "- **原片截图**：画面类小节在节末另起一行写 `*Screenshot-[mm:ss]` 或 `*Screenshot-mm:ss`（与 `*Content-*` 不同：后者只用于跳转，**不会**出图）；影视/多镜头笔记应对多数相关 `###` 各给一处截图占位；服务端写入 `storage/summary_shots/` 并在正文内嵌 `/storage/...`；**勿**自写 `![]()` 网络图。"
         )
     else:
         lines.append("- **原片截图位**：请勿输出 `*Screenshot-[mm:ss]`。")

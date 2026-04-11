@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 _SUMMARY_DIR = os.path.dirname(__file__)
 SUMMARY_SHOTS_ROOT = os.path.abspath(os.path.join(_SUMMARY_DIR, "..", "..", "..", "storage", "summary_shots"))
 
-_SCREENSHOT_RE = re.compile(r"\*Screenshot-\[(\d{1,2}:\d{2}(?::\d{2})?)\]")
+# 与 *Content-* 一致：方括号 / 无括号；模型常多写一个收尾 *。先匹配带 [] 的，避免与无括号形式冲突。
+_SCREENSHOT_BRACKET_RE = re.compile(
+    r"\*Screenshot-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\*?"
+)
+_SCREENSHOT_RAW_RE = re.compile(r"\*Screenshot-(\d{1,2}:\d{2}(?::\d{2})?)\*?")
 
 
 def time_token_to_seconds(t: str) -> float:
@@ -73,8 +77,9 @@ def _extract_frame_jpeg(video_path: str, t_sec: float, out_path: str, *, max_w: 
 
 def materialize_screenshot_placeholders(markdown: str, video_path: str, summary_id: str) -> str:
     """
-    将 *Screenshot-[mm:ss] 替换为 ![...](/storage/summary_shots/{summary_id}/...jpg)。
-    同一 summary 目录会先清空再写入（用于同 id 重跑，一般新 id 目录本为空）。
+    将 *Screenshot-[mm:ss] / *Screenshot-mm:ss / *Screenshot-0:04* 等替换为
+    ![...](/storage/summary_shots/{summary_id}/...jpg)。
+    同一 summary 目录会先清空再写入（同 id 重跑时重置截图）。
     """
     if not markdown or not video_path or not os.path.isfile(video_path):
         return markdown
@@ -87,7 +92,9 @@ def materialize_screenshot_placeholders(markdown: str, video_path: str, summary_
     counts: dict[int, int] = {}
 
     def repl(m: re.Match[str]) -> str:
-        token = m.group(1)
+        token = (m.group(1) or "").strip()
+        if not token:
+            return m.group(0)
         sec = time_token_to_seconds(token)
         sec_i = int(round(sec))
         counts[sec_i] = counts.get(sec_i, 0) + 1
@@ -98,7 +105,8 @@ def materialize_screenshot_placeholders(markdown: str, video_path: str, summary_
             return f"![截图 @ {token}](/storage/summary_shots/{summary_id}/{fname})"
         return f"\n\n> **截图失败**（{token}）\n\n"
 
-    return _SCREENSHOT_RE.sub(repl, markdown)
+    out = _SCREENSHOT_BRACKET_RE.sub(repl, markdown)
+    return _SCREENSHOT_RAW_RE.sub(repl, out)
 
 
 async def cleanup_previous_summary_shots_for_video(db: aiosqlite.Connection, video_id: str, mode: str) -> None:

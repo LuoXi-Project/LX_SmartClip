@@ -1,10 +1,13 @@
 'use client'
 
 import {
+  Fragment,
+  isValidElement,
   useCallback,
   useMemo,
   useRef,
   type ComponentPropsWithoutRef,
+  type ReactNode,
   type RefObject,
 } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
@@ -116,6 +119,29 @@ function realignTocAnchorLinks(md: string): string {
     .join('\n')
 }
 
+/**
+ * 目录行 `[标题 *Content-0:00](#…)` 中的 *Content 若被全局替换会变成嵌套 `[]()`，解析错乱。
+ * 仅把目录链接文字里的 *Content 规范成「标题 + 空格 + 时间码」，与正文替换逻辑一致但不破坏链接。
+ */
+function normalizeTocLinkContentMarkers(md: string): string {
+  return md
+    .split('\n')
+    .map((line) => {
+      const m = line.match(TOC_LINE_RE)
+      if (!m) return line
+      const bracket = m[2]
+      const inner = bracket.slice(1, -1)
+      const next = inner
+        .replace(/\s*\*Content-\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*/gi, ' $1')
+        .replace(/\s*\*Content-(\d{1,2}:\d{2}(?::\d{2})?)\s*/gi, ' $1')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (next === inner) return line
+      return line.replace(bracket, `[${next}]`)
+    })
+    .join('\n')
+}
+
 function findHeadingInContainer(container: HTMLElement, href: string): HTMLElement | null {
   const raw = href.startsWith('#') ? href.slice(1) : href
   let id = raw
@@ -134,12 +160,51 @@ function summaryUrlTransform(url: string): string {
   return defaultUrlTransform(url)
 }
 
+/** 目录链接标签内换行会导致解析异常或露出 []()；压成一行；`] (` 间允许空白 */
+function collapseHashLinkLabels(md: string): string {
+  return md.replace(/\[([\s\S]*?)\]\s*\((#[^)]+)\)/g, (full, inner: string, dest: string, offset: number) => {
+    if (offset > 0 && md[offset - 1] === '!') return full
+    const oneLine = inner.replace(/\s+/g, ' ').trim()
+    return `[${oneLine}](${dest})`
+  })
+}
+
+function plainTextFromChildren(node: ReactNode): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(plainTextFromChildren).join('')
+  if (isValidElement(node)) {
+    const { type, props } = node
+    const p = props as { children?: ReactNode }
+    if (type === Fragment && p.children !== undefined && p.children !== null) {
+      return plainTextFromChildren(p.children)
+    }
+    if (p.children !== undefined && p.children !== null) return plainTextFromChildren(p.children)
+  }
+  if (typeof node === 'object' && node !== null && 'props' in node) {
+    const p = (node as { props?: { children?: ReactNode } }).props
+    if (p?.children !== undefined && p.children !== null) return plainTextFromChildren(p.children)
+  }
+  return ''
+}
+
+/** 目录项「标题 0:00」拆成标题 + 时间，仅用于展示 */
+function splitTocLabel(text: string): { title: string; time: string | null } {
+  const t = text.replace(/\s+/g, ' ').trim()
+  const m = t.match(/^(.*?)\s+(\d{1,2}:\d{2}(?::\d{2})?)$/)
+  if (m) return { title: m[1].trim(), time: m[2] }
+  return { title: t, time: null }
+}
+
 /**
  * *Content-[mm:ss] 或模型常写的 *Content-mm:ss → video-time 链接（正文内由按钮+播放图标渲染）。
  * 截图由后端替换为图片，此处不处理 *Screenshot-*。
  */
 export function preprocessNoteMarkdown(md: string): string {
-  let s = stripHeadingLinesContentMarkers(md)
+  let s = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  s = stripHeadingLinesContentMarkers(s)
+  s = collapseHashLinkLabels(s)
+  s = normalizeTocLinkContentMarkers(s)
   s = realignTocAnchorLinks(s)
   const toLink = (_: string, t: string) => {
     const sec = timeTokenToSec(t)
@@ -206,24 +271,65 @@ export function SummaryNotePreview({
           )
         }
         if (href?.startsWith('#')) {
+          const label = plainTextFromChildren(children).replace(/\s+/g, ' ').trim()
+          const { title, time } = splitTocLabel(label)
+          const mainText = time ? title : label || title
+
+          const onTocHeadingClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+            ;(upstreamOnClick as ((ev: React.MouseEvent<HTMLElement>) => void) | undefined)?.(e)
+            if (e.defaultPrevented) return
+            const root = scrollContainerRef?.current
+            if (!root) return
+            const target = findHeadingInContainer(root, href)
+            if (!target) return
+            e.preventDefault()
+            scrollElementIntoScrollParent(target, root)
+          }
+
+          if (time != null) {
+            const sec = timeTokenToSec(time)
+            return (
+              <div className="group flex w-full max-w-full items-center gap-1 rounded-md border border-transparent px-1 py-0.5 -mx-1 hover:bg-slate-800/55 hover:border-slate-700/80 focus-within:outline-none focus-within:ring-1 focus-within:ring-cyan-600/70">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left rounded px-2 py-1.5 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-600/70"
+                  title={label || '跳转到本节'}
+                  aria-label={`跳转到本节：${mainText}`}
+                  onClick={onTocHeadingClick}
+                >
+                  <span className="text-slate-200 group-hover:text-cyan-100/95">{mainText}</span>
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-cyan-700/50 bg-cyan-950/40 px-1.5 py-0.5 text-xs font-medium text-cyan-300 hover:border-cyan-500/70 hover:bg-cyan-900/40 hover:text-cyan-200 cursor-pointer"
+                  title={`在上方预览中跳转到 ${time}`}
+                  aria-label={`跳转到视频 ${time}`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    seek(sec)
+                  }}
+                >
+                  <Play className="h-3 w-3 shrink-0 fill-cyan-400/30 text-cyan-400" aria-hidden />
+                  <span className="tabular-nums tracking-tight">{time}</span>
+                </button>
+              </div>
+            )
+          }
+
           return (
-            <a
-              href={href}
-              className="text-cyan-400/90 underline hover:text-cyan-300"
-              {...rest}
-              onClick={(e) => {
-                upstreamOnClick?.(e)
-                if (e.defaultPrevented) return
-                const root = scrollContainerRef?.current
-                if (!root) return
-                const target = findHeadingInContainer(root, href)
-                if (!target) return
-                e.preventDefault()
-                scrollElementIntoScrollParent(target, root)
-              }}
+            <button
+              type="button"
+              className="group w-full max-w-full text-left rounded-md px-2 py-1.5 -mx-1 border border-transparent hover:bg-slate-800/55 hover:border-slate-700/80 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-600/70"
+              title={label || '跳转到本节'}
+              onClick={onTocHeadingClick}
             >
-              {children}
-            </a>
+              {label ? (
+                <span className="text-slate-200 group-hover:text-cyan-100/95">{mainText}</span>
+              ) : (
+                <span className="text-slate-200 group-hover:text-cyan-100/95">{children}</span>
+              )}
+            </button>
           )
         }
         if (href && /^https?:\/\//i.test(href)) {

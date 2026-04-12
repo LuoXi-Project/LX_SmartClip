@@ -107,8 +107,6 @@ New-Item -Path $SpecDir -ItemType Directory -Force | Out-Null
 New-Item -Path $PyinstallerDistDir -ItemType Directory -Force | Out-Null
 
 $FrontendStatic = Join-Path $BackendDir "app\\static\\frontend"
-$StorageDir = Join-Path $BackendDir "storage"
-$DataDir = Join-Path $BackendDir "data"
 
 Push-Location $BackendDir
 try {
@@ -154,10 +152,9 @@ try {
     Write-Host "[backend] PyInstaller 打包（onedir）..."
     Push-Location $ObfDir
     try {
+        # storage/data 不打入包内：运行时由 app.utils.paths 在 exe 旁（或可写根）创建
         $AddData = @()
         if (Test-Path $FrontendStatic) { $AddData += @("--add-data", "$FrontendStatic;app/static/frontend") }
-        if (Test-Path $StorageDir) { $AddData += @("--add-data", "$StorageDir;storage") }
-        if (Test-Path $DataDir) { $AddData += @("--add-data", "$DataDir;data") }
         if (Test-Path $ConfigJson) { $AddData += @("--add-data", "$ConfigJson;config.json") }
 
         $CollectSubmodules = @(

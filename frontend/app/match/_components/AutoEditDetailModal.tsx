@@ -36,12 +36,13 @@ export function AutoEditDetailModal({
   const [viewMode, setViewMode] = useState<'detail' | 'copy'>('detail')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'ok' | 'fail'>('idle')
   const segments = (detailDraft?.segments ?? detailPlan.plan.segments) ?? []
+  const activeSegments = useMemo(() => segments.filter((s) => !s.exclude_from_output), [segments])
   const mergedCopyText = useMemo(() => {
-    return segments
+    return activeSegments
       .map((s) => s.subtitle?.text?.trim())
       .filter((txt): txt is string => Boolean(txt))
       .join('\n')
-  }, [segments])
+  }, [activeSegments])
 
   useEffect(() => {
     setViewMode('detail')
@@ -69,7 +70,7 @@ export function AutoEditDetailModal({
               {detailPlan.plan.title || `方案 ${detailPlan.index + 1}`} · 字幕详情 / 更多信息
             </p>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              plan_id: {detailPlan.plan.plan_id} · 段落：{detailPlan.plan.segments?.length ?? 0} · 模式：
+              plan_id: {detailPlan.plan.plan_id} · 段落：{activeSegments.length} 段参与成片 / 共 {segments.length} 段 · 模式：
               {detailPlan.plan.mode === 'auto'
                 ? '自动'
                 : detailPlan.plan.mode === 'voiceover'
@@ -90,6 +91,7 @@ export function AutoEditDetailModal({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] text-slate-500">
               在这里的修改会覆盖当前方案，并在点击“一键成片”时生效（只影响本次候选方案，不影响重新生成）。
+              标记「弃用」的段落不会进入拼接与字幕轴；其余段落按顺序连续对齐，无需手改时间消除空洞。
             </div>
             <div className="flex items-center gap-2">
               <div className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-950/40 p-0.5">
@@ -199,14 +201,18 @@ export function AutoEditDetailModal({
                 placeholder="当前方案没有可用字幕文案。"
               />
               <p className="mt-1 text-[11px] text-slate-500">
-                共 {segments.length} 段，含文案 {segments.filter((s) => s.subtitle?.text?.trim()).length} 段。
+                参与成片 {activeSegments.length} 段，含文案{' '}
+                {activeSegments.filter((s) => s.subtitle?.text?.trim()).length} 段（已排除弃用段）。
               </p>
             </div>
           ) : (
             <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
-              <p className="text-[11px] text-slate-400">段落明细（字幕/音频/片段选择）</p>
+              <p className="text-[11px] text-slate-400">
+                段落明细（字幕/音频/片段选择）· {activeSegments.length}/{segments.length} 段参与成片
+              </p>
               <div className="mt-2 space-y-2">
                 {segments.map((s, segIdx) => {
+                const excluded = !!s.exclude_from_output
                 const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id || ''
                 const cm = clipId ? clipMetaByClip[clipId] : undefined
                 // 字幕详情需要显示“方案标注”的句子级绝对时间；
@@ -216,10 +222,20 @@ export function AutoEditDetailModal({
                 const subtitleText = s.subtitle?.text?.trim() || ''
 
                 return (
-                  <div key={s.id} className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+                  <div
+                    key={s.id}
+                    className={`rounded-xl border px-3 py-2 ${
+                      excluded
+                        ? 'border-amber-900/60 bg-amber-950/20 opacity-90'
+                        : 'border-slate-800 bg-slate-950/30'
+                    }`}
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-200">
+                      <p className={`text-xs font-semibold ${excluded ? 'text-amber-200/90' : 'text-slate-200'}`}>
                         #{s.order} · {fmt(abs0)}–{fmt(abs1)}
+                        {excluded && (
+                          <span className="ml-2 text-[10px] font-normal text-amber-400/90">已弃用</span>
+                        )}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                         <span>音频模式: {s.audio_mode}</span>
@@ -232,6 +248,28 @@ export function AutoEditDetailModal({
                         )}
                       </div>
                     </div>
+
+                    {detailEditMode && (
+                      <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-slate-300">
+                        <input
+                          type="checkbox"
+                          className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500/40"
+                          checked={excluded}
+                          onChange={() => {
+                            setDetailDraft((prev) => {
+                              if (!prev) return prev
+                              const segs = [...(prev.segments ?? [])]
+                              const cur = { ...segs[segIdx], exclude_from_output: !excluded }
+                              segs[segIdx] = cur
+                              return { ...prev, segments: segs }
+                            })
+                          }}
+                        />
+                        <span>
+                          弃用本段（成片不拼接、字幕不计入；其余段顺序连续对齐）
+                        </span>
+                      </label>
+                    )}
 
                     <div className="mt-2 grid gap-2 md:grid-cols-2">
                       <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-2">
@@ -273,7 +311,7 @@ export function AutoEditDetailModal({
                             {(s.selected_clip_ids ?? []).length ? (s.selected_clip_ids ?? []).join(', ') : '（无）'}
                           </p>
 
-                          {detailEditMode && (
+                          {detailEditMode && !excluded && (
                             <div className="grid grid-cols-3 gap-2 pt-1">
                               <label className="col-span-1 text-[10px] text-slate-500">
                                 start_sec
@@ -361,7 +399,7 @@ export function AutoEditDetailModal({
                             <p className="text-slate-500">… 其余 {(s.clip_group ?? []).length - 6} 条已省略</p>
                           )}
 
-                          {detailEditMode && (
+                          {detailEditMode && !excluded && (
                             <div className="pt-1 flex flex-wrap gap-2">
                               <button
                                 type="button"

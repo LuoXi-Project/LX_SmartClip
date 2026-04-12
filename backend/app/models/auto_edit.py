@@ -66,6 +66,8 @@ class SegmentPlan(BaseModel):
     selected_clip_ids: List[str]
     start_time_sec: float
     end_time_sec: float
+    # 成片跳过该段（口播快剪/一键成片）；字幕与时间轴按剩余段落顺序连续拼接
+    exclude_from_output: bool = False
     # 前端可编辑：覆盖该段的成片时长（秒），用于更可控的节奏/字幕时长
     override_duration_sec: Optional[float] = None
     # 原声导出增强：当为单个 clip 的“内部片段”时，用于 ffmpeg -ss 截取。

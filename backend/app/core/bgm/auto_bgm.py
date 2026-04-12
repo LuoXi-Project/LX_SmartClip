@@ -113,6 +113,8 @@ def _mood_keywords() -> Dict[str, List[str]]:
 def _plan_text(plan: Plan) -> str:
     parts: List[str] = [plan.title or "", plan.summary or ""]
     for seg in plan.segments:
+        if seg.exclude_from_output:
+            continue
         if seg.subtitle and seg.subtitle.text:
             parts.append(seg.subtitle.text)
     return " ".join(parts).lower()

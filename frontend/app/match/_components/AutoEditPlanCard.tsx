@@ -43,6 +43,8 @@ export function AutoEditPlanCard({
 }: AutoEditPlanCardProps) {
   const planTitle = p.title || `方案 ${idx + 1}`
   const eps = 0.05
+  const segs = p.segments ?? []
+  const activeCount = segs.filter((s) => !s.exclude_from_output).length
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
@@ -79,7 +81,9 @@ export function AutoEditPlanCard({
         <div className="flex-shrink-0 text-right text-[11px] text-slate-500 space-y-0.5">
           {p.target_duration_sec && <p>目标：{p.target_duration_sec.toFixed(3)}s</p>}
           {p.estimated_duration_sec && <p>预估：{p.estimated_duration_sec.toFixed(3)}s</p>}
-          <p>段落：{p.segments?.length ?? 0}</p>
+          <p>
+            段落：{activeCount} 段参与成片 / 共 {segs.length} 段
+          </p>
         </div>
       </div>
 
@@ -131,7 +135,9 @@ export function AutoEditPlanCard({
         </p>
         <p>
           片段预览：
-          <span className="ml-1 text-slate-600">（共 {p.segments?.length ?? 0} 段）</span>
+          <span className="ml-1 text-slate-600">
+            （{activeCount} 段参与成片，共 {segs.length} 段）
+          </span>
         </p>
         <div
           className={`mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-2 ${
@@ -140,7 +146,8 @@ export function AutoEditPlanCard({
               : 'max-h-24 overflow-y-auto'
           }`}
         >
-          {(p.segments ?? []).map((s) => {
+          {segs.map((s) => {
+            const excluded = !!s.exclude_from_output
             const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
             const videoId = s.clip_group?.[0]?.video_id || null
             const cm = clipId ? clipMetaByClip[clipId] : undefined
@@ -191,23 +198,32 @@ export function AutoEditPlanCard({
                   })
                 }}
                 disabled={!clipId}
-                className="inline-flex items-center rounded-md border border-cyan-500/40 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900/50 disabled:text-slate-500"
+                className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900/50 disabled:text-slate-500 ${
+                  excluded
+                    ? 'border-amber-600/35 bg-amber-950/40 text-amber-200/80 hover:bg-amber-950/55 line-through decoration-amber-500/50'
+                    : 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20'
+                }`}
                 title={
                   clipId
-                    ? cm
-                      ? canMapByClip
-                        ? `已按片段起点换算（越界会钳制）：${fmt(rawStart)}–${fmt(rawEnd)} + clip起点${fmt(cm.start_time)} => ${fmt(displayStart)}–${fmt(displayEnd)}`
-                        : `按方案时间窗预览：${fmt(displayStart)}–${fmt(displayEnd)}（clip区间 ${fmt(cm.start_time)}–${fmt(cm.end_time)}）`
-                      : `加载库内时间中… 方案标注 ${fmt(rawStart)}–${fmt(rawEnd)}`
+                    ? excluded
+                      ? `已弃用：成片不包含本段；仍可预览素材。${
+                          cm ? ` ${fmt(displayStart)}–${fmt(displayEnd)}` : ''
+                        }`
+                      : cm
+                        ? canMapByClip
+                          ? `已按片段起点换算（越界会钳制）：${fmt(rawStart)}–${fmt(rawEnd)} + clip起点${fmt(cm.start_time)} => ${fmt(displayStart)}–${fmt(displayEnd)}`
+                          : `按方案时间窗预览：${fmt(displayStart)}–${fmt(displayEnd)}（clip区间 ${fmt(cm.start_time)}–${fmt(cm.end_time)}）`
+                        : `加载库内时间中… 方案标注 ${fmt(rawStart)}–${fmt(rawEnd)}`
                     : '该片段缺少 clip_id，暂不可预览'
                 }
               >
-                #{s.order}（{fmt(displayStart)}-{fmt(displayEnd)}）
+                #{s.order}
+                {excluded ? ' 弃用' : ''}（{fmt(displayStart)}-{fmt(displayEnd)}）
               </button>
             )
           })}
         </div>
-        {(p.segments?.length ?? 0) > 12 && (
+        {segs.length > 12 && (
           <button
             type="button"
             onClick={() => togglePreviewExpand(p.plan_id)}
@@ -221,7 +237,8 @@ export function AutoEditPlanCard({
       <div className="pt-1 space-y-1">
         <button
           onClick={() => onRealizePlan(customPlanById[p.plan_id] ?? p, idx)}
-          disabled={autoRealizingId !== null}
+          disabled={autoRealizingId !== null || activeCount === 0}
+          title={activeCount === 0 ? '至少保留一段参与成片' : undefined}
           className="w-full inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-500/50 bg-emerald-500/10 text-[11px] text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 transition-colors"
         >
           {autoRealizingId === p.plan_id ? (

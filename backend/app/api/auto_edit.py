@@ -902,6 +902,8 @@ async def realize_auto_edit_plan(
     plan = req.plan
     if not plan.segments:
         raise HTTPException(status_code=400, detail="Plan 中没有任何 segments")
+    if not any(not s.exclude_from_output for s in plan.segments):
+        raise HTTPException(status_code=400, detail="所有段落均已标记为弃用，无法成片")
 
     requested_clip_ids = collect_plan_clip_ids(plan)
     valid_clip_ids: Set[str] = set()

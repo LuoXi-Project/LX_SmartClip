@@ -94,6 +94,8 @@ def merge_contiguous_subtitle_segments(
 def collect_plan_clip_ids(plan: Plan) -> List[str]:
     ids: List[str] = []
     for seg in plan.segments:
+        if seg.exclude_from_output:
+            continue
         ids.extend([cid for cid in seg.selected_clip_ids if cid])
         ids.extend([ref.clip_id for ref in seg.clip_group if ref.clip_id])
     return list(dict.fromkeys(ids))
@@ -225,11 +227,12 @@ async def segments_from_plan(
             tts_res: SynthesizeResponse = await tts_synthesize(tts_req)
             return tts_res.filename
 
-    tts_filenames = await asyncio.gather(*[_maybe_tts(seg) for seg in plan.segments])
+    active_segments = [s for s in plan.segments if not s.exclude_from_output]
+    tts_filenames = await asyncio.gather(*[_maybe_tts(seg) for seg in active_segments])
     candidate_by_id: Dict[str, ClipCandidate] = {c.id: c for c in all_candidates}
 
     seg_inputs: List[SubtitleSegmentInput] = []
-    for seg, tts_filename in zip(plan.segments, tts_filenames):
+    for seg, tts_filename in zip(active_segments, tts_filenames):
         selected_valid = [cid for cid in seg.selected_clip_ids if cid in valid_clip_ids]
         group_valid = [ref.clip_id for ref in seg.clip_group if ref.clip_id in valid_clip_ids]
         preferred_video_ids = list(

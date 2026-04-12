@@ -663,6 +663,8 @@ export interface AutoEditSegmentPlanApi {
     weight?: number
   }>
   selected_clip_ids?: string[]
+  /** true：成片跳过该段；字幕与拼接仅按未弃用段落顺序连续排布 */
+  exclude_from_output?: boolean
   start_time_sec: number
   end_time_sec: number
   /** 用户手动覆盖该段在成片中的时长（秒）。用于“更可控”的段落时长/字幕节奏。 */

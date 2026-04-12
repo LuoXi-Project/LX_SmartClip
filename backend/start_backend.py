@@ -46,6 +46,11 @@ def main() -> None:
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))
 
+    # 打包内置 FFmpeg：在导入 MoviePy / imageio 之前设置 IMAGEIO_FFMPEG_EXE 等
+    from app.utils.bin_paths import apply_default_ffmpeg_environment
+
+    apply_default_ffmpeg_environment()
+
     host = args.host
     port = args.port if args.port != 0 else find_free_port(host)
 
@@ -80,5 +85,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # PyInstaller + Windows spawn：子进程会带 --multiprocessing-fork 重启本 exe，
+    # 须在此处理后再 parse_args，否则会 argparse 报错且抽帧/ASR 等子进程 exit=2。
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     main()
 

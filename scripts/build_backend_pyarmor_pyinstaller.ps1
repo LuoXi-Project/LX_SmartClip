@@ -55,6 +55,8 @@ $AppName = "lx_smartclip_backend"
 $PyinstallerName = "lx_smartclip_backend"
 
 $LogoIco = Join-Path $Root "frontend\logo.ico"
+# 仓库根目录 ffmpeg\bin（含 ffmpeg.exe / ffprobe.exe，见 ffmpeg 官网 Windows builds）
+$FfmpegBinDir = Join-Path $Root "ffmpeg\bin"
 
 $SecretPy = Join-Path $BackendDir "secret.py"
 $ConfigJson = Join-Path $BackendDir "config.json"
@@ -156,7 +158,15 @@ try {
         $AddData = @()
         if (Test-Path $FrontendStatic) { $AddData += @("--add-data", "$FrontendStatic;app/static/frontend") }
         if (Test-Path $ConfigJson) { $AddData += @("--add-data", "$ConfigJson;config.json") }
+        if (Test-Path $FfmpegBinDir) {
+            Write-Host "[backend] 打入 FFmpeg 目录: $FfmpegBinDir -> _internal/bin"
+            $AddData += @("--add-data", "$FfmpegBinDir;bin")
+        } else {
+            Write-Host "[backend] 警告: 未找到 $FfmpegBinDir ，请放置 ffmpeg.exe/ffprobe.exe 后重打包；否则依赖系统 PATH"
+        }
 
+        # MoviePy 依赖 imageio；frozen 环境下若缺少 imageio 的 dist-info，会报
+        # "No package metadata was found for imageio"。需 collect + copy-metadata。
         $CollectSubmodules = @(
             "uvicorn"
             "fastapi"
@@ -171,6 +181,8 @@ try {
             "numpy"
             "edge_tts"
             "moviepy"
+            "imageio"
+            "imageio_ffmpeg"
             "PIL"
             "scenedetect"
             "cryptography"
@@ -190,11 +202,20 @@ try {
             "whisper"
             "openai"
             "moviepy"
+            "imageio"
+            "imageio_ffmpeg"
             "PIL"
             "cryptography"
             "scenedetect"
             "faiss"
             "yt_dlp"
+        )
+
+        # PyInstaller：把 pip 包的元数据目录打进包，供 importlib.metadata 查询版本
+        $CopyMetadata = @(
+            "imageio"
+            "imageio-ffmpeg"
+            "moviepy"
         )
 
         $HiddenImports = @(
@@ -209,6 +230,7 @@ try {
         foreach ($m in $HiddenImports) { $ForceCollectArgs += @("--hidden-import", $m) }
         foreach ($p in $CollectSubmodules) { $ForceCollectArgs += @("--collect-submodules", $p) }
         foreach ($p in $CollectAll) { $ForceCollectArgs += @("--collect-all", $p) }
+        foreach ($d in $CopyMetadata) { $ForceCollectArgs += @("--copy-metadata", $d) }
 
         $IconArgs = @()
         if (Test-Path $LogoIco) {

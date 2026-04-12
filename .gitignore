@@ -33,3 +33,5 @@ backend/pyarmor.bug.log
 backend/nuitka-crash-report.xml
 start_dev.bat
 .cursor/rules/UI.mdc
+
+ffmpeg

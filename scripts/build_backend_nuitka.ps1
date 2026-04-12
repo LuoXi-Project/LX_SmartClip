@@ -88,6 +88,7 @@ Get-ChildItem -Path $DistDir -Directory -ErrorAction SilentlyContinue |
 $FrontendStatic = Join-Path $BackendDir "app\static\frontend"
 $StorageDir = Join-Path $BackendDir "storage"
 $DataDir = Join-Path $BackendDir "data"
+$FfmpegBinDir = Join-Path $Root "ffmpeg\bin"
 
 Write-Host "[backend] 去除 Python 源文件 UTF-8 BOM（避免编译/AST 解析失败）..."
 $StripBom = Join-Path $PSScriptRoot "strip_utf8_bom.py"
@@ -128,9 +129,15 @@ try {
         "--windows-console-mode=force",
         "--include-data-dir=$FrontendStatic=app/static/frontend",
         "--include-data-dir=$StorageDir=storage",
-        "--include-data-dir=$DataDir=data",
-        $Entry
+        "--include-data-dir=$DataDir=data"
     )
+    if (Test-Path $FfmpegBinDir) {
+        Write-Host "[backend] 打入 FFmpeg 目录: $FfmpegBinDir -> bin"
+        $Args += "--include-data-dir=$FfmpegBinDir=bin"
+    } else {
+        Write-Host "[backend] 警告: 未找到 $FfmpegBinDir ，请放置 ffmpeg.exe/ffprobe.exe 后重打包；否则依赖系统 PATH"
+    }
+    $Args += $Entry
 
     & $Py @Args
     if ($LASTEXITCODE -ne 0) { throw "Nuitka 构建失败" }

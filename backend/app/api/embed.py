@@ -29,7 +29,7 @@ async def _get_embedder_and_db():
         api_key = await get_cfg("embedding_api_key")
         base_url = await get_cfg("embedding_base_url", "https://api.openai.com/v1")
         model = await get_cfg("embedding_model", "text-embedding-3-small")
-        dimension = int(await get_cfg("vector_dimension", "1536"))
+        dimension = int(await get_cfg("vector_dimension", "1024"))
         concurrency_raw = await get_cfg("embedding_concurrency", "3")
     finally:
         await db.close()

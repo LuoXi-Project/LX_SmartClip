@@ -128,8 +128,8 @@ DEFAULT_CONFIG = [
     ("hybrid_max_segment_sec", "60", "number", "混合模式单镜头最长（秒）", None),
     # 切分性能相关参数（FFmpeg / 分段吞吐）
     ("cut_mode", "fast", "select", "切割模式（速度/精度）", '["fast","precise"]'),
-    ("stream_copy", "false", "select", "视频流复制（copy）", '["false","true"]'),
-    ("stream_copy_audio", "false", "select", "音频流复制（copy）", '["false","true"]'),
+    ("stream_copy", "true", "select", "视频流复制（copy）", '["false","true"]'),
+    ("stream_copy_audio", "true", "select", "音频流复制（copy）", '["false","true"]'),
     ("split_max_workers", "2", "number", "切分并行任务数", None),
     ("ffmpeg_threads_per_job", "1", "number", "每个 ffmpeg 的线程数", None),
     ("quiet_split", "true", "select", "安静切分（减少日志/进度输出）", '["true","false"]'),
@@ -167,7 +167,7 @@ DEFAULT_CONFIG = [
     ("export_acodec", "aac", "select", "成片音频编码器", '["aac","libopus"]'),
     (
         "export_preset",
-        "medium",
+        "fast",
         "select",
         "成片编码 preset（速度/质量）",
         '["ultrafast","superfast","veryfast","faster","fast","medium","slow","slower","veryslow"]',
@@ -182,7 +182,7 @@ DEFAULT_CONFIG = [
     ("export_scale_width", "0", "number", "成片输出宽度（px，0=不限制）", None),
     ("export_scale_height", "0", "number", "成片输出高度（px，0=不限制）", None),
     ("export_pix_fmt", "yuv420p", "select", "成片像素格式", '["yuv420p","yuv422p","yuv444p"]'),
-    ("vector_dimension", "1536", "number", "向量维度", None),
+    ("vector_dimension", "1024", "number", "向量维度", None),
     ("top_k", "12", "number", "召回数量 top_k", None),
     ("vlm_provider", "openai", "select", "视觉模型提供商", '["openai"]'),
     (
@@ -258,8 +258,8 @@ DEFAULT_CONFIG = [
     ("custom_tts_audio_key", "", "string", "响应 JSON 音频字段路径 (支持 a.b.0.c)", None),
     ("frame_fps", "1", "number", "抽帧帧率 (帧/秒)", None),
     ("frame_concurrency", "3", "number", "抽帧并发数量", None),
-    ("frame_target_pixels", "512", "number", "抽帧目标像素 (长边像素，0=不压制)", None),
-    ("vlm_context_length", "8192", "number", "VLM 上下文长度 (tokens)", None),
+    ("frame_target_pixels", "1280", "number", "抽帧目标像素 (长边像素，0=不压制)", None),
+    ("vlm_context_length", "65536", "number", "VLM 上下文长度 (tokens)", None),
     ("vlm_max_images_per_batch", "10", "number", "VLM 单次最大图片数量", None),
     ("vlm_concurrency", "3", "number", "VLM 并发数量", None),
     # 卡密（仅通过 /api/license 读写，不在 /api/config 中暴露）

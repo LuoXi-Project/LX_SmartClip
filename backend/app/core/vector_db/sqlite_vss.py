@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class SQLiteVSSDB(IVectorDB):
     """SQLite + sqlite-vss 向量数据库实现"""
 
-    def __init__(self, db_path: str, vector_dimension: int = 1536):
+    def __init__(self, db_path: str, vector_dimension: int = 1024):
         self.db_path = db_path
         self.vector_dimension = vector_dimension
         self._init_table()

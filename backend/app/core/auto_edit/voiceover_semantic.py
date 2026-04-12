@@ -627,7 +627,7 @@ async def build_semantic_voiceover_plan(
         )
 
     context_tokens = max(1, _cfg_int("context_tokens", DEFAULT_LLM_CONTEXT_TOKENS))
-    llm_max_tokens = max(1, _cfg_int("max_tokens", 8192))
+    llm_max_tokens = max(1, _cfg_int("max_tokens", 65536))
     llm_output_reserve = min(max(1, _cfg_int("output_reserve_tokens", llm_max_tokens)), LLM_OUTPUT_RESERVE_TOKENS_CAP)
     tokens_per_char = _cfg_float("tokens_per_char", DEFAULT_TOKENS_PER_CHAR)
     input_safety_tokens = max(1, _cfg_int("input_safety_tokens", LLM_INPUT_SAFETY_TOKENS))

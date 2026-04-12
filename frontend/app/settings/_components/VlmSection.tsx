@@ -88,7 +88,7 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = VLM_KEYS.some((k) => isDirty(k) && config[k])
 
-  const contextLength = Math.max(1, parseInt(v('vlm_context_length') || '8192', 10) || 8192)
+  const contextLength = Math.max(1, parseInt(v('vlm_context_length') || '65536', 10) || 65536)
   const maxImages = Math.max(1, parseInt(v('vlm_max_images_per_batch') || '10', 10) || 10)
   const concurrency = Math.max(1, parseInt(v('vlm_concurrency') || '3', 10) || 3)
 
@@ -192,7 +192,7 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
               <input type="number" min={1} step={1024} value={v('vlm_context_length')}
                 onChange={(e) => onSet('vlm_context_length', e.target.value)}
                 className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
-                placeholder="8192" />
+                placeholder="65536" />
               <SaveBtn dirty={isDirty('vlm_context_length')} saving={!!saving['vlm_context_length']} saved={!!saved['vlm_context_length']} onSave={() => onSave('vlm_context_length')} />
             </div>
             <p className="text-xs text-slate-500">

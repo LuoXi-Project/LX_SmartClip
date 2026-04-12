@@ -52,7 +52,7 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
         llm_max_context_tokens = int(_read_cfg(conn, "llm_max_context_tokens", "128000"))
         llm_concurrency = int(_read_cfg(conn, "llm_concurrency", "3"))
 
-        vector_dim = int(_read_cfg(conn, "vector_dimension", "1536"))
+        vector_dim = int(_read_cfg(conn, "vector_dimension", "1024"))
         top_k_cfg = int(_read_cfg(conn, "match_top_k", "12"))
         top_n_cfg = int(_read_cfg(conn, "match_top_n", "5"))
 

@@ -8,6 +8,9 @@ import { getClipTrim } from './clipTrim'
 
 const MIN_SPAN = 0.08
 const TRIM_BADGE_EPS = 0.03
+/** 播放到出点附近时暂停并回到入点；仅当从出点左侧连续播放越过时才触发，避免拖到出点之后无法继续往后看 */
+const TRIM_PREVIEW_OUT_EDGE = 0.02
+const TRIM_PREVIEW_CROSS_MIN_LEFT = 0.07
 /** 预览倍速（仅影响弹窗内播放，不改变导出） */
 const PLAYBACK_RATES = [0.25, 0.5, 1, 1.25, 1.5, 2] as const
 
@@ -28,6 +31,7 @@ export function ClipInOutDialog({
   onSave: (trims: Record<string, ClipTrimRange>) => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const lastVideoTimeRef = useRef(0)
   const [localTrims, setLocalTrims] = useState<Record<string, ClipTrimRange>>({})
   const [activeId, setActiveId] = useState<string>('')
   const [dur, setDur] = useState(MIN_SPAN)
@@ -140,6 +144,14 @@ export function ClipInOutDialog({
     }
   }
 
+  /** 无法依赖原生进度条时，一键回到入点并开始预览 */
+  const playFromIn = () => {
+    const v = videoRef.current
+    if (!v) return
+    seek(inSec)
+    void v.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
+  }
+
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
@@ -156,16 +168,43 @@ export function ClipInOutDialog({
   useEffect(() => {
     const v = videoRef.current
     if (!v || !open) return
+
+    const syncLast = () => {
+      lastVideoTimeRef.current = v.currentTime
+    }
+    syncLast()
+
     const tick = () => {
-      if (v.currentTime >= outSec - 0.02) {
+      const t = v.currentTime
+      const prev = lastVideoTimeRef.current
+
+      const reachedOut = t >= outSec - TRIM_PREVIEW_OUT_EDGE
+      const cameFromLeft = prev < outSec - TRIM_PREVIEW_CROSS_MIN_LEFT
+      // 必须先判「越过出点」：否则高倍速单帧跨过 out+ε 会误判成「已在出点之后」而不停
+      if (!v.paused && cameFromLeft && reachedOut) {
         v.pause()
         v.currentTime = inSec
+        lastVideoTimeRef.current = inSec
         setPlaying(false)
+        return
       }
+
+      // 已在出点之后（含原生条拖过去）：不截断，便于继续浏览素材后半段
+      if (t > outSec + TRIM_PREVIEW_OUT_EDGE) {
+        lastVideoTimeRef.current = t
+        return
+      }
+
+      lastVideoTimeRef.current = t
     }
+
     v.addEventListener('timeupdate', tick)
-    return () => v.removeEventListener('timeupdate', tick)
-  }, [open, inSec, outSec])
+    v.addEventListener('seeked', syncLast)
+    return () => {
+      v.removeEventListener('timeupdate', tick)
+      v.removeEventListener('seeked', syncLast)
+    }
+  }, [open, inSec, outSec, activeClip?.clip_id])
 
   const setInFromPlayhead = () => {
     const v = videoRef.current
@@ -278,10 +317,12 @@ export function ClipInOutDialog({
               src={clipStreamUrl(activeClip.clip_id)}
               preload="metadata"
               playsInline
+              controls
               onLoadedMetadata={onLoadedMeta}
               onClick={togglePlay}
             />
-            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2 pointer-events-none">
+            {/* 放顶部，避免盖住浏览器原生进度条 */}
+            <div className="absolute top-2 left-2 right-2 flex items-center justify-start gap-2 pointer-events-none">
               <span className="text-[10px] px-2 py-1 rounded-md bg-black/65 text-slate-200 tabular-nums">
                 本段选用 {span.toFixed(2)}s / 文件 {dur.toFixed(2)}s
               </span>
@@ -296,6 +337,15 @@ export function ClipInOutDialog({
             >
               {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
               {playing ? '暂停' : '播放'}
+            </button>
+            <button
+              type="button"
+              onClick={playFromIn}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/35 text-xs text-amber-100 hover:bg-amber-500/20"
+              title="跳到当前入点并从该处播放"
+            >
+              <Play className="w-3.5 h-3.5" />
+              从入点播放
             </button>
             <div className="flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-slate-500 shrink-0 mr-0.5">倍速</span>

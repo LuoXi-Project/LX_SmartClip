@@ -474,9 +474,9 @@ export default function AssetSearchPage() {
         </form>
 
         {/* Main content */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)] gap-4 min-h-[420px]">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)] gap-4 min-h-[420px] lg:items-stretch">
           {/* Left: list */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden flex flex-col min-h-[260px]">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden flex flex-col min-h-0 h-full">
             {loading ? (
               <div className="flex-1 flex items-center justify-center text-sm text-slate-400 gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -617,18 +617,19 @@ export default function AssetSearchPage() {
             )}
           </div>
 
-          {/* Right: player & info */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-[260px]">
-            <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
-              <span>预览 · 自动高光感知</span>
-              {effectiveAsset && (
-                <span className="text-[11px] text-slate-400">
-                  当前素材：{effectiveAsset.asset_title || effectiveAsset.asset_id}
-                </span>
-              )}
-            </div>
-            <div className="flex-1 flex flex-col">
-              <div className="flex-1 min-h-[210px]">
+          {/* Right: player & info — 外层撑满行高以便 sticky 在整页滚动时有效；内层卡片吸顶 */}
+          <div className="min-h-0 h-full flex flex-col">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-[260px] w-full sticky top-12 z-10 self-start max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain">
+              <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
+                <span>预览 · 自动高光感知</span>
+                {effectiveAsset && (
+                  <span className="text-[11px] text-slate-400">
+                    当前素材：{effectiveAsset.asset_title || effectiveAsset.asset_id}
+                  </span>
+                )}
+              </div>
+            <div className="flex flex-col">
+              <div className="min-h-[210px] max-h-[min(50vh,420px)] aspect-video w-full">
                 {playerSrc ? (
                   <video
                     key={playerSrc}
@@ -721,6 +722,7 @@ export default function AssetSearchPage() {
                   )}
                 </div>
               )}
+            </div>
             </div>
           </div>
         </div>

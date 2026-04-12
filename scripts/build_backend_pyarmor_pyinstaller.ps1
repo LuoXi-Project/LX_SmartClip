@@ -129,6 +129,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller 安装失败" }
     }
 
+    Write-Host "[backend] 去除 Python 源文件 UTF-8 BOM（避免 PyArmor ast.parse 失败）..."
+    $StripBom = Join-Path $PSScriptRoot "strip_utf8_bom.py"
+    & $Py $StripBom $BackendDir
+    if ($LASTEXITCODE -ne 0) { throw "去除 UTF-8 BOM 失败" }
+
     Write-Host "[backend] PyArmor 加密（递归）..."
     $PyarmorArgs = @(
         "-m", "pyarmor.cli", "gen",

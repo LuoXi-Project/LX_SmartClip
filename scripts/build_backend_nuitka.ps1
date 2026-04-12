@@ -89,6 +89,11 @@ $FrontendStatic = Join-Path $BackendDir "app\static\frontend"
 $StorageDir = Join-Path $BackendDir "storage"
 $DataDir = Join-Path $BackendDir "data"
 
+Write-Host "[backend] 去除 Python 源文件 UTF-8 BOM（避免编译/AST 解析失败）..."
+$StripBom = Join-Path $PSScriptRoot "strip_utf8_bom.py"
+& $Py $StripBom $BackendDir
+if ($LASTEXITCODE -ne 0) { throw "去除 UTF-8 BOM 失败" }
+
 Write-Host "[backend] 运行 Nuitka（standalone）..."
 Push-Location $BackendDir
 try {

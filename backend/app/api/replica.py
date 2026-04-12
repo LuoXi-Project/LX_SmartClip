@@ -34,8 +34,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/replica", tags=["replica"])
 
-_STORAGE_VIDEOS_DIR = ensure_storage_subpath("videos")
-
 _REPLICA_TYPE_DEFAULT = "short_video"
 _STYLE_PROFILE_FALLBACK = "通用"
 _QUALITY_DEFAULT = "high_quality"
@@ -176,10 +174,14 @@ def _fmt_time(seconds: float) -> str:
 
 async def _download_reference_video(req: ReplicaIngestRequest, *, video_id: str) -> str:
     """
-    用 yt-dlp 下载参考视频到 storage/videos，返回最终落盘文件路径。
+    用 yt-dlp 下载参考视频到 ``storage/<video_id>/videos/``，返回最终落盘文件路径。
     """
     try:
-        return download_video_with_yt_dlp(url=req.url, output_dir=_STORAGE_VIDEOS_DIR, file_stem=video_id)
+        return download_video_with_yt_dlp(
+            url=req.url,
+            output_dir=ensure_storage_subpath(video_id, "videos"),
+            file_stem="source",
+        )
     except YtDlpDownloadError as exc:
         detail = str(exc)
         status = 501 if "未检测到 yt-dlp" in detail else 502

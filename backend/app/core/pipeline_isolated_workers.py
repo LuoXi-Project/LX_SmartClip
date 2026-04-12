@@ -8,19 +8,25 @@ from __future__ import annotations
 from typing import Any
 
 
-def isolated_extract_frames(clip_path: str, frame_fps: float, frame_target_pixels: int) -> list[str]:
-    from app.api.process_shared import splitter
+def isolated_extract_frames(
+    video_id: str,
+    clip_path: str,
+    frame_fps: float,
+    frame_target_pixels: int,
+) -> list[str]:
+    from app.api.process_shared import get_splitter
 
-    return list(splitter.extract_frames(clip_path, frame_fps, frame_target_pixels) or [])
+    return list(get_splitter(video_id).extract_frames(clip_path, frame_fps, frame_target_pixels) or [])
 
 
-def isolated_extract_audio(clip_path: str, overwrite: bool) -> str:
-    from app.api.process_shared import splitter
+def isolated_extract_audio(video_id: str, clip_path: str, overwrite: bool) -> str:
+    from app.api.process_shared import get_splitter
 
-    return splitter.extract_audio(clip_path, overwrite)
+    return get_splitter(video_id).extract_audio(clip_path, overwrite)
 
 
 def isolated_openai_asr_clip(
+    video_id: str,
     clip_path: str,
     overwrite: bool,
     base_url: str,
@@ -28,25 +34,26 @@ def isolated_openai_asr_clip(
     model: str,
     language: str,
 ) -> dict[str, Any]:
-    from app.api.process_shared import splitter
+    from app.api.process_shared import get_splitter
     from app.core.asr.openai_asr import OpenAIASR
 
-    audio_path = splitter.extract_audio(clip_path, overwrite)
+    audio_path = get_splitter(video_id).extract_audio(clip_path, overwrite)
     asr = OpenAIASR(base_url, api_key, model, language)
     tr = asr.transcribe_detailed(audio_path)
     return {"text": tr.text, "segments": [s.to_dict() for s in tr.segments]}
 
 
 def isolated_whisper_asr_clip(
+    video_id: str,
     clip_path: str,
     overwrite: bool,
     model_size: str,
     language: str | None,
 ) -> dict[str, Any]:
-    from app.api.process_shared import splitter
+    from app.api.process_shared import get_splitter
     from app.core.asr.whisper_asr import WhisperASR
 
-    audio_path = splitter.extract_audio(clip_path, overwrite)
+    audio_path = get_splitter(video_id).extract_audio(clip_path, overwrite)
     lang = (language or "").strip() or None
     asr = WhisperASR(model_size, language=lang)
     tr = asr.transcribe_detailed(audio_path)

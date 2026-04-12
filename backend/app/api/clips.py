@@ -3,14 +3,13 @@ import os
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from app.db.database import get_db_conn
-from app.core.splitter import VideoSplitter
+from app.api.process_shared import get_splitter
 from app.models.clips import ClipUpdatePayload
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
-splitter = VideoSplitter()
 
 
 async def _get_config_value(db, key: str, default: str) -> str:
@@ -34,8 +33,8 @@ async def extract_audio(video_id: str):
 
         video_path = row["file_path"]
 
-        # 提取音频
-        audio_path = splitter.extract_audio(video_path)
+        # 提取音频（与流水线一致：落在 storage/<video_id>/audio/）
+        audio_path = get_splitter(video_id).extract_audio(video_path)
 
         return {"video_id": video_id, "audio_path": audio_path}
     except Exception as e:
@@ -77,6 +76,8 @@ async def split_video(video_id: str):
         )
 
         # 切分输出转码参数（由前端设置）
+        splitter = get_splitter(video_id)
+
         transcode_opts = {
             "clip_container": await _get_config_value(db, "clip_container", "mp4"),
             "clip_vcodec": await _get_config_value(db, "clip_vcodec", "libx264"),
@@ -192,6 +193,8 @@ async def extract_frames(video_id: str, fps: float | None = None, target_pixels:
         cfg_px = int(await _get_config_value(db, "frame_target_pixels", "512"))
         use_fps = float(fps) if fps is not None else cfg_fps
         use_px = int(target_pixels) if target_pixels is not None else cfg_px
+
+        splitter = get_splitter(video_id)
 
         # 为每个片段抽取帧
         results = []

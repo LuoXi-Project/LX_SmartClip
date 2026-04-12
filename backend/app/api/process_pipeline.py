@@ -26,9 +26,9 @@ from .process_shared import (
     ProcessCancelled,
     cancel_event_for,
     check_cancel,
+    get_splitter,
     logger,
     parse_positive_int,
-    splitter,
 )
 
 # 单片段单步（抽帧/ASR/VLM/Embedding）上限：短切片下一般远小于此值；超时则子进程 terminate/kill 或抛出后重试
@@ -120,6 +120,8 @@ async def run_pipeline(
     if not video:
         logger.error("run_pipeline: video_id=%s 视频不存在", video_id)
         raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+
+    splitter = get_splitter(video_id)
 
     cancel_event_for(video_id).clear()
     video_path = video["file_path"]
@@ -394,7 +396,7 @@ async def run_pipeline(
                             fp = await run_killable_target(
                                 _PIPELINE_ISOLATED,
                                 "isolated_extract_frames",
-                                (item["clip_path"], frame_fps, frame_target_pixels),
+                                (video_id, item["clip_path"], frame_fps, frame_target_pixels),
                                 timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                             )
                         elif do_vlm:
@@ -403,7 +405,7 @@ async def run_pipeline(
                                 fp = await run_killable_target(
                                     _PIPELINE_ISOLATED,
                                     "isolated_extract_frames",
-                                    (item["clip_path"], frame_fps, frame_target_pixels),
+                                    (video_id, item["clip_path"], frame_fps, frame_target_pixels),
                                     timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                                 )
                     return fp or []
@@ -446,7 +448,7 @@ async def run_pipeline(
                         payload = await run_killable_target(
                             _PIPELINE_ISOLATED,
                             "isolated_openai_asr_clip",
-                            (item["clip_path"], True, asr_base_url, asr_api_key, asr_openai_model, asr_language),
+                            (video_id, item["clip_path"], True, asr_base_url, asr_api_key, asr_openai_model, asr_language),
                             timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                         )
                         return _transcript_from_payload(payload)
@@ -454,7 +456,7 @@ async def run_pipeline(
                         audio_path = await run_killable_target(
                             _PIPELINE_ISOLATED,
                             "isolated_extract_audio",
-                            (item["clip_path"], True),
+                            (video_id, item["clip_path"], True),
                             timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                         )
                         return await asyncio.wait_for(
@@ -464,7 +466,7 @@ async def run_pipeline(
                     payload = await run_killable_target(
                         _PIPELINE_ISOLATED,
                         "isolated_whisper_asr_clip",
-                        (item["clip_path"], True, asr_model, asr_language or None),
+                        (video_id, item["clip_path"], True, asr_model, asr_language or None),
                         timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                     )
                     return _transcript_from_payload(payload)

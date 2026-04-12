@@ -11,6 +11,7 @@ from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, Upd
 
 from app.db.database import get_db_conn
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.material_media_names import REENCODED_VIDEO_NAME, source_video_basename
 from app.utils.paths import ensure_storage_subpath
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
@@ -18,8 +19,6 @@ from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
-
-STORAGE_DIR = ensure_storage_subpath("videos")
 
 ALLOWED_CONTENT_TYPES = {
     "video/mp4",
@@ -81,7 +80,8 @@ async def upload_video(file: UploadFile = File(...)):
 
     video_id = str(uuid.uuid4())
     ext = os.path.splitext(file.filename or "")[1] or ".mp4"
-    save_path = os.path.join(STORAGE_DIR, f"{video_id}{ext}")
+    video_dir = ensure_storage_subpath(video_id, "videos")
+    save_path = os.path.join(video_dir, source_video_basename(ext))
 
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -117,8 +117,8 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
     try:
         save_path = download_video_with_yt_dlp(
             url=payload.url.strip(),
-            output_dir=STORAGE_DIR,
-            file_stem=video_id,
+            output_dir=ensure_storage_subpath(video_id, "videos"),
+            file_stem="source",
             resolution=payload.resolution,
             fps_limit=payload.fps_limit,
             prefer_mp4=payload.prefer_mp4,
@@ -175,7 +175,7 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
     if not old_path or not os.path.exists(old_path):
         raise HTTPException(status_code=404, detail="源视频文件不存在")
 
-    output_path = os.path.join(STORAGE_DIR, f"{video_id}_reencoded.mp4")
+    output_path = os.path.join(ensure_storage_subpath(video_id, "videos"), REENCODED_VIDEO_NAME)
     vf_parts = []
     if payload.max_height:
         # 用 force_original_aspect_ratio=decrease 避免 min(...) 里的逗号被当作滤镜分隔符
@@ -460,10 +460,26 @@ async def delete_video(video_id: str):
     finally:
         await db.close()
 
-    if file_path and os.path.exists(file_path):
-        os.remove(file_path)
-    if thumbnail_path and os.path.exists(thumbnail_path):
-        os.remove(thumbnail_path)
+    material_root = ensure_storage_subpath(video_id)
+    if os.path.isdir(material_root):
+        try:
+            shutil.rmtree(material_root)
+        except Exception:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                try:
+                    os.remove(thumbnail_path)
+                except Exception:
+                    pass
+    else:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
 
     return {"id": video_id, "deleted": True}
 

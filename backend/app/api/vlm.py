@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from app.db.database import get_db_conn
 from app.core.vlm.openai_vlm import OpenAIVLM
-from app.core.splitter import VideoSplitter
+from app.api.process_shared import get_splitter
+from app.utils.storage_dedupe import strip_leading_material_id_from_clip_basename
 import logging
 import os
 
@@ -9,9 +10,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["vlm"])
 
-# 初始化 VLM 和 Splitter
+# 初始化 VLM
 vlm = None
-splitter = VideoSplitter()
 
 
 def get_vlm(base_url: str, model: str, api_key: str):
@@ -39,6 +39,8 @@ async def process_vlm(video_id: str):
         row = await cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+
+        splitter = get_splitter(video_id)
 
         # 从配置读取 VLM 参数
         config_keys = ["vlm_base_url", "vlm_model", "vlm_api_key"]
@@ -104,11 +106,11 @@ async def process_vlm(video_id: str):
             try:
                 logger.info(f"处理片段 {i+1}/{len(clips)}: {clip_id}")
 
-                # 获取片段的帧
-                frames_dir = os.path.join(
-                    splitter.frames_dir,
-                    os.path.splitext(os.path.basename(clip_path))[0],
-                )
+                # 与 extract_frames 一致：帧目录名对 clip basename 去前导素材 id
+                bn = os.path.basename(clip_path)
+                bn2 = strip_leading_material_id_from_clip_basename(video_id, bn)
+                clip_stem = os.path.splitext(bn2)[0]
+                frames_dir = os.path.join(splitter.frames_dir, clip_stem)
 
                 if not os.path.exists(frames_dir):
                     # 如果帧不存在，按配置帧率抽帧（与全处理流水线一致）

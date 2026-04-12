@@ -11,13 +11,17 @@ from typing import Dict, List, Optional, Tuple
 from app.models.auto_edit import Plan
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import probe_duration
-from app.utils.paths import ensure_storage_subpath, get_writable_backend_root
+from app.utils.paths import (
+    ensure_storage_subpath,
+    get_writable_backend_root,
+    resolve_burned_videos_dir_from_public_url,
+    storage_public_url_for_file,
+)
 
 logger = logging.getLogger(__name__)
 
 _WRITABLE_BACKEND_ROOT = str(get_writable_backend_root())
 
-_BURNED_VIDEOS_DIR = ensure_storage_subpath("burned_videos")
 _BGM_LIBRARY_DIR = ensure_storage_subpath("bgm")
 _BGM_MANIFEST_PATH = os.path.join(_BGM_LIBRARY_DIR, "bgm_manifest.json")
 _BGM_EXTENSIONS = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
@@ -298,8 +302,9 @@ def _mix_bgm_for_video(
     fade_out = max(0.0, float(fade_out_sec or 0.0))
     fade_out_start = max(0.0, video_dur - fade_out)
 
+    out_dir = os.path.dirname(os.path.abspath(video_path))
     out_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_bgm_{uuid.uuid4().hex[:6]}.mp4"
-    out_path = os.path.join(_BURNED_VIDEOS_DIR, out_filename)
+    out_path = os.path.join(out_dir, out_filename)
 
     # BGM 音轨处理：音量 + 淡入 + 淡出（按总时长）
     bgm_filter_parts = [f"volume={float(volume_db):.2f}dB"]
@@ -369,7 +374,8 @@ def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tupl
     if not bgm or not bgm.enabled:
         return filename, url
 
-    src_video_path = os.path.join(_BURNED_VIDEOS_DIR, filename)
+    burn_dir = resolve_burned_videos_dir_from_public_url(url) if (url or "").strip() else ensure_storage_subpath("burned_videos")
+    src_video_path = os.path.join(burn_dir, filename)
     if not os.path.isfile(src_video_path):
         logger.warning("BGM 混音跳过：成片文件不存在 %s", src_video_path)
         return filename, url
@@ -398,5 +404,5 @@ def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tupl
         return filename, url
 
     mixed_filename = os.path.basename(mixed_path)
-    return mixed_filename, f"/storage/burned_videos/{mixed_filename}"
+    return mixed_filename, storage_public_url_for_file(mixed_path)
 

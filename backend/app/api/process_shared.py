@@ -6,7 +6,13 @@ from app.core.splitter import VideoSplitter
 
 logger = logging.getLogger(__name__)
 
-splitter = VideoSplitter()
+
+def get_splitter(material_id: str) -> VideoSplitter:
+    """按素材 ID 返回切分器（输出落在 ``storage/<material_id>/{clips,audio,frames}/``）。"""
+    mid = (material_id or "").strip()
+    if not mid:
+        raise ValueError("material_id 不能为空")
+    return VideoSplitter(material_id=mid)
 
 
 # 用户停止：不能继承 Exception，否则会被流水线里大量 except Exception 吞掉

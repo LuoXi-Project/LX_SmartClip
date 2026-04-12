@@ -25,7 +25,7 @@ from app.models.subtitle import (
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
-from app.utils.paths import ensure_storage_subpath, get_fonts_dir
+from app.utils.paths import ensure_storage_subpath, get_fonts_dir, get_storage_root, storage_public_url_for_file
 from app.core.subtitle.srt import build_srt, parse_srt
 from app.core.subtitle.timeline import (
     resolve_durations,
@@ -42,8 +42,13 @@ TTS_AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(DB_PATH), "tts_audi
 
 _FONTS_DIR = get_fonts_dir()
 
-# 持久化存储：烧录成品统一放 storage/burned_videos/
-_BURNED_VIDEOS_DIR = ensure_storage_subpath("burned_videos")
+def _burned_output_dir_for_clip_rows(rows: list) -> str:
+    """由 clips 行得到烧录输出目录 ``storage/<video_id>/burned_videos/``。"""
+    video_ids = {str(r["video_id"]) for r in rows if r["video_id"]}
+    if len(video_ids) != 1:
+        raise HTTPException(400, "segments 中的片段必须属于同一素材视频")
+    material_id = next(iter(video_ids))
+    return ensure_storage_subpath(material_id, "burned_videos")
 
 
 async def _get_config_value(db, key: str, default: str) -> str:
@@ -190,13 +195,18 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            f"SELECT id,clip_path,duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
+            f"SELECT id, video_id, clip_path, duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
             ids,
         ) as cur:
             rows = await cur.fetchall()
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
         export_backend_cfg = await _load_export_backend(db)
+
+    if not rows:
+        raise HTTPException(400, "未找到片段数据，请检查 clip_id 是否有效")
+
+    burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -286,7 +296,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         export_render_opts=export_render_opts,
         render_mode="tts",
         export_backend=(req.export_backend or export_backend_cfg),
-        output_dir=_BURNED_VIDEOS_DIR,
+        output_dir=burn_output_dir,
     )
 
     if not saved_path or not os.path.exists(saved_path):
@@ -296,7 +306,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     logger.info("烧录完成，已保存: %s", saved_path)
     return {
         "filename": filename,
-        "url": f"/storage/burned_videos/{filename}",
+        "url": storage_public_url_for_file(saved_path),
     }
 
 
@@ -320,13 +330,18 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            f"SELECT id,clip_path,duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
+            f"SELECT id, video_id, clip_path, duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
             ids,
         ) as cur:
             rows = await cur.fetchall()
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
         export_backend_cfg = await _load_export_backend(db)
+
+    if not rows:
+        raise HTTPException(400, "未找到片段数据，请检查 clip_id 是否有效")
+
+    burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
     clip_map = {
         r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
@@ -400,7 +415,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         render_opts=render_opts,
         export_render_opts=export_render_opts,
         render_mode="original",
-        output_dir=_BURNED_VIDEOS_DIR,
+        output_dir=burn_output_dir,
         normalize_audio=req.normalize_audio,
         export_backend=(req.export_backend or export_backend_cfg),
     )
@@ -412,7 +427,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     logger.info("原声导出完成，已保存: %s", saved_path)
     return {
         "filename": filename,
-        "url": f"/storage/burned_videos/{filename}",
+        "url": storage_public_url_for_file(saved_path),
     }
 
 
@@ -447,11 +462,28 @@ async def export_original(req: ExportOriginalRequest, request: Request):
 # Route: 下载视频
 # ---------------------------------------------------------------------------
 
+def _find_burned_export_file(filename: str) -> str | None:
+    """在旧版扁平目录或各素材 ``storage/<id>/burned_videos/`` 下查找成片。"""
+    base = os.path.basename(filename)
+    legacy = os.path.join(ensure_storage_subpath("burned_videos"), base)
+    if os.path.isfile(legacy):
+        return legacy
+    root = get_storage_root()
+    try:
+        for mid in os.listdir(root):
+            candidate = os.path.join(str(root), mid, "burned_videos", base)
+            if os.path.isfile(candidate):
+                return candidate
+    except Exception:
+        pass
+    return None
+
+
 @router.get("/download/{filename}")
 async def download_video(filename: str):
     """下载烧录后的视频文件"""
-    filepath = os.path.join(_BURNED_VIDEOS_DIR, filename)
-    if not os.path.exists(filepath):
+    filepath = _find_burned_export_file(filename)
+    if not filepath:
         raise HTTPException(404, "文件不存在")
     # 避免中文文件名导致 latin-1 编码报错：使用 RFC 5987 filename*
     encoded_filename = quote(filename)

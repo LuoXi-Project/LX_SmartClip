@@ -4,15 +4,14 @@ import os
 import subprocess
 
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.material_media_names import THUMBNAIL_FILENAME
 from app.utils.paths import ensure_storage_subpath
-
-
-THUMBNAIL_DIR = ensure_storage_subpath("thumbnails")
 
 
 def generate_thumbnail(video_path: str, video_id: str) -> str | None:
     """使用 ffmpeg 提取视频封面帧，返回封面图路径，失败返回 None。"""
-    out_path = os.path.join(THUMBNAIL_DIR, f"{video_id}.jpg")
+    thumb_dir = ensure_storage_subpath(video_id, "thumbnails")
+    out_path = os.path.join(thumb_dir, THUMBNAIL_FILENAME)
     for ss in ("00:00:01", "00:00:00"):
         try:
             result = subprocess.run(

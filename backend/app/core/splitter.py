@@ -10,7 +10,8 @@ import logging
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.bin_paths import ffprobe_bin
 from app.utils.ffprobe_utils import has_video_stream as _has_video_stream, probe_duration
-from app.utils.paths import get_storage_root
+from app.utils.paths import ensure_storage_subpath, get_storage_root
+from app.utils.storage_dedupe import strip_leading_material_id_from_clip_basename
 
 logger = logging.getLogger(__name__)
 _SENTINEL = object()
@@ -38,9 +39,18 @@ class ClipInfo:
 class VideoSplitter:
     """视频切分器 - 支持镜头识别、固定时长与混合（镜头 + 超长强制切段）切分"""
 
-    def __init__(self, storage_dir: str = None):
+    def __init__(self, storage_dir: str | None = None, material_id: str | None = None):
+        """
+        Args:
+            storage_dir: 显式指定素材根目录（其下含 clips/audio/frames）。
+            material_id: 素材 ID（通常即 videos.id），等价于 ``storage_dir = storage/<id>/``。
+        """
+        self._material_id: str | None = str(material_id).strip() if material_id and str(material_id).strip() else None
         if storage_dir is None:
-            storage_dir = str(get_storage_root())
+            if self._material_id:
+                storage_dir = str(ensure_storage_subpath(self._material_id))
+            else:
+                storage_dir = str(get_storage_root())
         self.storage_dir = storage_dir
         self.clips_dir = os.path.join(storage_dir, "clips")
         self.audio_dir = os.path.join(storage_dir, "audio")
@@ -206,7 +216,7 @@ class VideoSplitter:
         # ===== 基础配置 =====
         video_has_stream = self.has_video_stream(video_path)
         output_container = opts.get("clip_container", "mp4").strip() or "mp4"
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
+        # 切片落在 storage/<素材id>/clips/，文件名不再带主视频 stem 前缀（如 hybrid_0000.mp4）
 
         # cut_mode
         cut_mode_val = (opts.get("cut_mode") or "fast").strip().lower()
@@ -309,7 +319,7 @@ class VideoSplitter:
             for idx, (st, ed) in enumerate(ranges):
                 if should_stop and should_stop():
                     raise StopRequested("切分已停止")
-                clip_filename = f"{video_name}_{name_prefix}_{idx:0{index_width}d}.{output_container}"
+                clip_filename = f"{name_prefix}_{idx:0{index_width}d}.{output_container}"
                 clip_path = os.path.join(self.clips_dir, clip_filename)
                 futures.append(executor.submit(_run_one, idx, float(st), float(ed), clip_path))
                 if not quiet_split_val:
@@ -346,9 +356,12 @@ class VideoSplitter:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
-        # 生成音频文件路径
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-        audio_path = os.path.join(self.audio_dir, f"{video_name}.wav")
+        # 与切片命名一致：落在 storage/<素材id>/audio/ 时，wav 名不再带前导素材 id（如 hybrid_0000.wav）
+        base = os.path.basename(video_path)
+        if self._material_id:
+            base = strip_leading_material_id_from_clip_basename(self._material_id, base)
+        stem = os.path.splitext(base)[0]
+        audio_path = os.path.join(self.audio_dir, f"{stem}.wav")
 
         # 如果音频已存在且不要求覆盖，直接返回
         if os.path.exists(audio_path) and not overwrite:
@@ -882,7 +895,6 @@ class VideoSplitter:
         clips: List[ClipInfo] = []
         results_by_idx: Dict[int, ClipInfo] = {}
 
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
         futures = []
         clip_idx = 0
 
@@ -943,7 +955,7 @@ class VideoSplitter:
                 for start_time, end_time in expanded:
                     if should_stop and should_stop():
                         raise StopRequested("混合切分已停止")
-                    clip_filename = f"{video_name}_hybrid_{clip_idx:04d}.{output_container}"
+                    clip_filename = f"hybrid_{clip_idx:04d}.{output_container}"
                     clip_path = os.path.join(self.clips_dir, clip_filename)
                     futures.append(
                         executor.submit(_run_one, clip_idx, start_time, end_time, clip_path)
@@ -1096,8 +1108,11 @@ class VideoSplitter:
         duration = self.get_video_duration(clip_path)
         n_frames = max(1, int(duration * fps))
 
-        # 创建帧存储目录
-        clip_name = os.path.splitext(os.path.basename(clip_path))[0]
+        # 创建帧存储目录（与切片文件同名 stem，且不含素材 id 前缀）
+        bn = os.path.basename(clip_path)
+        if self._material_id:
+            bn = strip_leading_material_id_from_clip_basename(self._material_id, bn)
+        clip_name = os.path.splitext(bn)[0]
         frames_output_dir = os.path.join(self.frames_dir, clip_name)
         os.makedirs(frames_output_dir, exist_ok=True)
 

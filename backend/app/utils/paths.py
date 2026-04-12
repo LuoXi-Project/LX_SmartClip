@@ -115,6 +115,52 @@ def ensure_storage_subpath(*parts: str) -> str:
     return str(p.resolve())
 
 
+def material_storage_root(material_id: str) -> str:
+    """
+    单个素材（通常即 videos.id）在 storage 下的根目录：`storage/<material_id>/`。
+
+    其下再分 `videos/`、`clips/`、`audio/`、`frames/`、`thumbnails/`、`burned_videos/` 等子目录。
+    """
+    mid = (material_id or "").strip()
+    if not mid:
+        raise ValueError("material_id 不能为空")
+    return ensure_storage_subpath(mid)
+
+
+def resolve_burned_videos_dir_from_public_url(url: str) -> str:
+    """
+    从静态资源 URL（如 ``/storage/<material_id>/burned_videos/xxx.mp4``）解析烧录成片所在目录。
+
+    兼容旧版扁平路径 ``/storage/burned_videos/xxx.mp4``。
+    """
+    u = (url or "").strip()
+    if "://" in u:
+        try:
+            from urllib.parse import urlparse
+
+            u = urlparse(u).path or u
+        except Exception:
+            pass
+    u = u.split("?")[0]
+    parts = [p for p in u.split("/") if p]
+    if len(parts) >= 2 and parts[0] == "storage":
+        if parts[1] == "burned_videos":
+            return ensure_storage_subpath("burned_videos")
+        if len(parts) >= 3 and parts[2] == "burned_videos":
+            return ensure_storage_subpath(parts[1], "burned_videos")
+    return ensure_storage_subpath("burned_videos")
+
+
+def storage_public_url_for_file(abs_file: str) -> str:
+    """将 storage 下的绝对路径转为前端可访问的 ``/storage/...`` URL。"""
+    root = os.path.normpath(str(get_storage_root().resolve()))
+    ap = os.path.normpath(os.path.abspath(abs_file))
+    if not ap.startswith(root):
+        return "/storage/" + os.path.basename(ap).replace("\\", "/")
+    rel = os.path.relpath(ap, root).replace("\\", "/")
+    return "/storage/" + rel
+
+
 def get_fonts_dir() -> str:
     """字幕烧录等使用的字体目录：优先包内 `fonts/`，否则可写根下 `fonts/`。"""
     for base in (get_resource_backend_root(), get_writable_backend_root()):

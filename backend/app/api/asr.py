@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from app.db.database import get_db_conn
 from app.core.asr.whisper_asr import WhisperASR
 from app.core.asr.openai_asr import OpenAIASR
-from app.core.splitter import VideoSplitter
+from app.api.process_shared import get_splitter
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,6 @@ router = APIRouter(prefix="/api/videos", tags=["asr"])
 
 # ASR 单例缓存（key = provider+model_size/model）
 _asr_cache: dict = {}
-splitter = VideoSplitter()
 
 
 def _cache_key(provider: str, **kwargs) -> str:
@@ -133,7 +132,9 @@ async def process_asr(video_id: str):
             try:
                 logger.info("处理片段 %d/%d: %s", idx + 1, len(clips), clip_id)
                 async with sem:
-                    audio_path = await asyncio.to_thread(splitter.extract_audio, clip_path)
+                    audio_path = await asyncio.to_thread(
+                        get_splitter(video_id).extract_audio, clip_path
+                    )
                     tr = await asyncio.to_thread(asr_instance.transcribe_detailed, audio_path)
                     asr_text = tr.text
                     seg_list = tr.segments_as_dicts()

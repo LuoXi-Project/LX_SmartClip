@@ -1,4 +1,4 @@
-chcp 65001 > nul
+﻿chcp 65001 > nul
 param(
     [string]$HostIP = "127.0.0.1"
 )
@@ -68,12 +68,12 @@ $VenvPythonCandidates = @(
 $Py = ($VenvPythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
 if (-not $Py) { $Py = "python" }
 
-Write-Host "[backend] 检查入口文件..."
+Write-Host "`[backend`] 检查入口文件..."
 if (-not (Test-Path $Entry)) {
     throw "未找到后端入口: $Entry"
 }
 
-Write-Host "[backend] 清理 dist/backend ..."
+Write-Host "`[backend`] 清理 dist/backend ..."
 if (-not (Test-Path $DistDir)) {
     New-Item -Path $DistDir -ItemType Directory -Force | Out-Null
 }
@@ -83,12 +83,12 @@ if (Test-Path $BackendOutDir) {
     } catch {
         $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
         $BackendOutDir = Join-Path $DistDir ("backend_" + $Stamp)
-        Write-Host "[backend] 注意：dist/backend 被占用，改用新目录：$BackendOutDir"
+        Write-Host "`[backend`] 注意：dist/backend 被占用，改用新目录：$BackendOutDir"
     }
 }
 New-Item -Path $BackendOutDir -ItemType Directory -Force | Out-Null
 
-Write-Host "[backend] 准备 PyArmor/PyInstaller 工作目录..."
+Write-Host "`[backend`] 准备 PyArmor/PyInstaller 工作目录..."
 if (Test-Path $WorkDir) {
     try {
         Remove-PathForce -PathToRemove $WorkDir
@@ -99,7 +99,7 @@ if (Test-Path $WorkDir) {
         $BuildDir = Join-Path $WorkDir "build"
         $SpecDir = Join-Path $WorkDir "spec"
         $PyinstallerDistDir = Join-Path $WorkDir "pyinstaller_dist"
-        Write-Host "[backend] 注意：旧工作目录无法清理（文件占用），改用新目录：$WorkDir"
+        Write-Host "`[backend`] 注意：旧工作目录无法清理（文件占用），改用新目录：$WorkDir"
     }
 }
 New-Item -Path $WorkDir -ItemType Directory -Force | Out-Null
@@ -112,10 +112,10 @@ $FrontendStatic = Join-Path $BackendDir "app\\static\\frontend"
 
 Push-Location $BackendDir
 try {
-    Write-Host "[backend] 检查 PyArmor / PyInstaller 依赖..."
+    Write-Host "`[backend`] 检查 PyArmor / PyInstaller 依赖..."
     & $Py -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pyarmor.cli') else 1)" *> $null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[backend] 未检测到 PyArmor，正在安装..."
+        Write-Host "`[backend`] 未检测到 PyArmor，正在安装..."
         & $Py -m pip install --upgrade pip
         if ($LASTEXITCODE -ne 0) { throw "pip 升级失败" }
         & $Py -m pip install --upgrade pyarmor
@@ -124,17 +124,23 @@ try {
 
     & $Py -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PyInstaller') else 1)" *> $null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[backend] 未检测到 PyInstaller，正在安装..."
+        Write-Host "`[backend`] 未检测到 PyInstaller，正在安装..."
         & $Py -m pip install --upgrade pyinstaller
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller 安装失败" }
     }
 
-    Write-Host "[backend] 去除 Python 源文件 UTF-8 BOM（避免 PyArmor ast.parse 失败）..."
+    # 官方补充 hooks，改善 imageio / moviepy 等在 frozen 下的数据与元数据收集
+    & $Py -m pip install --upgrade "pyinstaller-hooks-contrib"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "`[backend`] 警告: pyinstaller-hooks-contrib 安装失败（可忽略，运行时仍有 metadata 兜底）"
+    }
+
+    Write-Host "`[backend`] 去除 Python 源文件 UTF-8 BOM（避免 PyArmor ast.parse 失败）..."
     $StripBom = Join-Path $PSScriptRoot "strip_utf8_bom.py"
     & $Py $StripBom $BackendDir
     if ($LASTEXITCODE -ne 0) { throw "去除 UTF-8 BOM 失败" }
 
-    Write-Host "[backend] PyArmor 加密（递归）..."
+    Write-Host "`[backend`] PyArmor 加密（递归）..."
     $PyarmorArgs = @(
         "-m", "pyarmor.cli", "gen",
         "-r",
@@ -151,7 +157,7 @@ try {
         throw "未找到加密后的入口文件: $ObfEntry"
     }
 
-    Write-Host "[backend] PyInstaller 打包（onedir）..."
+    Write-Host "`[backend`] PyInstaller 打包（onedir）..."
     Push-Location $ObfDir
     try {
         # storage/data 不打入包内：运行时由 app.utils.paths 在 exe 旁（或可写根）创建
@@ -159,10 +165,10 @@ try {
         if (Test-Path $FrontendStatic) { $AddData += @("--add-data", "$FrontendStatic;app/static/frontend") }
         if (Test-Path $ConfigJson) { $AddData += @("--add-data", "$ConfigJson;config.json") }
         if (Test-Path $FfmpegBinDir) {
-            Write-Host "[backend] 打入 FFmpeg 目录: $FfmpegBinDir -> _internal/bin"
+            Write-Host "`[backend`] 打入 FFmpeg 目录: $FfmpegBinDir -> _internal/bin"
             $AddData += @("--add-data", "$FfmpegBinDir;bin")
         } else {
-            Write-Host "[backend] 警告: 未找到 $FfmpegBinDir ，请放置 ffmpeg.exe/ffprobe.exe 后重打包；否则依赖系统 PATH"
+            Write-Host "`[backend`] 警告: 未找到 $FfmpegBinDir ，请放置 ffmpeg.exe/ffprobe.exe 后重打包；否则依赖系统 PATH"
         }
 
         # MoviePy 依赖 imageio；frozen 环境下若缺少 imageio 的 dist-info，会报
@@ -234,10 +240,10 @@ try {
 
         $IconArgs = @()
         if (Test-Path $LogoIco) {
-            Write-Host "[backend] 使用 exe 图标: $LogoIco"
+            Write-Host "`[backend`] 使用 exe 图标: $LogoIco"
             $IconArgs = @("--icon", $LogoIco)
         } else {
-            Write-Host "[backend] 未找到 $LogoIco ，exe 使用默认图标"
+            Write-Host "`[backend`] 未找到 $LogoIco ，exe 使用默认图标"
         }
 
         $PyinstallerArgs = @(
@@ -268,7 +274,7 @@ if (-not (Test-Path $ProducedDir)) {
     throw "未找到 PyInstaller 产物目录: $ProducedDir"
 }
 
-Write-Host "[backend] 导出到 dist/backend ..."
+Write-Host "`[backend`] 导出到 dist/backend ..."
 Copy-Item -Path (Join-Path $ProducedDir "*") -Destination $BackendOutDir -Recurse -Force
 
 # 产物重命名为中文可执行文件名（便于用户识别）

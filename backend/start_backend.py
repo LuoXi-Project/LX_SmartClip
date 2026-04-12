@@ -46,6 +46,11 @@ def main() -> None:
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))
 
+    # imageio 在 import 时会调用 importlib.metadata.version；frozen 下可能缺 .dist-info
+    from app.utils.frozen_metadata_shim import apply_frozen_metadata_shim
+
+    apply_frozen_metadata_shim()
+
     # 打包内置 FFmpeg：在导入 MoviePy / imageio 之前设置 IMAGEIO_FFMPEG_EXE 等
     from app.utils.bin_paths import apply_default_ffmpeg_environment
 

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   AlertCircle, Loader2,
 } from 'lucide-react'
-import apiClient, { API_BASE_URL, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditBgmPlanApi } from '@/lib/api'
+import apiClient, { API_BASE_URL, bgmApi, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditBgmPlanApi, type BgmTrack } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { ClipInOutDialog } from './_components/ClipInOutDialog'
 import { buildClipTrimsForApi } from './_components/clipTrim'
@@ -180,6 +180,14 @@ export default function MatchPage() {
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
   const [resultOpen, setResultOpen] = useState(false)
   const [replicaTemplateRefreshSignal, setReplicaTemplateRefreshSignal] = useState(0)
+  const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
+  const [bgmListError, setBgmListError] = useState('')
+  const [manualBgmEnabled, setManualBgmEnabled] = useState(false)
+  const [manualBgmTrackIds, setManualBgmTrackIds] = useState<string[]>([])
+  const [manualBgmVolumeByTrackId, setManualBgmVolumeByTrackId] = useState<Record<string, number>>({})
+  const [manualBgmTimelineSegments, setManualBgmTimelineSegments] = useState<
+    Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  >([])
 
   // 自动成片 · 仅会话态（不持久化）
   const [autoLoading, setAutoLoading] = useState(false)
@@ -263,6 +271,19 @@ export default function MatchPage() {
       .catch(console.error)
   }, [])
 
+  useEffect(() => {
+    bgmApi.list()
+      .then((list) => {
+        setBgmTracks(Array.isArray(list) ? list : [])
+        setBgmListError('')
+      })
+      .catch((e: unknown) => {
+        const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'BGM 列表加载失败'
+        setBgmTracks([])
+        setBgmListError(msg)
+      })
+  }, [])
+
   // 兼容旧的 matchMode=template：一旦进入模板模式，默认打开模板开关
   useEffect(() => {
     if (mode === 'template') {
@@ -317,6 +338,10 @@ export default function MatchPage() {
     const q = videoSearch.trim().toLowerCase()
     return q ? doneVideos.filter((v) => v.name.toLowerCase().includes(q)) : doneVideos
   }, [doneVideos, videoSearch])
+  const effectiveCopyGenVideoIds = useMemo(
+    () => (selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id)),
+    [selectedVideoIds, doneVideos]
+  )
   const videoTotalPages = Math.max(1, Math.ceil(filteredDoneVideos.length / VIDEO_PAGE_SIZE))
   const pagedDoneVideos = filteredDoneVideos.slice((videoPage - 1) * VIDEO_PAGE_SIZE, videoPage * VIDEO_PAGE_SIZE)
   const handleVideoSearch = (val: string) => { setVideoSearch(val); setVideoPage(1) }
@@ -564,6 +589,7 @@ export default function MatchPage() {
           project_name: projectName,
           export_backend: exportBackend,
           strict_use_client_srt: strictUseClientSrt,
+          bgm: buildManualBgmPayload(),
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
@@ -594,6 +620,7 @@ export default function MatchPage() {
           include_subtitle: subtitleEnabled,
           normalize_audio: true,
           export_backend: exportBackend,
+          bgm: buildManualBgmPayload(),
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
@@ -618,6 +645,29 @@ export default function MatchPage() {
   }
   const toggleVideo = (id: string) =>
     setSelectedVideoIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+
+  const buildManualBgmPayload = () => {
+    if (!manualBgmEnabled || manualBgmTrackIds.length === 0) return undefined
+    const timeline_segments = manualBgmTimelineSegments
+      .map((seg) => ({
+        start_sec: Math.max(0, Number(seg.startSec) || 0),
+        end_sec: Math.max(0, Number(seg.endSec) || 0),
+        track_id: seg.trackId || undefined,
+        volume_db: typeof seg.volumeDb === 'number' && Number.isFinite(seg.volumeDb) ? seg.volumeDb : undefined,
+      }))
+      .filter((seg) => seg.end_sec > seg.start_sec)
+    return {
+      enabled: true,
+      track_ids: manualBgmTrackIds,
+      track_id: manualBgmTrackIds[0],
+      track_volumes_db: manualBgmVolumeByTrackId,
+      volume_db: -14,
+      loop: true,
+      fade_in_sec: 0.5,
+      fade_out_sec: 0.8,
+      timeline_segments: timeline_segments.length ? timeline_segments : undefined,
+    }
+  }
 
   function toggleClipSelected(segId: string, clipId: string) {
     const seg = useMatchStore.getState().segments.find((s) => s.id === segId)
@@ -1124,7 +1174,7 @@ export default function MatchPage() {
                 topN={topN}
                 onTopKChange={setTopK}
                 onTopNChange={setTopN}
-                selectedVideoIds={selectedVideoIds}
+                selectedVideoIds={effectiveCopyGenVideoIds}
                 onAiApply={handleAiApply}
                 globalQuery={globalQuery}
                 onGlobalQueryChange={setGlobalQuery}
@@ -1155,6 +1205,35 @@ export default function MatchPage() {
                 audioDuration={audioDuration}
                 onPreview={setPreviewClip}
                 replicaTemplateGuide={replicaTemplateGuide || undefined}
+                manualBgmEnabled={manualBgmEnabled}
+                onManualBgmEnabledChange={setManualBgmEnabled}
+                bgmTracks={bgmTracks}
+                selectedManualBgmTrackIds={manualBgmTrackIds}
+                onToggleManualBgmTrack={(trackId) => {
+                  setManualBgmTrackIds((prev) => (
+                    prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
+                  ))
+                }}
+                manualBgmVolumeByTrackId={manualBgmVolumeByTrackId}
+                onManualBgmTrackVolumeChange={(trackId, volumeDb) => {
+                  setManualBgmVolumeByTrackId((prev) => ({ ...prev, [trackId]: volumeDb }))
+                }}
+                manualBgmTimelineSegments={manualBgmTimelineSegments}
+                onAddManualBgmTimelineSegment={() => {
+                  setManualBgmTimelineSegments((prev) => [
+                    ...prev,
+                    { id: `bgmseg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, startSec: 0, endSec: 10 },
+                  ])
+                }}
+                onRemoveManualBgmTimelineSegment={(id) => {
+                  setManualBgmTimelineSegments((prev) => prev.filter((seg) => seg.id !== id))
+                }}
+                onUpdateManualBgmTimelineSegment={(id, patch) => {
+                  setManualBgmTimelineSegments((prev) =>
+                    prev.map((seg) => (seg.id === id ? { ...seg, ...patch } : seg))
+                  )
+                }}
+                bgmListError={bgmListError}
                 onToggleExpand={(segId) => {
                   const seg = segments.find((s) => s.id === segId)
                   if (!seg) return

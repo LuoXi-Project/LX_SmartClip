@@ -371,10 +371,168 @@ def _mix_bgm_for_video(
     return out_path
 
 
+def _mix_bgm_timeline_for_video(
+    video_path: str,
+    timeline_items: List[dict],
+    fade_in_sec: float,
+    fade_out_sec: float,
+) -> str:
+    out_dir = os.path.dirname(os.path.abspath(video_path))
+    out_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_bgm_{uuid.uuid4().hex[:6]}.mp4"
+    out_path = os.path.join(out_dir, out_filename)
+
+    filter_parts: List[str] = []
+    input_args: List[str] = ["-i", video_path]
+    mix_inputs = ["[0:a]"]
+    for idx, item in enumerate(timeline_items, start=1):
+        bgm_path = str(item.get("bgm_path") or "")
+        start_sec = max(0.0, float(item.get("start_sec") or 0.0))
+        end_sec = max(start_sec, float(item.get("end_sec") or start_sec))
+        dur = max(0.0, end_sec - start_sec)
+        if not bgm_path or dur <= 0:
+            continue
+        vol = float(item.get("volume_db") or -12.0)
+        fi = max(0.0, min(float(fade_in_sec or 0.0), dur / 2.0))
+        fo = max(0.0, min(float(fade_out_sec or 0.0), dur / 2.0))
+        fade_out_start = max(0.0, dur - fo)
+        delay_ms = int(round(start_sec * 1000))
+        label = f"bgm{idx}"
+        f = (
+            f"[{idx}:a]aloop=loop=-1:size=2000000000,atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+            f"volume={vol:.2f}dB"
+        )
+        if fi > 0:
+            f += f",afade=t=in:st=0:d={fi:.3f}"
+        if fo > 0:
+            f += f",afade=t=out:st={fade_out_start:.3f}:d={fo:.3f}"
+        f += f",adelay={delay_ms}|{delay_ms}[{label}]"
+        filter_parts.append(f)
+        mix_inputs.append(f"[{label}]")
+        input_args.extend(["-i", bgm_path])
+
+    if len(mix_inputs) == 1:
+        return video_path
+
+    filter_parts.append(
+        f"{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:duration=first:dropout_transition=2[aout]"
+    )
+    _run_ffmpeg(
+        [
+            *input_args,
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "0:v:0",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            out_path,
+        ],
+        desc="mix bgm timeline",
+    )
+    return out_path
+
+
+def apply_bgm_config_postprocess(filename: str, url: str, bgm_cfg: Optional[dict]) -> Tuple[str, str]:
+    if not bgm_cfg or not bool(bgm_cfg.get("enabled")):
+        return filename, url
+    burn_dir = resolve_burned_videos_dir_from_public_url(url) if (url or "").strip() else ensure_storage_subpath("burned_videos")
+    src_video_path = os.path.join(burn_dir, filename)
+    if not os.path.isfile(src_video_path):
+        return filename, url
+
+    track_ids = [str(x).strip() for x in (bgm_cfg.get("track_ids") or []) if str(x).strip()]
+    if not track_ids and bgm_cfg.get("track_id"):
+        track_ids = [str(bgm_cfg.get("track_id")).strip()]
+    track_paths = [(tid, _resolve_bgm_path(tid)) for tid in track_ids]
+    track_paths = [(tid, p) for tid, p in track_paths if p]
+    if not track_paths:
+        return filename, url
+
+    video_dur = float(probe_duration(src_video_path) or 0.0)
+    if video_dur <= 0:
+        return filename, url
+    volume_by_track = bgm_cfg.get("track_volumes_db") or {}
+    default_vol = float(bgm_cfg.get("volume_db") or -12.0)
+    timeline_items: List[dict] = []
+    raw_timeline = bgm_cfg.get("timeline_segments") or []
+    if isinstance(raw_timeline, list) and raw_timeline:
+        cycle_idx = 0
+        for seg in sorted(raw_timeline, key=lambda x: float((x or {}).get("start_sec") or 0.0)):
+            if not isinstance(seg, dict):
+                continue
+            st = max(0.0, float(seg.get("start_sec") or 0.0))
+            ed = min(video_dur, max(st, float(seg.get("end_sec") or st)))
+            if ed <= st:
+                continue
+            sid = str(seg.get("track_id") or "").strip()
+            if sid:
+                matched = next(((tid, p) for tid, p in track_paths if tid == sid), None)
+                if not matched:
+                    continue
+                tid, path = matched
+            else:
+                tid, path = track_paths[cycle_idx % len(track_paths)]
+                cycle_idx += 1
+            vol = seg.get("volume_db")
+            if vol is None:
+                vol = volume_by_track.get(tid, default_vol)
+            timeline_items.append({"bgm_path": path, "start_sec": st, "end_sec": ed, "volume_db": float(vol)})
+    else:
+        cur = 0.0
+        i = 0
+        while cur < video_dur - 0.01:
+            tid, path = track_paths[i % len(track_paths)]
+            i += 1
+            dur = float(probe_duration(path) or 20.0)
+            if dur <= 0:
+                dur = 20.0
+            end = min(video_dur, cur + dur)
+            timeline_items.append({
+                "bgm_path": path,
+                "start_sec": cur,
+                "end_sec": end,
+                "volume_db": float(volume_by_track.get(tid, default_vol)),
+            })
+            cur = end
+
+    if not timeline_items:
+        return filename, url
+    try:
+        mixed_path = _mix_bgm_timeline_for_video(
+            src_video_path,
+            timeline_items,
+            fade_in_sec=float(bgm_cfg.get("fade_in_sec") or 0.8),
+            fade_out_sec=float(bgm_cfg.get("fade_out_sec") or 1.0),
+        )
+    except Exception as e:
+        logger.error("BGM 时间轴混音失败，回退原成片: %s", e)
+        return filename, url
+    mixed_filename = os.path.basename(mixed_path)
+    return mixed_filename, storage_public_url_for_file(mixed_path)
+
+
 def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tuple[str, str]:
     bgm = plan.bgm
     if not bgm or not bgm.enabled:
         return filename, url
+    # 与 subtitle 导出流程统一复用，同时兼容单曲旧字段。
+    cfg = {
+        "enabled": bool(bgm.enabled),
+        "track_id": bgm.track_id,
+        "track_ids": [bgm.track_id] if bgm.track_id else None,
+        "volume_db": bgm.volume_db,
+        "loop": bgm.loop,
+        "fade_in_sec": bgm.fade_in_sec,
+        "fade_out_sec": bgm.fade_out_sec,
+    }
+    new_filename, new_url = apply_bgm_config_postprocess(filename, url, cfg)
+    if new_filename != filename or new_url != url:
+        return new_filename, new_url
 
     burn_dir = resolve_burned_videos_dir_from_public_url(url) if (url or "").strip() else ensure_storage_subpath("burned_videos")
     src_video_path = os.path.join(burn_dir, filename)

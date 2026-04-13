@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
-import { type MatchClip } from '@/lib/api'
+import { type BgmTrack, type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
 import { CopyGeneratorPanel } from './CopyGeneratorPanel'
 import { SegmentRow } from './SegmentRow'
@@ -43,6 +43,21 @@ export type ManualMatchPanelProps = {
   onOpenClipInOut?: (segId: string) => void
   /** 复刻模板向导：用于自动注入到文案生成提示词前缀 */
   replicaTemplateGuide?: string
+  manualBgmEnabled: boolean
+  onManualBgmEnabledChange: (value: boolean) => void
+  bgmTracks: BgmTrack[]
+  selectedManualBgmTrackIds: string[]
+  onToggleManualBgmTrack: (trackId: string) => void
+  manualBgmVolumeByTrackId: Record<string, number>
+  onManualBgmTrackVolumeChange: (trackId: string, volumeDb: number) => void
+  manualBgmTimelineSegments: Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  onAddManualBgmTimelineSegment: () => void
+  onRemoveManualBgmTimelineSegment: (id: string) => void
+  onUpdateManualBgmTimelineSegment: (
+    id: string,
+    patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  ) => void
+  bgmListError?: string
 }
 
 export function ManualMatchPanel({
@@ -77,6 +92,18 @@ export function ManualMatchPanel({
   onToggleExpand,
   onOpenClipInOut,
   replicaTemplateGuide,
+  manualBgmEnabled,
+  onManualBgmEnabledChange,
+  bgmTracks,
+  selectedManualBgmTrackIds,
+  onToggleManualBgmTrack,
+  manualBgmVolumeByTrackId,
+  onManualBgmTrackVolumeChange,
+  manualBgmTimelineSegments,
+  onAddManualBgmTimelineSegment,
+  onRemoveManualBgmTimelineSegment,
+  onUpdateManualBgmTimelineSegment,
+  bgmListError,
 }: ManualMatchPanelProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -147,6 +174,135 @@ export function ManualMatchPanel({
         onApply={onAiApply}
         replicaTemplateGuide={replicaTemplateGuide}
       />
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">手动 BGM</p>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={manualBgmEnabled}
+            onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
+            className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+          />
+          <span className="text-sm text-slate-200">导出时混入 BGM（支持多选循环、分段配置）</span>
+        </label>
+        {manualBgmEnabled && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
+              <p className="text-xs text-slate-400">可用 BGM（勾选后按列表顺序循环）</p>
+              {bgmTracks.length === 0 ? (
+                <p className="text-xs text-slate-500">{bgmListError || '暂无 BGM，请先到 BGM 页面上传。'}</p>
+              ) : (
+                <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
+                  {bgmTracks.map((t) => {
+                    const picked = selectedManualBgmTrackIds.includes(t.filename)
+                    return (
+                      <div key={t.id} className="flex items-center gap-2 rounded-lg border border-slate-800 px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={picked}
+                          onChange={() => onToggleManualBgmTrack(t.filename)}
+                          className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                        />
+                        <span className="text-xs text-slate-200 flex-1 truncate">
+                          {t.title || t.filename}
+                          {picked ? (
+                            <span className="ml-1 text-[10px] text-emerald-400/90">
+                              #{selectedManualBgmTrackIds.indexOf(t.filename) + 1}
+                            </span>
+                          ) : null}
+                        </span>
+                        <label className="text-[10px] text-slate-500 flex items-center gap-1">
+                          dB
+                          <input
+                            type="number"
+                            step={0.5}
+                            min={-40}
+                            max={12}
+                            value={manualBgmVolumeByTrackId[t.filename] ?? -14}
+                            onChange={(e) => onManualBgmTrackVolumeChange(t.filename, Number(e.target.value))}
+                            className="w-16 rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200"
+                          />
+                        </label>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-400">时间轴片段（留空则按顺序自动循环整条时间轴）</p>
+                <button
+                  type="button"
+                  onClick={onAddManualBgmTimelineSegment}
+                  className="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500"
+                >
+                  添加片段
+                </button>
+              </div>
+              {manualBgmTimelineSegments.length === 0 ? (
+                <p className="text-xs text-slate-500">未设置片段：导出时会自动按所选 BGM 顺序循环。</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {manualBgmTimelineSegments.map((seg) => (
+                    <div key={seg.id} className="grid grid-cols-12 gap-2 items-center">
+                      <input
+                        type="number"
+                        step={0.1}
+                        min={0}
+                        value={seg.startSec}
+                        onChange={(e) => onUpdateManualBgmTimelineSegment(seg.id, { startSec: Number(e.target.value) })}
+                        className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                        placeholder="开始(s)"
+                      />
+                      <input
+                        type="number"
+                        step={0.1}
+                        min={0.1}
+                        value={seg.endSec}
+                        onChange={(e) => onUpdateManualBgmTimelineSegment(seg.id, { endSec: Number(e.target.value) })}
+                        className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                        placeholder="结束(s)"
+                      />
+                      <select
+                        value={seg.trackId ?? ''}
+                        onChange={(e) => onUpdateManualBgmTimelineSegment(seg.id, { trackId: e.target.value || undefined })}
+                        className="col-span-4 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                      >
+                        <option value="">自动循环</option>
+                        {selectedManualBgmTrackIds.map((trackId) => (
+                          <option key={trackId} value={trackId}>{trackId}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        step={0.5}
+                        min={-40}
+                        max={12}
+                        value={seg.volumeDb ?? ''}
+                        onChange={(e) =>
+                          onUpdateManualBgmTimelineSegment(seg.id, {
+                            volumeDb: e.target.value === '' ? undefined : Number(e.target.value),
+                          })
+                        }
+                        className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                        placeholder="音量dB"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onRemoveManualBgmTimelineSegment(seg.id)}
+                        className="col-span-2 text-xs rounded border border-slate-700 px-2 py-1 text-slate-400 hover:text-red-300 hover:border-red-400/40"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
       <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
           <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />

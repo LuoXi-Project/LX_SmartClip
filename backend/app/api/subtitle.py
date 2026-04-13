@@ -34,6 +34,7 @@ from app.core.subtitle.timeline import (
     rule_timeline_weighted_chars,
 )
 from app.core.subtitle.burn import burn_to_mp4
+from app.core.bgm.auto_bgm import apply_bgm_config_postprocess
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subtitle", tags=["subtitle"])
@@ -304,10 +305,20 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
 
     filename = os.path.basename(saved_path)
     logger.info("烧录完成，已保存: %s", saved_path)
-    return {
+    result = {
         "filename": filename,
         "url": storage_public_url_for_file(saved_path),
     }
+    if req.bgm and req.bgm.enabled:
+        mixed_filename, mixed_url = await run_heavy(
+            apply_bgm_config_postprocess,
+            result["filename"],
+            result["url"],
+            req.bgm.model_dump(),
+        )
+        result["filename"] = mixed_filename
+        result["url"] = mixed_url
+    return result
 
 
 async def execute_export_original(req: ExportOriginalRequest) -> dict:
@@ -425,10 +436,20 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
 
     filename = os.path.basename(saved_path)
     logger.info("原声导出完成，已保存: %s", saved_path)
-    return {
+    result = {
         "filename": filename,
         "url": storage_public_url_for_file(saved_path),
     }
+    if req.bgm and req.bgm.enabled:
+        mixed_filename, mixed_url = await run_heavy(
+            apply_bgm_config_postprocess,
+            result["filename"],
+            result["url"],
+            req.bgm.model_dump(),
+        )
+        result["filename"] = mixed_filename
+        result["url"] = mixed_url
+    return result
 
 
 # ---------------------------------------------------------------------------

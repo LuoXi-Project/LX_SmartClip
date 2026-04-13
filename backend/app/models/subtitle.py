@@ -73,6 +73,25 @@ class BurnSubtitleResponse(BaseModel):
     url: str
 
 
+class BgmTimelineSegment(BaseModel):
+    start_sec: float
+    end_sec: float
+    track_id: Optional[str] = None
+    volume_db: Optional[float] = None
+
+
+class BgmMixConfig(BaseModel):
+    enabled: bool = False
+    track_id: Optional[str] = None
+    track_ids: Optional[List[str]] = None
+    track_volumes_db: Optional[dict[str, float]] = None
+    volume_db: float = -12.0
+    loop: bool = True
+    fade_in_sec: float = 0.8
+    fade_out_sec: float = 1.0
+    timeline_segments: Optional[List[BgmTimelineSegment]] = None
+
+
 class BurnSubtitleRequest(BaseModel):
     segments: List[SubtitleSegmentInput]
     srt_content: str
@@ -82,6 +101,7 @@ class BurnSubtitleRequest(BaseModel):
     # 默认：成片阶段会按 TTS 校验并在必要时重建时间轴，确保最终对齐配音。
     # 若用户已在前端手动微调时间轴并希望“完全按传入 SRT 烧录”，则置为 True。
     strict_use_client_srt: bool = False
+    bgm: Optional[BgmMixConfig] = None
 
 
 class ExportOriginalRequest(BaseModel):
@@ -99,4 +119,5 @@ class ExportOriginalRequest(BaseModel):
     include_subtitle: bool = True
     normalize_audio: bool = True
     export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
+    bgm: Optional[BgmMixConfig] = None
 

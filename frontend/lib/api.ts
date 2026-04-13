@@ -360,6 +360,7 @@ export interface BurnSubtitleRequest {
   export_backend?: 'ffmpeg' | 'moviepy'
   /** 完全按传入 srt_content 烧录；不做 TTS 对齐兜底重建 */
   strict_use_client_srt?: boolean
+  bgm?: BgmMixConfigApi
 }
 
 export interface BurnSubtitleResponse {
@@ -374,6 +375,26 @@ export interface ExportOriginalRequest {
   include_subtitle?: boolean
   normalize_audio?: boolean
   export_backend?: 'ffmpeg' | 'moviepy'
+  bgm?: BgmMixConfigApi
+}
+
+export interface BgmTimelineSegmentApi {
+  start_sec: number
+  end_sec: number
+  track_id?: string
+  volume_db?: number
+}
+
+export interface BgmMixConfigApi {
+  enabled: boolean
+  track_id?: string
+  track_ids?: string[]
+  track_volumes_db?: Record<string, number>
+  volume_db?: number
+  loop?: boolean
+  fade_in_sec?: number
+  fade_out_sec?: number
+  timeline_segments?: BgmTimelineSegmentApi[]
 }
 
 export const subtitleApi = {

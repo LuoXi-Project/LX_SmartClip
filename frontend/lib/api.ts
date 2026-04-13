@@ -791,13 +791,12 @@ function formDataPostConfig() {
 
 export const bgmApi = {
   list: () => apiClient.get<unknown, BgmTrack[]>('/api/bgm/tracks'),
-  upload: (file: File, meta?: { title?: string; mood?: string; bpm?: number; tags?: string[] }) => {
+  upload: (file: File, meta?: { title?: string; mood?: string; tags?: string[] }) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('client_filename', file.name || '')
     if (meta?.title) formData.append('title', meta.title)
     if (meta?.mood) formData.append('mood', meta.mood)
-    if (typeof meta?.bpm === 'number') formData.append('bpm', String(meta.bpm))
     if (meta?.tags?.length) formData.append('tags', meta.tags.join(','))
     return apiClient.post<unknown, BgmTrack>('/api/bgm/upload', formData, formDataPostConfig())
   },

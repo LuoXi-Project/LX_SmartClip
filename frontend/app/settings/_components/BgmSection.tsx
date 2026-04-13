@@ -44,7 +44,6 @@ type TrackEditState = {
 type UploadMetaState = {
   title: string
   mood: string
-  bpm: string
   tags: string[]
 }
 
@@ -79,7 +78,6 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
   const [uploadMeta, setUploadMeta] = useState<UploadMetaState>({
     title: '',
     mood: '',
-    bpm: '',
     tags: [],
   })
   const [dragActive, setDragActive] = useState(false)
@@ -116,11 +114,10 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
       await bgmApi.upload(file, {
         title: uploadMeta.title || undefined,
         mood: uploadMeta.mood || undefined,
-        bpm: uploadMeta.bpm ? Number(uploadMeta.bpm) : undefined,
         tags: uploadMeta.tags,
       })
       await load()
-      setUploadMeta({ title: '', mood: '', bpm: '', tags: [] })
+      setUploadMeta({ title: '', mood: '', tags: [] })
     } catch {
       setError('上传 BGM 失败，请重试。')
     } finally {

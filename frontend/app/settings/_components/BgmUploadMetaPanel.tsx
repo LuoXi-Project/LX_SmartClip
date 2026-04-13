@@ -5,7 +5,6 @@ import type { ReactNode } from 'react'
 type UploadMetaState = {
   title: string
   mood: string
-  bpm: string
   tags: string[]
 }
 
@@ -50,13 +49,9 @@ export function BgmUploadMetaPanel({
             </option>
           ))}
         </select>
-        <input
-          type="number"
-          value={uploadMeta.bpm}
-          onChange={(e) => onUploadMetaChange({ ...uploadMeta, bpm: e.target.value })}
-          className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
-          placeholder="BPM（可选）"
-        />
+        <div className="rounded-lg bg-slate-900 border border-dashed border-slate-700 px-3 py-2 text-xs text-slate-400 flex items-center">
+          BPM 上传后自动检测
+        </div>
       </div>
 
       {childrenAboveTags}

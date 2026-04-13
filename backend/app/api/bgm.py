@@ -6,7 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from moviepy import AudioFileClip
 
 from app.models.bgm import BgmTrack, BgmUpdatePayload
 from app.utils.paths import ensure_storage_subpath
@@ -48,6 +50,66 @@ def _unique_storage_filename(stem: str, ext: str) -> str:
 
 def _ensure_dir() -> None:
     os.makedirs(_BGM_DIR, exist_ok=True)
+
+
+def _estimate_bpm(audio_path: str) -> Optional[float]:
+    """
+    基于音频包络自相关估算 BPM。
+    失败时返回 None，不影响上传主流程。
+    """
+    try:
+        fps = 22050
+        hop = 512
+        min_bpm, max_bpm = 60.0, 200.0
+        max_seconds = 120.0
+
+        with AudioFileClip(audio_path) as clip:
+            if clip.duration is None or clip.duration <= 0:
+                return None
+            seg = clip.subclip(0, min(float(clip.duration), max_seconds))
+            samples = seg.to_soundarray(fps=fps)
+
+        if samples.size == 0:
+            return None
+
+        mono = samples.mean(axis=1) if samples.ndim > 1 else samples
+        n_frames = len(mono) // hop
+        if n_frames < 32:
+            return None
+
+        trimmed = mono[: n_frames * hop].reshape(n_frames, hop)
+        envelope = np.mean(np.abs(trimmed), axis=1).astype(np.float64)
+        envelope = envelope - envelope.mean()
+        std = envelope.std()
+        if std <= 1e-8:
+            return None
+        envelope = envelope / std
+
+        env_rate = fps / hop
+        min_lag = max(1, int(round((60.0 / max_bpm) * env_rate)))
+        max_lag = int(round((60.0 / min_bpm) * env_rate))
+        if max_lag <= min_lag:
+            return None
+
+        corr = np.correlate(envelope, envelope, mode="full")
+        corr = corr[len(corr) // 2 :]
+        if len(corr) <= max_lag:
+            return None
+
+        window = corr[min_lag : max_lag + 1]
+        if window.size == 0:
+            return None
+        best_lag = int(np.argmax(window)) + min_lag
+        bpm = 60.0 * env_rate / best_lag
+
+        # 将倍频/半频折叠到常见区间，提升可读性。
+        while bpm < 70:
+            bpm *= 2
+        while bpm > 180:
+            bpm /= 2
+        return round(float(bpm), 1)
+    except Exception:
+        return None
 
 
 def _load_manifest() -> List[dict]:
@@ -170,7 +232,6 @@ async def upload_track(
     client_filename: Optional[str] = Form(None),
     title: Optional[str] = Form(None),
     mood: Optional[str] = Form(None),
-    bpm: Optional[float] = Form(None),
     tags: Optional[str] = Form(None),
 ) -> BgmTrack:
     """上传新的 BGM 音频并写入 manifest。"""
@@ -194,11 +255,12 @@ async def upload_track(
     tracks = [t for t in tracks if t.filename != filename]
     new_id = uuid.uuid4().hex
     tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+    estimated_bpm = _estimate_bpm(dest)
     new_track = BgmTrack(
         id=new_id,
         title=title or os.path.splitext(name_hint)[0],
         mood=mood or None,
-        bpm=bpm,
+        bpm=estimated_bpm,
         tags=tag_list,
         filename=filename,
         url=f"/storage/bgm/{filename}",

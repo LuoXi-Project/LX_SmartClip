@@ -309,6 +309,9 @@ export interface SubtitleStyleApi {
   pos_x_pct?: number
   pos_y_pct?: number
   background?: boolean
+  background_pad_x?: number
+  background_pad_y?: number
+  background_opacity?: number
   max_chars_per_line?: number
 }
 

@@ -1,4 +1,4 @@
-﻿export interface SubtitleStyle {
+export interface SubtitleStyle {
   font_name: string
   font_size: number
   font_color: string
@@ -12,6 +12,9 @@
   pos_x_pct: number
   pos_y_pct: number
   background: boolean
+  background_pad_x: number
+  background_pad_y: number
+  background_opacity: number
   max_chars_per_line: number
 }
 
@@ -29,6 +32,9 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   pos_x_pct: 50,
   pos_y_pct: 90,
   background: true,
+  background_pad_x: 6,
+  background_pad_y: 3,
+  background_opacity: 55,
   max_chars_per_line: 20,
 }
 

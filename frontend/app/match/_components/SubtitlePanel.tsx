@@ -50,6 +50,9 @@ export function SubtitlePanel({
   const previewH = Math.round(sourceH * scale)
   const xPct = typeof style.pos_x_pct === 'number' ? style.pos_x_pct : 50
   const yPct = typeof style.pos_y_pct === 'number' ? style.pos_y_pct : 90
+  const bgPadX = typeof style.background_pad_x === 'number' ? style.background_pad_x : 6
+  const bgPadY = typeof style.background_pad_y === 'number' ? style.background_pad_y : 3
+  const bgOpacity = typeof style.background_opacity === 'number' ? style.background_opacity : 55
   const showPreviewImage = Boolean(previewFrameUrl) && !previewImageError
 
   useEffect(() => {
@@ -256,6 +259,48 @@ export function SubtitlePanel({
                 className="w-full accent-cyan-500"
               />
             </div>
+
+            {style.background && (
+              <>
+                <div className="col-span-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] text-slate-500">
+                  背景框参数用于提升对原始字幕的覆盖率：横向/纵向扩展控制覆盖范围，不透明度控制遮挡强度。
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500 uppercase tracking-widest">背景横向扩展 {bgPadX.toFixed(1)}</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range" min={0} max={1200} step={1} value={bgPadX}
+                      onChange={e => patch('background_pad_x', +e.target.value)}
+                      className="flex-1 accent-cyan-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => patch('background_pad_x', Math.round(sourceW / 2))}
+                      className="shrink-0 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 transition-colors"
+                      title="按当前视频宽度设置为全宽覆盖（左右各半屏）"
+                    >
+                      全宽覆盖
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500 uppercase tracking-widest">背景纵向扩展 {bgPadY.toFixed(1)}</label>
+                  <input
+                    type="range" min={0} max={20} step={0.5} value={bgPadY}
+                    onChange={e => patch('background_pad_y', +e.target.value)}
+                    className="w-full accent-cyan-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500 uppercase tracking-widest">背景不透明度 {Math.round(bgOpacity)}%</label>
+                  <input
+                    type="range" min={0} max={100} step={1} value={bgOpacity}
+                    onChange={e => patch('background_opacity', +e.target.value)}
+                    className="w-full accent-cyan-500"
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {/* toggles row */}
@@ -304,8 +349,12 @@ export function SubtitlePanel({
                   textShadow: style.outline_width > 0
                     ? `0 0 ${style.outline_width}px ${style.outline_color}, 0 0 ${style.outline_width}px ${style.outline_color}`
                     : 'none',
-                  background: style.background ? 'rgba(0,0,0,0.5)' : 'transparent',
-                  padding: style.background ? `${Math.max(1, Math.round(scale * 2))}px ${Math.max(4, Math.round(scale * 8))}px` : undefined,
+                  background: style.background
+                    ? `rgba(0,0,0,${Math.max(0, Math.min(100, bgOpacity)) / 100})`
+                    : 'transparent',
+                  padding: style.background
+                    ? `${Math.max(0, bgPadY * scale)}px ${Math.max(0, bgPadX * scale)}px`
+                    : undefined,
                   borderRadius: style.background ? 4 : undefined,
                   left: `${xPct}%`,
                   top: `${yPct}%`,

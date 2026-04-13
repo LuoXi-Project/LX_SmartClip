@@ -9,6 +9,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _opacity_pct_to_ass_alpha(opacity_pct: int | float) -> int:
+    """
+    不透明度(0~100) -> ASS Alpha(00~FF)。
+    ASS 中 00=不透明，FF=全透明。
+    """
+    pct = max(0.0, min(100.0, float(opacity_pct)))
+    return int(round(255 - (pct / 100.0) * 255))
+
+
 def _style_to_ass_header(style: "SubtitleStyle", video_size: tuple) -> str:
     """将 SubtitleStyle 转换为 ASS [V4+ Styles] 段。"""
     vw, vh = video_size
@@ -58,14 +67,15 @@ def _style_to_ass_header(style: "SubtitleStyle", video_size: tuple) -> str:
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     if getattr(style, "background", False):
+        bg_alpha = _opacity_pct_to_ass_alpha(getattr(style, "background_opacity", 55))
         # 底层背景盒样式：使用 BorderStyle=3 的 box，仅用于承载背景，不覆盖文字描边样式。
         header = header.replace(
             "\n[Events]\n",
             (
                 f"Style: BgBox,{style.font_name},{style.font_size},"
-                # BorderStyle=3 时，盒子主色取 OutlineColour；此前误配为全透明导致背景不可见。
-                "&HFF000000,&HFF000000,&H70000000,&HFF000000,"
-                f"0,0,0,0,100,100,0,0,3,6,0,{alignment},10,10,{margin_v},1\n"
+                # BorderStyle=3 时，盒子主色取 OutlineColour，Primary 设透明仅保留盒子。
+                f"&HFF000000,&HFF000000,&H{bg_alpha:02X}000000,&HFF000000,"
+                f"0,0,0,0,100,100,0,0,3,0,0,{alignment},10,10,{margin_v},1\n"
                 "\n[Events]\n"
             ),
         )
@@ -95,16 +105,21 @@ def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> s
     """将 srt_entries 列表转换为完整 ASS 字幕字符串。"""
     lines = [_style_to_ass_header(style, video_size)]
     pos_x, pos_y = _style_to_ass_pos(style, video_size)
+    bg_pad_x = max(0.0, float(getattr(style, "background_pad_x", 6.0)))
+    bg_pad_y = max(0.0, float(getattr(style, "background_pad_y", 3.0)))
+    # 对 BgBox 行单独使用 xbord/ybord，以支持横向与纵向扩展独立控制。
+    bg_box_tags = f"{{\\pos({pos_x},{pos_y})\\xbord{bg_pad_x:.1f}\\ybord{bg_pad_y:.1f}}}"
     for entry in srt_entries:
-        text = entry["text"].strip().replace("\n", "\\N")
-        if not text or entry["end"] <= entry["start"]:
+        raw_text = entry["text"].strip().replace("\n", "\\N")
+        if not raw_text or entry["end"] <= entry["start"]:
             continue
+        text = raw_text
         # 用 \pos 锚定坐标，确保导出位置与前端预览一致。
         text = f"{{\\pos({pos_x},{pos_y})}}{text}"
         if getattr(style, "background", False):
             lines.append(
                 f"Dialogue: 0,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"
-                f"BgBox,,0,0,0,,{text}"
+                f"BgBox,,0,0,0,,{bg_box_tags}{raw_text}"
             )
         lines.append(
             f"Dialogue: 1,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"

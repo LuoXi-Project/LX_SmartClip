@@ -44,6 +44,9 @@ class SubtitleStyle(BaseModel):
     pos_x_pct: float = 50.0
     pos_y_pct: float = 90.0
     background: bool = False
+    background_pad_x: float = 6.0
+    background_pad_y: float = 3.0
+    background_opacity: int = 55
     max_chars_per_line: int = 20
 
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, Subtitles, Eye } from 'lucide-react'
 import type { SubtitleStyle, SRTEntry } from './types'
 import { DEFAULT_SUBTITLE_STYLE } from './types'
@@ -15,6 +15,7 @@ interface Props {
   onStrictUseClientSrtChange?: (v: boolean) => void
   timingSource?: string
   previewVideoSize?: { width: number; height: number } | null
+  previewFrameUrl?: string | null
 }
 
 export function SubtitlePanel({
@@ -27,8 +28,10 @@ export function SubtitlePanel({
   onStrictUseClientSrtChange,
   timingSource,
   previewVideoSize,
+  previewFrameUrl,
 }: Props) {
   const [open, setOpen] = useState(false)
+  const [previewImageError, setPreviewImageError] = useState(false)
 
   function patch(k: keyof SubtitleStyle, v: SubtitleStyle[typeof k]) {
     onChange({ ...style, [k]: v })
@@ -47,6 +50,11 @@ export function SubtitlePanel({
   const previewH = Math.round(sourceH * scale)
   const xPct = typeof style.pos_x_pct === 'number' ? style.pos_x_pct : 50
   const yPct = typeof style.pos_y_pct === 'number' ? style.pos_y_pct : 90
+  const showPreviewImage = Boolean(previewFrameUrl) && !previewImageError
+
+  useEffect(() => {
+    setPreviewImageError(false)
+  }, [previewFrameUrl])
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
@@ -273,6 +281,18 @@ export function SubtitlePanel({
               className="relative overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900"
               style={{ width: previewW, height: previewH }}
             >
+              {showPreviewImage && (
+                <>
+                  <img
+                    src={previewFrameUrl ?? ''}
+                    alt="匹配片段截图"
+                    className="absolute inset-0 w-full h-full object-cover"
+                    loading="lazy"
+                    onError={() => setPreviewImageError(true)}
+                  />
+                  <div className="absolute inset-0 bg-black/30" />
+                </>
+              )}
               <span
                 className="absolute"
                 style={{

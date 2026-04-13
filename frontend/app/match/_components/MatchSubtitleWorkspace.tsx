@@ -14,6 +14,7 @@ type MatchSubtitleWorkspaceProps = {
   onStrictUseClientSrtChange?: (v: boolean) => void
   timingSource: string
   previewVideoSize: { width: number; height: number } | null
+  previewFrameUrl?: string | null
   srtError: string
   /** 导出流程说明（如一键成片 / 原声成片），各模式按需传入 */
   footer?: ReactNode
@@ -33,6 +34,7 @@ export function MatchSubtitleWorkspace({
   onStrictUseClientSrtChange,
   timingSource,
   previewVideoSize,
+  previewFrameUrl,
   srtError,
   footer,
 }: MatchSubtitleWorkspaceProps) {
@@ -48,6 +50,7 @@ export function MatchSubtitleWorkspace({
         onStrictUseClientSrtChange={onStrictUseClientSrtChange}
         timingSource={timingSource}
         previewVideoSize={previewVideoSize}
+        previewFrameUrl={previewFrameUrl}
       />
       {srtError && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">

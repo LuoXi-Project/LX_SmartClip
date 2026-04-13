@@ -490,6 +490,17 @@ export default function MatchPage() {
     if (!first) return ''
     return first.clips[first.chosenIdx]?.clip_id ?? ''
   }, [segments])
+  const subtitlePreviewFrameUrl = useMemo(() => {
+    for (const seg of segments) {
+      if (!seg.clips.length) continue
+      const primaryClipId = seg.selectedClipIds?.[0] ?? seg.clips[seg.chosenIdx]?.clip_id ?? ''
+      const primaryClip = seg.clips.find((clip) => clip.clip_id === primaryClipId)
+      if (primaryClip?.thumbnail_url) return primaryClip.thumbnail_url
+      const fallback = seg.clips.find((clip) => clip.thumbnail_url)
+      if (fallback?.thumbnail_url) return fallback.thumbnail_url
+    }
+    return null
+  }, [segments])
 
   useEffect(() => {
     if (!firstReadyClipId) {
@@ -1254,6 +1265,7 @@ export default function MatchPage() {
             onStrictUseClientSrtChange={showStrictSrtToggle ? setStrictUseClientSrt : undefined}
             timingSource={isAutoLikeMode(mode) ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
             previewVideoSize={previewVideoSize}
+            previewFrameUrl={subtitlePreviewFrameUrl}
             srtError={srtError}
             footer={
               <>

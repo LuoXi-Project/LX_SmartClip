@@ -66,7 +66,11 @@ def _estimate_bpm(audio_path: str) -> Optional[float]:
         with AudioFileClip(audio_path) as clip:
             if clip.duration is None or clip.duration <= 0:
                 return None
-            seg = clip.subclip(0, min(float(clip.duration), max_seconds))
+            end_sec = min(float(clip.duration), max_seconds)
+            if hasattr(clip, "subclipped"):
+                seg = clip.subclipped(0, end_sec)
+            else:
+                seg = clip.subclip(0, end_sec)
             samples = seg.to_soundarray(fps=fps)
 
         if samples.size == 0:

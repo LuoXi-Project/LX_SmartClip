@@ -71,6 +71,7 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     bpm: '',
     tags: [],
   })
+  const [dragActive, setDragActive] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -93,9 +94,7 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     setPage(1)
   }, [searchQuery, moodFilter, tagFilter, pageSize])
 
-  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const uploadFile = async (file: File) => {
     setUploading(true)
     setError('')
     try {
@@ -106,13 +105,41 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
         tags: uploadMeta.tags,
       })
       await load()
-      e.target.value = ''
       setUploadMeta({ title: '', mood: '', bpm: '', tags: [] })
     } catch {
       setError('上传 BGM 失败，请重试。')
     } finally {
       setUploading(false)
     }
+  }
+
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await uploadFile(file)
+    e.target.value = ''
+  }
+
+  const onDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
+    if (uploading) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setDragActive(true)
+  }
+
+  const onDragLeave = (e: React.DragEvent<HTMLLabelElement>) => {
+    if (uploading) return
+    e.preventDefault()
+    setDragActive(false)
+  }
+
+  const onDrop = async (e: React.DragEvent<HTMLLabelElement>) => {
+    if (uploading) return
+    e.preventDefault()
+    setDragActive(false)
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+    await uploadFile(file)
   }
 
   const onFieldChange = (id: string, key: 'title' | 'mood' | 'bpm', value: string) => {
@@ -228,9 +255,20 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
               打开大页面
             </Link>
           )}
-          <label className="relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-indigo-500/60 bg-indigo-500/10 text-indigo-200 cursor-pointer hover:bg-indigo-500/20 transition-colors">
+          <label
+            className={`relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border text-indigo-200 cursor-pointer transition-colors ${
+              dragActive
+                ? 'border-indigo-400 bg-indigo-500/25'
+                : 'border-indigo-500/60 bg-indigo-500/10 hover:bg-indigo-500/20'
+            }`}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+          >
             <UploadCloud className="w-3.5 h-3.5" />
-            <span>{uploading ? '上传中...' : '上传音频'}</span>
+            <span>
+              {uploading ? '上传中...' : dragActive ? '松开以上传音频' : '上传音频（支持拖拽）'}
+            </span>
             <input
               type="file"
               accept=".mp3,.wav,.m4a,.aac,.flac,.ogg"

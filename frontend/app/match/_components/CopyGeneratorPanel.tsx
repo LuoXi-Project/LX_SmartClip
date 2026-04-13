@@ -160,9 +160,9 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateG
   }, [replicaTemplateGuide]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyTemplate(t: CopyTemplate) {
-    const prefix = replicaTemplateGuide?.trim() ? `${replicaTemplateGuide.trim()}\n\n` : ''
     setActiveTemplate(t.id)
-    setPrompt(prefix + t.prompt)
+    // 快速模板应保持“所见即所得”，不混入复刻约束前缀，避免用户误判模板内容。
+    setPrompt(t.prompt)
     setStyle(t.style)
   }
 

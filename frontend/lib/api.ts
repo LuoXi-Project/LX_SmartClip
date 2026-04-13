@@ -761,6 +761,7 @@ export interface BgmTrack {
   tags: string[]
   filename: string
   url: string
+  uploaded_at?: string | null
 }
 
 export interface BgmUpdatePayload {

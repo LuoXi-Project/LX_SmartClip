@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -94,6 +95,7 @@ def _build_track_list() -> List[BgmTrack]:
 
     tracks: List[BgmTrack] = []
     for filename in files:
+        file_path = os.path.join(_BGM_DIR, filename)
         meta = None
         # 先试 id 映射，再试 path/filename
         for item in manifest:
@@ -118,6 +120,12 @@ def _build_track_list() -> List[BgmTrack]:
         else:
             tags = []
         url = f"/storage/bgm/{filename}"
+        uploaded_at: Optional[str] = None
+        try:
+            mtime = os.path.getmtime(file_path)
+            uploaded_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            uploaded_at = None
         tracks.append(
             BgmTrack(
                 id=track_id,
@@ -127,8 +135,10 @@ def _build_track_list() -> List[BgmTrack]:
                 tags=tags,
                 filename=filename,
                 url=url,
+                uploaded_at=uploaded_at,
             )
         )
+    tracks.sort(key=lambda x: x.uploaded_at or "", reverse=True)
     return tracks
 
 

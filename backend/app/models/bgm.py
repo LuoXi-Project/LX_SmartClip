@@ -10,6 +10,7 @@ class BgmTrack(BaseModel):
     tags: List[str] = Field(default_factory=list)
     filename: str
     url: str
+    uploaded_at: Optional[str] = None
 
 
 class BgmUpdatePayload(BaseModel):

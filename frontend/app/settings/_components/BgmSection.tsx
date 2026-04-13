@@ -48,6 +48,9 @@ type UploadMetaState = {
   tags: string[]
 }
 
+type SortOption = 'uploaded_desc' | 'filename_asc' | 'filename_desc'
+const BGM_SORT_STORAGE_KEY = 'lx.bgm.sort-option'
+
 interface BgmSectionProps {
   fullPage?: boolean
 }
@@ -63,6 +66,14 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [moodFilter, setMoodFilter] = useState('')
   const [tagFilter, setTagFilter] = useState('')
+  const [sortBy, setSortBy] = useState<SortOption>(() => {
+    if (typeof window === 'undefined') return 'uploaded_desc'
+    const raw = window.localStorage.getItem(BGM_SORT_STORAGE_KEY)
+    if (raw === 'filename_asc' || raw === 'filename_desc' || raw === 'uploaded_desc') {
+      return raw
+    }
+    return 'uploaded_desc'
+  })
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [uploadMeta, setUploadMeta] = useState<UploadMetaState>({
@@ -92,7 +103,11 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
 
   useEffect(() => {
     setPage(1)
-  }, [searchQuery, moodFilter, tagFilter, pageSize])
+  }, [searchQuery, moodFilter, tagFilter, sortBy, pageSize])
+
+  useEffect(() => {
+    window.localStorage.setItem(BGM_SORT_STORAGE_KEY, sortBy)
+  }, [sortBy])
 
   const uploadFile = async (file: File) => {
     setUploading(true)
@@ -211,7 +226,7 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
 
   const filteredTracks = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    return tracks.filter((t) => {
+    const filtered = tracks.filter((t) => {
       const moodText = String(t.mood || '').toLowerCase()
       const tags = (t.tags || []).map((x) => x.toLowerCase())
       const matchesQuery = !q || [
@@ -224,7 +239,19 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
       const matchesTag = !tagFilter || tags.includes(tagFilter.toLowerCase())
       return matchesQuery && matchesMood && matchesTag
     })
-  }, [tracks, searchQuery, moodFilter, tagFilter])
+    const collator = new Intl.Collator('zh-CN')
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'filename_asc') {
+        return collator.compare(a.filename || '', b.filename || '')
+      }
+      if (sortBy === 'filename_desc') {
+        return collator.compare(b.filename || '', a.filename || '')
+      }
+      const aTs = a.uploaded_at ? Date.parse(a.uploaded_at) : 0
+      const bTs = b.uploaded_at ? Date.parse(b.uploaded_at) : 0
+      return bTs - aTs
+    })
+  }, [tracks, searchQuery, moodFilter, tagFilter, sortBy])
 
   const totalPages = Math.max(1, Math.ceil(filteredTracks.length / pageSize))
   const currentPage = Math.min(page, totalPages)
@@ -309,7 +336,7 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
 
         {!loading && tracks.length > 0 && (
           <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
               <input
                 type="text"
                 value={searchQuery}
@@ -340,6 +367,15 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
                     {tag}
                   </option>
                 ))}
+              </select>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
+              >
+                <option value="uploaded_desc">按上传时间（最新）</option>
+                <option value="filename_asc">按文件名（A-Z）</option>
+                <option value="filename_desc">按文件名（Z-A）</option>
               </select>
             </div>
 

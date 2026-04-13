@@ -513,6 +513,7 @@ class VideoSplitter:
         duration: float,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[ClipInfo]:
         """
         固定时长切分视频
@@ -552,6 +553,7 @@ class VideoSplitter:
             ranges,
             transcode_opts=transcode_opts,
             on_clip_created=on_clip_created,
+            should_stop=should_stop,
             name_prefix="clip",
             index_width=3,
         )

@@ -35,6 +35,13 @@ from .process_shared import (
 PIPELINE_STEP_TIMEOUT_SEC = 600.0
 # 共尝试次数：首次 + 3 次重试，仍失败则跳过该片段改步骤
 PIPELINE_STEP_MAX_ATTEMPTS = 4
+# 全流程总超时（秒）：默认 6 小时，避免极端情况下任务无限运行
+PIPELINE_TOTAL_TIMEOUT_SEC = 6 * 60 * 60.0
+# split 阶段超时（秒）：默认 2 小时
+PIPELINE_SPLIT_TIMEOUT_SEC = 2 * 60 * 60.0
+# 队列 put/join 与 worker 收尾等待超时（秒）
+PIPELINE_QUEUE_TIMEOUT_SEC = 300.0
+PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC = 600.0
 
 # multiprocessing 子进程入口（app.core.pipeline_isolated_workers 内顶层函数）
 _PIPELINE_ISOLATED = "app.core.pipeline_isolated_workers"
@@ -191,6 +198,7 @@ async def run_pipeline(
     loop = asyncio.get_event_loop()
     cancel_event = cancel_event_for(video_id)
     await check_cancel(video_id)
+    pipeline_deadline = time.perf_counter() + PIPELINE_TOTAL_TIMEOUT_SEC
 
     t0 = time.perf_counter()
     step_start_ts: dict[str, float] = {}
@@ -230,6 +238,22 @@ async def run_pipeline(
             },
             "errors": list(metrics_errors),
         }
+
+    def _remaining_timeout(cap_sec: float | None = None) -> float:
+        remain = pipeline_deadline - time.perf_counter()
+        if remain <= 0:
+            raise TimeoutError(f"流水线总超时（>{int(PIPELINE_TOTAL_TIMEOUT_SEC)}s）")
+        if cap_sec is None:
+            return remain
+        return max(0.1, min(cap_sec, remain))
+
+    async def _put_with_timeout(q: asyncio.Queue, item: Any, label: str):
+        await asyncio.wait_for(q.put(item), timeout=_remaining_timeout(PIPELINE_QUEUE_TIMEOUT_SEC))
+        logger.debug("queue put ok: %s", label)
+
+    async def _join_with_timeout(q: asyncio.Queue, label: str):
+        await asyncio.wait_for(q.join(), timeout=_remaining_timeout(PIPELINE_QUEUE_TIMEOUT_SEC))
+        logger.debug("queue join ok: %s", label)
 
     do_split = "split" not in skip_steps
     if do_split:
@@ -315,7 +339,12 @@ async def run_pipeline(
             mode = "主进程线程" if embed_inprocess else "子进程"
             await reporter.send("embed", "running", f"开始生成 Embedding 并入库（{mode}，单片段超时 {int(embedding_timeout_sec)}s）...")
             try:
-                embedder = Embedder(base_url=embedding_base_url, api_key=embedding_api_key, model=embedding_model)
+                embedder = Embedder(
+                    base_url=embedding_base_url,
+                    api_key=embedding_api_key,
+                    model=embedding_model,
+                    request_timeout_sec=embedding_timeout_sec,
+                )
                 vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
                 if embed_inprocess:
                     logger.warning(
@@ -375,7 +404,7 @@ async def run_pipeline(
             if item["vlm_enqueued"]:
                 return
             item["vlm_enqueued"] = True
-            await vlm_queue.put(item)
+            await _put_with_timeout(vlm_queue, item, f"vlm:{item['id']}")
 
     async def _frames_worker():
         nonlocal frame_done, frame_success
@@ -547,7 +576,7 @@ async def run_pipeline(
                         if ok:
                             vlm_success += 1
                         await _inc_progress("vlm", "VLM", total_clips, vlm_success, vlm_done)
-                await embed_queue.put(item)
+                await _put_with_timeout(embed_queue, item, f"embed:{item['id']}")
                 vlm_queue.task_done()
 
     async def _embed_worker():
@@ -602,7 +631,7 @@ async def run_pipeline(
                             return await run_killable_target(
                                 _PIPELINE_ISOLATED,
                                 "isolated_embed_text",
-                                (embedding_base_url, embedding_api_key, embedding_model, text),
+                                (embedding_base_url, embedding_api_key, embedding_model, text, embedding_timeout_sec),
                                 timeout_sec=embedding_timeout_sec,
                             )
 
@@ -655,12 +684,15 @@ async def run_pipeline(
     async def _cancel_all_workers():
         for t in all_workers:
             t.cancel()
-        await asyncio.gather(*all_workers, return_exceptions=True)
+        await asyncio.wait_for(
+            asyncio.gather(*all_workers, return_exceptions=True),
+            timeout=_remaining_timeout(PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC),
+        )
 
     async def _enqueue_item(item: dict):
-        await frame_queue.put(item)
+        await _put_with_timeout(frame_queue, item, f"frame:{item['id']}")
         if do_asr:
-            await asr_queue.put(item)
+            await _put_with_timeout(asr_queue, item, f"asr:{item['id']}")
 
     if do_split:
         await clear_clips_for_video(video_id)
@@ -675,11 +707,51 @@ async def run_pipeline(
         async def _run_split_task():
             try:
                 if split_mode == "fixed":
-                    await loop.run_in_executor(None, lambda: splitter.split_by_fixed(video_path, fixed_duration, transcode_opts=transcode_opts, on_clip_created=_on_clip_created))
+                    await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: splitter.split_by_fixed(
+                                video_path,
+                                fixed_duration,
+                                transcode_opts=transcode_opts,
+                                on_clip_created=_on_clip_created,
+                                should_stop=cancel_event.is_set,
+                            ),
+                        ),
+                        timeout=_remaining_timeout(PIPELINE_SPLIT_TIMEOUT_SEC),
+                    )
                 elif split_mode == "hybrid":
-                    await loop.run_in_executor(None, lambda: splitter.split_by_hybrid(video_path, scene_threshold, scene_min_scene_len, hybrid_max_segment_sec, fixed_duration, transcode_opts=transcode_opts, on_clip_created=_on_clip_created, should_stop=cancel_event.is_set))
+                    await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: splitter.split_by_hybrid(
+                                video_path,
+                                scene_threshold,
+                                scene_min_scene_len,
+                                hybrid_max_segment_sec,
+                                fixed_duration,
+                                transcode_opts=transcode_opts,
+                                on_clip_created=_on_clip_created,
+                                should_stop=cancel_event.is_set,
+                            ),
+                        ),
+                        timeout=_remaining_timeout(PIPELINE_SPLIT_TIMEOUT_SEC),
+                    )
                 else:
-                    await loop.run_in_executor(None, lambda: splitter.split_by_scene(video_path, scene_threshold, scene_min_scene_len, transcode_opts=transcode_opts, on_clip_created=_on_clip_created, should_stop=cancel_event.is_set))
+                    await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: splitter.split_by_scene(
+                                video_path,
+                                scene_threshold,
+                                scene_min_scene_len,
+                                transcode_opts=transcode_opts,
+                                on_clip_created=_on_clip_created,
+                                should_stop=cancel_event.is_set,
+                            ),
+                        ),
+                        timeout=_remaining_timeout(PIPELINE_SPLIT_TIMEOUT_SEC),
+                    )
             except (StopRequested, ProcessCancelled):
                 split_error["err"] = ProcessCancelled()
             except Exception as e:
@@ -689,13 +761,14 @@ async def run_pipeline(
 
         split_task = asyncio.create_task(_run_split_task())
         while True:
+            _remaining_timeout()
             try:
                 await check_cancel(video_id)
             except ProcessCancelled:
                 cancelled_early = True
                 break
             try:
-                clip_obj = await asyncio.wait_for(split_out_queue.get(), timeout=1.0)
+                clip_obj = await asyncio.wait_for(split_out_queue.get(), timeout=min(1.0, _remaining_timeout(1.0)))
             except asyncio.TimeoutError:
                 continue
             if clip_obj is split_done:
@@ -736,20 +809,23 @@ async def run_pipeline(
         raise ProcessCancelled()
 
     for _ in range(frames_worker_count):
-        await frame_queue.put(None)
+        await _put_with_timeout(frame_queue, None, "frame:sentinel")
     if do_asr:
         for _ in range(asr_worker_count):
-            await asr_queue.put(None)
-    await frame_queue.join()
+            await _put_with_timeout(asr_queue, None, "asr:sentinel")
+    await _join_with_timeout(frame_queue, "frame")
     if do_asr:
-        await asr_queue.join()
+        await _join_with_timeout(asr_queue, "asr")
     for _ in range(vlm_worker_count):
-        await vlm_queue.put(None)
-    await vlm_queue.join()
+        await _put_with_timeout(vlm_queue, None, "vlm:sentinel")
+    await _join_with_timeout(vlm_queue, "vlm")
     for _ in range(embed_worker_count):
-        await embed_queue.put(None)
-    await embed_queue.join()
-    await asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers)
+        await _put_with_timeout(embed_queue, None, "embed:sentinel")
+    await _join_with_timeout(embed_queue, "embed")
+    await asyncio.wait_for(
+        asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers),
+        timeout=_remaining_timeout(PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC),
+    )
 
     if do_frames:
         _ensure_step_end("extract_frames")

@@ -8,7 +8,13 @@ logger = logging.getLogger(__name__)
 class Embedder:
     """文本向量化器，调用 OpenAI Embedding API"""
 
-    def __init__(self, base_url: str, api_key: str, model: str = "text-embedding-3-small"):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str = "text-embedding-3-small",
+        request_timeout_sec: float = 120.0,
+    ):
         """
         初始化 Embedder
         
@@ -23,8 +29,9 @@ class Embedder:
             raise ImportError("请安装 openai: pip install openai")
 
         self.model = model
+        self.request_timeout_sec = max(1.0, float(request_timeout_sec or 120.0))
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        logger.info(f"初始化 Embedder: model={model}")
+        logger.info(f"初始化 Embedder: model={model}, timeout={self.request_timeout_sec}s")
 
     def embed(
         self,
@@ -48,6 +55,7 @@ class Embedder:
             response = self.client.embeddings.create(
                 model=self.model,
                 input=text,
+                timeout=self.request_timeout_sec,
             )
             if on_usage is not None:
                 try:
@@ -79,6 +87,7 @@ class Embedder:
             response = self.client.embeddings.create(
                 model=self.model,
                 input=texts,
+                timeout=self.request_timeout_sec,
             )
             embeddings = [item.embedding for item in response.data]
             logger.info(f"批量 Embedding 生成成功: {len(embeddings)} 个向量")

@@ -91,11 +91,17 @@ def isolated_vlm_generate(
     return {"description": (desc or "").strip(), "usage": u_dict, "est": int(box.get("est") or 0)}
 
 
-def isolated_embed_text(base_url: str, api_key: str, model: str, text: str) -> dict[str, Any]:
+def isolated_embed_text(
+    base_url: str,
+    api_key: str,
+    model: str,
+    text: str,
+    request_timeout_sec: float = 120.0,
+) -> dict[str, Any]:
     from app.core.embedder import Embedder
     from app.core.metrics.token_usage import TokenUsage
 
-    emb = Embedder(base_url, api_key, model)
+    emb = Embedder(base_url, api_key, model, request_timeout_sec=request_timeout_sec)
     box: dict[str, Any] = {}
 
     def on_usage(u):

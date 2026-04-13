@@ -5,6 +5,7 @@ import AIChatPanel from './_components/AIChatPanel'
 import { LicenseGate } from './_components/LicenseGate'
 import { ToastProvider } from '@/components/ui/toast-provider'
 import { ConfirmProvider } from '@/hooks/use-confirm'
+import TopNav from './_components/TopNav'
 
 export const metadata: Metadata = {
   title: '洛曦智剪 - AI智能剪辑工具',
@@ -21,17 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             洛曦智剪
             </Link>
             <div className="h-4 w-px bg-slate-700" />
-            <Link href="/library" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材库</Link>
-            <Link href="/process" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材处理</Link>
-            <Link href="/search" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">素材检索</Link>
-            <Link href="/match" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">智能剪辑</Link>
-            <Link href="/summary" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">视频总结</Link>
-            <Link href="/tts" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">TTS 配音</Link>
-            <Link href="/bgm" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">BGM 音乐库</Link>
-            <Link href="/logs" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">日志</Link>
-            <Link href="/settings" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">设置</Link>
-            <Link href="/license" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">卡密</Link>
-            <Link href="/about" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">关于与支持</Link>
+            <TopNav />
           </div>
         </nav>
         <ToastProvider>

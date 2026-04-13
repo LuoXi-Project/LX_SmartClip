@@ -1,11 +1,19 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { Loader2, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2, Pause, Play, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
 import { type BgmTrack, type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
 import { CopyGeneratorPanel } from './CopyGeneratorPanel'
 import { SegmentRow } from './SegmentRow'
+
+function formatAudioTime(sec: number) {
+  if (!Number.isFinite(sec) || sec < 0) return '00:00'
+  const total = Math.floor(sec)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
 
 export type ManualMatchPanelProps = {
   topK: number
@@ -108,8 +116,29 @@ export function ManualMatchPanel({
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
+  const [bgmKeyword, setBgmKeyword] = useState('')
+  const [previewTrackId, setPreviewTrackId] = useState<string | null>(null)
+  const [previewCurrentTime, setPreviewCurrentTime] = useState(0)
+  const [previewDuration, setPreviewDuration] = useState(0)
   const flashClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const dragMime = 'application/x-smartclip-seg-id'
+  const normalizedBgmKeyword = bgmKeyword.trim().toLowerCase()
+  const filteredBgmTracks = useMemo(() => {
+    if (!normalizedBgmKeyword) return bgmTracks
+    return bgmTracks.filter((track) => {
+      const searchable = [
+        track.title,
+        track.filename,
+        track.mood ?? '',
+        String(track.bpm ?? ''),
+        ...(track.tags ?? []),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return searchable.includes(normalizedBgmKeyword)
+    })
+  }, [bgmTracks, normalizedBgmKeyword])
 
   const flashRow = (id: string) => {
     if (flashClearRef.current) clearTimeout(flashClearRef.current)
@@ -122,6 +151,9 @@ export function ManualMatchPanel({
 
   useEffect(() => () => {
     if (flashClearRef.current) clearTimeout(flashClearRef.current)
+  }, [])
+  useEffect(() => () => {
+    Object.values(previewAudioRefs.current).forEach((audio) => audio?.pause())
   }, [])
 
   /** 拖动靠近视口上下边缘时自动滚动，便于长列表排序 */
@@ -192,40 +224,129 @@ export function ManualMatchPanel({
               {bgmTracks.length === 0 ? (
                 <p className="text-xs text-slate-500">{bgmListError || '暂无 BGM，请先到 BGM 页面上传。'}</p>
               ) : (
-                <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
-                  {bgmTracks.map((t) => {
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={bgmKeyword}
+                    onChange={(e) => setBgmKeyword(e.target.value)}
+                    placeholder="搜索 BGM：名称 / 文件名 / 标签 / 心情 / BPM"
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                  <div className="space-y-1.5 max-h-72 overflow-auto pr-1">
+                    {filteredBgmTracks.map((t) => {
                     const picked = selectedManualBgmTrackIds.includes(t.filename)
+                    const isPreviewing = previewTrackId === t.id
                     return (
-                      <div key={t.id} className="flex items-center gap-2 rounded-lg border border-slate-800 px-2 py-1.5">
-                        <input
-                          type="checkbox"
-                          checked={picked}
-                          onChange={() => onToggleManualBgmTrack(t.filename)}
-                          className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
-                        />
-                        <span className="text-xs text-slate-200 flex-1 truncate">
-                          {t.title || t.filename}
-                          {picked ? (
-                            <span className="ml-1 text-[10px] text-emerald-400/90">
-                              #{selectedManualBgmTrackIds.indexOf(t.filename) + 1}
-                            </span>
-                          ) : null}
-                        </span>
-                        <label className="text-[10px] text-slate-500 flex items-center gap-1">
-                          dB
+                      <div key={t.id} className="rounded-lg border border-slate-800 px-2 py-1.5">
+                        <div className="flex items-center gap-2 rounded-md bg-slate-900/70">
                           <input
-                            type="number"
-                            step={0.5}
-                            min={-40}
-                            max={12}
-                            value={manualBgmVolumeByTrackId[t.filename] ?? -14}
-                            onChange={(e) => onManualBgmTrackVolumeChange(t.filename, Number(e.target.value))}
-                            className="w-16 rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200"
+                            type="checkbox"
+                            checked={picked}
+                            onChange={() => onToggleManualBgmTrack(t.filename)}
+                            className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
                           />
-                        </label>
+                          <span className="text-xs text-slate-200 w-40 shrink-0 truncate">
+                            {t.title || t.filename}
+                            {picked ? (
+                              <span className="ml-1 text-[10px] text-emerald-400/90">
+                                #{selectedManualBgmTrackIds.indexOf(t.filename) + 1}
+                              </span>
+                            ) : null}
+                          </span>
+                          <label className="text-[10px] text-slate-500 flex items-center gap-1 shrink-0">
+                            dB
+                            <input
+                              type="number"
+                              step={0.5}
+                              min={-40}
+                              max={12}
+                              value={manualBgmVolumeByTrackId[t.filename] ?? -14}
+                              onChange={(e) => onManualBgmTrackVolumeChange(t.filename, Number(e.target.value))}
+                              className="w-16 rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const current = previewAudioRefs.current[t.id]
+                              if (!current) return
+                              if (isPreviewing) {
+                                current.pause()
+                                setPreviewTrackId(null)
+                                return
+                              }
+                              if (previewTrackId && previewTrackId !== t.id) {
+                                previewAudioRefs.current[previewTrackId]?.pause()
+                              }
+                              void current.play()
+                              setPreviewTrackId(t.id)
+                            }}
+                            className="h-7 w-7 shrink-0 rounded-full border border-slate-700 bg-slate-800 text-slate-200 hover:border-indigo-500 hover:text-indigo-300 flex items-center justify-center"
+                            aria-label={isPreviewing ? '暂停试听' : '播放试听'}
+                          >
+                            {isPreviewing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+                          </button>
+                          <input
+                            type="range"
+                            min={0}
+                            max={isPreviewing && previewDuration > 0 ? previewDuration : 0}
+                            step={0.01}
+                            value={isPreviewing ? Math.min(previewCurrentTime, previewDuration || 0) : 0}
+                            onChange={(e) => {
+                              const next = Number(e.target.value)
+                              const audio = previewAudioRefs.current[t.id]
+                              if (!audio) return
+                              audio.currentTime = next
+                              if (isPreviewing) setPreviewCurrentTime(next)
+                            }}
+                            className="flex-1 min-w-24 accent-indigo-500"
+                          />
+                          <span className="w-20 text-right text-[10px] text-slate-400 tabular-nums">
+                            {isPreviewing
+                              ? `${formatAudioTime(previewCurrentTime)} / ${formatAudioTime(previewDuration)}`
+                              : '--:-- / --:--'}
+                          </span>
+                          <audio
+                            ref={(el) => {
+                              previewAudioRefs.current[t.id] = el
+                            }}
+                            preload="metadata"
+                            src={t.url}
+                            onLoadedMetadata={(e) => {
+                              if (previewTrackId === t.id) {
+                                setPreviewDuration(e.currentTarget.duration || 0)
+                              }
+                            }}
+                            onTimeUpdate={(e) => {
+                              if (previewTrackId !== t.id) return
+                              setPreviewCurrentTime(e.currentTarget.currentTime || 0)
+                            }}
+                            onPlay={(e) => {
+                              if (previewTrackId && previewTrackId !== t.id) {
+                                previewAudioRefs.current[previewTrackId]?.pause()
+                              }
+                              setPreviewTrackId(t.id)
+                              setPreviewDuration(e.currentTarget.duration || 0)
+                            }}
+                            onPause={() => {
+                              if (previewTrackId === t.id) setPreviewTrackId(null)
+                            }}
+                            onEnded={() => {
+                              if (previewTrackId === t.id) {
+                                setPreviewTrackId(null)
+                                setPreviewCurrentTime(0)
+                              }
+                            }}
+                            className="hidden"
+                          />
+                        </div>
                       </div>
                     )
-                  })}
+                    })}
+                  </div>
+                  {filteredBgmTracks.length === 0 ? (
+                    <p className="text-xs text-slate-500">未找到匹配的 BGM，请换个关键词。</p>
+                  ) : null}
                 </div>
               )}
             </div>

@@ -349,7 +349,12 @@ async def generate_copy(req: CopyGenRequest):
                     stream=True,
                 )
                 async for chunk in stream:
-                    delta = chunk.choices[0].delta.content
+                    # 某些兼容 OpenAI 协议的后端在尾包可能返回空 choices（仅带 usage 等元信息）
+                    # 这里做安全判断，避免偶发 IndexError 干扰正常流式输出。
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0].delta, "content", None)
                     if delta:
                         yield ("data: " + json.dumps({"content": delta}, ensure_ascii=False) + "\n\n").encode()
                 yield b"data: [DONE]\n\n"

@@ -21,7 +21,8 @@ try:
 except ImportError:  # pragma: no cover
     _secret = None  # type: ignore
 
-_SESSION_TTL_SEC = 3600
+# 使用进程单调时钟计时，避免系统时间被篡改导致校验窗口失真。
+_SESSION_TTL_SEC = 24 * 60 * 60
 _last_ok_monotonic: float = 0.0
 
 def has_card_server_config() -> bool:

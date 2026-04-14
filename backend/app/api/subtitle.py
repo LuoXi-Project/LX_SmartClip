@@ -25,7 +25,7 @@ from app.models.subtitle import (
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
-from app.utils.paths import ensure_storage_subpath, get_fonts_dir, get_storage_root, storage_public_url_for_file
+from app.utils.paths import ensure_storage_subpath, get_fonts_dir, get_storage_root, resolve_stored_path, storage_public_url_for_file
 from app.core.subtitle.srt import build_srt, parse_srt
 from app.core.subtitle.timeline import (
     resolve_durations,
@@ -210,7 +210,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
     clip_map = {
-        r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
+        r["id"]: {"path": resolve_stored_path(r["clip_path"]), "dur": float(r["duration"] or 5)}
         for r in rows
     }
     clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
@@ -355,7 +355,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
     clip_map = {
-        r["id"]: {"path": r["clip_path"], "dur": float(r["duration"] or 5)}
+        r["id"]: {"path": resolve_stored_path(r["clip_path"]), "dur": float(r["duration"] or 5)}
         for r in rows
     }
     clip_dur = {cid: float(info["dur"] or 5) for cid, info in clip_map.items()}

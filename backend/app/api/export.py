@@ -2,11 +2,8 @@ import io
 import json
 import logging
 import os
-import subprocess
-import tempfile
 import zipfile
 from urllib.parse import quote
-from typing import List, Optional
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException
@@ -14,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from app.models.export import ExportRequest
 
 from app.db.database import DB_PATH
+from app.utils.paths import resolve_stored_path
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +59,7 @@ async def export_project(req: ExportRequest):
 
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for i, clip in enumerate(clips):
-            clip_path = clip["clip_path"]
+            clip_path = resolve_stored_path(clip["clip_path"])
             clip_filename = os.path.basename(clip_path) if clip_path else f"clip_{i}.mp4"
 
             clip_entry: dict = {

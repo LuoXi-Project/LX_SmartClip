@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import WebSocket
 from app.db.database import get_db_conn
+from app.utils.paths import resolve_stored_path, to_stored_path
 from .process_shared import now_iso, _task_subscribers
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,16 @@ async def get_video(video_id: str):
     db = await get_db_conn()
     try:
         cursor = await db.execute("SELECT * FROM videos WHERE id = ?", (video_id,))
-        return await cursor.fetchone()
+        row = await cursor.fetchone()
+        if not row:
+            return row
+        out = dict(row)
+        if out.get("file_path"):
+            try:
+                out["file_path"] = resolve_stored_path(str(out["file_path"]))
+            except Exception:
+                pass
+        return out
     finally:
         await db.close()
 
@@ -56,7 +66,15 @@ async def get_clips(video_id: str):
             "WHERE video_id = ? ORDER BY start_time",
             (video_id,),
         )
-        return await cursor.fetchall()
+        rows = await cursor.fetchall()
+        out = [dict(r) for r in rows]
+        for r in out:
+            if r.get("clip_path"):
+                try:
+                    r["clip_path"] = resolve_stored_path(str(r["clip_path"]))
+                except Exception:
+                    pass
+        return out
     finally:
         await db.close()
 
@@ -73,7 +91,15 @@ async def get_clips_by_ids_for_video(video_id: str, clip_ids: list[str]):
             f"WHERE video_id = ? AND id IN ({placeholders}) ORDER BY start_time",
             (video_id, *clip_ids),
         )
-        return await cursor.fetchall()
+        rows = await cursor.fetchall()
+        out = [dict(r) for r in rows]
+        for r in out:
+            if r.get("clip_path"):
+                try:
+                    r["clip_path"] = resolve_stored_path(str(r["clip_path"]))
+                except Exception:
+                    pass
+        return out
     finally:
         await db.close()
 
@@ -302,7 +328,7 @@ async def insert_clip_to_db(video_id: str, clip) -> str:
             (
                 clip_id,
                 video_id,
-                clip.clip_path,
+                to_stored_path(clip.clip_path),
                 float(clip.start_time),
                 float(clip.end_time),
                 float(clip.duration),

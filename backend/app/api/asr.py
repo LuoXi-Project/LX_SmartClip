@@ -5,6 +5,7 @@ from app.db.database import get_db_conn
 from app.core.asr.whisper_asr import WhisperASR
 from app.core.asr.openai_asr import OpenAIASR
 from app.api.process_shared import get_splitter
+from app.utils.paths import resolve_stored_path
 import logging
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ async def process_asr(video_id: str):
 
         async def _process_one(idx: int, clip_row):
             clip_id = clip_row["id"]
-            clip_path = clip_row["clip_path"]
+            clip_path = resolve_stored_path(clip_row["clip_path"])
             try:
                 logger.info("处理片段 %d/%d: %s", idx + 1, len(clips), clip_id)
                 async with sem:
@@ -192,7 +193,6 @@ async def get_asr_info():
         asr_provider     = await _read_config(db, "asr_provider", "whisper")
         model_size       = await _read_config(db, "asr_model", "base")
         asr_base_url     = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
-        asr_api_key      = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
         asr_language = (await _read_config(db, "asr_language", "zh") or "").strip()
     finally:

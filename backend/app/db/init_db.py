@@ -2,6 +2,7 @@ import aiosqlite
 import os
 
 from app.db.database import DB_PATH
+from app.utils.paths import to_stored_path
 
 CREATE_VIDEOS = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -472,4 +473,25 @@ async def init_db():
         await db.execute(
             "UPDATE config SET value = '18' WHERE key = 'clip_crf' AND COALESCE(TRIM(value), '') IN ('', '23')",
         )
+        # 兼容旧库：将历史绝对路径规范化为相对路径，避免打包后运行目录变化导致找不到文件
+        try:
+            cur = await db.execute("SELECT id, file_path, thumbnail_path FROM videos")
+            rows = await cur.fetchall()
+            for r in rows:
+                fp = to_stored_path(r[1] or "")
+                tp = to_stored_path(r[2] or "") if r[2] else None
+                await db.execute(
+                    "UPDATE videos SET file_path = ?, thumbnail_path = ? WHERE id = ?",
+                    (fp, tp, r[0]),
+                )
+        except Exception:
+            pass
+        try:
+            cur = await db.execute("SELECT id, clip_path FROM clips")
+            rows = await cur.fetchall()
+            for r in rows:
+                cp = to_stored_path(r[1] or "")
+                await db.execute("UPDATE clips SET clip_path = ? WHERE id = ?", (cp, r[0]))
+        except Exception:
+            pass
         await db.commit()

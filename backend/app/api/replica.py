@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 import sqlite3
@@ -26,7 +25,7 @@ from app.models.replica import (
     ReplicaTemplateListResponse,
 )
 from app.utils.ffprobe_utils import probe_duration
-from app.utils.paths import ensure_storage_subpath
+from app.utils.paths import ensure_storage_subpath, to_stored_path
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
@@ -196,7 +195,7 @@ async def _insert_video_row(*, video_id: str, name: str, file_path: str) -> None
             INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
             VALUES (?, ?, ?, ?, NULL, 0, 'scene', 'pending', ?)
             """,
-            (video_id, name, file_path, None, _utc_now_iso()),
+            (video_id, name, to_stored_path(file_path), None, _utc_now_iso()),
         )
         await db.commit()
     finally:
@@ -406,7 +405,7 @@ async def ingest_reference_video(req: ReplicaIngestRequest) -> ReplicaIngestResp
             INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
             VALUES (?, ?, ?, ?, ?, 0, 'scene', 'pending', ?)
             """,
-            (video_id, name, file_path, thumbnail_path, duration, _utc_now_iso()),
+            (video_id, name, to_stored_path(file_path), to_stored_path(thumbnail_path), duration, _utc_now_iso()),
         )
         await db.commit()
     finally:

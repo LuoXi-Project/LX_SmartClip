@@ -289,8 +289,18 @@ if (Test-Path $ConfigJson) {
     Copy-Item -Path $ConfigJson -Destination (Join-Path $BackendOutDir "config.json") -Force
 }
 
+# 生成启动脚本：固定 LX_SMARTCLIP_HOME 到 exe 同目录，避免路径受调用 cwd 影响
+$LauncherCmd = @'
+@echo off
+setlocal
+set LX_SMARTCLIP_HOME=%~dp0
+"%~dp0lx_smartclip_backend.exe" %*
+'@
+Set-Content -Path (Join-Path $BackendOutDir "start_backend.cmd") -Value $LauncherCmd -Encoding UTF8
+
 Write-Host ""
-Write-Host "后端构建完成（PyArmor + PyInstaller）：$BackendOutDir"
-Write-Host "可执行文件：$(Join-Path $BackendOutDir ($AppName + '.exe'))"
+$OutExe = Join-Path $BackendOutDir ($AppName + ".exe")
+Write-Host ("Backend build done (PyArmor + PyInstaller): " + $BackendOutDir)
+Write-Host ("Executable: " + $OutExe)
 Write-Host ""
 

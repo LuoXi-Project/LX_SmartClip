@@ -12,6 +12,7 @@ import aiosqlite
 from fastapi import HTTPException
 
 from app.models.summary import SummaryGenerateRequest, VideoSummary
+from app.utils.paths import resolve_stored_path
 
 from .prompts import BUILTIN_TEMPLATE_ID, STAGE_A_SYSTEM, STAGE_B_SYSTEM
 from .screenshots import materialize_screenshot_placeholders
@@ -73,7 +74,7 @@ async def persist_generated_summary(
     if prompt_var_bool(req.prompt_vars, "note_screenshot", True):
         cur_vp = await db.execute("SELECT file_path FROM videos WHERE id = ?", (req.video_id,))
         row_vp = await cur_vp.fetchone()
-        vp = row_vp["file_path"] if row_vp and row_vp["file_path"] else None
+        vp = resolve_stored_path(row_vp["file_path"]) if row_vp and row_vp["file_path"] else None
         if vp and os.path.isfile(vp):
             md_for_store = await asyncio.to_thread(
                 materialize_screenshot_placeholders, md_for_store, vp, summary_id

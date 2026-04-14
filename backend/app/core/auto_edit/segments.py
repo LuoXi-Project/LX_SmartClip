@@ -223,9 +223,15 @@ async def segments_from_plan(
         if seg.audio_mode != "tts" or not seg.subtitle or not seg.subtitle.text:
             return None
         async with sem:
-            tts_req = SynthesizeRequest(text=seg.subtitle.text)
-            tts_res: SynthesizeResponse = await tts_synthesize(tts_req)
-            return tts_res.filename
+            try:
+                tts_req = SynthesizeRequest(text=seg.subtitle.text)
+                tts_res: SynthesizeResponse = await tts_synthesize(tts_req)
+                return tts_res.filename
+            except Exception as e:
+                # 单段 TTS 失败不应阻塞整条一键成片链路：降级为无 tts_filename，
+                # 后续时间轴会自动回落到 clip 时长。
+                logger.warning("segment %s TTS 失败，已降级为原片时长: %s", seg.id, e)
+                return None
 
     active_segments = [s for s in plan.segments if not s.exclude_from_output]
     tts_filenames = await asyncio.gather(*[_maybe_tts(seg) for seg in active_segments])

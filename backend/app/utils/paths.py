@@ -115,6 +115,82 @@ def ensure_storage_subpath(*parts: str) -> str:
     return str(p.resolve())
 
 
+def to_stored_path(path: str) -> str:
+    """
+    将磁盘路径转换为数据库可持久化路径（优先相对路径）。
+
+    约定：
+    - 新写入数据库时，尽量存相对 `backend_root` 的路径（如 `storage/<id>/clips/x.mp4`）。
+    - 传入已是相对路径时，仅做分隔符标准化并原样返回。
+    """
+    raw = (path or "").strip()
+    if not raw:
+        return raw
+    normalized = raw.replace("\\", "/")
+    if not os.path.isabs(raw):
+        return normalized.lstrip("./")
+
+    ap = Path(raw).resolve()
+    writable_root = get_writable_backend_root().resolve()
+    try:
+        rel = ap.relative_to(writable_root)
+        return str(rel).replace("\\", "/")
+    except Exception:
+        pass
+
+    storage_root = get_storage_root().resolve()
+    try:
+        rel_storage = ap.relative_to(storage_root)
+        rel_storage_str = str(rel_storage).replace("\\", "/")
+        return f"storage/{rel_storage_str}"
+    except Exception:
+        return str(ap).replace("\\", "/")
+
+
+def resolve_stored_path(path: str) -> str:
+    """
+    将数据库中的路径解析为当前运行环境可访问的绝对路径。
+
+    兼容：
+    - 新版相对路径（`storage/...`）
+    - 旧版绝对路径（打包目录变化后，自动回退到当前 storage 根）
+    """
+    raw = (path or "").strip()
+    if not raw:
+        return ""
+
+    v = raw.replace("\\", "/")
+    if v.startswith("/storage/"):
+        v = v.lstrip("/")
+
+    writable_root = get_writable_backend_root().resolve()
+    storage_root = get_storage_root().resolve()
+
+    if os.path.isabs(raw):
+        ap = Path(raw).resolve()
+        if ap.exists():
+            return str(ap)
+
+        parts = [p for p in str(ap).replace("\\", "/").split("/") if p]
+        lower_parts = [p.lower() for p in parts]
+        if "storage" in lower_parts:
+            idx = lower_parts.index("storage")
+            tail = parts[idx + 1 :]
+            if tail:
+                candidate = storage_root.joinpath(*tail).resolve()
+                return str(candidate)
+        return str(ap)
+
+    rel = Path(v.lstrip("./"))
+    c1 = (writable_root / rel).resolve()
+    c2 = (storage_root / rel).resolve()
+    if c1.exists():
+        return str(c1)
+    if c2.exists():
+        return str(c2)
+    return str(c1)
+
+
 def material_storage_root(material_id: str) -> str:
     """
     单个素材（通常即 videos.id）在 storage 下的根目录：`storage/<material_id>/`。

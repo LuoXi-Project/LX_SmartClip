@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.db.database import get_db_conn
 from app.core.vlm.openai_vlm import OpenAIVLM
 from app.api.process_shared import get_splitter
+from app.utils.paths import resolve_stored_path
 from app.utils.storage_dedupe import strip_leading_material_id_from_clip_basename
 import logging
 import os
@@ -101,7 +102,7 @@ async def process_vlm(video_id: str):
         results = []
         for i, clip in enumerate(clips):
             clip_id = clip["id"]
-            clip_path = clip["clip_path"]
+            clip_path = resolve_stored_path(clip["clip_path"])
 
             try:
                 logger.info(f"处理片段 {i+1}/{len(clips)}: {clip_id}")

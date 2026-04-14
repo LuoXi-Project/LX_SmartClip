@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from app.db.database import get_db_conn
 from app.api.process_shared import get_splitter
 from app.models.clips import ClipUpdatePayload
+from app.utils.paths import resolve_stored_path, to_stored_path
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ async def extract_audio(video_id: str):
         if row is None:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
-        video_path = row["file_path"]
+        video_path = resolve_stored_path(row["file_path"])
 
         # 提取音频（与流水线一致：落在 storage/<video_id>/audio/）
         audio_path = get_splitter(video_id).extract_audio(video_path)
@@ -64,7 +65,7 @@ async def split_video(video_id: str):
         if row is None:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
-        video_path = row["file_path"]
+        video_path = resolve_stored_path(row["file_path"])
         split_mode = row["split_mode"]
 
         # 从配置读取参数
@@ -139,7 +140,7 @@ async def split_video(video_id: str):
                 (
                     clip_id,
                     video_id,
-                    clip.clip_path,
+                    to_stored_path(clip.clip_path),
                     clip.start_time,
                     clip.end_time,
                     clip.duration,
@@ -200,7 +201,7 @@ async def extract_frames(video_id: str, fps: float | None = None, target_pixels:
         results = []
         for clip in clips:
             clip_id = clip["id"]
-            clip_path = clip["clip_path"]
+            clip_path = resolve_stored_path(clip["clip_path"])
 
             try:
                 frame_paths = splitter.extract_frames(clip_path, fps=use_fps, target_pixels=use_px)
@@ -279,7 +280,7 @@ async def stream_clip(clip_id: str):
         row = await cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"片段 '{clip_id}' 不存在")
-        clip_path = row["clip_path"]
+        clip_path = resolve_stored_path(row["clip_path"])
     finally:
         await db.close()
 

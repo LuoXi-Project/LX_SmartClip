@@ -12,7 +12,7 @@ from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, Upd
 from app.db.database import get_db_conn
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.material_media_names import REENCODED_VIDEO_NAME, source_video_basename
-from app.utils.paths import ensure_storage_subpath
+from app.utils.paths import ensure_storage_subpath, resolve_stored_path, to_stored_path
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
 
@@ -96,7 +96,7 @@ async def upload_video(file: UploadFile = File(...)):
             INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
             VALUES (?, ?, ?, ?, NULL, 0, 'scene', 'pending', ?)
             """,
-            (video_id, file.filename, save_path, thumbnail_path, upload_at),
+            (video_id, file.filename, to_stored_path(save_path), to_stored_path(thumbnail_path), upload_at),
         )
         await db.commit()
     finally:
@@ -139,7 +139,7 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
             INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
             VALUES (?, ?, ?, ?, NULL, 0, 'scene', 'pending', ?)
             """,
-            (video_id, name, save_path, thumbnail_path, upload_at),
+            (video_id, name, to_stored_path(save_path), to_stored_path(thumbnail_path), upload_at),
         )
         await db.commit()
     finally:
@@ -166,8 +166,8 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
         row = await cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
-        old_path = row["file_path"]
-        old_thumb = row["thumbnail_path"]
+        old_path = resolve_stored_path(row["file_path"])
+        old_thumb = resolve_stored_path(row["thumbnail_path"]) if row["thumbnail_path"] else None
         old_name = row["name"]
     finally:
         await db.close()
@@ -240,7 +240,7 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
     try:
         await db.execute(
             "UPDATE videos SET file_path = ?, thumbnail_path = ? WHERE id = ?",
-            (output_path, thumbnail_path, video_id),
+            (to_stored_path(output_path), to_stored_path(thumbnail_path), video_id),
         )
         await db.commit()
     finally:
@@ -358,7 +358,7 @@ async def get_thumbnail(video_id: str):
         if row is None:
             logger.error(f"视频封面图不存在: {video_id}")
             raise HTTPException(status_code=404, detail="视频不存在")
-        thumb_path = row["thumbnail_path"]
+        thumb_path = resolve_stored_path(row["thumbnail_path"]) if row["thumbnail_path"] else ""
     finally:
         await db.close()
 
@@ -380,7 +380,7 @@ async def stream_video(video_id: str):
         if row is None:
             logger.error(f"视频文件不存在: {video_id}")
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
-        file_path = row["file_path"]
+        file_path = resolve_stored_path(row["file_path"])
     finally:
         await db.close()
 
@@ -451,8 +451,8 @@ async def delete_video(video_id: str):
             logger.error(f"视频不存在: {video_id}")
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
 
-        file_path = row["file_path"]
-        thumbnail_path = row["thumbnail_path"]
+        file_path = resolve_stored_path(row["file_path"])
+        thumbnail_path = resolve_stored_path(row["thumbnail_path"]) if row["thumbnail_path"] else ""
 
         await db.execute("DELETE FROM clips WHERE video_id = ?", (video_id,))
         await db.execute("DELETE FROM videos WHERE id = ?", (video_id,))

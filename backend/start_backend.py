@@ -42,6 +42,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    # 冻结运行时将持久化根固定到可执行文件目录，避免受启动 cwd 影响
+    if getattr(sys, "frozen", False):
+        os.environ.setdefault("LX_SMARTCLIP_HOME", str(Path(sys.executable).resolve().parent))
+
     backend_root = _repo_backend_root()
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))

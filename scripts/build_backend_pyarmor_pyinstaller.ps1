@@ -1,4 +1,4 @@
-﻿chcp 65001 > nul
+chcp 65001 > nul
 param(
     [string]$HostIP = "127.0.0.1"
 )
@@ -288,6 +288,15 @@ if (Test-Path $ProducedExe) {
 if (Test-Path $ConfigJson) {
     Copy-Item -Path $ConfigJson -Destination (Join-Path $BackendOutDir "config.json") -Force
 }
+
+# 生成启动脚本：固定 LX_SMARTCLIP_HOME 到 exe 同目录，避免路径受调用 cwd 影响
+$LauncherCmd = @'
+@echo off
+setlocal
+set LX_SMARTCLIP_HOME=%~dp0
+"%~dp0lx_smartclip_backend.exe" %*
+'@
+Set-Content -Path (Join-Path $BackendOutDir "start_backend.cmd") -Value $LauncherCmd -Encoding UTF8
 
 Write-Host ""
 Write-Host "后端构建完成（PyArmor + PyInstaller）：$BackendOutDir"

@@ -188,6 +188,12 @@ export default function MatchPage() {
   const [manualBgmTimelineSegments, setManualBgmTimelineSegments] = useState<
     Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
   >([])
+  const [voiceoverBgmEnabled, setVoiceoverBgmEnabled] = useState(false)
+  const [voiceoverBgmTrackIds, setVoiceoverBgmTrackIds] = useState<string[]>([])
+  const [voiceoverBgmVolumeByTrackId, setVoiceoverBgmVolumeByTrackId] = useState<Record<string, number>>({})
+  const [voiceoverBgmTimelineSegments, setVoiceoverBgmTimelineSegments] = useState<
+    Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  >([])
 
   // 自动成片 · 仅会话态（不持久化）
   const [autoLoading, setAutoLoading] = useState(false)
@@ -680,6 +686,32 @@ export default function MatchPage() {
     }
   }
 
+  const buildVoiceoverBgmPlanPayload = (): AutoEditBgmPlanApi | null => {
+    if (!voiceoverBgmEnabled || voiceoverBgmTrackIds.length === 0) return null
+    const timeline_segments = voiceoverBgmTimelineSegments
+      .map((seg) => ({
+        start_sec: Math.max(0, Number(seg.startSec) || 0),
+        end_sec: Math.max(0, Number(seg.endSec) || 0),
+        track_id: seg.trackId || undefined,
+        volume_db: typeof seg.volumeDb === 'number' && Number.isFinite(seg.volumeDb) ? seg.volumeDb : undefined,
+      }))
+      .filter((seg) => seg.end_sec > seg.start_sec)
+    return {
+      enabled: true,
+      source: 'user',
+      track_id: voiceoverBgmTrackIds[0],
+      track_ids: voiceoverBgmTrackIds,
+      track_volumes_db: voiceoverBgmVolumeByTrackId,
+      volume_db: -14,
+      loop: true,
+      fade_in_sec: 0.5,
+      fade_out_sec: 0.8,
+      timeline_segments: timeline_segments.length ? timeline_segments : undefined,
+    }
+  }
+  const showVoiceoverBgmConfig =
+    autoBgmMixEnabled && (autoBgmPlanPolicy === 'user' || (autoBgmTrackFilename || '').trim().length > 0)
+
   function toggleClipSelected(segId: string, clipId: string) {
     const seg = useMatchStore.getState().segments.find((s) => s.id === segId)
     if (!seg) return
@@ -905,7 +937,13 @@ export default function MatchPage() {
     setAutoRealizeMsg('')
     setAutoRealizingId(plan.plan_id)
     try {
-      const planForRealize = applyAutoBgmRealizeOptions(plan)
+      let planForRealize = applyAutoBgmRealizeOptions(plan)
+      if (mode === 'voiceover') {
+        const voBgm = showVoiceoverBgmConfig ? buildVoiceoverBgmPlanPayload() : null
+        if (voBgm) {
+          planForRealize = { ...planForRealize, bgm: voBgm }
+        }
+      }
       const res = await autoEditApi.realize({
         plan: planForRealize,
         project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
@@ -1114,6 +1152,36 @@ export default function MatchPage() {
                 onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
                 autoBgmTrackFilename={autoBgmTrackFilename}
                 onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+                showVoiceoverBgmConfig={showVoiceoverBgmConfig}
+                voiceoverBgmEnabled={voiceoverBgmEnabled}
+                onVoiceoverBgmEnabledChange={setVoiceoverBgmEnabled}
+                bgmTracksForVoiceover={bgmTracks}
+                bgmListErrorForVoiceover={bgmListError}
+                selectedVoiceoverBgmTrackIds={voiceoverBgmTrackIds}
+                onToggleVoiceoverBgmTrack={(trackId) => {
+                  setVoiceoverBgmTrackIds((prev) => (
+                    prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
+                  ))
+                }}
+                voiceoverBgmVolumeByTrackId={voiceoverBgmVolumeByTrackId}
+                onVoiceoverBgmTrackVolumeChange={(trackId, volumeDb) => {
+                  setVoiceoverBgmVolumeByTrackId((prev) => ({ ...prev, [trackId]: volumeDb }))
+                }}
+                voiceoverBgmTimelineSegments={voiceoverBgmTimelineSegments}
+                onAddVoiceoverBgmTimelineSegment={() => {
+                  setVoiceoverBgmTimelineSegments((prev) => [
+                    ...prev,
+                    { id: `vobgm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, startSec: 0, endSec: 10 },
+                  ])
+                }}
+                onRemoveVoiceoverBgmTimelineSegment={(id) => {
+                  setVoiceoverBgmTimelineSegments((prev) => prev.filter((seg) => seg.id !== id))
+                }}
+                onUpdateVoiceoverBgmTimelineSegment={(id, patch) => {
+                  setVoiceoverBgmTimelineSegments((prev) =>
+                    prev.map((seg) => (seg.id === id ? { ...seg, ...patch } : seg))
+                  )
+                }}
                 autoUseTimelineEngine={autoUseTimelineEngine}
                 onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
                 processingProfileLocked={false}

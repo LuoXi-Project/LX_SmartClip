@@ -27,6 +27,7 @@ export type AutoEditBgmMixPanelProps = {
 
   strategyLabel?: string
   emptyBgmHintPrefix: string
+  hideTrackSelector?: boolean
 }
 
 export function AutoEditBgmMixPanel({
@@ -43,6 +44,7 @@ export function AutoEditBgmMixPanel({
   helperText,
   strategyLabel = '规划阶段 BGM 策略（写给模型）',
   emptyBgmHintPrefix,
+  hideTrackSelector = false,
 }: AutoEditBgmMixPanelProps) {
   return (
     <div className={wrapperClassName}>
@@ -76,36 +78,38 @@ export function AutoEditBgmMixPanel({
               <option value="ai">AI 推荐曲目</option>
             </select>
           </div>
-          <div className="space-y-1.5">
-            <span className="text-[11px] text-slate-400">成片使用的曲目</span>
-            <select
-              value={autoBgmTrackFilename}
-              onChange={(e) => onAutoBgmTrackFilenameChange(e.target.value)}
-              disabled={!autoBgmMixEnabled}
-              className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
-            >
-              <option value="">自动（方案推荐 / 曲库匹配）</option>
-              {bgmTracks.map((t) => (
-                <option key={t.id} value={t.filename}>
-                  {t.title || t.filename}
-                </option>
-              ))}
-            </select>
-            {bgmListError && <p className="text-[11px] text-amber-400/90">{bgmListError}</p>}
-            {autoBgmMixEnabled && bgmTracks.length === 0 && !bgmListError && (
-              <p className="text-[11px] text-slate-500">
-                {emptyBgmHintPrefix}{' '}
-                <Link href="/settings" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
-                  设置 → BGM
-                </Link>{' '}
-                或{' '}
-                <Link href="/bgm" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
-                  BGM 页
-                </Link>{' '}
-                上传音频。
-              </p>
-            )}
-          </div>
+          {!hideTrackSelector && (
+            <div className="space-y-1.5">
+              <span className="text-[11px] text-slate-400">成片使用的曲目</span>
+              <select
+                value={autoBgmTrackFilename}
+                onChange={(e) => onAutoBgmTrackFilenameChange(e.target.value)}
+                disabled={!autoBgmMixEnabled}
+                className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
+              >
+                <option value="">自动（方案推荐 / 曲库匹配）</option>
+                {bgmTracks.map((t) => (
+                  <option key={t.id} value={t.filename}>
+                    {t.title || t.filename}
+                  </option>
+                ))}
+              </select>
+              {bgmListError && <p className="text-[11px] text-amber-400/90">{bgmListError}</p>}
+              {autoBgmMixEnabled && bgmTracks.length === 0 && !bgmListError && (
+                <p className="text-[11px] text-slate-500">
+                  {emptyBgmHintPrefix}{' '}
+                  <Link href="/settings" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                    设置 → BGM
+                  </Link>{' '}
+                  或{' '}
+                  <Link href="/bgm" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                    BGM 页
+                  </Link>{' '}
+                  上传音频。
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

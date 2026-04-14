@@ -23,6 +23,22 @@ export type AutoEditPanelProps = {
   onAutoBgmPlanPolicyChange: (value: 'auto' | 'none' | 'user' | 'ai') => void
   autoBgmTrackFilename: string
   onAutoBgmTrackFilenameChange: (value: string) => void
+  showVoiceoverBgmConfig?: boolean
+  voiceoverBgmEnabled?: boolean
+  onVoiceoverBgmEnabledChange?: (value: boolean) => void
+  bgmTracksForVoiceover?: import('@/lib/api').BgmTrack[]
+  bgmListErrorForVoiceover?: string
+  selectedVoiceoverBgmTrackIds?: string[]
+  onToggleVoiceoverBgmTrack?: (trackId: string) => void
+  voiceoverBgmVolumeByTrackId?: Record<string, number>
+  onVoiceoverBgmTrackVolumeChange?: (trackId: string, volumeDb: number) => void
+  voiceoverBgmTimelineSegments?: Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  onAddVoiceoverBgmTimelineSegment?: () => void
+  onRemoveVoiceoverBgmTimelineSegment?: (id: string) => void
+  onUpdateVoiceoverBgmTimelineSegment?: (
+    id: string,
+    patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  ) => void
   autoUseTimelineEngine: boolean
   onAutoUseTimelineEngineChange: (value: boolean) => void
   processingProfileLocked?: boolean
@@ -80,6 +96,19 @@ export function AutoEditPanel({
   onAutoBgmPlanPolicyChange,
   autoBgmTrackFilename,
   onAutoBgmTrackFilenameChange,
+  showVoiceoverBgmConfig = false,
+  voiceoverBgmEnabled = false,
+  onVoiceoverBgmEnabledChange,
+  bgmTracksForVoiceover,
+  bgmListErrorForVoiceover = '',
+  selectedVoiceoverBgmTrackIds = [],
+  onToggleVoiceoverBgmTrack,
+  voiceoverBgmVolumeByTrackId = {},
+  onVoiceoverBgmTrackVolumeChange,
+  voiceoverBgmTimelineSegments = [],
+  onAddVoiceoverBgmTimelineSegment,
+  onRemoveVoiceoverBgmTimelineSegment,
+  onUpdateVoiceoverBgmTimelineSegment,
   autoUseTimelineEngine,
   onAutoUseTimelineEngineChange,
   processingProfileLocked = false,
@@ -177,6 +206,19 @@ export function AutoEditPanel({
         onAutoBgmPlanPolicyChange={onAutoBgmPlanPolicyChange}
         autoBgmTrackFilename={autoBgmTrackFilename}
         onAutoBgmTrackFilenameChange={onAutoBgmTrackFilenameChange}
+        showVoiceoverBgmConfig={showVoiceoverBgmConfig}
+        voiceoverBgmEnabled={voiceoverBgmEnabled}
+        onVoiceoverBgmEnabledChange={onVoiceoverBgmEnabledChange}
+        bgmTracksForVoiceover={bgmTracksForVoiceover ?? bgmTracks}
+        bgmListErrorForVoiceover={bgmListErrorForVoiceover || bgmListError}
+        selectedVoiceoverBgmTrackIds={selectedVoiceoverBgmTrackIds}
+        onToggleVoiceoverBgmTrack={onToggleVoiceoverBgmTrack}
+        voiceoverBgmVolumeByTrackId={voiceoverBgmVolumeByTrackId}
+        onVoiceoverBgmTrackVolumeChange={onVoiceoverBgmTrackVolumeChange}
+        voiceoverBgmTimelineSegments={voiceoverBgmTimelineSegments}
+        onAddVoiceoverBgmTimelineSegment={onAddVoiceoverBgmTimelineSegment}
+        onRemoveVoiceoverBgmTimelineSegment={onRemoveVoiceoverBgmTimelineSegment}
+        onUpdateVoiceoverBgmTimelineSegment={onUpdateVoiceoverBgmTimelineSegment}
         autoUseTimelineEngine={autoUseTimelineEngine}
         onAutoUseTimelineEngineChange={onAutoUseTimelineEngineChange}
         processingProfileLocked={processingProfileLocked}

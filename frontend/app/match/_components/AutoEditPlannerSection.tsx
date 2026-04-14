@@ -36,6 +36,22 @@ export type AutoEditPlannerSectionProps = {
 
   autoBgmTrackFilename: string
   onAutoBgmTrackFilenameChange: (value: string) => void
+  showVoiceoverBgmConfig?: boolean
+  voiceoverBgmEnabled?: boolean
+  onVoiceoverBgmEnabledChange?: (value: boolean) => void
+  bgmTracksForVoiceover?: BgmTrack[]
+  bgmListErrorForVoiceover?: string
+  selectedVoiceoverBgmTrackIds?: string[]
+  onToggleVoiceoverBgmTrack?: (trackId: string) => void
+  voiceoverBgmVolumeByTrackId?: Record<string, number>
+  onVoiceoverBgmTrackVolumeChange?: (trackId: string, volumeDb: number) => void
+  voiceoverBgmTimelineSegments?: Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  onAddVoiceoverBgmTimelineSegment?: () => void
+  onRemoveVoiceoverBgmTimelineSegment?: (id: string) => void
+  onUpdateVoiceoverBgmTimelineSegment?: (
+    id: string,
+    patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  ) => void
 
   autoUseTimelineEngine: boolean
   onAutoUseTimelineEngineChange: (value: boolean) => void
@@ -100,6 +116,19 @@ export function AutoEditPlannerSection({
 
   autoBgmTrackFilename,
   onAutoBgmTrackFilenameChange,
+  showVoiceoverBgmConfig = false,
+  voiceoverBgmEnabled = false,
+  onVoiceoverBgmEnabledChange,
+  bgmTracksForVoiceover = [],
+  bgmListErrorForVoiceover = '',
+  selectedVoiceoverBgmTrackIds = [],
+  onToggleVoiceoverBgmTrack,
+  voiceoverBgmVolumeByTrackId = {},
+  onVoiceoverBgmTrackVolumeChange,
+  voiceoverBgmTimelineSegments = [],
+  onAddVoiceoverBgmTimelineSegment,
+  onRemoveVoiceoverBgmTimelineSegment,
+  onUpdateVoiceoverBgmTimelineSegment,
 
   autoUseTimelineEngine,
   onAutoUseTimelineEngineChange,
@@ -165,7 +194,118 @@ export function AutoEditPlannerSection({
             helperText="开关与曲目作用于「一键成片」请求，会覆盖方案中的 BGM 占位字段。"
             strategyLabel="规划阶段 BGM 策略（占位）"
             emptyBgmHintPrefix="曲库暂无曲目时可到"
+            hideTrackSelector={showVoiceoverBgmConfig}
           />
+
+          <div className="space-y-2 rounded-xl border border-violet-500/20 bg-slate-950/40 px-4 py-3">
+            <label className="flex items-center gap-2 text-[11px] font-medium text-violet-200/95">
+              口播快剪 BGM（成片混音）
+            </label>
+            {!showVoiceoverBgmConfig ? (
+              <p className="text-xs text-slate-500">
+                请先在上方「背景音乐（成片混音）」选择自定义（用户指定/指定曲目），再配置口播快剪专用 BGM。
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={voiceoverBgmEnabled}
+                    onChange={(e) => onVoiceoverBgmEnabledChange?.(e.target.checked)}
+                    className="rounded border-slate-600 bg-slate-900 text-violet-500 focus:ring-violet-500/40"
+                  />
+                  <span className="text-xs text-slate-300">支持自选多首、按顺序循环、单曲响度、时间轴片段</span>
+                </label>
+                {voiceoverBgmEnabled && (
+                  <div className="space-y-2">
+                    <div className="space-y-1 max-h-40 overflow-auto pr-1">
+                      {bgmTracksForVoiceover.length === 0 ? (
+                        <p className="text-xs text-slate-500">{bgmListErrorForVoiceover || '暂无 BGM，请先去 BGM 页面上传。'}</p>
+                      ) : bgmTracksForVoiceover.map((t) => (
+                        <div key={t.id} className="flex items-center gap-2 rounded-lg border border-slate-800 px-2 py-1.5">
+                          <input
+                            type="checkbox"
+                            checked={selectedVoiceoverBgmTrackIds.includes(t.filename)}
+                            onChange={() => onToggleVoiceoverBgmTrack?.(t.filename)}
+                            className="rounded border-slate-600 bg-slate-900 text-violet-500 focus:ring-violet-500/40"
+                          />
+                          <span className="text-xs text-slate-200 flex-1 truncate">{t.title || t.filename}</span>
+                          <input
+                            type="number"
+                            step={0.5}
+                            min={-40}
+                            max={12}
+                            value={voiceoverBgmVolumeByTrackId[t.filename] ?? -14}
+                            onChange={(e) => onVoiceoverBgmTrackVolumeChange?.(t.filename, Number(e.target.value))}
+                            className="w-16 rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] text-slate-500">时间轴片段（空=整片自动循环）</p>
+                        <button
+                          type="button"
+                          onClick={() => onAddVoiceoverBgmTimelineSegment?.()}
+                          className="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500"
+                        >
+                          添加片段
+                        </button>
+                      </div>
+                      {voiceoverBgmTimelineSegments.map((seg) => (
+                        <div key={seg.id} className="grid grid-cols-12 gap-2">
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            value={seg.startSec}
+                            onChange={(e) => onUpdateVoiceoverBgmTimelineSegment?.(seg.id, { startSec: Number(e.target.value) })}
+                            className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                          />
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0.1}
+                            value={seg.endSec}
+                            onChange={(e) => onUpdateVoiceoverBgmTimelineSegment?.(seg.id, { endSec: Number(e.target.value) })}
+                            className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                          />
+                          <select
+                            value={seg.trackId ?? ''}
+                            onChange={(e) => onUpdateVoiceoverBgmTimelineSegment?.(seg.id, { trackId: e.target.value || undefined })}
+                            className="col-span-4 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                          >
+                            <option value="">自动循环</option>
+                            {selectedVoiceoverBgmTrackIds.map((id) => <option key={id} value={id}>{id}</option>)}
+                          </select>
+                          <input
+                            type="number"
+                            step={0.5}
+                            min={-40}
+                            max={12}
+                            value={seg.volumeDb ?? ''}
+                            onChange={(e) =>
+                              onUpdateVoiceoverBgmTimelineSegment?.(seg.id, {
+                                volumeDb: e.target.value === '' ? undefined : Number(e.target.value),
+                              })}
+                            className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => onRemoveVoiceoverBgmTimelineSegment?.(seg.id)}
+                            className="col-span-2 rounded border border-slate-700 text-xs text-slate-400 hover:text-red-300 hover:border-red-400/40"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </>
       )}
 
@@ -246,7 +386,7 @@ export function AutoEditPlannerSection({
                     启用 Timeline Engine（DSL→事件池→Tier→编排→编译回 Plan）
                   </span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none hidden">
+                <label className="hidden items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={autoExplain}

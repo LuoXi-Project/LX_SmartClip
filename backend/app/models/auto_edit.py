@@ -82,10 +82,13 @@ class BGMPlan(BaseModel):
     enabled: bool = False
     source: Literal["library", "user", "ai"] = "library"
     track_id: Optional[str] = None
+    track_ids: Optional[List[str]] = None
+    track_volumes_db: Optional[dict[str, float]] = None
     volume_db: float = -12.0
     loop: bool = True
     fade_in_sec: float = 0.8
     fade_out_sec: float = 1.0
+    timeline_segments: Optional[List[dict]] = None
 
 
 class Constraints(BaseModel):

@@ -524,11 +524,13 @@ def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tupl
     cfg = {
         "enabled": bool(bgm.enabled),
         "track_id": bgm.track_id,
-        "track_ids": [bgm.track_id] if bgm.track_id else None,
+        "track_ids": (bgm.track_ids if getattr(bgm, "track_ids", None) else ([bgm.track_id] if bgm.track_id else None)),
+        "track_volumes_db": getattr(bgm, "track_volumes_db", None),
         "volume_db": bgm.volume_db,
         "loop": bgm.loop,
         "fade_in_sec": bgm.fade_in_sec,
         "fade_out_sec": bgm.fade_out_sec,
+        "timeline_segments": getattr(bgm, "timeline_segments", None),
     }
     new_filename, new_url = apply_bgm_config_postprocess(filename, url, cfg)
     if new_filename != filename or new_url != url:

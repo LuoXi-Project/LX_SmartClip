@@ -705,10 +705,13 @@ export interface AutoEditBgmPlanApi {
   enabled: boolean
   source?: 'library' | 'user' | 'ai'
   track_id?: string | null
+  track_ids?: string[]
+  track_volumes_db?: Record<string, number>
   volume_db?: number
   loop?: boolean
   fade_in_sec?: number
   fade_out_sec?: number
+  timeline_segments?: BgmTimelineSegmentApi[]
 }
 
 export interface AutoEditPlanApi {

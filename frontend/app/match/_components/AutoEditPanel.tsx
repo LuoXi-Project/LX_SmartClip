@@ -23,6 +23,20 @@ export type AutoEditPanelProps = {
   onAutoBgmPlanPolicyChange: (value: 'auto' | 'none' | 'user' | 'ai') => void
   autoBgmTrackFilename: string
   onAutoBgmTrackFilenameChange: (value: string) => void
+  showAutoCustomBgmConfig?: boolean
+  autoCustomBgmEnabled?: boolean
+  onAutoCustomBgmEnabledChange?: (value: boolean) => void
+  autoCustomBgmTrackIds?: string[]
+  onToggleAutoCustomBgmTrack?: (trackId: string) => void
+  autoCustomBgmVolumeByTrackId?: Record<string, number>
+  onAutoCustomBgmTrackVolumeChange?: (trackId: string, volumeDb: number) => void
+  autoCustomBgmTimelineSegments?: Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  onAddAutoCustomBgmTimelineSegment?: () => void
+  onRemoveAutoCustomBgmTimelineSegment?: (id: string) => void
+  onUpdateAutoCustomBgmTimelineSegment?: (
+    id: string,
+    patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  ) => void
   showVoiceoverBgmConfig?: boolean
   voiceoverBgmEnabled?: boolean
   onVoiceoverBgmEnabledChange?: (value: boolean) => void
@@ -96,6 +110,17 @@ export function AutoEditPanel({
   onAutoBgmPlanPolicyChange,
   autoBgmTrackFilename,
   onAutoBgmTrackFilenameChange,
+  showAutoCustomBgmConfig = false,
+  autoCustomBgmEnabled = false,
+  onAutoCustomBgmEnabledChange,
+  autoCustomBgmTrackIds = [],
+  onToggleAutoCustomBgmTrack,
+  autoCustomBgmVolumeByTrackId = {},
+  onAutoCustomBgmTrackVolumeChange,
+  autoCustomBgmTimelineSegments = [],
+  onAddAutoCustomBgmTimelineSegment,
+  onRemoveAutoCustomBgmTimelineSegment,
+  onUpdateAutoCustomBgmTimelineSegment,
   showVoiceoverBgmConfig = false,
   voiceoverBgmEnabled = false,
   onVoiceoverBgmEnabledChange,
@@ -206,6 +231,17 @@ export function AutoEditPanel({
         onAutoBgmPlanPolicyChange={onAutoBgmPlanPolicyChange}
         autoBgmTrackFilename={autoBgmTrackFilename}
         onAutoBgmTrackFilenameChange={onAutoBgmTrackFilenameChange}
+        showAutoCustomBgmConfig={showAutoCustomBgmConfig}
+        autoCustomBgmEnabled={autoCustomBgmEnabled}
+        onAutoCustomBgmEnabledChange={onAutoCustomBgmEnabledChange}
+        autoCustomBgmTrackIds={autoCustomBgmTrackIds}
+        onToggleAutoCustomBgmTrack={onToggleAutoCustomBgmTrack}
+        autoCustomBgmVolumeByTrackId={autoCustomBgmVolumeByTrackId}
+        onAutoCustomBgmTrackVolumeChange={onAutoCustomBgmTrackVolumeChange}
+        autoCustomBgmTimelineSegments={autoCustomBgmTimelineSegments}
+        onAddAutoCustomBgmTimelineSegment={onAddAutoCustomBgmTimelineSegment}
+        onRemoveAutoCustomBgmTimelineSegment={onRemoveAutoCustomBgmTimelineSegment}
+        onUpdateAutoCustomBgmTimelineSegment={onUpdateAutoCustomBgmTimelineSegment}
         showVoiceoverBgmConfig={showVoiceoverBgmConfig}
         voiceoverBgmEnabled={voiceoverBgmEnabled}
         onVoiceoverBgmEnabledChange={onVoiceoverBgmEnabledChange}

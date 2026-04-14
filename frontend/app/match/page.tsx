@@ -194,6 +194,12 @@ export default function MatchPage() {
   const [voiceoverBgmTimelineSegments, setVoiceoverBgmTimelineSegments] = useState<
     Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
   >([])
+  const [autoCustomBgmEnabled, setAutoCustomBgmEnabled] = useState(false)
+  const [autoCustomBgmTrackIds, setAutoCustomBgmTrackIds] = useState<string[]>([])
+  const [autoCustomBgmVolumeByTrackId, setAutoCustomBgmVolumeByTrackId] = useState<Record<string, number>>({})
+  const [autoCustomBgmTimelineSegments, setAutoCustomBgmTimelineSegments] = useState<
+    Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  >([])
 
   // 自动成片 · 仅会话态（不持久化）
   const [autoLoading, setAutoLoading] = useState(false)
@@ -709,7 +715,32 @@ export default function MatchPage() {
       timeline_segments: timeline_segments.length ? timeline_segments : undefined,
     }
   }
+  const buildAutoCustomBgmPlanPayload = (): AutoEditBgmPlanApi | null => {
+    if (!autoCustomBgmEnabled || autoCustomBgmTrackIds.length === 0) return null
+    const timeline_segments = autoCustomBgmTimelineSegments
+      .map((seg) => ({
+        start_sec: Math.max(0, Number(seg.startSec) || 0),
+        end_sec: Math.max(0, Number(seg.endSec) || 0),
+        track_id: seg.trackId || undefined,
+        volume_db: typeof seg.volumeDb === 'number' && Number.isFinite(seg.volumeDb) ? seg.volumeDb : undefined,
+      }))
+      .filter((seg) => seg.end_sec > seg.start_sec)
+    return {
+      enabled: true,
+      source: 'user',
+      track_id: autoCustomBgmTrackIds[0],
+      track_ids: autoCustomBgmTrackIds,
+      track_volumes_db: autoCustomBgmVolumeByTrackId,
+      volume_db: -14,
+      loop: true,
+      fade_in_sec: 0.5,
+      fade_out_sec: 0.8,
+      timeline_segments: timeline_segments.length ? timeline_segments : undefined,
+    }
+  }
   const showVoiceoverBgmConfig =
+    autoBgmMixEnabled && (autoBgmPlanPolicy === 'user' || (autoBgmTrackFilename || '').trim().length > 0)
+  const showAutoCustomBgmConfig =
     autoBgmMixEnabled && (autoBgmPlanPolicy === 'user' || (autoBgmTrackFilename || '').trim().length > 0)
 
   function toggleClipSelected(segId: string, clipId: string) {
@@ -742,6 +773,10 @@ export default function MatchPage() {
     })
     if (!autoBgmMixEnabled) {
       return { ...plan, bgm: { ...baseBgm(), enabled: false } }
+    }
+    const custom = buildAutoCustomBgmPlanPayload()
+    if (custom) {
+      return { ...plan, bgm: custom }
     }
     const pick = (autoBgmTrackFilename || '').trim()
     if (pick) {
@@ -1069,6 +1104,34 @@ export default function MatchPage() {
               onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
               autoBgmTrackFilename={autoBgmTrackFilename}
               onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+                showAutoCustomBgmConfig={showAutoCustomBgmConfig}
+                autoCustomBgmEnabled={autoCustomBgmEnabled}
+                onAutoCustomBgmEnabledChange={setAutoCustomBgmEnabled}
+                autoCustomBgmTrackIds={autoCustomBgmTrackIds}
+                onToggleAutoCustomBgmTrack={(trackId) => {
+                  setAutoCustomBgmTrackIds((prev) =>
+                    prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
+                  )
+                }}
+                autoCustomBgmVolumeByTrackId={autoCustomBgmVolumeByTrackId}
+                onAutoCustomBgmTrackVolumeChange={(trackId, volumeDb) => {
+                  setAutoCustomBgmVolumeByTrackId((prev) => ({ ...prev, [trackId]: volumeDb }))
+                }}
+                autoCustomBgmTimelineSegments={autoCustomBgmTimelineSegments}
+                onAddAutoCustomBgmTimelineSegment={() => {
+                  setAutoCustomBgmTimelineSegments((prev) => [
+                    ...prev,
+                    { id: `abgm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, startSec: 0, endSec: 10 },
+                  ])
+                }}
+                onRemoveAutoCustomBgmTimelineSegment={(id) => {
+                  setAutoCustomBgmTimelineSegments((prev) => prev.filter((seg) => seg.id !== id))
+                }}
+                onUpdateAutoCustomBgmTimelineSegment={(id, patch) => {
+                  setAutoCustomBgmTimelineSegments((prev) =>
+                    prev.map((seg) => (seg.id === id ? { ...seg, ...patch } : seg))
+                  )
+                }}
               autoUseTimelineEngine={autoUseTimelineEngine}
               onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
               processingProfileLocked={mode === 'template' || autoTemplateEnabled}
@@ -1152,6 +1215,34 @@ export default function MatchPage() {
                 onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
                 autoBgmTrackFilename={autoBgmTrackFilename}
                 onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+                showAutoCustomBgmConfig={showAutoCustomBgmConfig}
+                autoCustomBgmEnabled={autoCustomBgmEnabled}
+                onAutoCustomBgmEnabledChange={setAutoCustomBgmEnabled}
+                autoCustomBgmTrackIds={autoCustomBgmTrackIds}
+                onToggleAutoCustomBgmTrack={(trackId) => {
+                  setAutoCustomBgmTrackIds((prev) =>
+                    prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
+                  )
+                }}
+                autoCustomBgmVolumeByTrackId={autoCustomBgmVolumeByTrackId}
+                onAutoCustomBgmTrackVolumeChange={(trackId, volumeDb) => {
+                  setAutoCustomBgmVolumeByTrackId((prev) => ({ ...prev, [trackId]: volumeDb }))
+                }}
+                autoCustomBgmTimelineSegments={autoCustomBgmTimelineSegments}
+                onAddAutoCustomBgmTimelineSegment={() => {
+                  setAutoCustomBgmTimelineSegments((prev) => [
+                    ...prev,
+                    { id: `abgm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, startSec: 0, endSec: 10 },
+                  ])
+                }}
+                onRemoveAutoCustomBgmTimelineSegment={(id) => {
+                  setAutoCustomBgmTimelineSegments((prev) => prev.filter((seg) => seg.id !== id))
+                }}
+                onUpdateAutoCustomBgmTimelineSegment={(id, patch) => {
+                  setAutoCustomBgmTimelineSegments((prev) =>
+                    prev.map((seg) => (seg.id === id ? { ...seg, ...patch } : seg))
+                  )
+                }}
                 showVoiceoverBgmConfig={showVoiceoverBgmConfig}
                 voiceoverBgmEnabled={voiceoverBgmEnabled}
                 onVoiceoverBgmEnabledChange={setVoiceoverBgmEnabled}

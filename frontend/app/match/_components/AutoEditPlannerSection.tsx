@@ -36,6 +36,20 @@ export type AutoEditPlannerSectionProps = {
 
   autoBgmTrackFilename: string
   onAutoBgmTrackFilenameChange: (value: string) => void
+  showAutoCustomBgmConfig?: boolean
+  autoCustomBgmEnabled?: boolean
+  onAutoCustomBgmEnabledChange?: (value: boolean) => void
+  autoCustomBgmTrackIds?: string[]
+  onToggleAutoCustomBgmTrack?: (trackId: string) => void
+  autoCustomBgmVolumeByTrackId?: Record<string, number>
+  onAutoCustomBgmTrackVolumeChange?: (trackId: string, volumeDb: number) => void
+  autoCustomBgmTimelineSegments?: Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  onAddAutoCustomBgmTimelineSegment?: () => void
+  onRemoveAutoCustomBgmTimelineSegment?: (id: string) => void
+  onUpdateAutoCustomBgmTimelineSegment?: (
+    id: string,
+    patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
+  ) => void
   showVoiceoverBgmConfig?: boolean
   voiceoverBgmEnabled?: boolean
   onVoiceoverBgmEnabledChange?: (value: boolean) => void
@@ -116,6 +130,17 @@ export function AutoEditPlannerSection({
 
   autoBgmTrackFilename,
   onAutoBgmTrackFilenameChange,
+  showAutoCustomBgmConfig = false,
+  autoCustomBgmEnabled = false,
+  onAutoCustomBgmEnabledChange,
+  autoCustomBgmTrackIds = [],
+  onToggleAutoCustomBgmTrack,
+  autoCustomBgmVolumeByTrackId = {},
+  onAutoCustomBgmTrackVolumeChange,
+  autoCustomBgmTimelineSegments = [],
+  onAddAutoCustomBgmTimelineSegment,
+  onRemoveAutoCustomBgmTimelineSegment,
+  onUpdateAutoCustomBgmTimelineSegment,
   showVoiceoverBgmConfig = false,
   voiceoverBgmEnabled = false,
   onVoiceoverBgmEnabledChange,
@@ -366,7 +391,118 @@ export function AutoEditPlannerSection({
               policySelectDisabled={autoLoading}
               helperText="开关与下方曲目仅作用于「一键成片」请求，会覆盖方案 JSON 中的 BGM 占位字段的实际混音行为。"
               emptyBgmHintPrefix="曲库暂无曲目时仍可勾选「自动」尝试扫描服务端目录；也可到"
+              hideTrackSelector={showAutoCustomBgmConfig}
             />
+
+            <div className="space-y-2 sm:col-span-3 rounded-xl border border-emerald-500/20 bg-slate-950/40 px-4 py-3">
+              <label className="flex items-center gap-2 text-[11px] font-medium text-emerald-200/95">
+                自动成片 BGM（成片混音）
+              </label>
+              {!showAutoCustomBgmConfig ? (
+                <p className="text-xs text-slate-500">
+                  请先在上方「背景音乐（成片混音）」选择自定义（用户指定/指定曲目），再配置自动成片专用 BGM。
+                </p>
+              ) : (
+                <>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoCustomBgmEnabled}
+                      onChange={(e) => onAutoCustomBgmEnabledChange?.(e.target.checked)}
+                      className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                    />
+                    <span className="text-xs text-slate-300">支持自选多首、按顺序循环、单曲响度、时间轴片段</span>
+                  </label>
+                  {autoCustomBgmEnabled && (
+                    <div className="space-y-2">
+                      <div className="space-y-1 max-h-40 overflow-auto pr-1">
+                        {bgmTracks.length === 0 ? (
+                          <p className="text-xs text-slate-500">{bgmListError || '暂无 BGM，请先去 BGM 页面上传。'}</p>
+                        ) : bgmTracks.map((t) => (
+                          <div key={t.id} className="flex items-center gap-2 rounded-lg border border-slate-800 px-2 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={autoCustomBgmTrackIds.includes(t.filename)}
+                              onChange={() => onToggleAutoCustomBgmTrack?.(t.filename)}
+                              className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                            />
+                            <span className="text-xs text-slate-200 flex-1 truncate">{t.title || t.filename}</span>
+                            <input
+                              type="number"
+                              step={0.5}
+                              min={-40}
+                              max={12}
+                              value={autoCustomBgmVolumeByTrackId[t.filename] ?? -14}
+                              onChange={(e) => onAutoCustomBgmTrackVolumeChange?.(t.filename, Number(e.target.value))}
+                              className="w-16 rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[11px] text-slate-500">时间轴片段（空=整片自动循环）</p>
+                          <button
+                            type="button"
+                            onClick={() => onAddAutoCustomBgmTimelineSegment?.()}
+                            className="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500"
+                          >
+                            添加片段
+                          </button>
+                        </div>
+                        {autoCustomBgmTimelineSegments.map((seg) => (
+                          <div key={seg.id} className="grid grid-cols-12 gap-2">
+                            <input
+                              type="number"
+                              step={0.1}
+                              min={0}
+                              value={seg.startSec}
+                              onChange={(e) => onUpdateAutoCustomBgmTimelineSegment?.(seg.id, { startSec: Number(e.target.value) })}
+                              className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                            />
+                            <input
+                              type="number"
+                              step={0.1}
+                              min={0.1}
+                              value={seg.endSec}
+                              onChange={(e) => onUpdateAutoCustomBgmTimelineSegment?.(seg.id, { endSec: Number(e.target.value) })}
+                              className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                            />
+                            <select
+                              value={seg.trackId ?? ''}
+                              onChange={(e) => onUpdateAutoCustomBgmTimelineSegment?.(seg.id, { trackId: e.target.value || undefined })}
+                              className="col-span-4 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                            >
+                              <option value="">自动循环</option>
+                              {autoCustomBgmTrackIds.map((id) => <option key={id} value={id}>{id}</option>)}
+                            </select>
+                            <input
+                              type="number"
+                              step={0.5}
+                              min={-40}
+                              max={12}
+                              value={seg.volumeDb ?? ''}
+                              onChange={(e) =>
+                                onUpdateAutoCustomBgmTimelineSegment?.(seg.id, {
+                                  volumeDb: e.target.value === '' ? undefined : Number(e.target.value),
+                                })}
+                              className="col-span-2 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => onRemoveAutoCustomBgmTimelineSegment?.(seg.id)}
+                              className="col-span-2 rounded border border-slate-700 text-xs text-slate-400 hover:text-red-300 hover:border-red-400/40"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
             <div className="space-y-2 sm:col-span-3">
               <label className="text-xs text-slate-300 flex items-center gap-2">

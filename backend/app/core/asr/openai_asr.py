@@ -1,5 +1,8 @@
+import base64
+import mimetypes
 import os
 import logging
+from urllib.parse import urlparse
 import httpx
 from app.core.asr.base import IASR
 from app.core.asr.types import ASRSegment, ASRTranscript
@@ -59,6 +62,49 @@ def _segments_from_openai_verbose(resp) -> tuple[ASRSegment, ...]:
     return tuple(out)
 
 
+def _guess_audio_mime(path: str) -> str:
+    mt, _ = mimetypes.guess_type(path)
+    if mt and mt.startswith("audio/"):
+        return mt
+    return "audio/wav"
+
+
+def _extract_chat_text(resp) -> str:
+    try:
+        msg = resp.choices[0].message
+    except Exception:
+        return ""
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for it in content:
+            if isinstance(it, str):
+                if it.strip():
+                    parts.append(it.strip())
+                continue
+            if not isinstance(it, dict):
+                continue
+            text = (it.get("text") or "").strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts).strip()
+    return ""
+
+
+def _is_dashscope_compatible_base_url(base_url: str) -> bool:
+    try:
+        u = urlparse((base_url or "").strip())
+        host = (u.netloc or "").lower()
+        path = (u.path or "").lower().rstrip("/")
+        if host not in {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}:
+            return False
+        return path.endswith("/compatible-mode/v1")
+    except Exception:
+        return False
+
+
 class OpenAIASR(IASR):
     """OpenAI 兼容语音识别实现（支持 Whisper API 及兼容接口）"""
 
@@ -94,6 +140,7 @@ class OpenAIASR(IASR):
 
         timeout = _calc_timeout(audio_path)
         logger.info("开始 OpenAI ASR 转写: %s (超时 %.0fs)", audio_path, timeout)
+        force_qwen_chain = _is_dashscope_compatible_base_url(self.base_url)
 
         def _call_verbose():
             # 与 OpenAPI 一致：verbose_json + segment 粒度才会返回完整 segments 时间轴
@@ -122,7 +169,55 @@ class OpenAIASR(IASR):
                     kwargs["language"] = self.language
                 return self.client.audio.transcriptions.create(**kwargs)
 
+        def _call_qwen_chat_audio():
+            with open(audio_path, "rb") as f:
+                raw = f.read()
+            b64_audio = base64.b64encode(raw).decode("ascii")
+            mime = _guess_audio_mime(audio_path)
+            # 兼容不同网关实现：优先裸 base64，失败后自动回退 data URI
+            payloads = [b64_audio, f"data:{mime};base64,{b64_audio}"]
+            last_err = None
+            for audio_data in payloads:
+                try:
+                    kwargs = dict(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_audio",
+                                        "input_audio": {"data": audio_data},
+                                    }
+                                ],
+                            }
+                        ],
+                        stream=False,
+                        extra_body={
+                            "asr_options": {
+                                "enable_itn": True,
+                            }
+                        },
+                        timeout=httpx.Timeout(timeout, connect=10),
+                    )
+                    if self.language:
+                        kwargs["extra_body"]["asr_options"]["language"] = self.language
+                    return self.client.chat.completions.create(**kwargs)
+                except Exception as e:
+                    last_err = e
+            raise last_err if last_err else RuntimeError("qwen-asr chat 请求失败")
+
         try:
+            if force_qwen_chain:
+                logger.info(
+                    "检测到 DashScope 兼容模式地址，转为 qwen-asr 执行链路: %s",
+                    self.base_url,
+                )
+                chat_resp = retry_sync(_call_qwen_chat_audio)
+                text = _extract_chat_text(chat_resp)
+                logger.info("OpenAI 兼容 ASR（qwen chat）转写成功: %d 字", len(text))
+                return ASRTranscript(text=text, segments=())
+
             try:
                 response = retry_sync(_call_verbose)
             except Exception as e:
@@ -130,7 +225,17 @@ class OpenAIASR(IASR):
                     "verbose_json 转写失败（部分兼容网关不支持时间轴），回退纯文本: %s",
                     e,
                 )
-                response = retry_sync(_call_plain)
+                try:
+                    response = retry_sync(_call_plain)
+                except Exception as e2:
+                    logger.warning(
+                        "/audio/transcriptions 回退仍失败，尝试 qwen-asr 兼容模式: %s",
+                        e2,
+                    )
+                    chat_resp = retry_sync(_call_qwen_chat_audio)
+                    text = _extract_chat_text(chat_resp)
+                    logger.info("OpenAI 兼容 ASR（qwen chat）转写成功: %d 字", len(text))
+                    return ASRTranscript(text=text, segments=())
             text = (getattr(response, "text", None) or "").strip()
             segments = _segments_from_openai_verbose(response)
             logger.info(

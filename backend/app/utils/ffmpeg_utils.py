@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from typing import List
 
@@ -31,4 +32,32 @@ def write_concat_list(paths: List[str], output_path: str) -> None:
     with open(output_path, "w", encoding="utf-8") as f:
         for p in paths:
             f.write(f"file '{p.replace(chr(92), '/')}' \n")
+
+
+def extract_audio_for_asr(
+    input_path: str,
+    output_path: str,
+    *,
+    overwrite: bool = True,
+    sample_rate: int = 16000,
+    channels: int = 1,
+) -> str:
+    """将输入媒体稳定转成 ASR 友好的 WAV（pcm_s16le / mono / 16kHz）。"""
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"输入媒体不存在: {input_path}")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    args = [
+        "-i",
+        input_path,
+        "-vn",
+        "-ac",
+        str(max(1, int(channels))),
+        "-ar",
+        str(max(8000, int(sample_rate))),
+        "-c:a",
+        "pcm_s16le",
+    ]
+    args += ["-y" if overwrite else "-n", output_path]
+    run_ffmpeg(args, desc="extract-audio-for-asr")
+    return output_path
 

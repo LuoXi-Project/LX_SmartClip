@@ -208,7 +208,7 @@ DEFAULT_CONFIG = [
     ("embedding_concurrency", "3", "number", "Embedding 并发数量", None),
     ("tts_provider", "edge-tts", "select", "TTS 提供商", '["edge-tts","openai","bailian","volcengine","gpt-sovits","index-tts","custom-get"]'),
     ("tts_concurrency", "3", "number", "TTS 并发数量", None),
-    ("asr_provider", "whisper", "select", "ASR 提供商", '["whisper","openai"]'),
+    ("asr_provider", "whisper", "select", "ASR 提供商", '["whisper","openai","bailian"]'),
     (
         "asr_model",
         "base",
@@ -218,7 +218,7 @@ DEFAULT_CONFIG = [
     ),
     ("asr_base_url", "https://api.openai.com/v1", "string", "ASR API 地址", None),
     ("asr_api_key", "", "string", "ASR API 密钥", None),
-    ("asr_openai_model", "whisper-1", "string", "ASR 模型名称 (OpenAI 协议)", None),
+    ("asr_openai_model", "whisper-1", "string", "ASR 模型名称 (OpenAI/百炼)", None),
     (
         "asr_language",
         "zh",
@@ -460,6 +460,10 @@ async def init_db():
         await db.execute(
             "UPDATE config SET options = ? WHERE key = 'split_mode'",
             ('["scene","fixed","hybrid"]',),
+        )
+        await db.execute(
+            "UPDATE config SET options = ? WHERE key = 'asr_provider'",
+            ('["whisper","openai","bailian"]',),
         )
         await db.execute(
             "UPDATE config SET options = ? WHERE key = 'clip_vcodec'",

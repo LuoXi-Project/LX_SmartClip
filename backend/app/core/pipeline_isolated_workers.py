@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
+import logging
+logger = logging.getLogger(__name__)
 
 def isolated_extract_frames(
     video_id: str,
@@ -39,6 +42,35 @@ def isolated_openai_asr_clip(
 
     audio_path = get_splitter(video_id).extract_audio(clip_path, overwrite)
     asr = OpenAIASR(base_url, api_key, model, language)
+    tr = asr.transcribe_detailed(audio_path)
+    return {"text": tr.text, "segments": [s.to_dict() for s in tr.segments]}
+
+
+def isolated_bailian_asr_clip(
+    video_id: str,
+    clip_path: str,
+    overwrite: bool,
+    base_url: str,
+    api_key: str,
+    model: str,
+    language: str,
+) -> dict[str, Any]:
+    from app.api.process_shared import get_splitter
+    from app.core.asr.bailian_asr import BailianASR
+    from app.utils.ffmpeg_utils import extract_audio_for_asr
+
+    splitter = get_splitter(video_id)
+    clip_name = os.path.splitext(os.path.basename(clip_path))[0]
+    audio_path = os.path.join(splitter.audio_dir, f"{clip_name}.asr.wav")
+    audio_path = extract_audio_for_asr(
+        clip_path,
+        audio_path,
+        overwrite=overwrite,
+        sample_rate=16000,
+        channels=1,
+    )
+    logger.info(f"[ASR] BailianASR: audio_path={audio_path}")
+    asr = BailianASR(base_url=base_url, api_key=api_key, model=model, language=language)
     tr = asr.transcribe_detailed(audio_path)
     return {"text": tr.text, "segments": [s.to_dict() for s in tr.segments]}
 

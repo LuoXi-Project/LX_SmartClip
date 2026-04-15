@@ -5,14 +5,13 @@ import Link from 'next/link'
 import { ArrowLeft, Loader2, Settings2, AlertCircle, ChevronUp } from 'lucide-react'
 import apiClient from '@/lib/api'
 import type { ConfigMap, ProviderPreset } from './_components/types'
-import { VLM_PROVIDERS, LLM_PROVIDERS, EMBEDDING_PROVIDERS } from './_components/constants'
+import { VLM_PROVIDERS, LLM_PROVIDERS, EMBEDDING_PROVIDERS, ASR_PROVIDERS } from './_components/constants'
 import { VlmSection } from './_components/VlmSection'
 import { LlmSection } from './_components/LlmSection'
 import { EmbeddingSection } from './_components/EmbeddingSection'
 import { VideoSection } from './_components/VideoSection'
 import { TtsSection } from './_components/TtsSection'
 import { AsrSection } from './_components/AsrSection'
-
 export default function SettingsPage() {
   const [config, setConfig] = useState<ConfigMap>({})
   const [edits, setEdits] = useState<Record<string, string>>({})
@@ -53,7 +52,16 @@ export default function SettingsPage() {
         const savedTtsProv = data?.tts_provider?.value ?? ''
         if (savedTtsProv) setTtsProvider(savedTtsProv)
         const savedAsrProv = data?.asr_provider?.value ?? ''
-        if (savedAsrProv) setAsrProvider(savedAsrProv)
+        if (savedAsrProv) {
+          const hasProvider = ASR_PROVIDERS.some((p) => p.id === savedAsrProv)
+          if (hasProvider) {
+            setAsrProvider(savedAsrProv)
+          } else {
+            // 隐藏旧 provider 时，UI 自动回落到 openai 兼容模式
+            initial.asr_provider = 'openai'
+            setAsrProvider('openai')
+          }
+        }
       })
       .catch(() => setError('加载配置失败，请检查后端服务。'))
       .finally(() => setLoading(false))

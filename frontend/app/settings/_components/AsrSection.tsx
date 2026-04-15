@@ -83,13 +83,14 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
         {asrProvider === 'openai' && (
           <>
             <div className="rounded-lg bg-green-500/5 border border-green-500/20 px-4 py-2.5 text-xs text-green-300">
-              OpenAI Whisper API — 支持 OpenAI 官方及任何兼容 <code className="text-green-200 bg-slate-800 px-1 rounded">/audio/transcriptions</code> 接口的服务
+              OpenAI 兼容 ASR — 支持 <code className="text-green-200 bg-slate-800 px-1 rounded">/audio/transcriptions</code>，
+              也支持 Qwen ASR 兼容模式（<code className="text-green-200 bg-slate-800 px-1 rounded">chat.completions + input_audio</code>）。
             </div>
             <ApiTextField
               label="API 地址"
               value={v('asr_base_url')}
               onChange={(val) => onSet('asr_base_url', val)}
-              placeholder="https://api.openai.com/v1"
+              placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
               dirty={isDirty('asr_base_url')}
               saving={!!saving['asr_base_url']}
               saved={!!saved['asr_base_url']}
@@ -109,7 +110,7 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
               label="模型名称"
               value={v('asr_openai_model')}
               onChange={(val) => onSet('asr_openai_model', val)}
-              placeholder="whisper-1"
+              placeholder="qwen3-asr-flash（或 whisper-1）"
               dirty={isDirty('asr_openai_model')}
               saving={!!saving['asr_openai_model']}
               saved={!!saved['asr_openai_model']}

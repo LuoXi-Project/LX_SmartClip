@@ -284,11 +284,12 @@ async def run_pipeline(
     asr_instance = None
     if do_asr:
         try:
-            if asr_provider == "openai":
-                await reporter.send("asr", "running", f"使用 OpenAI ASR ({asr_openai_model}) 开始语音识别（子进程，可强杀超时）...")
+            if asr_provider in ("openai", "bailian"):
+                provider_name = "OpenAI ASR" if asr_provider == "openai" else "百炼 ASR"
+                await reporter.send("asr", "running", f"使用 {provider_name} ({asr_openai_model}) 开始语音识别（子进程，可强杀超时）...")
                 if not (asr_api_key or "").strip():
                     do_asr = False
-                    await reporter.send("asr", "error", "OpenAI ASR 未配置 API Key")
+                    await reporter.send("asr", "error", f"{provider_name} 未配置 API Key")
                 else:
                     asr_instance = None
             else:
@@ -477,6 +478,14 @@ async def run_pipeline(
                         payload = await run_killable_target(
                             _PIPELINE_ISOLATED,
                             "isolated_openai_asr_clip",
+                            (video_id, item["clip_path"], True, asr_base_url, asr_api_key, asr_openai_model, asr_language),
+                            timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
+                        )
+                        return _transcript_from_payload(payload)
+                    if asr_provider == "bailian":
+                        payload = await run_killable_target(
+                            _PIPELINE_ISOLATED,
+                            "isolated_bailian_asr_clip",
                             (video_id, item["clip_path"], True, asr_base_url, asr_api_key, asr_openai_model, asr_language),
                             timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                         )

@@ -1,11 +1,14 @@
 import json
 import asyncio
+import os
 from fastapi import APIRouter, HTTPException
 from app.db.database import get_db_conn
 from app.core.asr.whisper_asr import WhisperASR
 from app.core.asr.openai_asr import OpenAIASR
+from app.core.asr.bailian_asr import BailianASR
 from app.api.process_shared import get_splitter
 from app.utils.paths import resolve_stored_path
+from app.utils.ffmpeg_utils import extract_audio_for_asr
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,14 @@ def get_asr(
         if provider == "openai":
             logger.info("初始化 OpenAI ASR (base_url=%s, model=%s)", base_url, model)
             _asr_cache[key] = OpenAIASR(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                language=language,
+            )
+        elif provider == "bailian":
+            logger.info("初始化百炼 ASR (base_url=%s, model=%s)", base_url, model)
+            _asr_cache[key] = BailianASR(
                 base_url=base_url,
                 api_key=api_key,
                 model=model,
@@ -133,9 +144,23 @@ async def process_asr(video_id: str):
             try:
                 logger.info("处理片段 %d/%d: %s", idx + 1, len(clips), clip_id)
                 async with sem:
-                    audio_path = await asyncio.to_thread(
-                        get_splitter(video_id).extract_audio, clip_path
-                    )
+                    splitter = get_splitter(video_id)
+                    if asr_provider == "bailian":
+                        clip_name = os.path.splitext(os.path.basename(clip_path))[0]
+                        audio_out = os.path.join(splitter.audio_dir, f"{clip_name}.asr.wav")
+                        audio_path = await asyncio.to_thread(
+                            lambda: extract_audio_for_asr(
+                                clip_path,
+                                audio_out,
+                                overwrite=True,
+                                sample_rate=16000,
+                                channels=1,
+                            ),
+                        )
+                    else:
+                        audio_path = await asyncio.to_thread(
+                            splitter.extract_audio, clip_path
+                        )
                     tr = await asyncio.to_thread(asr_instance.transcribe_detailed, audio_path)
                     asr_text = tr.text
                     seg_list = tr.segments_as_dicts()

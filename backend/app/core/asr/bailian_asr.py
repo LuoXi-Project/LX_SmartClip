@@ -1,5 +1,7 @@
 import logging
 import os
+import base64
+import mimetypes
 from typing import Any
 
 import requests
@@ -53,6 +55,61 @@ def _merge_text(items: list[dict[str, Any]], fallback_segments: list[ASRSegment]
     return ""
 
 
+def _guess_audio_mime(path: str) -> str:
+    mt, _ = mimetypes.guess_type(path)
+    if mt and mt.startswith("audio/"):
+        return mt
+    return "audio/wav"
+
+
+def _file_to_data_uri(path: str) -> str:
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+    mime = _guess_audio_mime(path)
+    return f"data:{mime};base64,{b64}"
+
+
+def _resp_output(resp: Any) -> dict[str, Any]:
+    out = getattr(resp, "output", None)
+    if isinstance(out, dict):
+        return out
+    # 兼容 SDK 可能返回对象而非 dict
+    if out is not None:
+        try:
+            return dict(out)
+        except Exception:
+            pass
+    return {}
+
+
+def _extract_multimodal_text(resp: Any) -> str:
+    """解析 MultiModalConversation(result_format=message) 的文本结果。"""
+    output = _resp_output(resp)
+    choices = output.get("choices") or []
+    if not isinstance(choices, list) or not choices:
+        return ""
+    msg = (choices[0] or {}).get("message") or {}
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            t = item.strip()
+            if t:
+                parts.append(t)
+            continue
+        if not isinstance(item, dict):
+            continue
+        # 常见 key: text / transcript
+        t = (item.get("text") or item.get("transcript") or "").strip()
+        if t:
+            parts.append(t)
+    return "\n".join(parts).strip()
+
+
 class BailianASR(IASR):
     """阿里云百炼 DashScope 异步转写实现（fun-asr 等）。"""
 
@@ -77,6 +134,7 @@ class BailianASR(IASR):
         try:
             import dashscope
             from dashscope.audio.asr import Transcription
+            from dashscope.audio.qwen_asr import QwenTranscription
         except ImportError as e:
             raise ImportError("请安装 dashscope: pip install dashscope") from e
 
@@ -86,7 +144,49 @@ class BailianASR(IASR):
         language_hints = [self.language] if self.language else None
         logger.info("开始百炼 ASR 转写: %s", audio_path)
 
-        def _run_task():
+        def _run_task_qwen_base64():
+            # 新版 Qwen ASR：多模态对话直出文本（你提供的官方示例）
+            resp = dashscope.MultiModalConversation.call(
+                api_key=self.api_key,
+                model=self.model,
+                messages=[{"role": "user", "content": [{"audio": _file_to_data_uri(audio_path)}]}],
+                result_format="message",
+                asr_options={
+                    "enable_itn": False,
+                },
+            )
+            status_code = getattr(resp, "status_code", None)
+            if status_code != 200:
+                msg = _resp_output(resp).get("message") or getattr(resp, "message", "")
+                raise RuntimeError(f"Qwen MultiModal ASR 失败: status={status_code}, msg={msg}")
+            text = _extract_multimodal_text(resp)
+            if not text:
+                raise RuntimeError(f"Qwen MultiModal ASR 无有效文本: {resp}")
+            return ASRTranscript(text=text, segments=())
+
+        def _run_task_qwen_filetrans():
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                # Qwen 文件转写链路：传本地音频的 Base64 Data URI
+                "file_url": _file_to_data_uri(audio_path),
+                "enable_itn": False,
+                "enable_words": True,
+            }
+            if self.language:
+                kwargs["language"] = self.language
+
+            task_resp = QwenTranscription.async_call(**kwargs)
+            task_id = _resp_output(task_resp).get("task_id")
+            if not task_id:
+                raise RuntimeError(f"创建 Qwen ASR 转写任务失败: {task_resp}")
+            resp = QwenTranscription.wait(task=task_id)
+            status_code = getattr(resp, "status_code", None)
+            if status_code != 200:
+                msg = _resp_output(resp).get("message") or getattr(resp, "message", "")
+                raise RuntimeError(f"Qwen ASR 转写任务失败: status={status_code}, msg={msg}")
+            return resp
+
+        def _run_task_legacy():
             kwargs: dict[str, Any] = {
                 "model": self.model,
                 "file_urls": [f"file://{os.path.abspath(audio_path)}"],
@@ -105,8 +205,19 @@ class BailianASR(IASR):
                 raise RuntimeError(f"百炼转写任务失败: status={status_code}, msg={msg}")
             return resp
 
-        resp = retry_sync(_run_task)
-        output = getattr(resp, "output", {}) or {}
+        try:
+            resp = retry_sync(_run_task_qwen_base64)
+            logger.info("百炼 ASR 使用 Qwen MultiModal Base64 链路")
+            return resp
+        except Exception as mm_err:
+            logger.warning("Qwen MultiModal Base64 失败，回退 Qwen 文件转写: %s", mm_err)
+        try:
+            resp = retry_sync(_run_task_qwen_filetrans)
+            logger.info("百炼 ASR 使用 Qwen 文件转写链路")
+        except Exception as qwen_err:
+            logger.warning("Qwen 文件转写失败，回退 legacy Transcription: %s", qwen_err)
+            resp = retry_sync(_run_task_legacy)
+        output = _resp_output(resp)
         results = output.get("results") or []
         if not results:
             return ASRTranscript(text="", segments=())

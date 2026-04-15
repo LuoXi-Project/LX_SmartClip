@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS clips (
     asr_segments TEXT,
     vlm_description TEXT,
     tags TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (video_id) REFERENCES videos(id)
 );
 """
@@ -220,6 +222,13 @@ DEFAULT_CONFIG = [
     ("asr_api_key", "", "string", "ASR API 密钥", None),
     ("asr_openai_model", "whisper-1", "string", "ASR 模型名称 (OpenAI/百炼)", None),
     (
+        "asr_openai_transcriptions_path",
+        "auto",
+        "select",
+        "OpenAI ASR 转写接口路径",
+        '["auto","audio","v1_audio"]',
+    ),
+    (
         "asr_language",
         "zh",
         "string",
@@ -408,6 +417,48 @@ async def init_db():
             cols = [str(r[1]) for r in await cur.fetchall()]  # (cid, name, type, notnull, dflt_value, pk)
             if "name" not in cols:
                 await db.execute("ALTER TABLE replica_templates ADD COLUMN name TEXT")
+        except Exception:
+            # 不因兼容迁移失败而阻断启动
+            pass
+        # 兼容旧库：clips 补齐 created_at / updated_at
+        try:
+            cur = await db.execute("PRAGMA table_info(clips)")
+            cols = [str(r[1]) for r in await cur.fetchall()]  # (cid, name, type, notnull, dflt_value, pk)
+            if "created_at" not in cols:
+                # SQLite 旧表 ADD COLUMN 时对非常量默认值限制较多，先加普通列再回填
+                await db.execute("ALTER TABLE clips ADD COLUMN created_at TEXT")
+            if "updated_at" not in cols:
+                await db.execute("ALTER TABLE clips ADD COLUMN updated_at TEXT")
+            await db.execute(
+                "UPDATE clips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP), "
+                "updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)"
+            )
+            # 统一重建触发器：兼容旧库历史触发器定义，避免引用不存在字段
+            await db.execute("DROP TRIGGER IF EXISTS trg_clips_updated_at")
+            await db.execute("DROP TRIGGER IF EXISTS trg_clips_insert_timestamps")
+            await db.execute(
+                """
+                CREATE TRIGGER trg_clips_insert_timestamps
+                AFTER INSERT ON clips
+                FOR EACH ROW
+                BEGIN
+                    UPDATE clips
+                    SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP),
+                        updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+                    WHERE id = NEW.id;
+                END;
+                """
+            )
+            await db.execute(
+                """
+                CREATE TRIGGER trg_clips_updated_at
+                AFTER UPDATE ON clips
+                FOR EACH ROW
+                BEGIN
+                    UPDATE clips SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+                END;
+                """
+            )
         except Exception:
             # 不因兼容迁移失败而阻断启动
             pass

@@ -220,10 +220,14 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     # 则在烧录阶段按 TTS 时长重新生成时间轴，确保最终成片字幕对齐配音。
     #
     # 若 strict_use_client_srt=True：完全按传入 SRT 烧录（不做任何校验/重建）。
-    srt_entries = parse_srt(req.srt_content or "")
+    client_srt_raw = (req.srt_content or "").strip()
+    srt_entries = parse_srt(client_srt_raw)
+    subtitle_enabled = bool(client_srt_raw)
     try:
         if getattr(req, "strict_use_client_srt", False):
-            raise RuntimeError("strict_use_client_srt enabled; skip rebuild")
+            raise RuntimeError("严格使用客户端SRT功能；跳过重建")
+        if not subtitle_enabled:
+            raise RuntimeError("由于srt_content为空，字幕已禁用；跳过重建")
 
         tts_durs, _src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, use_tts=True)
         expected_total = float(sum(float(x or 0.0) for x in tts_durs) or 0.0)
@@ -276,6 +280,8 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         # strict_use_client_srt 会主动走到这里：属于预期行为，不输出 warning 降噪。
         if getattr(req, "strict_use_client_srt", False):
             logger.info("strict_use_client_srt=True，烧录阶段跳过字幕时间轴校验/重建")
+        elif not subtitle_enabled:
+            logger.info("srt_content 为空，视为未启用字幕；烧录阶段跳过字幕时间轴校验/重建")
         else:
             logger.warning("烧录阶段校验/重建字幕时间轴失败，继续使用原 srt_content: %s", e)
 

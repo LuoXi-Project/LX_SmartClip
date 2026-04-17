@@ -139,7 +139,8 @@ class OpenAIASR(IASR):
             raise FileNotFoundError(f"音频文件不存在: {audio_path}")
 
         timeout = _calc_timeout(audio_path)
-        logger.info("开始 OpenAI ASR 转写: %s (超时 %.0fs)", audio_path, timeout)
+        print(f"开始 OpenAI ASR 转写: {audio_path} (超时 {timeout} 秒)")
+        logger.info(f"开始 OpenAI ASR 转写: {audio_path} (超时 {timeout} 秒)")
         force_qwen_chain = _is_dashscope_compatible_base_url(self.base_url)
 
         def _call_verbose():
@@ -155,6 +156,7 @@ class OpenAIASR(IASR):
                 if self.language:
                     kwargs["language"] = self.language
                 result = self.client.audio.transcriptions.create(**kwargs)
+                print(f"OpenAI ASR 转写结果: {result}")
                 logger.info("OpenAI ASR 转写结果: %r", result)
                 return result
 

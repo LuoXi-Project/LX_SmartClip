@@ -285,6 +285,16 @@ class VideoSplitter:
                 start_adj, end_adj = self._adjust_range_to_keyframes(keyframes, start_time, end_time)
                 if video_duration is not None:
                     end_adj = min(float(end_adj), float(video_duration))
+                # stream copy 只能从关键帧切入，边界会偏移；显式记录便于排查“日志区间”和“落盘区间”不一致
+                if abs(start_adj - start_time) > 1e-3 or abs(end_adj - end_time) > 1e-3:
+                    logger.warning(
+                        "stream_copy 关键帧对齐导致片段边界偏移 idx=%s 请求=[%.3f, %.3f] 实际=[%.3f, %.3f]",
+                        idx,
+                        start_time,
+                        end_time,
+                        start_adj,
+                        end_adj,
+                    )
 
             duration = max(0.0, float(end_adj - start_adj))
             if duration <= 1e-6:
@@ -907,6 +917,16 @@ class VideoSplitter:
                 start_adj, end_adj = self._adjust_range_to_keyframes(keyframes, start_time, end_time)
                 if video_duration is not None:
                     end_adj = min(float(end_adj), float(video_duration))
+                # stream copy 只能从关键帧切入，边界会偏移；显式记录便于排查“日志区间”和“落盘区间”不一致
+                if abs(start_adj - start_time) > 1e-3 or abs(end_adj - end_time) > 1e-3:
+                    logger.warning(
+                        "stream_copy 关键帧对齐导致片段边界偏移 idx=%s 请求=[%.3f, %.3f] 实际=[%.3f, %.3f]",
+                        idx,
+                        start_time,
+                        end_time,
+                        start_adj,
+                        end_adj,
+                    )
 
             duration = max(0.0, float(end_adj - start_adj))
             if duration <= 1e-6:

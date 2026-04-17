@@ -103,6 +103,7 @@ export function VideoResultDrawer({
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [clips, setClips] = useState<ClipResult[]>([])
+  const [videoQ, setVideoQ] = useState('')
   const [q, setQ] = useState('')
   const [activeClipId, setActiveClipId] = useState<string>('')
   const [playerMode, setPlayerMode] = useState<'video' | 'clip'>('video')
@@ -117,7 +118,18 @@ export function VideoResultDrawer({
   useEffect(() => {
     if (!open) return
     setCurVideoId(initialVideoId)
+    setVideoQ('')
   }, [open, initialVideoId])
+
+  const filteredVideoOptions = useMemo(() => {
+    const kw = videoQ.trim().toLowerCase()
+    const all = videoOptions || []
+    if (!kw) return all
+    return all.filter((v) => {
+      const name = safeStr(v.name).toLowerCase()
+      return name.includes(kw) || v.id.toLowerCase().includes(kw)
+    })
+  }, [videoOptions, videoQ])
 
   useEffect(() => {
     if (!open) return
@@ -371,17 +383,37 @@ export function VideoResultDrawer({
           </div>
           <div className="ml-auto flex items-center gap-2">
             {videoOptions && videoOptions.length > 0 && (
-              <select
-                value={curVideoId}
-                onChange={(e) => setCurVideoId(e.target.value)}
-                className="max-w-[280px] px-2 py-1.5 rounded-md bg-slate-900/60 border border-slate-700 text-xs text-slate-200 outline-none focus:border-indigo-500"
-              >
-                {videoOptions.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </select>
+              <div className="w-[520px] max-w-[58vw] flex items-center gap-2">
+                <div className="relative flex-[1.15] min-w-[170px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                  <input
+                    value={videoQ}
+                    onChange={(e) => setVideoQ(e.target.value)}
+                    placeholder="搜索切换视频（名称 / ID）..."
+                    className="w-full pl-8 pr-2 py-1.5 rounded-md bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <select
+                  value={curVideoId}
+                  onChange={(e) => setCurVideoId(e.target.value)}
+                  className="flex-1 min-w-[170px] px-2 py-1.5 rounded-md bg-slate-900/60 border border-slate-700 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                >
+                  {filteredVideoOptions.length === 0 ? (
+                    <option value="" disabled>
+                      无匹配视频
+                    </option>
+                  ) : (
+                    filteredVideoOptions.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <span className="shrink-0 text-[11px] text-slate-500">
+                  {filteredVideoOptions.length}/{videoOptions.length}
+                </span>
+              </div>
             )}
             <button
               onClick={onClose}

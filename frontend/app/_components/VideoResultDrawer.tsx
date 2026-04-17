@@ -106,6 +106,8 @@ export function VideoResultDrawer({
   const [q, setQ] = useState('')
   const [activeClipId, setActiveClipId] = useState<string>('')
   const [playerMode, setPlayerMode] = useState<'video' | 'clip'>('video')
+  const [resultsTab, setResultsTab] = useState<'preview' | 'details'>('details')
+  const [asrPreviewMode, setAsrPreviewMode] = useState<'timeline' | 'plain'>('timeline')
 
   const [editing, setEditing] = useState<Record<string, EditState>>({})
   const [reprocessBusyId, setReprocessBusyId] = useState<string | null>(null)
@@ -161,6 +163,31 @@ export function VideoResultDrawer({
       return a.includes(kw) || v.includes(kw) || segBlob.includes(kw) || c.id.toLowerCase().includes(kw)
     })
   }, [clips, q, editing])
+
+  const asrPreviewRows = useMemo(() => {
+    return filtered.map((c) => {
+      const st = editing[c.id]
+      const segs = st?.asr_segments ?? parseAsrSegments(c.asr_segments)
+      const hasSegments = segs.length > 0
+      const text = hasSegments ? joinSegmentsText(segs) : safeStr(st?.asr_text ?? c.asr_text)
+      return {
+        id: c.id,
+        start: c.start_time || 0,
+        end: c.end_time || 0,
+        clip: c,
+        segs,
+        hasSegments,
+        text,
+      }
+    })
+  }, [filtered, editing])
+
+  const asrPreviewPlainText = useMemo(() => {
+    return asrPreviewRows
+      .map((r) => r.text)
+      .filter((t) => !!t.trim())
+      .join('\n')
+  }, [asrPreviewRows])
 
   const activeClip = clips.find((c) => c.id === activeClipId) || null
 
@@ -333,7 +360,7 @@ export function VideoResultDrawer({
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="absolute right-0 top-0 h-full w-full max-w-5xl bg-[#0d0f14] border-l border-slate-800 shadow-2xl flex flex-col">
+      <div className="absolute right-0 top-0 h-full w-full max-w-[96vw] xl:max-w-[1800px] bg-[#0d0f14] border-l border-slate-800 shadow-2xl flex flex-col">
         <div className="px-5 py-4 border-b border-slate-800 flex items-center gap-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold text-slate-200 truncate">{title}</div>
@@ -436,6 +463,29 @@ export function VideoResultDrawer({
               <div className="text-xs text-slate-500 shrink-0">{filtered.length}/{clips.length}</div>
             </div>
 
+            <div className="px-5 py-2.5 border-b border-slate-800 bg-slate-950/20">
+              <div className="inline-flex items-center gap-1 rounded-full bg-slate-900/70 border border-slate-700 px-1 py-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setResultsTab('details')}
+                  className={`px-3 py-0.5 rounded-full transition-colors ${
+                    resultsTab === 'details' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  片段详情
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setResultsTab('preview')}
+                  className={`px-3 py-0.5 rounded-full transition-colors ${
+                    resultsTab === 'preview' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  ASR 全文预览
+                </button>
+              </div>
+            </div>
+
             <div className="flex-1 min-h-0 overflow-auto">
               {loading ? (
                 <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
@@ -443,6 +493,89 @@ export function VideoResultDrawer({
                 </div>
               ) : err ? (
                 <div className="p-6 text-sm text-red-400">{err}</div>
+              ) : resultsTab === 'preview' ? (
+                <div className="p-5 h-full flex flex-col gap-2 min-h-0">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-slate-300 font-medium">ASR 全文预览</div>
+                    <div className="ml-auto inline-flex items-center gap-1 rounded-full bg-slate-900/70 border border-slate-700 px-1 py-1 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setAsrPreviewMode('timeline')}
+                        className={`px-2 py-0.5 rounded-full transition-colors ${
+                          asrPreviewMode === 'timeline' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        时间轴
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAsrPreviewMode('plain')}
+                        className={`px-2 py-0.5 rounded-full transition-colors ${
+                          asrPreviewMode === 'plain' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        全文
+                      </button>
+                    </div>
+                  </div>
+                  {asrPreviewMode === 'timeline' ? (
+                    <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800 bg-slate-900/30 divide-y divide-slate-800">
+                      {asrPreviewRows.length === 0 ? (
+                        <div className="px-3 py-2 text-[11px] text-slate-500">暂无可预览内容</div>
+                      ) : (
+                        asrPreviewRows.map((row) => (
+                          <div key={row.id} className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveClipId(row.id)
+                                  jumpToClip(row.clip)
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-cyan-600/60"
+                              >
+                                {fmt(row.start)}-{fmt(row.end)}
+                              </button>
+                              <span className="text-[10px] text-slate-600 truncate">{row.id}</span>
+                            </div>
+                            {row.hasSegments ? (
+                              <div className="mt-1.5 space-y-1">
+                                {row.segs.map((seg, si) => {
+                                  const absStart = Math.max(0, row.start + Math.max(0, seg.start))
+                                  return (
+                                    <button
+                                      key={`${row.id}-${si}`}
+                                      type="button"
+                                      onClick={() => seekToSegment(row.clip, seg)}
+                                      className="w-full text-left rounded border border-slate-800 bg-slate-950/40 px-2 py-1 hover:border-emerald-600/50 transition-colors"
+                                    >
+                                      <span className="text-[10px] text-emerald-300 mr-2">{fmt(absStart)}</span>
+                                      <span className="text-[11px] text-slate-300">{seg.text || '（空）'}</span>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            ) : (
+                              <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+                                {row.text || '（空）'}
+                              </p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : (
+                    <textarea
+                      value={asrPreviewPlainText}
+                      readOnly
+                      className="w-full flex-1 min-h-0 h-full rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-3 text-sm leading-7 text-slate-200 resize-none outline-none"
+                      placeholder="暂无可预览内容"
+                    />
+                  )}
+                  <div className="text-[10px] text-slate-500">
+                    预览会实时展示当前编辑态（包括未保存改动）；点击时间点可在播放器快速定位。
+                  </div>
+                </div>
               ) : filtered.length === 0 ? (
                 <div className="p-6 text-sm text-slate-500">没有匹配的片段</div>
               ) : (

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { VIDEO_KEYS } from './constants'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save, Scissors, Clock, Layers, Info } from 'lucide-react'
+import { Save, Scissors, Clock, Layers, Info, Zap, Crosshair, Gauge } from 'lucide-react'
 import type { ConfigMap } from './types'
 import { SettingsDetails } from './SettingsDetails'
 
@@ -46,7 +46,7 @@ const PARAM_HINTS: Record<string, string> = {
   scene_min_scene_len: '「镜头检测」与「混合模式」：抑制过碎切分；单位为帧（越大越不容易切碎）',
   hybrid_max_segment_sec: '仅在「混合模式」下生效：单镜头超过该秒数时，按「固定分割时长」强制切段',
   cut_mode: '切割模式：`fast` 更快（`-ss` 放在 `-i` 前），`precise` 更准但更慢（`-ss` 放在 `-i` 后）',
-  stream_copy: '视频流复制（copy）：开启后尽量不转码，速度更快；但对切点精度需要关键帧对齐',
+  stream_copy: '视频流复制（copy）：开启后尽量不转码，速度更快；但切点需关键帧对齐，且会忽略缩放/fps/pix_fmt 等滤镜参数',
   stream_copy_audio: '音频流复制（copy）：与 `stream_copy` 配合可进一步加速；关闭则使用音频编码器重新编码',
   split_max_workers: '切分并行任务数：越大吞吐越高，但会增加 CPU/磁盘压力（建议 1~4）',
   ffmpeg_threads_per_job: '每个 ffmpeg 任务的线程数：并行切分时建议保持较小值（如 1）',
@@ -86,9 +86,167 @@ const PARAM_HINTS: Record<string, string> = {
   export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
 }
 
+const VIDEO_PRESETS = [
+  {
+    id: 'fast_preview',
+    name: '极速预览',
+    icon: Zap,
+    desc: '优先吞吐，切得快，适合先跑一遍流程看结果。',
+    focus: '速度优先',
+    impact: {
+      speed: '高',
+      accuracy: '中低',
+      quality: '低',
+      load: '中高',
+    },
+    values: {
+      split_mode: 'fixed',
+      fixed_duration: '8',
+      cut_mode: 'fast',
+      stream_copy: 'true',
+      stream_copy_audio: 'true',
+      split_max_workers: '4',
+      ffmpeg_threads_per_job: '1',
+      quiet_split: 'true',
+      frame_fps: '1',
+      frame_target_pixels: '512',
+      clip_vcodec: 'libx264',
+      clip_acodec: 'aac',
+      clip_preset: 'ultrafast',
+      clip_crf: '30',
+      clip_g: '72',
+      clip_keyint_min: '72',
+      clip_sc_threshold: '0',
+      clip_scale_width: '0',
+      clip_scale_height: '0',
+      clip_pix_fmt: 'yuv420p',
+      export_vcodec: 'libx264',
+      export_acodec: 'aac',
+      export_preset: 'veryfast',
+      export_crf: '30',
+      export_scale_width: '960',
+      export_scale_height: '540',
+      export_pix_fmt: 'yuv420p',
+    },
+  },
+  {
+    id: 'accurate_lowres',
+    name: '精准快切（低清）',
+    icon: Crosshair,
+    desc: '切点精度优先，同时降低分辨率/质量来抵消转码开销。',
+    focus: '精度优先',
+    impact: {
+      speed: '中',
+      accuracy: '高',
+      quality: '低',
+      load: '中',
+    },
+    values: {
+      split_mode: 'hybrid',
+      fixed_duration: '10',
+      scene_threshold: '30',
+      scene_min_scene_len: '15',
+      hybrid_max_segment_sec: '18',
+      cut_mode: 'precise',
+      stream_copy: 'false',
+      stream_copy_audio: 'false',
+      split_max_workers: '2',
+      ffmpeg_threads_per_job: '1',
+      quiet_split: 'true',
+      frame_fps: '1',
+      frame_target_pixels: '512',
+      clip_vcodec: 'libx264',
+      clip_acodec: 'aac',
+      clip_preset: 'ultrafast',
+      clip_crf: '32',
+      clip_g: '24',
+      clip_keyint_min: '24',
+      clip_sc_threshold: '0',
+      clip_scale_width: '960',
+      clip_scale_height: '540',
+      clip_pix_fmt: 'yuv420p',
+      export_vcodec: 'libx264',
+      export_acodec: 'aac',
+      export_preset: 'veryfast',
+      export_crf: '31',
+      export_scale_width: '960',
+      export_scale_height: '540',
+      export_pix_fmt: 'yuv420p',
+    },
+  },
+  {
+    id: 'balanced_default',
+    name: '平衡推荐',
+    icon: Gauge,
+    desc: '速度、切点、画质折中，作为日常默认更稳妥。',
+    focus: '均衡',
+    impact: {
+      speed: '中高',
+      accuracy: '中高',
+      quality: '中',
+      load: '中高',
+    },
+    values: {
+      split_mode: 'hybrid',
+      fixed_duration: '10',
+      scene_threshold: '30',
+      scene_min_scene_len: '15',
+      hybrid_max_segment_sec: '20',
+      cut_mode: 'fast',
+      stream_copy: 'false',
+      stream_copy_audio: 'false',
+      split_max_workers: '3',
+      ffmpeg_threads_per_job: '1',
+      quiet_split: 'true',
+      frame_fps: '1',
+      frame_target_pixels: '640',
+      clip_vcodec: 'libx264',
+      clip_acodec: 'aac',
+      clip_preset: 'veryfast',
+      clip_crf: '29',
+      clip_g: '48',
+      clip_keyint_min: '48',
+      clip_sc_threshold: '0',
+      clip_scale_width: '1280',
+      clip_scale_height: '720',
+      clip_pix_fmt: 'yuv420p',
+      export_vcodec: 'libx264',
+      export_acodec: 'aac',
+      export_preset: 'veryfast',
+      export_crf: '28',
+      export_scale_width: '1280',
+      export_scale_height: '720',
+      export_pix_fmt: 'yuv420p',
+    },
+  },
+] as const
+
+const HOW_IT_WORKS = [
+  '切点是否精确主要由 cut_mode + stream_copy 决定：precise + 非 copy 更准，fast + copy 更快。',
+  '速度主要由并行度与编码成本决定：split_max_workers 越高越快，但 CPU/磁盘占用更高。',
+  '降低分辨率/质量（scale + crf）可显著提速，但会降低片段清晰度与细节。',
+  'fixed 更可控，scene/hybrid 更贴近镜头边界；hybrid 还能防止单段过长。',
+]
+
+const IMPACT_LABELS = [
+  { key: 'speed', label: '速度' },
+  { key: 'accuracy', label: '切点准确' },
+  { key: 'quality', label: '画质' },
+  { key: 'load', label: '资源占用' },
+] as const
+
+function impactBadgeClass(level: string) {
+  if (level === '高') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+  if (level === '中高') return 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
+  if (level === '中') return 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+  if (level === '中低') return 'border-orange-500/40 bg-orange-500/10 text-orange-300'
+  return 'border-slate-600 bg-slate-800/60 text-slate-300'
+}
+
 export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSaveGroup }: Props) {
   const v = (k: string) => edits[k] ?? config[k]?.value ?? ''
   const isDirty = (k: string) => edits[k] !== config[k]?.value
+  const hasConfig = (k: string) => Boolean(config[k])
   const groupDirty = VIDEO_KEYS.some((k) => isDirty(k) && config[k])
   const currentMode = v('split_mode') || 'scene'
   const [sceneHybridAdvOpen, setSceneHybridAdvOpen] = useState(currentMode === 'scene' || currentMode === 'hybrid')
@@ -127,6 +285,47 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
   const EXPORT_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('export_'))
+  const presetDirty = (values: Record<string, string>) =>
+    Object.entries(values).some(([key, val]) => hasConfig(key) && v(key) !== val)
+  const presetMatchStats = (values: Record<string, string>) => {
+    const entries = Object.entries(values).filter(([key]) => hasConfig(key))
+    if (!entries.length) return { matched: 0, total: 0, score: 0 }
+    const matched = entries.reduce((acc, [key, val]) => (v(key) === val ? acc + 1 : acc), 0)
+    return {
+      matched,
+      total: entries.length,
+      score: matched / entries.length,
+    }
+  }
+  const bestPreset = VIDEO_PRESETS.reduce<{
+    id: string
+    name: string
+    matched: number
+    total: number
+    score: number
+  } | null>((best, preset) => {
+    const stats = presetMatchStats(preset.values)
+    if (stats.total === 0) return best
+    if (!best || stats.score > best.score) {
+      return {
+        id: preset.id,
+        name: preset.name,
+        matched: stats.matched,
+        total: stats.total,
+        score: stats.score,
+      }
+    }
+    return best
+  }, null)
+  const applyPreset = (values: Record<string, string>) => {
+    Object.entries(values).forEach(([key, val]) => {
+      if (hasConfig(key)) onSet(key, val)
+    })
+  }
+  const savePreset = (values: Record<string, string>) => {
+    const keys = Object.keys(values).filter((key) => hasConfig(key))
+    onSaveGroup(keys)
+  }
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -144,6 +343,85 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
       </div>
 
       <div className="px-6 py-5 space-y-5">
+        <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-indigo-200">视频处理模板</p>
+            <p className="text-xs text-slate-400 mt-1">
+              先一键套参数，再按素材微调。你当前需求建议优先试「精准快切（低清）」。
+            </p>
+            {bestPreset && (
+              <p className="text-[11px] text-emerald-300 mt-1.5">
+                当前配置最接近：{bestPreset.name}（匹配 {bestPreset.matched}/{bestPreset.total}）
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            {VIDEO_PRESETS.map((preset) => {
+              const Icon = preset.icon
+              const dirty = presetDirty(preset.values)
+              const isClosest = bestPreset?.id === preset.id
+              return (
+                <div key={preset.id} className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <Icon className="w-4 h-4 text-indigo-300" />
+                        <p className="text-sm font-medium text-slate-100">{preset.name}</p>
+                      </div>
+                      <p className="text-[11px] text-indigo-300/80 mt-1">{preset.focus}</p>
+                    </div>
+                    {isClosest && (
+                      <span className="text-[10px] font-semibold text-emerald-300 border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
+                        最接近当前
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">{preset.desc}</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {IMPACT_LABELS.map((item) => {
+                      const level = preset.impact[item.key]
+                      return (
+                        <div
+                          key={item.key}
+                          className={`rounded-md border px-2 py-1 text-[10px] leading-tight ${impactBadgeClass(level)}`}
+                        >
+                          <span className="text-slate-300/90">{item.label}</span>
+                          <span className="ml-1 font-semibold">{level}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyPreset(preset.values)}
+                      className="flex-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                    >
+                      一键应用
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => savePreset(preset.values)}
+                      disabled={!dirty}
+                      className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-slate-600 text-slate-200 hover:border-slate-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      保存模板参数
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="rounded-lg border border-slate-700/80 bg-slate-950/40 px-3 py-2.5 space-y-1.5">
+            <p className="text-xs font-medium text-slate-200">这套参数会如何工作</p>
+            {HOW_IT_WORKS.map((line) => (
+              <p key={line} className="text-[11px] text-slate-400 leading-relaxed">- {line}</p>
+            ))}
+            <p className="text-[11px] text-amber-300/85 pt-0.5">
+              建议流程：先用「极速预览」做粗切确认内容，再切到「精准快切（低清）」重跑关键素材。
+            </p>
+          </div>
+        </div>
 
         {/* split_mode — card picker */}
         {config['split_mode'] && (

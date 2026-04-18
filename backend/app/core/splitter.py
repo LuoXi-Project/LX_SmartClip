@@ -469,35 +469,57 @@ class VideoSplitter:
         crf = _to_int("clip_crf", 23)
         v_bitrate_kbps = _to_int("clip_video_bitrate_kbps", 0)
         a_bitrate_kbps = _to_int("clip_audio_bitrate_kbps", 128)
+        gop = _to_int("clip_g", 0)
+        keyint_min = _to_int("clip_keyint_min", 0)
+        sc_threshold = _to_int("clip_sc_threshold", 0)
         fps = _to_float("clip_fps", 0.0)
         scale_w = _to_int("clip_scale_width", 0)
         scale_h = _to_int("clip_scale_height", 0)
 
+        is_video_copy = vcodec.lower() == "copy"
         vf_parts: List[str] = []
-        if scale_w > 0 or scale_h > 0:
-            # 只设置一边时，另一边保持等比（-2 以保证偶数）
-            sw = scale_w if scale_w > 0 else -2
-            sh = scale_h if scale_h > 0 else -2
-            vf_parts.append(f"scale={sw}:{sh}:flags=lanczos")
-        if fps and fps > 0:
-            vf_parts.append(f"fps={fps}")
+        if not is_video_copy:
+            if scale_w > 0 or scale_h > 0:
+                # 只设置一边时，另一边保持等比（-2 以保证偶数）
+                sw = scale_w if scale_w > 0 else -2
+                sh = scale_h if scale_h > 0 else -2
+                vf_parts.append(f"scale={sw}:{sh}:flags=lanczos")
+            if fps and fps > 0:
+                vf_parts.append(f"fps={fps}")
 
         args: List[str] = []
         if has_video_stream:
             args += ["-map", "0:v:0", "-map", "0:a?"]
             args += ["-c:v", vcodec]
-            if vcodec in ("libx264", "libx265") and preset:
-                args += ["-preset", preset]
-            if v_bitrate_kbps > 0:
-                args += ["-b:v", f"{v_bitrate_kbps}k"]
+            if not is_video_copy:
+                if vcodec in ("libx264", "libx265") and preset:
+                    args += ["-preset", preset]
+                # GOP/关键帧参数：对切点稳定性与 seek 行为有直接影响。
+                # x264/x265 支持 keyint_min / sc_threshold；其他编码器只下发通用 g。
+                if gop > 0:
+                    args += ["-g", str(gop)]
+                if vcodec in ("libx264", "libx265"):
+                    if keyint_min > 0:
+                        args += ["-keyint_min", str(keyint_min)]
+                    # 保持 0 也应显式下发：用于关闭场景切换自动关键帧。
+                    if sc_threshold >= 0:
+                        args += ["-sc_threshold", str(sc_threshold)]
+                if v_bitrate_kbps > 0:
+                    args += ["-b:v", f"{v_bitrate_kbps}k"]
+                else:
+                    # bitrate 未指定时使用 CRF（仅 x264/x265 有意义，其他编码器忽略也不会致命）
+                    if crf >= 0:
+                        args += ["-crf", str(crf)]
+                if pix_fmt:
+                    args += ["-pix_fmt", pix_fmt]
+                if vf_parts:
+                    args += ["-vf", ",".join(vf_parts)]
             else:
-                # bitrate 未指定时使用 CRF（仅 x264/x265 有意义，其他编码器忽略也不会致命）
-                if crf >= 0:
-                    args += ["-crf", str(crf)]
-            if pix_fmt:
-                args += ["-pix_fmt", pix_fmt]
-            if vf_parts:
-                args += ["-vf", ",".join(vf_parts)]
+                # stream copy 与滤镜/像素格式/码率/CRF 等互斥，统一跳过避免 ffmpeg 报错。
+                if scale_w > 0 or scale_h > 0 or (fps and fps > 0):
+                    logger.warning("clip_vcodec=copy 时将忽略 clip_scale_* / clip_fps（stream copy 不支持滤镜）")
+                if pix_fmt:
+                    logger.warning("clip_vcodec=copy 时将忽略 clip_pix_fmt（stream copy 不支持像素格式转换）")
 
             args += ["-c:a", acodec]
             if a_bitrate_kbps > 0 and acodec not in ("copy",):

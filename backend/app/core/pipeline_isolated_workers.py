@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Optional
 
 import logging
 logger = logging.getLogger(__name__)
@@ -129,11 +129,18 @@ def isolated_embed_text(
     model: str,
     text: str,
     request_timeout_sec: float = 120.0,
+    volc_output_dimensions: Optional[int] = None,
 ) -> dict[str, Any]:
     from app.core.embedder import Embedder
     from app.core.metrics.token_usage import TokenUsage
 
-    emb = Embedder(base_url, api_key, model, request_timeout_sec=request_timeout_sec)
+    emb = Embedder(
+        base_url,
+        api_key,
+        model,
+        request_timeout_sec=request_timeout_sec,
+        volc_output_dimensions=volc_output_dimensions,
+    )
     box: dict[str, Any] = {}
 
     def on_usage(u):

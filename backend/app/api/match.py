@@ -71,7 +71,12 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
             )
 
         from app.core.embedder import Embedder
-        embedder = Embedder(base_url=embed_base_url, api_key=embed_api_key, model=embed_model)
+        embedder = Embedder(
+            base_url=embed_base_url,
+            api_key=embed_api_key,
+            model=embed_model,
+            volc_output_dimensions=vector_dim,
+        )
 
         from app.core.vector_db.faiss_db import FaissVectorDB
         vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)

@@ -197,7 +197,13 @@ DEFAULT_CONFIG = [
     ),
     ("vlm_model", "gpt-4o", "string", "视觉模型名称", None),
     ("vlm_api_key", "", "string", "视觉模型 API 密钥", None),
-    ("embedding_provider", "openai", "select", "向量嵌入提供商", '["openai"]'),
+    (
+        "embedding_provider",
+        "openai",
+        "select",
+        "向量嵌入提供商",
+        '["openai","siliconflow","deepseek","volcengine","custom"]',
+    ),
     (
         "embedding_base_url",
         "https://api.openai.com/v1",

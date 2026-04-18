@@ -1,5 +1,7 @@
 import logging
 import asyncio
+from typing import Optional, Tuple
+
 from fastapi import APIRouter, HTTPException
 
 from app.core.embedder import Embedder
@@ -10,14 +12,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["embed"])
 
-# 单例
+# 单例（base_url / key / model / vector_dimension 变化时重建）
 _embedder = None
+_embedder_sig: Optional[Tuple[str, str, str, int]] = None
 _vector_db = None
+_vector_db_dim: Optional[int] = None
 
 
 async def _get_embedder_and_db():
     """从配置读取参数，返回 Embedder 和 VectorDB 实例"""
-    global _embedder, _vector_db
+    global _embedder, _embedder_sig, _vector_db, _vector_db_dim
 
     db = await get_db_conn()
     try:
@@ -48,11 +52,19 @@ async def _get_embedder_and_db():
     if not api_key:
         raise HTTPException(status_code=400, detail="Embedding API Key 未配置，请在设置页面配置 embedding_api_key")
 
-    if _embedder is None:
-        _embedder = Embedder(base_url=base_url, api_key=api_key, model=model)
+    sig: Tuple[str, str, str, int] = (base_url or "", api_key or "", model or "", dimension)
+    if _embedder is None or _embedder_sig != sig:
+        _embedder = Embedder(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            volc_output_dimensions=dimension,
+        )
+        _embedder_sig = sig
 
-    if _vector_db is None:
+    if _vector_db is None or _vector_db_dim != dimension:
         _vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=dimension)
+        _vector_db_dim = dimension
 
     return _embedder, _vector_db, concurrency
 

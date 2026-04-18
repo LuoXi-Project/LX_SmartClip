@@ -23,6 +23,13 @@ export const EMBEDDING_PROVIDERS: ProviderPreset[] = [
   { id: 'openai',      name: 'OpenAI',      logo: '🟢', baseUrl: 'https://api.openai.com/v1',      defaultModel: 'text-embedding-3-small' },
   { id: 'siliconflow', name: 'SiliconFlow', logo: '🟠', baseUrl: 'https://api.siliconflow.cn/v1', defaultModel: 'BAAI/bge-m3' },
   { id: 'deepseek',    name: 'DeepSeek',    logo: '🔵', baseUrl: 'https://api.deepseek.com/v1',   defaultModel: '' },
+  {
+    id: 'volcengine',
+    name: '火山引擎（方舟）',
+    logo: '🌋',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal',
+    defaultModel: 'doubao-embedding-vision-251215',
+  },
   { id: 'custom',      name: '自定义',      logo: '⚙️', baseUrl: '' },
 ]
 

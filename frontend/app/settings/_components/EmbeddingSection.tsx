@@ -50,7 +50,27 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
             label="API 地址"
             value={v('embedding_base_url')}
             onChange={(val) => onSet('embedding_base_url', val)}
-            placeholder="https://api.openai.com/v1"
+            placeholder={
+              embProvider === 'volcengine'
+                ? 'https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal'
+                : 'https://api.openai.com/v1'
+            }
+            description={
+              embProvider === 'volcengine' ? (
+                <span>
+                  火山方舟多模态向量接口，需与控制台地域一致；详见{' '}
+                  <a
+                    href="https://www.volcengine.com/docs/82379/1399008?lang=zh"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-400 hover:text-indigo-300 underline"
+                  >
+                    快速入门
+                  </a>
+                  。密钥为方舟 API Key（Bearer）。请求体中的 dimensions 与本页「向量维度」一致，仅支持 1024 或 2048。
+                </span>
+              ) : undefined
+            }
             dirty={isDirty('embedding_base_url')}
             saving={!!saving['embedding_base_url']}
             saved={!!saved['embedding_base_url']}
@@ -76,7 +96,12 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
             onChange={(val) => onSet('embedding_model', val)}
             baseUrl={v('embedding_base_url')}
             apiKey={v('embedding_api_key')}
-            placeholder="text-embedding-3-small"
+            placeholder={embProvider === 'volcengine' ? 'doubao-embedding-vision-251215' : 'text-embedding-3-small'}
+            description={
+              embProvider === 'volcengine' ? (
+                <span>方舟控制台开通的 Embedding 模型 ID；纯文本片段仅需 input 中的 text 字段即可。</span>
+              ) : undefined
+            }
             dirty={isDirty('embedding_model')}
             saving={!!saving['embedding_model']}
             saved={!!saved['embedding_model']}

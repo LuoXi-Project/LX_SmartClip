@@ -345,6 +345,7 @@ async def run_pipeline(
                     api_key=embedding_api_key,
                     model=embedding_model,
                     request_timeout_sec=embedding_timeout_sec,
+                    volc_output_dimensions=vector_dim,
                 )
                 vector_db = FaissVectorDB(db_path=DB_PATH, vector_dimension=vector_dim)
                 if embed_inprocess:
@@ -640,7 +641,14 @@ async def run_pipeline(
                             return await run_killable_target(
                                 _PIPELINE_ISOLATED,
                                 "isolated_embed_text",
-                                (embedding_base_url, embedding_api_key, embedding_model, text, embedding_timeout_sec),
+                                (
+                                    embedding_base_url,
+                                    embedding_api_key,
+                                    embedding_model,
+                                    text,
+                                    embedding_timeout_sec,
+                                    vector_dim,
+                                ),
                                 timeout_sec=embedding_timeout_sec,
                             )
 

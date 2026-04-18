@@ -45,9 +45,11 @@ export default function SettingsPage() {
         )
         if (matchedLlm) setLlmProvider(matchedLlm.id)
         const savedEmbUrl = data?.embedding_base_url?.value ?? ''
-        const matchedEmb = EMBEDDING_PROVIDERS.find(
-          (p) => p.id !== 'custom' && p.baseUrl && savedEmbUrl.startsWith(p.baseUrl.split('/v1')[0])
-        )
+        const matchedEmb = EMBEDDING_PROVIDERS.find((p) => {
+          if (p.id === 'custom' || !p.baseUrl) return false
+          const prefix = p.baseUrl.includes('/v1') ? p.baseUrl.split('/v1')[0] : p.baseUrl
+          return savedEmbUrl.startsWith(prefix)
+        })
         if (matchedEmb) setEmbProvider(matchedEmb.id)
         const savedTtsProv = data?.tts_provider?.value ?? ''
         if (savedTtsProv) setTtsProvider(savedTtsProv)
@@ -157,6 +159,7 @@ export default function SettingsPage() {
   }
   const applyEmbProvider = (p: ProviderPreset) => {
     setEmbProvider(p.id)
+    set('embedding_provider', p.id)
     if (p.baseUrl) set('embedding_base_url', p.baseUrl)
     if (p.defaultModel) set('embedding_model', p.defaultModel)
   }

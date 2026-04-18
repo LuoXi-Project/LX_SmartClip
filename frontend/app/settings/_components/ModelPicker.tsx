@@ -35,6 +35,15 @@ export function ModelPicker({ value, onChange, baseUrl, apiKey, placeholder }: P
     const safeApiKey = apiKey?.trim() ?? ''
     if (!safeBaseUrl || !safeApiKey) { setFetchError('请先填写 API 地址和密钥'); return }
 
+    const isVolcArkMultimodalEmb =
+      safeBaseUrl.includes('volces.com') && safeBaseUrl.includes('embeddings/multimodal')
+    if (isVolcArkMultimodalEmb) {
+      setFetchError('火山方舟多模态向量无通用「模型列表」接口，请在控制台复制模型 ID 后手动输入')
+      setModels([])
+      setOpen(false)
+      return
+    }
+
     const cacheKey = `${safeBaseUrl}::${safeApiKey}`
     const cached = cacheRef.current.get(cacheKey)
     if (cached) {

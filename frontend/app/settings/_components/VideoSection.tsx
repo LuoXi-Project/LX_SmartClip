@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { VIDEO_KEYS } from './constants'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save, Scissors, Clock, Layers, Info, Zap, Crosshair, Gauge } from 'lucide-react'
+import { Save, Scissors, Clock, Layers, Info, Zap, Crosshair, Gauge, Film } from 'lucide-react'
 import type { ConfigMap } from './types'
 import { SettingsDetails } from './SettingsDetails'
 
@@ -88,17 +88,34 @@ const PARAM_HINTS: Record<string, string> = {
   export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
 }
 
+/** 三种流程模板共用的成片目标：切片/切分仍可省资源，最终成片统一高质量重编码（与切片 clip_* 解耦）。 */
+const PRESET_EXPORT_HIGH_VALUES: Record<string, string> = {
+  export_vcodec: 'h264_nvenc',
+  export_acodec: 'aac',
+  export_preset: 'medium',
+  export_crf: '20',
+  export_video_bitrate_kbps: '0',
+  export_audio_bitrate_kbps: '192',
+  export_g: '48',
+  export_keyint_min: '48',
+  export_sc_threshold: '40',
+  export_fps: '0',
+  export_scale_width: '0',
+  export_scale_height: '0',
+  export_pix_fmt: 'yuv420p',
+}
+
 const VIDEO_PRESETS = [
   {
     id: 'fast_preview',
     name: '极速预览',
     icon: Zap,
-    desc: '优先吞吐，切得快，适合先跑一遍流程看结果。',
+    desc: '优先吞吐，切得快；切片与中间流程偏省资源，但成片导出仍按高质量重编码输出。',
     focus: '速度优先',
     impact: {
       speed: '高',
       accuracy: '中低',
-      quality: '低',
+      quality: '中',
       load: '中高',
     },
     values: {
@@ -112,7 +129,7 @@ const VIDEO_PRESETS = [
       quiet_split: 'true',
       frame_fps: '1',
       frame_target_pixels: '512',
-      clip_vcodec: 'libx264',
+      clip_vcodec: 'h264_nvenc',
       clip_acodec: 'aac',
       clip_preset: 'ultrafast',
       clip_crf: '30',
@@ -122,25 +139,19 @@ const VIDEO_PRESETS = [
       clip_scale_width: '0',
       clip_scale_height: '0',
       clip_pix_fmt: 'yuv420p',
-      export_vcodec: 'libx264',
-      export_acodec: 'aac',
-      export_preset: 'veryfast',
-      export_crf: '30',
-      export_scale_width: '960',
-      export_scale_height: '540',
-      export_pix_fmt: 'yuv420p',
+      ...PRESET_EXPORT_HIGH_VALUES,
     },
   },
   {
     id: 'accurate_lowres',
     name: '精准快切（低清）',
     icon: Crosshair,
-    desc: '切点精度优先，同时降低分辨率/质量来抵消转码开销。',
+    desc: '切点精度优先，切片侧可低清省算力；成片导出与切片解耦，仍输出高质量最终文件。',
     focus: '精度优先',
     impact: {
       speed: '中',
       accuracy: '高',
-      quality: '低',
+      quality: '中',
       load: '中',
     },
     values: {
@@ -157,7 +168,7 @@ const VIDEO_PRESETS = [
       quiet_split: 'true',
       frame_fps: '1',
       frame_target_pixels: '512',
-      clip_vcodec: 'libx264',
+      clip_vcodec: 'h264_nvenc',
       clip_acodec: 'aac',
       clip_preset: 'ultrafast',
       clip_crf: '32',
@@ -167,25 +178,19 @@ const VIDEO_PRESETS = [
       clip_scale_width: '960',
       clip_scale_height: '540',
       clip_pix_fmt: 'yuv420p',
-      export_vcodec: 'libx264',
-      export_acodec: 'aac',
-      export_preset: 'veryfast',
-      export_crf: '31',
-      export_scale_width: '960',
-      export_scale_height: '540',
-      export_pix_fmt: 'yuv420p',
+      ...PRESET_EXPORT_HIGH_VALUES,
     },
   },
   {
     id: 'balanced_default',
     name: '平衡推荐',
     icon: Gauge,
-    desc: '速度、切点、画质折中，作为日常默认更稳妥。',
+    desc: '速度、切点、切片画质折中；成片导出与其它模板一致，默认高质量交付。',
     focus: '均衡',
     impact: {
       speed: '中高',
       accuracy: '中高',
-      quality: '中',
+      quality: '中高',
       load: '中高',
     },
     values: {
@@ -202,7 +207,7 @@ const VIDEO_PRESETS = [
       quiet_split: 'true',
       frame_fps: '1',
       frame_target_pixels: '640',
-      clip_vcodec: 'libx264',
+      clip_vcodec: 'h264_nvenc',
       clip_acodec: 'aac',
       clip_preset: 'veryfast',
       clip_crf: '29',
@@ -212,13 +217,7 @@ const VIDEO_PRESETS = [
       clip_scale_width: '1280',
       clip_scale_height: '720',
       clip_pix_fmt: 'yuv420p',
-      export_vcodec: 'libx264',
-      export_acodec: 'aac',
-      export_preset: 'veryfast',
-      export_crf: '28',
-      export_scale_width: '1280',
-      export_scale_height: '720',
-      export_pix_fmt: 'yuv420p',
+      ...PRESET_EXPORT_HIGH_VALUES,
     },
   },
 ] as const
@@ -226,7 +225,7 @@ const VIDEO_PRESETS = [
 const HOW_IT_WORKS = [
   '切点是否精确主要由 cut_mode + stream_copy 决定：precise + 非 copy 更准，fast + copy 更快。',
   '速度主要由并行度与编码成本决定：split_max_workers 越高越快，但 CPU/磁盘占用更高。',
-  '降低分辨率/质量（scale + crf）可显著提速，但会降低片段清晰度与细节。',
+  '切片 clip_* 与抽帧参数主要影响中间素材；成片 export_* 可与切片解耦，单独追求最终交付质量。',
   'fixed 更可控，scene/hybrid 更贴近镜头边界；hybrid 还能防止单段过长。',
 ]
 
@@ -349,7 +348,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
           <div>
             <p className="text-sm font-medium text-indigo-200">视频处理模板</p>
             <p className="text-xs text-slate-400 mt-1">
-              先一键套参数，再按素材微调。你当前需求建议优先试「精准快切（低清）」。
+              先一键套参数，再按素材微调。切片可走极速/低清省资源；三种模板的成片导出已默认统一为高质量，也可用下方「成片快速设置」单独调整。
             </p>
             {bestPreset && (
               <p className="text-[11px] text-emerald-300 mt-1.5">
@@ -414,13 +413,41 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
               )
             })}
           </div>
+          <div className="rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              <Film className="w-4 h-4 text-indigo-300 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-medium text-slate-200">成片导出快速设置</p>
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                  仅调整 export_*（烧录字幕、原声成片等最终文件），不改切分与切片 clip_*。三种模板已默认套用同一套高质量成片参数；若你改过成片项，可在此一键恢复。
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => applyPreset(PRESET_EXPORT_HIGH_VALUES)}
+                className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-md text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors whitespace-nowrap"
+              >
+                一键高质量成片
+              </button>
+              <button
+                type="button"
+                onClick={() => savePreset(PRESET_EXPORT_HIGH_VALUES)}
+                disabled={!presetDirty(PRESET_EXPORT_HIGH_VALUES)}
+                className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-slate-600 text-slate-200 hover:border-slate-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                保存成片参数
+              </button>
+            </div>
+          </div>
           <div className="rounded-lg border border-slate-700/80 bg-slate-950/40 px-3 py-2.5 space-y-1.5">
             <p className="text-xs font-medium text-slate-200">这套参数会如何工作</p>
             {HOW_IT_WORKS.map((line) => (
               <p key={line} className="text-[11px] text-slate-400 leading-relaxed">- {line}</p>
             ))}
             <p className="text-[11px] text-amber-300/85 pt-0.5">
-              建议流程：先用「极速预览」做粗切确认内容，再切到「精准快切（低清）」重跑关键素材。
+              建议流程：先用「极速预览」做粗切确认内容，再切到「精准快切（低清）」重跑关键素材；成片若需再压体积或改分辨率，仅改「成片导出编码」即可，不必降低切片质量。
             </p>
           </div>
         </div>

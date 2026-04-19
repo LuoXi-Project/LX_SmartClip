@@ -20,12 +20,40 @@ def _to_float(opts: Dict[str, str], key: str, default: float) -> float:
         return default
 
 
+# libx264/libx265 的 preset 名与 NVENC（FFmpeg 4.4+ 的 p1~p7）不通用；成片/烧录若选 GPU 会切到 *_nvenc，需映射。
+_X264_STYLE_PRESET_TO_NVENC: Dict[str, str] = {
+    "ultrafast": "p1",
+    "superfast": "p1",
+    "veryfast": "p2",
+    "faster": "p2",
+    "fast": "p3",
+    "medium": "p4",
+    "slow": "p5",
+    "slower": "p6",
+    "veryslow": "p7",
+}
+
+
+def _effective_encoder_preset(vcodec: str, preset: str) -> str:
+    """NVENC 不接受 ultrafast 等 x264 预设名；配置表仍用统一选项时需转换。"""
+    vc = (vcodec or "").strip().lower()
+    p = (preset or "").strip()
+    if not p:
+        return p
+    if vc in ("h264_nvenc", "hevc_nvenc"):
+        mapped = _X264_STYLE_PRESET_TO_NVENC.get(p.lower())
+        if mapped:
+            return mapped
+    return p
+
+
 def build_render_codec_args(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
     """根据配置构建编码参数，避免硬编码渲染质量。"""
     opts = render_opts or {}
     vcodec = (opts.get("clip_vcodec") or "libx264").strip()
     acodec = (opts.get("clip_acodec") or "aac").strip()
     preset = (opts.get("clip_preset") or "veryfast").strip()
+    preset = _effective_encoder_preset(vcodec, preset)
     pix_fmt = (opts.get("clip_pix_fmt") or "yuv420p").strip()
     crf = _to_int(opts, "clip_crf", 18)
     v_bitrate_kbps = _to_int(opts, "clip_video_bitrate_kbps", 0)
@@ -85,6 +113,44 @@ def force_video_reencode(codec_args: List[str], render_opts: Optional[Dict[str, 
     fallback_codec_args = build_render_codec_args(fallback_opts)
     logger.warning("检测到视频滤镜 + clip_vcodec=copy，已自动回退为 libx264 重编码")
     return fallback_codec_args
+
+
+def sanitize_merged_opts_for_final_burn(
+    merged_opts: Optional[Dict[str, str]],
+    reference_video_path: str,
+) -> Dict[str, str]:
+    """
+    成片最后一道 encode 前：merged_opts 里的 clip_scale_* 来自 export_scale_*，
+    常与「切片/预览」共用为 960×540；而分段 materialize 已统一到 1080p 时，
+    再套 scale=960:540 会严重发糊。此时去掉缩放，保持与拼接一致的分辨率。
+
+    仍允许显式导出 1280×720 等（宽或高大于 960）的合理下采样。
+    """
+    opts = dict(merged_opts or {})
+    sw = _to_int(opts, "clip_scale_width", 0)
+    sh = _to_int(opts, "clip_scale_height", 0)
+    if sw <= 0 or sh <= 0:
+        return opts
+
+    try:
+        from app.utils.ffprobe_utils import probe_video_dimensions
+
+        rw, rh = probe_video_dimensions(reference_video_path, default=(1920, 1080), logger_=logger)
+    except Exception:
+        return opts
+
+    # 参考已是高清，且配置为典型低清预览档 → 视为误用，不在成片再压一遍
+    if rw >= 1280 and rh >= 720 and sw <= 960 and sh <= 540 and (sw < rw or sh < rh):
+        logger.info(
+            "成片最终编码：忽略过小导出分辨率 %dx%d（参考画面约 %dx%d），避免二次缩糊",
+            sw,
+            sh,
+            rw,
+            rh,
+        )
+        opts["clip_scale_width"] = "0"
+        opts["clip_scale_height"] = "0"
+    return opts
 
 
 def build_extra_video_filters(render_opts: Optional[Dict[str, str]] = None) -> List[str]:

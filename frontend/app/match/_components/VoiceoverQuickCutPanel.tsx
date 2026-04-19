@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { MessageSquare, Mic2, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
+import { Switch } from '@/components/ui/switch'
 
 export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic'
 
@@ -11,7 +12,12 @@ type VoiceoverQuickCutPanelProps = {
   doneVideos: VideoModel[]
   /** 接入后端生成接口后由父组件传入方案与回调；智能快剪时携带 user_prompt 供 LLM 按诉求筛选片段 */
   onGenerate?: (
-    payload: { videoIds: string[]; strategy: VoiceoverQuickCutStrategy; userPrompt?: string }
+    payload: {
+      videoIds: string[]
+      strategy: VoiceoverQuickCutStrategy
+      userPrompt?: string
+      allowOverlappingSourceTimeline?: boolean
+    }
   ) => void | Promise<void>
 }
 
@@ -36,8 +42,12 @@ export function VoiceoverQuickCutPanel({
   doneVideos,
   onGenerate,
 }: VoiceoverQuickCutPanelProps) {
+  const overlapSwitchId = useId()
+  const overlapLabelId = `${overlapSwitchId}-label`
   const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('asr_fast')
   const [semanticUserPrompt, setSemanticUserPrompt] = useState('')
+  /** 默认关闭：与后端一致，避免同一 clip 源时间重叠导致口播重复播放 */
+  const [allowOverlappingSourceTimeline, setAllowOverlappingSourceTimeline] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [info, setInfo] = useState<string | null>(null)
 
@@ -67,7 +77,12 @@ export function VoiceoverQuickCutPanel({
     if (onGenerate) {
       setGenerating(true)
       try {
-        await onGenerate({ videoIds, strategy, userPrompt })
+        await onGenerate({
+          videoIds,
+          strategy,
+          userPrompt,
+          allowOverlappingSourceTimeline,
+        })
       } finally {
         setGenerating(false)
       }
@@ -128,6 +143,26 @@ export function VoiceoverQuickCutPanel({
                 <span className="mt-1 block text-[10px] text-slate-500 leading-snug">{opt.desc}</span>
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <p id={overlapLabelId} className="text-xs font-medium text-slate-200">
+                允许源时间轴重叠
+              </p>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                关闭（推荐）：同一视频素材下（含多个 clip）若成片段在源文件绝对时间上重叠，会按顺序裁掉已播区间，避免同一段画面/口播听两遍。仅在确有需要时开启。
+              </p>
+            </div>
+            <Switch
+              id={overlapSwitchId}
+              aria-labelledby={overlapLabelId}
+              checked={allowOverlappingSourceTimeline}
+              onCheckedChange={setAllowOverlappingSourceTimeline}
+              disabled={generating}
+            />
           </div>
         </div>
 

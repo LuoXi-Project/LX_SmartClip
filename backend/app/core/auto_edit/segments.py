@@ -239,6 +239,26 @@ async def segments_from_plan(
 
     seg_inputs: List[SubtitleSegmentInput] = []
     for seg, tts_filename in zip(active_segments, tts_filenames):
+        raw_trims = getattr(seg, "clip_trims", None)
+        if raw_trims:
+            plan_trims = list(raw_trims)
+            clip_ids_m = [str(t.clip_id) for t in plan_trims]
+            if clip_ids_m and all(cid in valid_clip_ids for cid in clip_ids_m):
+                dur_sum = sum(max(0.05, float(t.duration_sec)) for t in plan_trims)
+                seg_inputs.append(
+                    SubtitleSegmentInput(
+                        copy_text=seg.subtitle.text if seg.subtitle and seg.subtitle.text else "",
+                        clip_id=clip_ids_m[0],
+                        clip_ids=clip_ids_m,
+                        tts_filename=tts_filename,
+                        duration_sec=dur_sum,
+                        clip_start_sec=None,
+                        clip_trims=plan_trims,
+                    )
+                )
+                continue
+            logger.warning("segment %s clip_trims 无效或含不可用 clip，回退主 clip 解析", seg.id)
+
         selected_valid = [cid for cid in seg.selected_clip_ids if cid in valid_clip_ids]
         group_valid = [ref.clip_id for ref in seg.clip_group if ref.clip_id in valid_clip_ids]
         preferred_video_ids = list(

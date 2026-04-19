@@ -78,9 +78,13 @@ def materialize_clip_paths_for_group(
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
     materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
     force_materialize: bool = False,
+    from_source_video: bool = True,
 ) -> Tuple[List[str], float]:
     """
     按顺序处理 clip 组：必要时逐段 ffmpeg 裁剪，返回 concat 用的路径列表与总视频时长。
+
+    from_source_video=True 且 clip_map 提供 src_video_path/src_start/src_end 时，
+    在「切片文件时间轴」上解析出的入点会映射到整片素材上的绝对时间，从原片裁剪（成片画质不受预处理 clip 影响）。
     """
     trim_list = _trim_list_from_seg(seg, clip_ids)
     # 优化1（最重要）：提前统一尺寸/SAR，避免后续 filter_complex 对每路反复 scale。
@@ -97,23 +101,58 @@ def materialize_clip_paths_for_group(
     paths_out: List[str] = []
     total_dur = 0.0
     for j, (cid, info) in enumerate(zip(clip_ids, infos)):
-        src_path = info["path"]
-        # 以实际文件时长为准：库表 duration 可能偏短，若优先用表会导致出入点 span 被错误截断
-        src_total = float(probe_duration(src_path, log_on_failure=True) or 0.0)
-        if src_total <= 0.05:
-            src_total = float(info.get("dur") or 0.0)
-        if src_total <= 0.05:
-            src_total = 0.05
+        clip_disk_path = info["path"]
+        clip_probe_total = float(probe_duration(clip_disk_path, log_on_failure=True) or 0.0)
+        if clip_probe_total <= 0.05:
+            clip_probe_total = float(info.get("dur") or 0.0)
+        if clip_probe_total <= 0.05:
+            clip_probe_total = 0.05
 
+        # --- 先在「预处理 clip 文件」时间轴上得到 (clip_rel_start, clip_rel_span) ---
         if trim_list is not None:
-            start, span = trim_list[j]
-            if span <= 0.05:
-                start, span = 0.0, src_total
-            start = max(0.0, min(start, src_total - 0.05))
-            span = min(max(0.05, span), max(0.05, src_total - start))
+            clip_rel_start, clip_rel_span = trim_list[j]
+            if clip_rel_span <= 0.05:
+                clip_rel_start, clip_rel_span = 0.0, clip_probe_total
+            clip_rel_start = max(0.0, min(clip_rel_start, clip_probe_total - 0.05))
+            clip_rel_span = min(max(0.05, clip_rel_span), max(0.05, clip_probe_total - clip_rel_start))
         else:
-            # 无 clip_trims：默认使用整段素材（单素材段落的 clip_start_sec/duration_sec 由上层/其它路径控制）
-            start, span = 0.0, src_total
+            rel_cs = getattr(seg, "clip_start_sec", None)
+            try:
+                clip_rel_start = float(rel_cs) if rel_cs is not None else 0.0
+            except Exception:
+                clip_rel_start = 0.0
+            clip_rel_start = max(0.0, min(clip_rel_start, clip_probe_total - 0.05))
+            dur_want = resolve_desired_dur(seg)
+            if dur_want is not None and float(dur_want) > 0:
+                clip_rel_span = min(float(dur_want), max(0.05, clip_probe_total - clip_rel_start))
+            else:
+                clip_rel_span = max(0.05, clip_probe_total - clip_rel_start)
+
+        src_video = str(info.get("src_video_path") or "").strip()
+        use_src = bool(from_source_video and src_video and os.path.isfile(src_video))
+        if use_src:
+            src_path = src_video
+            src_total = float(probe_duration(src_path, log_on_failure=True) or 0.0)
+            if src_total <= 0.05:
+                use_src = False
+
+        if use_src:
+            clip_abs_start = float(info.get("src_start") or 0.0)
+            clip_abs_end = float(info.get("src_end") or 0.0)
+            if clip_abs_end <= clip_abs_start + 0.02:
+                clip_abs_end = clip_abs_start + clip_probe_total
+            abs_start = clip_abs_start + clip_rel_start
+            abs_start = max(0.0, min(abs_start, src_total - 0.05, clip_abs_end - 0.05))
+            max_span = min(
+                clip_rel_span,
+                max(0.05, clip_abs_end - abs_start),
+                max(0.05, src_total - abs_start),
+            )
+            start, span = abs_start, max(0.05, max_span)
+        else:
+            src_path = clip_disk_path
+            src_total = clip_probe_total
+            start, span = clip_rel_start, clip_rel_span
 
         need_trim = start > 0.001 or (span + 0.02) < (src_total - start - 0.001)
         # 即便不裁剪，只要尺寸不一致也先 materialize 成统一规格，便于后续 concat demuxer/copy。
@@ -129,7 +168,8 @@ def materialize_clip_paths_for_group(
             # cache key：相同输入 + 相同裁剪参数 + 相同视频滤镜 → 复用同一个预处理文件（跨 seg）
             # 注意：这里不把 seg_idx/j 写入 key，避免同素材重复引用时重复编码。
             vf_key = ",".join(seg_filter_parts)
-            cache_key = f"{src_path}|{tmp_name}|{start:.3f}|{span:.3f}|vf={vf_key}"
+            src_flag = "src1" if use_src else "src0"
+            cache_key = f"{src_path}|{tmp_name}|{start:.3f}|{span:.3f}|vf={vf_key}|{src_flag}"
             cached = mat_cache.get(cache_key)
             if cached and os.path.isfile(cached[0]):
                 paths_out.append(cached[0])
@@ -315,6 +355,7 @@ def render_original_segment(
     render_opts,
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
     materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
+    from_source_video: bool = True,
 ) -> str:
     seg_out = os.path.join(tmp, f"seg_{seg_idx:03d}.mp4")
 
@@ -328,6 +369,7 @@ def render_original_segment(
         keyframe_cache=keyframe_cache,
         materialize_cache=materialize_cache,
         force_materialize=False,
+        from_source_video=from_source_video,
     )
 
     desired_dur = resolve_desired_dur(seg)
@@ -427,6 +469,7 @@ def render_tts_segment(
     render_opts,
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
     materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
+    from_source_video: bool = True,
 ) -> str:
     from fastapi import HTTPException
 
@@ -471,6 +514,7 @@ def render_tts_segment(
         materialize_cache=materialize_cache,
         # TTS 模式后续用 concat demuxer 拼接，必须确保每段输入规格尽量一致，否则容易生成“容器时长很长但后半段读不到帧”的坏文件。
         force_materialize=True,
+        from_source_video=from_source_video,
     )
 
     if not paths_group:

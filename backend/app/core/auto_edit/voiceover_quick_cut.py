@@ -16,6 +16,10 @@ from app.models.auto_edit import (
     SubtitlePlan,
     TimingHint,
 )
+from app.models.subtitle import ClipTrimPart
+
+# 同一 clip 内判断「已占用源时间」时的容差（秒）
+_VO_OVERLAP_EPS_SEC = 0.05
 
 
 def _clip_has_asr(asr_text: str | None) -> bool:
@@ -82,6 +86,237 @@ def _is_meaningful_text(text: str | None) -> bool:
         if ch.isalnum() or ("\u4e00" <= ch <= "\u9fff")
     )
     return bool(meaningful)
+
+
+def _sum_segment_output_duration(segments: Sequence[SegmentPlan]) -> float:
+    total = 0.0
+    for s in segments:
+        od = s.override_duration_sec
+        if od is not None and od > 0:
+            total += float(od)
+        else:
+            total += max(0.0, float(s.end_time_sec) - float(s.start_time_sec))
+    return total
+
+
+def _dedupe_overlaps_on_video_source_timeline(segments: List[SegmentPlan]) -> List[SegmentPlan]:
+    """
+    按成片顺序处理：同一 video_id（同一底层素材文件时间轴）下，若当前段 start 早于已占用源时间末尾，
+    则向右裁切起点（并同步 clip_start_offset / override_duration / 字幕 timing），避免跨 clip 重复播同一段。
+    裁切后有效时长过小则丢弃该段。
+    """
+    if not segments:
+        return []
+    sorted_segs = sorted(segments, key=lambda s: s.order)
+    last_src_end: dict[str, float] = {}
+    out: List[SegmentPlan] = []
+    for s in sorted_segs:
+        if not s.clip_group:
+            out.append(s)
+            continue
+        ref = s.clip_group[0]
+        key = str(ref.video_id)
+        st = float(s.start_time_sec)
+        et = float(s.end_time_sec)
+        if et <= st + _VO_OVERLAP_EPS_SEC:
+            continue
+        prev_end = last_src_end.get(key, float("-inf"))
+        if st + _VO_OVERLAP_EPS_SEC < prev_end:
+            new_st = prev_end
+            delta = new_st - st
+            new_et = et
+            if new_et <= new_st + _VO_OVERLAP_EPS_SEC:
+                continue
+            off = float(s.clip_start_offset_sec or 0.0) + delta
+            new_dur = new_et - new_st
+            th = s.subtitle.timing_hint
+            new_sub = s.subtitle.model_copy(
+                update={
+                    "timing_hint": (
+                        TimingHint(start=new_st, end=new_et)
+                        if th is not None
+                        else None
+                    )
+                }
+            )
+            s = s.model_copy(
+                update={
+                    "start_time_sec": new_st,
+                    "end_time_sec": new_et,
+                    "clip_start_offset_sec": off,
+                    "override_duration_sec": new_dur,
+                    "subtitle": new_sub,
+                }
+            )
+            st, et = new_st, new_et
+        last_src_end[key] = max(prev_end, et)
+        out.append(s)
+    for i, seg in enumerate(out):
+        if seg.order != i:
+            out[i] = seg.model_copy(update={"order": i})
+    return out
+
+
+def _round_src_t(t: float) -> float:
+    return round(float(t), 3)
+
+
+def _build_merged_voiceover_segment(*, order: int, parts: List[SegmentPlan]) -> SegmentPlan:
+    """将同一 video、时间轴上相接/重叠的多段合并为一条 Plan（跨 clip 用 clip_trims）。"""
+    assert len(parts) >= 2 and all(p.clip_group for p in parts)
+    ref0 = parts[0].clip_group[0]
+    vid = str(ref0.video_id)
+    cid0 = str(ref0.clip_id)
+
+    text_lines: List[str] = []
+    for p in parts:
+        tx = (p.subtitle.text or "").strip() if p.subtitle else ""
+        if tx:
+            text_lines.append(tx)
+    merged_text = "\n".join(text_lines) if text_lines else "（间隙/环境声）"
+
+    st_abs = _round_src_t(min(float(p.start_time_sec) for p in parts))
+    et_abs = _round_src_t(max(float(p.end_time_sec) for p in parts))
+    timing = TimingHint(start=st_abs, end=et_abs)
+
+    cids = {str(p.clip_group[0].clip_id) for p in parts}
+    all_same_clip = len(cids) == 1
+    if all_same_clip:
+        bases = [
+            float(p.start_time_sec) - float(p.clip_start_offset_sec or 0.0) for p in parts
+        ]
+        if max(bases) - min(bases) > 0.02:
+            all_same_clip = False
+        else:
+            base = bases[0]
+            st_rel = min(float(p.start_time_sec) - base for p in parts)
+            et_rel = max(float(p.end_time_sec) - base for p in parts)
+            dur = max(0.0, _round_src_t(et_rel - st_rel))
+            return SegmentPlan(
+                id=f"vq_{order:04d}_{cid0[:6]}_mg",
+                order=order,
+                clip_group=[ClipRef(clip_id=cid0, video_id=vid, weight=1.0)],
+                selected_clip_ids=[cid0],
+                start_time_sec=_round_src_t(base + st_rel),
+                end_time_sec=_round_src_t(base + et_rel),
+                override_duration_sec=dur,
+                clip_start_offset_sec=_round_src_t(st_rel),
+                clip_trims=None,
+                audio_mode=parts[0].audio_mode,
+                subtitle=SubtitlePlan(
+                    strategy=parts[0].subtitle.strategy if parts[0].subtitle else "asr",
+                    text=merged_text,
+                    source=parts[0].subtitle.source if parts[0].subtitle else "asr",
+                    timing_hint=timing,
+                ),
+                transition=parts[-1].transition,
+            )
+
+    trims: List[ClipTrimPart] = []
+    clip_group: List[ClipRef] = []
+    selected: List[str] = []
+    for p in parts:
+        ref = p.clip_group[0]
+        cid = str(ref.clip_id)
+        cs = float(p.clip_start_offset_sec or 0.0)
+        span = float(
+            p.override_duration_sec
+            if p.override_duration_sec is not None
+            else max(0.0, float(p.end_time_sec) - float(p.start_time_sec))
+        )
+        span = _round_src_t(span)
+        if span <= _VO_OVERLAP_EPS_SEC:
+            continue
+        trims.append(
+            ClipTrimPart(
+                clip_id=cid,
+                clip_start_sec=_round_src_t(cs),
+                duration_sec=span,
+            )
+        )
+        clip_group.append(
+            ClipRef(clip_id=cid, video_id=str(ref.video_id), weight=float(ref.weight or 1.0))
+        )
+        selected.append(cid)
+    if not trims:
+        return parts[0].model_copy(update={"order": order, "id": f"vq_{order:04d}_mgfb"})
+
+    total_dur = _round_src_t(sum(float(t.duration_sec) for t in trims))
+    return SegmentPlan(
+        id=f"vq_{order:04d}_mg",
+        order=order,
+        clip_group=clip_group,
+        selected_clip_ids=selected,
+        start_time_sec=st_abs,
+        end_time_sec=et_abs,
+        override_duration_sec=total_dur,
+        clip_start_offset_sec=_round_src_t(float(parts[0].clip_start_offset_sec or 0.0)),
+        clip_trims=trims,
+        audio_mode=parts[0].audio_mode,
+        subtitle=SubtitlePlan(
+            strategy=parts[0].subtitle.strategy if parts[0].subtitle else "asr",
+            text=merged_text,
+            source=parts[0].subtitle.source if parts[0].subtitle else "asr",
+            timing_hint=timing,
+        ),
+        transition=parts[-1].transition,
+    )
+
+
+def _merge_touching_same_video_segments(segments: List[SegmentPlan]) -> List[SegmentPlan]:
+    """
+    成片顺序下：同一 video_id 且源时间轴相接（含去重后的紧挨）的连续段合并为一条，
+    避免响应里出现多段「看起来还叠在一起」。
+    """
+    if len(segments) <= 1:
+        return segments
+    sorted_segs = sorted(segments, key=lambda s: s.order)
+    out: List[SegmentPlan] = []
+    i = 0
+    while i < len(sorted_segs):
+        cur = sorted_segs[i]
+        if not cur.clip_group:
+            out.append(cur)
+            i += 1
+            continue
+        group: List[SegmentPlan] = [cur]
+        j = i + 1
+        vid0 = str(cur.clip_group[0].video_id)
+        while j < len(sorted_segs):
+            nxt = sorted_segs[j]
+            if not nxt.clip_group:
+                break
+            if str(nxt.clip_group[0].video_id) != vid0:
+                break
+            prev = group[-1]
+            if float(nxt.start_time_sec) > float(prev.end_time_sec) + _VO_OVERLAP_EPS_SEC:
+                break
+            group.append(nxt)
+            j += 1
+        if len(group) == 1:
+            out.append(cur)
+        else:
+            out.append(_build_merged_voiceover_segment(order=len(out), parts=group))
+        i = j
+    for k, seg in enumerate(out):
+        if seg.order != k:
+            out[k] = seg.model_copy(update={"order": k})
+    return out
+
+
+def apply_voiceover_source_timeline_dedupe(plan: Plan, *, allow_overlaps: bool) -> Plan:
+    """口播快剪：同一 video 源时间去重后，将相接段合并为单条 Plan（除非允许重叠）。"""
+    if allow_overlaps:
+        return plan
+    new_segments = _dedupe_overlaps_on_video_source_timeline(list(plan.segments))
+    new_segments = _merge_touching_same_video_segments(new_segments)
+    total = _sum_segment_output_duration(new_segments)
+    return plan.model_copy(
+        update={
+            "segments": new_segments,
+            "estimated_duration_sec": round(total, 2) if total > 0 else None,
+        }
+    )
 
 
 async def load_clip_groups_by_videos(

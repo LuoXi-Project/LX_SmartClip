@@ -940,6 +940,7 @@ export default function MatchPage() {
     videoIds: string[]
     strategy: VoiceoverQuickCutStrategy
     userPrompt?: string
+    allowOverlappingSourceTimeline?: boolean
   }) {
     setAutoError('')
     setAutoLoading(true)
@@ -948,6 +949,7 @@ export default function MatchPage() {
         video_ids: payload.videoIds,
         strategy: payload.strategy,
         user_prompt: payload.userPrompt,
+        allow_overlapping_source_timeline: Boolean(payload.allowOverlappingSourceTimeline),
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))

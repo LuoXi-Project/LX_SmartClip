@@ -56,6 +56,7 @@ from app.models.auto_edit import (
 )
 from app.models.auto_edit_timeline import FinalTimeline, StrategyDSL, TimelineItem
 from app.core.auto_edit.voiceover_quick_cut import (
+    apply_voiceover_source_timeline_dedupe,
     build_plan_from_clip_groups,
     load_clip_groups_by_videos,
 )
@@ -642,6 +643,9 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
             strategy=req.strategy,
             video_title_hint=hint,
         )
+    plan = apply_voiceover_source_timeline_dedupe(
+        plan, allow_overlaps=req.allow_overlapping_source_timeline
+    )
     if not plan.segments:
         raise HTTPException(
             status_code=400,

@@ -364,6 +364,8 @@ export interface BurnSubtitleRequest {
   /** 完全按传入 srt_content 烧录；不做 TTS 对齐兜底重建 */
   strict_use_client_srt?: boolean
   bgm?: BgmMixConfigApi
+  /** 默认 true：从原始完整视频裁剪；false：用预处理 clip */
+  materialize_from_source?: boolean
 }
 
 export interface BurnSubtitleResponse {
@@ -379,6 +381,8 @@ export interface ExportOriginalRequest {
   normalize_audio?: boolean
   export_backend?: 'ffmpeg' | 'moviepy'
   bgm?: BgmMixConfigApi
+  /** 默认 true：从原始完整视频裁剪；false：用预处理 clip */
+  materialize_from_source?: boolean
 }
 
 export interface BgmTimelineSegmentApi {
@@ -693,11 +697,15 @@ export interface AutoEditSegmentPlanApi {
   end_time_sec: number
   /** 用户手动覆盖该段在成片中的时长（秒）。用于“更可控”的段落时长/字幕节奏。 */
   override_duration_sec?: number | null
+  clip_start_offset_sec?: number | null
+  /** 口播快剪合并段：多 clip 顺序裁剪拼接，与 realize 管线一致 */
+  clip_trims?: SubtitleClipTrimPart[]
   audio_mode: 'original' | 'tts' | 'mute'
   subtitle?: {
     strategy: 'auto' | 'asr' | 'rewrite' | 'none'
     text: string
     source: 'asr' | 'llm' | 'user'
+    timing_hint?: { start: number; end: number }
   }
 }
 
@@ -743,6 +751,8 @@ export interface VoiceoverQuickCutRequestApi {
   video_ids: string[]
   strategy: VoiceoverQuickCutStrategyApi
   user_prompt?: string
+  /** 默认 false：同一 video 源绝对时间重叠（含跨 clip）时按成片顺序裁切，避免重复播放 */
+  allow_overlapping_source_timeline?: boolean
 }
 
 export const autoEditApi = {

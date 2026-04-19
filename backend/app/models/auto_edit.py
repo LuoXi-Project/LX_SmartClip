@@ -5,6 +5,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 from app.models.subtitle import (
+    ClipTrimPart,
     SubtitleStyle,
 )
 
@@ -73,6 +74,8 @@ class SegmentPlan(BaseModel):
     # 原声导出增强：当为单个 clip 的“内部片段”时，用于 ffmpeg -ss 截取。
     # 默认 None：保持旧行为（只按 duration_sec 截取，不偏移）。
     clip_start_offset_sec: Optional[float] = None
+    # 多 clip 顺序拼接（与 realize 管线 clip_trims 一致）；存在时优先于单段 clip_start_offset_sec
+    clip_trims: Optional[List[ClipTrimPart]] = None
     audio_mode: Literal["original", "tts", "mute"] = "original"
     subtitle: SubtitlePlan
     transition: Optional[TransitionPlan] = None
@@ -180,6 +183,10 @@ class VoiceoverQuickCutRequest(BaseModel):
         description="asr_fast=仅保留有 ASR 的片段；standard≈asr_fast；semantic=LLM 分块筛选句子",
     )
     user_prompt: Optional[str] = Field(None, description="智能快剪必填：剪辑诉求，用于 LLM 筛选句子")
+    allow_overlapping_source_timeline: bool = Field(
+        False,
+        description="是否允许同一素材视频 (video_id) 下多段成片在源文件绝对时间上重叠（默认否；否时先裁切重叠再合并相接段，跨 clip 用 clip_trims 导出）",
+    )
 
 
 class AutoEditPlanResponse(BaseModel):

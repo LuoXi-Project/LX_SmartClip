@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
 import type { ClipMetaByClip, SelectedPreviewState } from './autoEditTypes'
+import { planSegmentPreviewAbsRange } from './planSegmentPreviewRange'
 import { fmt } from './types'
 
 export type AutoEditPlanCardProps = {
@@ -42,7 +43,6 @@ export function AutoEditPlanCard({
   autoRealizeDownloads,
 }: AutoEditPlanCardProps) {
   const planTitle = p.title || `方案 ${idx + 1}`
-  const eps = 0.05
   const segs = p.segments ?? []
   const activeCount = segs.filter((s) => !s.exclude_from_output).length
 
@@ -152,32 +152,16 @@ export function AutoEditPlanCard({
             const videoId = s.clip_group?.[0]?.video_id || null
             const cm = clipId ? clipMetaByClip[clipId] : undefined
 
-            // 兼容“clip 内相对时间”语义：当窗口落在 clip 时长范围内，换算到源视频绝对时间后再展示/预览。
-            const rawStart = Number(s.start_time_sec) || 0
-            const rawEnd = Number(s.end_time_sec) || rawStart
-            const clipDuration = cm ? Math.max(0, Number(cm.end_time) - Number(cm.start_time)) : null
-            const windowDur = Math.max(0, rawEnd - rawStart)
-            const canMapByClip =
-              clipDuration != null &&
-              clipDuration > 0 &&
-              rawStart >= -eps &&
-              rawEnd > rawStart
-            let mappedStart = rawStart
-            let mappedEnd = rawEnd
-            if (canMapByClip && clipDuration != null) {
-              if (rawEnd <= clipDuration + eps) {
-                mappedStart = rawStart
-              } else if (windowDur > 0) {
-                // 越界时按“片段起点 + seg持续时间”展示/预览
-                mappedStart = 0
-              } else {
-                mappedStart = Math.min(rawStart, Math.max(0, clipDuration - windowDur))
-              }
-              mappedStart = Math.max(0, Math.min(mappedStart, Math.max(0, clipDuration - windowDur)))
-              mappedEnd = mappedStart + windowDur
-            }
-            const displayStart = canMapByClip && cm ? Number(cm.start_time) + mappedStart : rawStart
-            const displayEnd = canMapByClip && cm ? Number(cm.start_time) + mappedEnd : rawEnd
+            const { displayStart, displayEnd } = planSegmentPreviewAbsRange(s, cm)
+            const planRawStart = Number(s.subtitle?.timing_hint?.start ?? s.start_time_sec) || 0
+            const planRawEnd = Number(s.subtitle?.timing_hint?.end ?? s.end_time_sec) || planRawStart
+            const usedTimingHint = Boolean(s.subtitle?.timing_hint)
+            const canMapByClip = Boolean(
+              cm &&
+                planRawEnd > planRawStart + 0.05 &&
+                planRawStart >= Number(cm.start_time) - 0.05 &&
+                planRawEnd <= Number(cm.end_time) + 0.05
+            )
 
             return (
               <button
@@ -210,15 +194,18 @@ export function AutoEditPlanCard({
                           cm ? ` ${fmt(displayStart)}–${fmt(displayEnd)}` : ''
                         }`
                       : cm
-                        ? canMapByClip
-                          ? `已按片段起点换算（越界会钳制）：${fmt(rawStart)}–${fmt(rawEnd)} + clip起点${fmt(cm.start_time)} => ${fmt(displayStart)}–${fmt(displayEnd)}`
-                          : `按方案时间窗预览：${fmt(displayStart)}–${fmt(displayEnd)}（clip区间 ${fmt(cm.start_time)}–${fmt(cm.end_time)}）`
-                        : `加载库内时间中… 方案标注 ${fmt(rawStart)}–${fmt(rawEnd)}`
+                        ? (s.clip_trims?.length ?? 0) > 1
+                          ? `多段拼接（${s.clip_trims?.length} 条 clip_trims），成片绝对时间窗 ${fmt(displayStart)}–${fmt(displayEnd)}`
+                          : canMapByClip || usedTimingHint
+                            ? `素材视频绝对时间：${fmt(displayStart)}–${fmt(displayEnd)}（clip 库区间 ${fmt(cm.start_time)}–${fmt(cm.end_time)}）`
+                            : `按方案时间窗预览：${fmt(displayStart)}–${fmt(displayEnd)}（clip区间 ${fmt(cm.start_time)}–${fmt(cm.end_time)}）`
+                        : `加载库内时间中… 方案标注 ${fmt(planRawStart)}–${fmt(planRawEnd)}`
                     : '该片段缺少 clip_id，暂不可预览'
                 }
               >
                 #{s.order}
-                {excluded ? ' 弃用' : ''}（{fmt(displayStart)}-{fmt(displayEnd)}）
+                {excluded ? ' 弃用' : ''}
+                {(s.clip_trims?.length ?? 0) > 1 ? ` ·${s.clip_trims?.length}段` : ''}（{fmt(displayStart)}-{fmt(displayEnd)}）
               </button>
             )
           })}

@@ -197,7 +197,13 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            f"SELECT id, video_id, clip_path, duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
+            f"""
+            SELECT c.id AS id, c.video_id AS video_id, c.clip_path AS clip_path, c.duration AS duration,
+                   c.start_time AS start_time, c.end_time AS end_time, v.file_path AS video_file_path
+            FROM clips c
+            LEFT JOIN videos v ON v.id = c.video_id
+            WHERE c.id IN ({','.join(['?']*len(ids))})
+            """,
             ids,
         ) as cur:
             rows = await cur.fetchall()
@@ -210,10 +216,16 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
 
     burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
-    clip_map = {
-        r["id"]: {"path": resolve_stored_path(r["clip_path"]), "dur": float(r["duration"] or 5)}
-        for r in rows
-    }
+    clip_map = {}
+    for r in rows:
+        vfp = (r["video_file_path"] or "").strip() if r["video_file_path"] is not None else ""
+        clip_map[str(r["id"])] = {
+            "path": resolve_stored_path(r["clip_path"]),
+            "dur": float(r["duration"] or 5),
+            "src_video_path": resolve_stored_path(vfp) if vfp else "",
+            "src_start": float(r["start_time"] or 0.0),
+            "src_end": float(r["end_time"] or 0.0),
+        }
     clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
 
     # 兜底一致性：一键成片场景下，字幕默认与 TTS 音频“强绑定”。
@@ -305,6 +317,8 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         render_mode="tts",
         export_backend=(req.export_backend or export_backend_cfg),
         output_dir=burn_output_dir,
+        normalize_audio=False,
+        materialize_from_source=req.materialize_from_source,
     )
 
     if not saved_path or not os.path.exists(saved_path):
@@ -348,7 +362,13 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            f"SELECT id, video_id, clip_path, duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})",
+            f"""
+            SELECT c.id AS id, c.video_id AS video_id, c.clip_path AS clip_path, c.duration AS duration,
+                   c.start_time AS start_time, c.end_time AS end_time, v.file_path AS video_file_path
+            FROM clips c
+            LEFT JOIN videos v ON v.id = c.video_id
+            WHERE c.id IN ({','.join(['?']*len(ids))})
+            """,
             ids,
         ) as cur:
             rows = await cur.fetchall()
@@ -361,10 +381,16 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
 
     burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
-    clip_map = {
-        r["id"]: {"path": resolve_stored_path(r["clip_path"]), "dur": float(r["duration"] or 5)}
-        for r in rows
-    }
+    clip_map = {}
+    for r in rows:
+        vfp = (r["video_file_path"] or "").strip() if r["video_file_path"] is not None else ""
+        clip_map[str(r["id"])] = {
+            "path": resolve_stored_path(r["clip_path"]),
+            "dur": float(r["duration"] or 5),
+            "src_video_path": resolve_stored_path(vfp) if vfp else "",
+            "src_start": float(r["start_time"] or 0.0),
+            "src_end": float(r["end_time"] or 0.0),
+        }
     clip_dur = {cid: float(info["dur"] or 5) for cid, info in clip_map.items()}
 
     # 每段（segments 内每个 seg 对应的“段落”）总时长 = 该段选中 clip 组时长之和
@@ -436,6 +462,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         output_dir=burn_output_dir,
         normalize_audio=req.normalize_audio,
         export_backend=(req.export_backend or export_backend_cfg),
+        materialize_from_source=req.materialize_from_source,
     )
 
     if not saved_path or not os.path.exists(saved_path):

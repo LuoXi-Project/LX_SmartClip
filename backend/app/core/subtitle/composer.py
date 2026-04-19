@@ -13,6 +13,7 @@ from .render_opts import (
     build_render_codec_args,
     force_video_reencode,
     iter_export_gpu_render_attempts,
+    sanitize_merged_opts_for_final_burn,
     to_int,
 )
 
@@ -100,7 +101,8 @@ def compose_final_video(
     else:
         vf_filter = "setpts=PTS-STARTPTS"
 
-    extra_filters = build_extra_video_filters(final_render_opts)
+    opts_for_vf = sanitize_merged_opts_for_final_burn(final_render_opts, seg_paths[0])
+    extra_filters = build_extra_video_filters(opts_for_vf)
     if extra_filters:
         vf_filter = f"{vf_filter},{','.join(extra_filters)}"
 
@@ -234,74 +236,37 @@ def compose_final_video_moviepy(
     prefer_gpu: bool = False,
 ) -> str:
     """
-    备用导出方案：MoviePy 负责“拼接输出中间文件”，随后用 FFmpeg 做单文件烧字幕/滤镜/编码。
+    备用导出方案：先用 FFmpeg 将分段拼成中间 MP4，再用 FFmpeg 做单文件烧字幕/滤镜/编码。
 
-    设计动机：避免对 N 段输入构建复杂 `filter_complex concat`，让成片阶段的命令更简单、易定位问题。
+    说明：历史上曾用 MoviePy 做第一步拼接；当某段「视频轨时长 ≫ 音轨时长」时，MoviePy 读音频会在
+    t>audio_dur 处抛错（口播快剪等场景易出现）。现第一步改为与 compose_final_video 相同的 FFmpeg
+    拼接逻辑（不在此阶段套用 export 缩放/帧率，与旧 MoviePy 第一步语义一致）。
     """
     out_path = os.path.join(tmp, f"{project_name}.mp4")
     concat_path = os.path.join(tmp, f"{project_name}__concat.mp4")
 
-    # 1) MoviePy 拼接（简化调用；实际底层仍会调用 ffmpeg，通常会发生一次转码）。
-    # MoviePy 2.x 移除了 `moviepy.editor` 的常用导入路径，做兼容处理。
-    try:
-        from moviepy.editor import VideoFileClip, concatenate_videoclips  # type: ignore
-    except Exception:
-        try:
-            from moviepy import VideoFileClip, concatenate_videoclips  # type: ignore
-        except Exception as e:  # pragma: no cover
-            raise RuntimeError(f"MoviePy 导入失败：{e}")
-
-    logger.info(f"MoviePy 拼接开始: {seg_paths}")
-    clips = []
-    final_clip = None
-    try:
-        for p in seg_paths:
-            clips.append(VideoFileClip(p))
-
-        # 同规格优先 chain，避免 compose 的额外开销；不一致则 compose。
-        target_w, target_h = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)
-        same_size = True
-        for p in seg_paths[1:]:
-            w, h = probe_video_dimensions(p, default=(target_w, target_h), logger_=logger)
-            if (w, h) != (target_w, target_h):
-                same_size = False
-                break
-        final_clip = concatenate_videoclips(clips, method="chain" if same_size else "compose")
-
-        v_bitrate = to_int(final_render_opts, "clip_video_bitrate_kbps", 0) or 0
-        a_bitrate = to_int(final_render_opts, "clip_audio_bitrate_kbps", 192)
-
-        write_kwargs = {
-            "codec": "libx264",
-            "audio_codec": "aac",
-            "preset": (final_render_opts.get("clip_preset") or "").strip() or "veryfast",
-            # 让 ffmpeg 自动选择线程数（通常等价于用满可用核）。
-            # 注意：若 MoviePy 侧“供帧”成为瓶颈，CPU 依然可能吃不满。
-            "threads": 0,
-            "logger": None,
-        }
-        if v_bitrate > 0:
-            write_kwargs["bitrate"] = f"{v_bitrate}k"
-        if a_bitrate > 0:
-            write_kwargs["audio_bitrate"] = f"{a_bitrate}k"
-
-        final_clip.write_videofile(concat_path, **write_kwargs)
-    finally:
-        try:
-            if final_clip is not None:
-                final_clip.close()
-        except Exception:
-            pass
-        for c in clips:
-            try:
-                c.close()
-            except Exception:
-                pass
-
-    logger.info("MoviePy 拼接完成: %s", concat_path)
+    # 1) FFmpeg 拼接：去掉成片缩放/帧率（留给第 2 步），避免与旧 MoviePy 双阶段语义不一致。
+    plain_opts = dict(final_render_opts or {})
+    plain_opts["clip_fps"] = "0"
+    plain_opts["clip_scale_width"] = "0"
+    plain_opts["clip_scale_height"] = "0"
+    logger.info("FFmpeg 拼接分段（moviepy 管线第 1 步）: %d 段 -> %s", len(seg_paths), concat_path)
+    compose_final_video(
+        seg_paths=seg_paths,
+        srt_entries=[],
+        style=style,
+        fonts_dir=fonts_dir,
+        tmp=tmp,
+        project_name=f"{project_name}__concat",
+        final_render_opts=plain_opts,
+        normalize_audio=False,
+        prefer_gpu=prefer_gpu,
+    )
+    logger.info("FFmpeg 拼接完成: %s", concat_path)
 
     # 2) 单文件阶段：烧字幕 + 额外滤镜 + 编码参数（复用现有 ffmpeg 管线）。
-    extra_filters = build_extra_video_filters(final_render_opts)
+    opts_for_vf = sanitize_merged_opts_for_final_burn(final_render_opts, concat_path)
+    extra_filters = build_extra_video_filters(opts_for_vf)
 
     if srt_entries:
         video_size = probe_video_dimensions(concat_path, default=(1920, 1080), logger_=logger)

@@ -43,6 +43,7 @@ def burn_to_mp4(
     export_backend: str = "moviepy",  # ffmpeg | moviepy
     normalize_audio: bool = False,
     output_dir: str = None,
+    materialize_from_source: bool = True,
 ) -> tuple:
     from fastapi import HTTPException
 
@@ -53,6 +54,8 @@ def burn_to_mp4(
     final_render_opts = sanitize_no_stream_copy(
         final_render_opts_from_export(export_render_opts, render_opts)
     )
+    # 从原片裁剪时用 export_* 合并结果；仅用预处理 clip 时用 clip_*（避免低质切片参数污染成片）
+    segment_render_opts = final_render_opts if materialize_from_source else (render_opts or {})
 
     mode = (render_mode or "auto").strip().lower()
     if mode not in ("auto", "original", "tts"):
@@ -87,8 +90,9 @@ def burn_to_mp4(
                     tmp=tmp,
                     seg_idx=i,
                     tts_audio_dir=tts_audio_dir,
-                    render_opts=render_opts,
+                    render_opts=segment_render_opts,
                     keyframe_cache=keyframe_cache,
+                    from_source_video=materialize_from_source,
                 )
             else:
                 seg_out = render_original_segment(
@@ -97,8 +101,9 @@ def burn_to_mp4(
                     infos=infos,
                     tmp=tmp,
                     seg_idx=i,
-                    render_opts=render_opts,
+                    render_opts=segment_render_opts,
                     keyframe_cache=keyframe_cache,
+                    from_source_video=materialize_from_source,
                 )
             seg_paths.append(seg_out)
 

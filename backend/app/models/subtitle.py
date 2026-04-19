@@ -105,6 +105,8 @@ class BurnSubtitleRequest(BaseModel):
     # 若用户已在前端手动微调时间轴并希望“完全按传入 SRT 烧录”，则置为 True。
     strict_use_client_srt: bool = False
     bgm: Optional[BgmMixConfig] = None
+    # 默认 True：按 clips 在整片上的时间窗从「原始素材视频」裁剪；False 时用预处理 clip 文件（更快、画质取决于切片参数）
+    materialize_from_source: bool = True
 
 
 class ExportOriginalRequest(BaseModel):
@@ -123,4 +125,6 @@ class ExportOriginalRequest(BaseModel):
     normalize_audio: bool = True
     export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
     bgm: Optional[BgmMixConfig] = None
+    # 默认 True：从原始完整视频按时间窗裁剪拼接；False：仅用预处理 clip（旧行为）
+    materialize_from_source: bool = True
 

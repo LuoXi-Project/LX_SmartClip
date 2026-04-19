@@ -2,18 +2,58 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Callable, Dict, List
 
 from app.utils.ffprobe_utils import probe_audio_sample_rate, probe_video_dimensions
 
 from .ass_builder import build_ass
 from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
-from .render_opts import build_extra_video_filters, build_render_codec_args, force_video_reencode, to_int
+from .render_opts import (
+    build_extra_video_filters,
+    build_render_codec_args,
+    force_video_reencode,
+    iter_export_gpu_render_attempts,
+    to_int,
+)
 
 if TYPE_CHECKING:
     from app.models.subtitle import SubtitleStyle
 
 logger = logging.getLogger(__name__)
+
+
+def _build_concat_codec_args(opts: Dict[str, str], normalize_audio: bool) -> List[str]:
+    if normalize_audio:
+        norm_render_opts = dict(opts)
+        norm_render_opts["clip_acodec"] = "aac"
+        return force_video_reencode(build_render_codec_args(norm_render_opts), render_opts=norm_render_opts)
+    return force_video_reencode(build_render_codec_args(opts), render_opts=opts)
+
+
+def _run_export_encode_attempts(
+    *,
+    prefer_gpu: bool,
+    final_render_opts: Dict[str, str],
+    normalize_audio: bool,
+    cmd_for_codec: Callable[[List[str]], List[str]],
+    desc: str,
+) -> None:
+    attempts = iter_export_gpu_render_attempts(final_render_opts, prefer_gpu)
+    last_err: RuntimeError | None = None
+    for idx, ro in enumerate(attempts):
+        cc = _build_concat_codec_args(ro, normalize_audio)
+        try:
+            run_ffmpeg(cmd_for_codec(cc), desc=desc)
+            if idx > 0:
+                logger.warning("成片编码经回退后成功（第 %d 档）", idx + 1)
+            return
+        except RuntimeError as e:
+            last_err = e
+            if idx >= len(attempts) - 1:
+                raise
+            logger.warning("成片编码失败，尝试下一档（GPU→CPU 回退）: %s", e)
+    if last_err:
+        raise last_err
 
 
 def _segments_uniform_for_stream_copy(seg_paths: List[str]) -> bool:
@@ -41,6 +81,7 @@ def compose_final_video(
     project_name: str,
     final_render_opts: Dict[str, str],
     normalize_audio: bool,
+    prefer_gpu: bool = False,
 ) -> str:
     out_path = os.path.join(tmp, f"{project_name}.mp4")
     target_w, target_h = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)
@@ -66,11 +107,6 @@ def compose_final_video(
     # 注意：dynaudnorm / alimiter 这类实时音频滤镜非常吃 CPU。
     # 这里默认不做任何音频后处理；若上层显式要求 normalize_audio，仅做“音频转码/统一编码器”，不加滤镜。
     audio_post = "anull"
-    concat_codec_args = force_video_reencode(build_render_codec_args(final_render_opts), render_opts=final_render_opts)
-    if normalize_audio:
-        norm_render_opts = dict(final_render_opts)
-        norm_render_opts["clip_acodec"] = "aac"
-        concat_codec_args = force_video_reencode(build_render_codec_args(norm_render_opts), render_opts=norm_render_opts)
 
     # 快路径：无字幕、无成片缩放/帧率、各段规格一致 → concat demuxer + copy，避免再整片 x264。
     uniform = _segments_uniform_for_stream_copy(seg_paths)
@@ -78,7 +114,7 @@ def compose_final_video(
         concat_list = os.path.join(tmp, "concat.txt")
         write_concat_list(seg_paths, concat_list)
         if not normalize_audio:
-            logger.info(f"FFmpeg concat+copy 参数: {concat_codec_args}")
+            logger.info("FFmpeg concat+copy（无重编码）")
             run_ffmpeg(
                 [
                     "-fflags",
@@ -157,8 +193,9 @@ def compose_final_video(
     cmd = []
     for p in seg_paths:
         cmd += ["-i", p]
-    run_ffmpeg(
-        [
+
+    def _cmd_concat_burn(concat_codec_args: List[str]) -> List[str]:
+        return [
             *cmd,
             "-filter_complex",
             filter_complex,
@@ -172,7 +209,13 @@ def compose_final_video(
             "-movflags",
             "+faststart",
             out_path,
-        ],
+        ]
+
+    _run_export_encode_attempts(
+        prefer_gpu=prefer_gpu,
+        final_render_opts=final_render_opts,
+        normalize_audio=normalize_audio,
+        cmd_for_codec=_cmd_concat_burn,
         desc="concat+burn",
     )
     return out_path
@@ -188,6 +231,7 @@ def compose_final_video_moviepy(
     project_name: str,
     final_render_opts: Dict[str, str],
     normalize_audio: bool,
+    prefer_gpu: bool = False,
 ) -> str:
     """
     备用导出方案：MoviePy 负责“拼接输出中间文件”，随后用 FFmpeg 做单文件烧字幕/滤镜/编码。
@@ -276,12 +320,6 @@ def compose_final_video_moviepy(
     if extra_filters:
         vf_filter = f"{vf_filter},{','.join(extra_filters)}"
 
-    concat_codec_args = force_video_reencode(build_render_codec_args(final_render_opts), render_opts=final_render_opts)
-    if normalize_audio:
-        norm_render_opts = dict(final_render_opts)
-        norm_render_opts["clip_acodec"] = "aac"
-        concat_codec_args = force_video_reencode(build_render_codec_args(norm_render_opts), render_opts=norm_render_opts)
-
     # 若无需字幕/滤镜且不要求音频编码，则直接返回 MoviePy 拼接结果。
     if (not srt_entries) and (not extra_filters) and (not normalize_audio):
         if concat_path != out_path:
@@ -293,9 +331,8 @@ def compose_final_video_moviepy(
                     wf.write(rf.read())
         return out_path
 
-    logger.info(f"FFmpeg moviepy_concat+burn 参数: {concat_codec_args}")
-    run_ffmpeg(
-        [
+    def _cmd_moviepy_burn(concat_codec_args: List[str]) -> List[str]:
+        return [
             "-i",
             concat_path,
             "-vf",
@@ -311,7 +348,14 @@ def compose_final_video_moviepy(
             "-movflags",
             "+faststart",
             out_path,
-        ],
+        ]
+
+    logger.info("FFmpeg moviepy_concat+burn（可能多档 GPU/CPU 回退）")
+    _run_export_encode_attempts(
+        prefer_gpu=prefer_gpu,
+        final_render_opts=final_render_opts,
+        normalize_audio=normalize_audio,
+        cmd_for_codec=_cmd_moviepy_burn,
         desc="moviepy_concat+burn",
     )
     logger.info("FFmpeg moviepy_concat+burn 完成")

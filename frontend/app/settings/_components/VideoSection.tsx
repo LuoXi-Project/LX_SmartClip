@@ -71,6 +71,8 @@ const PARAM_HINTS: Record<string, string> = {
   clip_pix_fmt: '像素格式。yuv420p 兼容性最好（尤其浏览器播放）',
   export_container: '成片文件容器（字幕烧录、原声成片最终文件）',
   export_backend: '成片导出实现：`moviepy`（更稳）或 `ffmpeg`（更快）；通常建议保持默认',
+  export_gpu:
+    '成片合成最终编码：开启后先尝试 NVENC（libx264→h264_nvenc、libx265→hevc_nvenc；已为 NVENC 时失败则回退 x264/x265）；VP9 等无对应硬件编码则仅用 CPU',
   export_vcodec: '成片视频编码：必须为实际编码器（无 copy），避免 concat 时间戳导致音画不同步',
   export_acodec: '成片音频编码：必须为实际编码器（无 copy）',
   export_preset: '成片 x264/x265 的编码速度与压缩权衡',

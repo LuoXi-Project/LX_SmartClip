@@ -15,7 +15,7 @@ from app.utils.paths import get_render_tmp_base_dir
 
 from .ass_builder import build_ass  # noqa: F401 - re-export for backwards compatibility
 from .composer import compose_final_video, compose_final_video_moviepy
-from .render_opts import final_render_opts_from_export, sanitize_no_stream_copy
+from .render_opts import final_render_opts_from_export, sanitize_no_stream_copy, truthy_export_gpu
 from .segment_render import (
     collect_segment_sources,
     render_original_segment,
@@ -49,6 +49,7 @@ def burn_to_mp4(
     if not segments:
         raise HTTPException(400, "segments不能为空")
 
+    prefer_gpu = truthy_export_gpu((export_render_opts or {}).get("export_gpu"))
     final_render_opts = sanitize_no_stream_copy(
         final_render_opts_from_export(export_render_opts, render_opts)
     )
@@ -119,6 +120,7 @@ def burn_to_mp4(
                 project_name=project_name,
                 final_render_opts=final_render_opts,
                 normalize_audio=normalize_audio,
+                prefer_gpu=prefer_gpu,
             )
         else:
             out_path = compose_final_video(
@@ -130,6 +132,7 @@ def burn_to_mp4(
                 project_name=project_name,
                 final_render_opts=final_render_opts,
                 normalize_audio=normalize_audio,
+                prefer_gpu=prefer_gpu,
             )
         logger.info("导出 MP4 完成: %s", out_path)
 

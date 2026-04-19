@@ -151,3 +151,35 @@ def sanitize_no_stream_copy(opts: Dict[str, str]) -> Dict[str, str]:
 def to_int(opts: Dict[str, str], key: str, default: int) -> int:
     return _to_int(opts, key, default)
 
+
+def truthy_export_gpu(val: Optional[str]) -> bool:
+    return str(val or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def iter_export_gpu_render_attempts(render_opts: Dict[str, str], prefer_gpu: bool) -> List[Dict[str, str]]:
+    """
+    成片最终重编码：prefer_gpu 时按序尝试 NVENC → CPU（或 NVENC 直连失败再回退）。
+    libvpx-vp9 等无常见 NVENC 映射时仅返回一档配置。
+    """
+    base = dict(render_opts)
+    if not prefer_gpu:
+        return [base]
+    vc = (base.get("clip_vcodec") or "libx264").strip().lower()
+    if vc == "libx264":
+        gpu = dict(base)
+        gpu["clip_vcodec"] = "h264_nvenc"
+        return [gpu, base]
+    if vc == "libx265":
+        gpu = dict(base)
+        gpu["clip_vcodec"] = "hevc_nvenc"
+        return [gpu, base]
+    if vc == "h264_nvenc":
+        cpu = dict(base)
+        cpu["clip_vcodec"] = "libx264"
+        return [base, cpu]
+    if vc == "hevc_nvenc":
+        cpu = dict(base)
+        cpu["clip_vcodec"] = "libx265"
+        return [base, cpu]
+    return [base]
+

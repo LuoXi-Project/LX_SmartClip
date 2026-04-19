@@ -161,6 +161,13 @@ DEFAULT_CONFIG = [
         '["moviepy","ffmpeg"]',
     ),
     (
+        "export_gpu",
+        "false",
+        "select",
+        "成片优先使用 GPU 编码（NVENC，失败自动回退 CPU）",
+        '["false","true"]',
+    ),
+    (
         "export_vcodec",
         "libx264",
         "select",

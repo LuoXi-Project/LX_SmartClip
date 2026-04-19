@@ -85,6 +85,7 @@ export const VIDEO_KEYS = [
   // 成片导出（烧录 / 原声成片）
   'export_container',
   'export_backend',
+  'export_gpu',
   'export_vcodec',
   'export_acodec',
   'export_preset',

@@ -99,6 +99,7 @@ async def _load_export_render_opts(db) -> dict:
         "export_scale_height",
         "export_pix_fmt",
         "export_container",
+        "export_gpu",
     ]
     opts = {}
     for key in keys:

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import apiClient, { connectProcessJobWebSocket, processJobsApi, videosApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
-import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 
 const STEPS = [
@@ -62,6 +62,8 @@ export default function ProcessPage() {
   const [syncVectorOnRecover, setSyncVectorOnRecover] = useState(true)
   const [statusUpdating, setStatusUpdating] = useState(false)
   const [statusFixMsg, setStatusFixMsg] = useState('')
+  /** 最近一次主入口任务模式：用于完成文案区分（恢复区重跑不改变此值） */
+  const [runPreset, setRunPreset] = useState<'full' | 'asr_only'>('full')
   const [activeTaskId, setActiveTaskId] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -258,14 +260,40 @@ export default function ProcessPage() {
     setSteps((p) => ({ ...p, [msg.step as StepKey]: { status: msg.status as StepStatus, message: msg.message, detail: msg.detail } }))
   }
 
+  /** 口播快轨：只做切分（若尚无片段）+ ASR，跳过抽帧 / VLM / 向量，显著快于全流程 */
+  const asrOnlySkipSteps = (hasExistingClips: boolean): string[] =>
+    hasExistingClips
+      ? ['split', 'extract_frames', 'vlm', 'embed']
+      : ['extract_frames', 'vlm', 'embed']
+
   const handleStart = async () => {
     if (!selId || running || activeTaskId) return
+    setRunPreset('full')
     setSteps(blank())
     setRunning(true)
     setDone(false)
     setFinalMetrics(null)
     try {
       const created = await processJobsApi.create(selId)
+      persistActiveTask(created.task_id)
+      const snapshot = await processJobsApi.get(created.task_id)
+      applyTaskSnapshot(snapshot)
+      bindTaskSocket(created.task_id)
+    } catch {
+      setRunning(false)
+    }
+  }
+
+  const handleStartAsrOnly = async () => {
+    if (!selId || running || activeTaskId) return
+    const hasClips = (videos.find((v) => v.id === selId)?.total_clips ?? 0) > 0
+    setRunPreset('asr_only')
+    setSteps(blank())
+    setRunning(true)
+    setDone(false)
+    setFinalMetrics(null)
+    try {
+      const created = await processJobsApi.create(selId, { skip_steps: asrOnlySkipSteps(hasClips) })
       persistActiveTask(created.task_id)
       const snapshot = await processJobsApi.get(created.task_id)
       applyTaskSnapshot(snapshot)
@@ -456,13 +484,31 @@ export default function ProcessPage() {
         <section className="flex flex-wrap items-center gap-3">
           <button onClick={handleStart} disabled={!selId || selectionLocked}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors">
-            {selectionLocked ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理</>}
+            {selectionLocked ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleStartAsrOnly()}
+            disabled={!selId || selectionLocked}
+            title="跳过抽帧、视觉描述与向量入库；无现成片段时会先切分再识别。适合口播剪气口。"
+            className="flex items-center gap-2 px-5 py-2.5 border border-amber-600/50 bg-amber-500/10 hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed text-amber-100 text-sm font-medium rounded-lg transition-colors"
+          >
+            {selectionLocked ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
+            口播快轨（仅 ASR）
           </button>
           {activeTaskId && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
           {selVideo && selectionLocked && (
             <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo.name}</span></span>
           )}
           {selVideo && !selectionLocked && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
+          {selVideo && !selectionLocked && (
+            <span className="w-full sm:w-auto text-[11px] text-slate-500 leading-relaxed sm:ml-0 basis-full">
+              全流程含抽帧与 VLM，较慢；若只依赖台词剪口播，优先用「口播快轨」。
+              {selVideo.total_clips > 0
+                ? ` 当前已有 ${selVideo.total_clips} 个片段，快轨不会重切分，仅刷新 ASR。`
+                : ' 当前尚无片段，快轨会先切分再只跑语音识别。'}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setRecoverOpen((o) => !o)}
@@ -689,7 +735,11 @@ export default function ProcessPage() {
             <CheckCircle2 className="w-8 h-8 text-emerald-400 shrink-0" />
             <div>
               <p className="font-semibold text-emerald-300">处理完成！</p>
-              <p className="text-sm text-slate-400 mt-0.5">视频已完成全部处理步骤，现在可以进行智能剪辑。</p>
+              <p className="text-sm text-slate-400 mt-0.5">
+                {runPreset === 'asr_only'
+                  ? '已完成切分（若需要）与语音识别。若还要画面描述或素材语义检索，请使用「开始处理（全流程）」或下方恢复区补跑 VLM / 向量。'
+                  : '视频已完成全部处理步骤，现在可以进行智能剪辑。'}
+              </p>
             </div>
           </section>
         )}

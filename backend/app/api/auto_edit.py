@@ -638,11 +638,23 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
             # 把 LLM 鉴权/调用失败等关键异常透传到前端展示
             raise HTTPException(status_code=502, detail=str(e)) from e
     else:
-        plan = build_plan_from_clip_groups(
-            clip_groups=groups,
-            strategy=req.strategy,
-            video_title_hint=hint,
-        )
+        build_kwargs = {
+            "clip_groups": groups,
+            "strategy": req.strategy,
+            "video_title_hint": hint,
+            "audio_activity_cfg": {
+                "db_threshold": float(req.activity_db_threshold),
+                "min_silence_sec": float(req.activity_min_silence_sec),
+                "min_keep_sec": float(req.activity_min_keep_sec),
+                "merge_gap_sec": float(req.activity_merge_gap_sec),
+                "head_pad_sec": float(req.activity_head_pad_sec),
+                "tail_pad_sec": float(req.activity_tail_pad_sec),
+            },
+        }
+        if req.strategy == "audio_activity_fast":
+            plan = await run_heavy(build_plan_from_clip_groups, **build_kwargs)
+        else:
+            plan = build_plan_from_clip_groups(**build_kwargs)
     plan = apply_voiceover_source_timeline_dedupe(
         plan, allow_overlaps=req.allow_overlapping_source_timeline
     )

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+import subprocess
 import uuid
 from typing import Any, List, Sequence
 
@@ -17,6 +20,10 @@ from app.models.auto_edit import (
     TimingHint,
 )
 from app.models.subtitle import ClipTrimPart
+from app.utils.bin_paths import ffmpeg_bin
+from app.utils.paths import resolve_stored_path
+
+logger = logging.getLogger(__name__)
 
 # 同一 clip 内判断「已占用源时间」时的容差（秒）
 _VO_OVERLAP_EPS_SEC = 0.05
@@ -24,6 +31,95 @@ _VO_OVERLAP_EPS_SEC = 0.05
 
 def _clip_has_asr(asr_text: str | None) -> bool:
     return bool((asr_text or "").strip())
+
+
+def _merge_ranges(ranges: list[tuple[float, float]], eps_sec: float) -> list[tuple[float, float]]:
+    if not ranges:
+        return []
+    rows = sorted(ranges, key=lambda x: x[0])
+    out: list[tuple[float, float]] = []
+    cs, ce = rows[0]
+    for ns, ne in rows[1:]:
+        if ns <= ce + eps_sec:
+            ce = max(ce, ne)
+        else:
+            out.append((cs, ce))
+            cs, ce = ns, ne
+    out.append((cs, ce))
+    return out
+
+
+def detect_voice_ranges_by_silencedetect(
+    *,
+    clip_path: str,
+    clip_dur: float,
+    noise_db: float,
+    min_silence_sec: float,
+    min_keep_sec: float,
+    merge_gap_sec: float,
+    head_pad_sec: float,
+    tail_pad_sec: float,
+) -> list[tuple[float, float]]:
+    dur = max(0.0, float(clip_dur or 0.0))
+    if dur <= 0:
+        return []
+    cmd = [
+        ffmpeg_bin(),
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        clip_path,
+        "-af",
+        f"silencedetect=noise={noise_db:.2f}dB:d={max(0.05, float(min_silence_sec)):.3f}",
+        "-f",
+        "null",
+        "-",
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+    if result.returncode != 0:
+        logger.warning("silencedetect 失败，回退整段 clip: %s", clip_path)
+        return [(0.0, dur)] if dur >= min_keep_sec else []
+
+    stderr_txt = result.stderr.decode(errors="replace")
+    st_re = re.compile(r"silence_start:\s*([0-9]+(?:\.[0-9]+)?)")
+    ed_re = re.compile(r"silence_end:\s*([0-9]+(?:\.[0-9]+)?)")
+
+    silences: list[tuple[float, float]] = []
+    cur_sil_start: float | None = None
+    for ln in stderr_txt.splitlines():
+        m1 = st_re.search(ln)
+        if m1:
+            cur_sil_start = max(0.0, min(dur, float(m1.group(1))))
+            continue
+        m2 = ed_re.search(ln)
+        if m2:
+            end_t = max(0.0, min(dur, float(m2.group(1))))
+            start_t = 0.0 if cur_sil_start is None else cur_sil_start
+            if end_t > start_t:
+                silences.append((start_t, end_t))
+            cur_sil_start = None
+    if cur_sil_start is not None and dur > cur_sil_start:
+        silences.append((cur_sil_start, dur))
+
+    silences = _merge_ranges(silences, 0.02)
+    voices: list[tuple[float, float]] = []
+    cursor = 0.0
+    for ss, se in silences:
+        if ss > cursor:
+            voices.append((cursor, ss))
+        cursor = max(cursor, se)
+    if cursor < dur:
+        voices.append((cursor, dur))
+
+    padded: list[tuple[float, float]] = []
+    for st, et in voices:
+        pst = max(0.0, st - max(0.0, head_pad_sec))
+        pet = min(dur, et + max(0.0, tail_pad_sec))
+        if pet - pst >= max(0.1, min_keep_sec):
+            padded.append((pst, pet))
+
+    merged = _merge_ranges(padded, max(0.0, merge_gap_sec))
+    return [(st, et) for st, et in merged if et - st >= max(0.1, min_keep_sec)]
 
 
 def _parse_asr_segments(asr_segments_json: str | None) -> list[dict[str, Any]]:
@@ -325,7 +421,7 @@ async def load_clip_groups_by_videos(
     groups: List[List[aiosqlite.Row]] = []
     for vid in video_ids:
         async with db.execute(
-            "SELECT id, video_id, start_time, duration, asr_text, asr_segments "
+            "SELECT id, video_id, clip_path, start_time, duration, asr_text, asr_segments "
             "FROM clips WHERE video_id = ? ORDER BY start_time ASC, id ASC",
             (vid,),
         ) as cur:
@@ -339,12 +435,26 @@ def build_plan_from_clip_groups(
     clip_groups: Sequence[Sequence[aiosqlite.Row]],
     strategy: str,
     video_title_hint: str | None,
+    audio_activity_cfg: dict[str, float] | None = None,
 ) -> Plan:
-    if strategy not in ("asr_fast", "standard"):
+    if strategy not in ("asr_fast", "standard", "audio_activity_fast"):
         raise ValueError(f"unsupported strategy: {strategy}")
 
     # MVP：standard 暂时与 asr_fast 等价（均用 clips.asr_segments 精确裁剪）。
-    label = "极速" if strategy == "asr_fast" else "标准"
+    if strategy == "asr_fast":
+        label = "极速"
+    elif strategy == "standard":
+        label = "标准"
+    else:
+        label = "音频活动"
+
+    aa_cfg = audio_activity_cfg or {}
+    aa_noise_db = float(aa_cfg.get("db_threshold", -36.0))
+    aa_min_sil = float(aa_cfg.get("min_silence_sec", 0.25))
+    aa_min_keep = float(aa_cfg.get("min_keep_sec", 0.35))
+    aa_merge_gap = float(aa_cfg.get("merge_gap_sec", 0.2))
+    aa_head_pad = float(aa_cfg.get("head_pad_sec", 0.08))
+    aa_tail_pad = float(aa_cfg.get("tail_pad_sec", 0.12))
 
     segments: List[SegmentPlan] = []
     total_sec = 0.0
@@ -359,6 +469,47 @@ def build_plan_from_clip_groups(
             clip_dur = float(row["duration"] or 0.0)
             asr_segments_json = row["asr_segments"]
             seg_items = _parse_asr_segments(asr_segments_json)
+            clip_path = resolve_stored_path(str(row["clip_path"] or ""))
+
+            if strategy == "audio_activity_fast":
+                detected = detect_voice_ranges_by_silencedetect(
+                    clip_path=clip_path,
+                    clip_dur=clip_dur,
+                    noise_db=aa_noise_db,
+                    min_silence_sec=aa_min_sil,
+                    min_keep_sec=aa_min_keep,
+                    merge_gap_sec=aa_merge_gap,
+                    head_pad_sec=aa_head_pad,
+                    tail_pad_sec=aa_tail_pad,
+                )
+                for idx, (st_rel, et_rel) in enumerate(detected):
+                    dur = et_rel - st_rel
+                    if dur <= 0:
+                        continue
+                    total_sec += dur
+                    st_abs = clip_base + st_rel
+                    et_abs = clip_base + et_rel
+                    segments.append(
+                        SegmentPlan(
+                            id=f"vq_{order:04d}_{cid[:6]}_a{idx:03d}",
+                            order=order,
+                            clip_group=[ClipRef(clip_id=cid, video_id=vid, weight=1.0)],
+                            selected_clip_ids=[cid],
+                            start_time_sec=st_abs,
+                            end_time_sec=et_abs,
+                            override_duration_sec=dur,
+                            clip_start_offset_sec=st_rel,
+                            audio_mode="original",
+                            subtitle=SubtitlePlan(
+                                strategy="none",
+                                text="（语音活动片段）",
+                                source="asr",
+                                timing_hint=TimingHint(start=st_abs, end=et_abs),
+                            ),
+                        )
+                    )
+                    order += 1
+                continue
 
             # 回退：没有 segments，就按整段 clip（仍可通过 override_duration_sec=clip_dur 移除尾部静音，若 clips.duration 已裁剪对齐）
             if not seg_items:
@@ -445,10 +596,16 @@ def build_plan_from_clip_groups(
 
     vt = (video_title_hint or "").strip()
     title = f"口播快剪（{label}）· {vt}" if vt else f"口播快剪（{label}）"
-    summary = (
-        f"基于 ASR 句子级 segments 的{label}快剪：共 {len(segments)} 段，"
-        f"预估总时长约 {total_sec:.1f}s（按句子区间 -ss/-t 精确裁剪）。"
-    )
+    if strategy == "audio_activity_fast":
+        summary = (
+            f"基于原音频活动检测（静音互补）粗剪：共 {len(segments)} 段，"
+            f"预估总时长约 {total_sec:.1f}s（支持阈值/补偿参数微调）。"
+        )
+    else:
+        summary = (
+            f"基于 ASR 句子级 segments 的{label}快剪：共 {len(segments)} 段，"
+            f"预估总时长约 {total_sec:.1f}s（按句子区间 -ss/-t 精确裁剪）。"
+        )
 
     return Plan(
         plan_id=uuid.uuid4().hex[:8],

@@ -941,6 +941,14 @@ export default function MatchPage() {
     strategy: VoiceoverQuickCutStrategy
     userPrompt?: string
     allowOverlappingSourceTimeline?: boolean
+    audioActivityConfig?: {
+      activityDbThreshold: number
+      activityMinSilenceSec: number
+      activityMinKeepSec: number
+      activityMergeGapSec: number
+      activityHeadPadSec: number
+      activityTailPadSec: number
+    }
   }) {
     setAutoError('')
     setAutoLoading(true)
@@ -950,6 +958,12 @@ export default function MatchPage() {
         strategy: payload.strategy,
         user_prompt: payload.userPrompt,
         allow_overlapping_source_timeline: Boolean(payload.allowOverlappingSourceTimeline),
+        activity_db_threshold: payload.audioActivityConfig?.activityDbThreshold,
+        activity_min_silence_sec: payload.audioActivityConfig?.activityMinSilenceSec,
+        activity_min_keep_sec: payload.audioActivityConfig?.activityMinKeepSec,
+        activity_merge_gap_sec: payload.audioActivityConfig?.activityMergeGapSec,
+        activity_head_pad_sec: payload.audioActivityConfig?.activityHeadPadSec,
+        activity_tail_pad_sec: payload.audioActivityConfig?.activityTailPadSec,
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))

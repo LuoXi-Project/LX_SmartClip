@@ -5,7 +5,23 @@ import { MessageSquare, Mic2, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
 import { Switch } from '@/components/ui/switch'
 
-export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic'
+export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic' | 'audio_activity_fast'
+
+export type VoiceoverAudioActivityConfig = {
+  activityDbThreshold: number
+  activityMinSilenceSec: number
+  activityMinKeepSec: number
+  activityMergeGapSec: number
+  activityHeadPadSec: number
+  activityTailPadSec: number
+}
+
+type VoiceoverAudioActivityPreset = {
+  id: 'quiet_voiceover' | 'noisy_scene' | 'tight_rhythm'
+  label: string
+  desc: string
+  config: VoiceoverAudioActivityConfig
+}
 
 type VoiceoverQuickCutPanelProps = {
   selectedVideoIds: string[]
@@ -17,6 +33,7 @@ type VoiceoverQuickCutPanelProps = {
       strategy: VoiceoverQuickCutStrategy
       userPrompt?: string
       allowOverlappingSourceTimeline?: boolean
+      audioActivityConfig?: VoiceoverAudioActivityConfig
     }
   ) => void | Promise<void>
 }
@@ -32,6 +49,53 @@ const STRATEGY_OPTIONS = [
     label: '智能快剪',
     desc: '句子打分筛选，带缓冲合并与保护策略（推荐默认）',
   },
+  {
+    id: 'audio_activity_fast' as const,
+    label: '音频粗剪',
+    desc: '无需 ASR，按音频活动自动保留语音段（支持参数微调）',
+  },
+]
+
+const AUDIO_ACTIVITY_PRESETS: VoiceoverAudioActivityPreset[] = [
+  {
+    id: 'quiet_voiceover',
+    label: '安静口播',
+    desc: '室内相对安静，尽量保留完整语句',
+    config: {
+      activityDbThreshold: -38,
+      activityMinSilenceSec: 0.22,
+      activityMinKeepSec: 0.3,
+      activityMergeGapSec: 0.25,
+      activityHeadPadSec: 0.1,
+      activityTailPadSec: 0.14,
+    },
+  },
+  {
+    id: 'noisy_scene',
+    label: '嘈杂环境',
+    desc: '环境噪声明显，减少误保留',
+    config: {
+      activityDbThreshold: -31,
+      activityMinSilenceSec: 0.3,
+      activityMinKeepSec: 0.45,
+      activityMergeGapSec: 0.16,
+      activityHeadPadSec: 0.06,
+      activityTailPadSec: 0.1,
+    },
+  },
+  {
+    id: 'tight_rhythm',
+    label: '紧凑节奏',
+    desc: '更强删减，优先速度与密度',
+    config: {
+      activityDbThreshold: -34,
+      activityMinSilenceSec: 0.2,
+      activityMinKeepSec: 0.5,
+      activityMergeGapSec: 0.12,
+      activityHeadPadSec: 0.04,
+      activityTailPadSec: 0.08,
+    },
+  },
 ]
 
 /**
@@ -46,6 +110,15 @@ export function VoiceoverQuickCutPanel({
   const overlapLabelId = `${overlapSwitchId}-label`
   const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('asr_fast')
   const [semanticUserPrompt, setSemanticUserPrompt] = useState('')
+  const [audioActivityConfig, setAudioActivityConfig] = useState<VoiceoverAudioActivityConfig>({
+    activityDbThreshold: -36,
+    activityMinSilenceSec: 0.25,
+    activityMinKeepSec: 0.35,
+    activityMergeGapSec: 0.2,
+    activityHeadPadSec: 0.08,
+    activityTailPadSec: 0.12,
+  })
+  const [audioPresetId, setAudioPresetId] = useState<VoiceoverAudioActivityPreset['id'] | 'custom'>('custom')
   /** 默认关闭：与后端一致，避免同一 clip 源时间重叠导致口播重复播放 */
   const [allowOverlappingSourceTimeline, setAllowOverlappingSourceTimeline] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -82,6 +155,7 @@ export function VoiceoverQuickCutPanel({
           strategy,
           userPrompt,
           allowOverlappingSourceTimeline,
+          audioActivityConfig: strategy === 'audio_activity_fast' ? audioActivityConfig : undefined,
         })
       } finally {
         setGenerating(false)
@@ -182,6 +256,162 @@ export function VoiceoverQuickCutPanel({
               rows={4}
               className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600 resize-y min-h-[88px]"
             />
+          </div>
+        )}
+
+        {strategy === 'audio_activity_fast' && (
+          <div className="space-y-3 rounded-xl border border-violet-500/20 bg-slate-950/40 px-4 py-3">
+            <p className="text-[11px] font-medium text-violet-200/95">
+              音频粗剪参数（可微调）
+            </p>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              该模式通过静音检测保留语音活动区间。阈值越高越容易判静音；头尾补偿用于避免切字。
+            </p>
+            <div className="space-y-1.5">
+              <p className="text-[11px] text-slate-300">参数预设</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {AUDIO_ACTIVITY_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      setAudioActivityConfig(preset.config)
+                      setAudioPresetId(preset.id)
+                    }}
+                    className={`text-left rounded-lg border px-2.5 py-2 transition-colors ${
+                      audioPresetId === preset.id
+                        ? 'border-violet-500/70 bg-violet-500/15 text-violet-100'
+                        : 'border-slate-700 bg-slate-900/40 text-slate-300 hover:border-slate-600'
+                    }`}
+                  >
+                    <span className="block text-[11px] font-medium">{preset.label}</span>
+                    <span className="mt-1 block text-[10px] text-slate-500 leading-snug">{preset.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-[11px] text-slate-300 space-y-1">
+                <span>静音阈值 dB</span>
+                <input
+                  type="number"
+                  step={1}
+                  min={-70}
+                  max={-5}
+                  value={audioActivityConfig.activityDbThreshold}
+                  onChange={(e) =>
+                    setAudioActivityConfig((prev) => {
+                      setAudioPresetId('custom')
+                      return {
+                        ...prev,
+                        activityDbThreshold: Number(e.target.value || -36),
+                      }
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                />
+              </label>
+              <label className="text-[11px] text-slate-300 space-y-1">
+                <span>最短静音秒数</span>
+                <input
+                  type="number"
+                  step={0.05}
+                  min={0.05}
+                  max={2}
+                  value={audioActivityConfig.activityMinSilenceSec}
+                  onChange={(e) =>
+                    setAudioActivityConfig((prev) => {
+                      setAudioPresetId('custom')
+                      return {
+                        ...prev,
+                        activityMinSilenceSec: Number(e.target.value || 0.25),
+                      }
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                />
+              </label>
+              <label className="text-[11px] text-slate-300 space-y-1">
+                <span>最短保留秒数</span>
+                <input
+                  type="number"
+                  step={0.05}
+                  min={0.1}
+                  max={10}
+                  value={audioActivityConfig.activityMinKeepSec}
+                  onChange={(e) =>
+                    setAudioActivityConfig((prev) => {
+                      setAudioPresetId('custom')
+                      return {
+                        ...prev,
+                        activityMinKeepSec: Number(e.target.value || 0.35),
+                      }
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                />
+              </label>
+              <label className="text-[11px] text-slate-300 space-y-1">
+                <span>段间合并阈值秒</span>
+                <input
+                  type="number"
+                  step={0.05}
+                  min={0}
+                  max={2}
+                  value={audioActivityConfig.activityMergeGapSec}
+                  onChange={(e) =>
+                    setAudioActivityConfig((prev) => {
+                      setAudioPresetId('custom')
+                      return {
+                        ...prev,
+                        activityMergeGapSec: Number(e.target.value || 0.2),
+                      }
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                />
+              </label>
+              <label className="text-[11px] text-slate-300 space-y-1">
+                <span>前置补偿秒</span>
+                <input
+                  type="number"
+                  step={0.01}
+                  min={0}
+                  max={1}
+                  value={audioActivityConfig.activityHeadPadSec}
+                  onChange={(e) =>
+                    setAudioActivityConfig((prev) => {
+                      setAudioPresetId('custom')
+                      return {
+                        ...prev,
+                        activityHeadPadSec: Number(e.target.value || 0.08),
+                      }
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                />
+              </label>
+              <label className="text-[11px] text-slate-300 space-y-1">
+                <span>后置补偿秒</span>
+                <input
+                  type="number"
+                  step={0.01}
+                  min={0}
+                  max={1}
+                  value={audioActivityConfig.activityTailPadSec}
+                  onChange={(e) =>
+                    setAudioActivityConfig((prev) => {
+                      setAudioPresetId('custom')
+                      return {
+                        ...prev,
+                        activityTailPadSec: Number(e.target.value || 0.12),
+                      }
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                />
+              </label>
+            </div>
           </div>
         )}
 

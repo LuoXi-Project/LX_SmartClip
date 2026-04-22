@@ -745,7 +745,16 @@ export interface AutoEditPlanSessionResponseApi {
   stream_url: string
 }
 
-export type VoiceoverQuickCutStrategyApi = 'asr_fast' | 'standard' | 'semantic'
+export type VoiceoverQuickCutStrategyApi = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'
+
+export interface VoiceoverAudioActivityConfigApi {
+  activity_db_threshold?: number
+  activity_min_silence_sec?: number
+  activity_min_keep_sec?: number
+  activity_merge_gap_sec?: number
+  activity_head_pad_sec?: number
+  activity_tail_pad_sec?: number
+}
 
 export interface VoiceoverQuickCutRequestApi {
   video_ids: string[]
@@ -753,6 +762,13 @@ export interface VoiceoverQuickCutRequestApi {
   user_prompt?: string
   /** 默认 false：同一 video 源绝对时间重叠（含跨 clip）时按成片顺序裁切，避免重复播放 */
   allow_overlapping_source_timeline?: boolean
+  /** strategy=audio_activity_fast 时生效：音频活动检测参数 */
+  activity_db_threshold?: number
+  activity_min_silence_sec?: number
+  activity_min_keep_sec?: number
+  activity_merge_gap_sec?: number
+  activity_head_pad_sec?: number
+  activity_tail_pad_sec?: number
 }
 
 export const autoEditApi = {

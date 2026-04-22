@@ -178,14 +178,50 @@ class VoiceoverQuickCutRequest(BaseModel):
     """口播快剪：基于 clips.asr_text 生成原声 Plan（当前成片仍为片段级；句级时间见 clips.asr_segments）。"""
 
     video_ids: List[str] = Field(..., description="选中视频 ID，顺序即成片片段顺序")
-    strategy: Literal["asr_fast", "standard", "semantic"] = Field(
+    strategy: Literal["asr_fast", "standard", "semantic", "audio_activity_fast"] = Field(
         "asr_fast",
-        description="asr_fast=仅保留有 ASR 的片段；standard≈asr_fast；semantic=LLM 分块筛选句子",
+        description="asr_fast=仅保留有 ASR 的片段；standard≈asr_fast；semantic=LLM 分块筛选句子；audio_activity_fast=按音频活动(静音检测)粗剪",
     )
     user_prompt: Optional[str] = Field(None, description="智能快剪必填：剪辑诉求，用于 LLM 筛选句子")
     allow_overlapping_source_timeline: bool = Field(
         False,
         description="是否允许同一素材视频 (video_id) 下多段成片在源文件绝对时间上重叠（默认否；否时先裁切重叠再合并相接段，跨 clip 用 clip_trims 导出）",
+    )
+    activity_db_threshold: float = Field(
+        -36.0,
+        ge=-70.0,
+        le=-5.0,
+        description="audio_activity_fast: 静音检测阈值(dB)，越高越敏感（更容易判为静音）",
+    )
+    activity_min_silence_sec: float = Field(
+        0.25,
+        ge=0.05,
+        le=2.0,
+        description="audio_activity_fast: 识别为静音的最短持续时长(秒)",
+    )
+    activity_min_keep_sec: float = Field(
+        0.35,
+        ge=0.1,
+        le=10.0,
+        description="audio_activity_fast: 保留语音片段最短时长(秒)",
+    )
+    activity_merge_gap_sec: float = Field(
+        0.2,
+        ge=0.0,
+        le=2.0,
+        description="audio_activity_fast: 相邻语音段间隔小于该值时自动合并(秒)",
+    )
+    activity_head_pad_sec: float = Field(
+        0.08,
+        ge=0.0,
+        le=1.0,
+        description="audio_activity_fast: 每段前置补偿时长(秒)",
+    )
+    activity_tail_pad_sec: float = Field(
+        0.12,
+        ge=0.0,
+        le=1.0,
+        description="audio_activity_fast: 每段后置补偿时长(秒)",
     )
 
 

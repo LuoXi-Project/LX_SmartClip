@@ -17,10 +17,15 @@ export type VoiceoverAudioActivityConfig = {
 }
 
 type VoiceoverAudioActivityPreset = {
-  id: 'quiet_voiceover' | 'noisy_scene' | 'tight_rhythm'
+  id: 'quiet_voiceover' | 'noisy_scene' | 'extreme_noisy' | 'tight_rhythm'
   label: string
   desc: string
   config: VoiceoverAudioActivityConfig
+}
+
+type ParamHelp = {
+  title: string
+  detail: string
 }
 
 type VoiceoverQuickCutPanelProps = {
@@ -84,6 +89,19 @@ const AUDIO_ACTIVITY_PRESETS: VoiceoverAudioActivityPreset[] = [
     },
   },
   {
+    id: 'extreme_noisy',
+    label: '极嘈杂环境',
+    desc: '强噪声/底噪场景，严格过滤非语音',
+    config: {
+      activityDbThreshold: -28,
+      activityMinSilenceSec: 0.35,
+      activityMinKeepSec: 0.55,
+      activityMergeGapSec: 0.1,
+      activityHeadPadSec: 0.04,
+      activityTailPadSec: 0.08,
+    },
+  },
+  {
     id: 'tight_rhythm',
     label: '紧凑节奏',
     desc: '更强删减，优先速度与密度',
@@ -97,6 +115,71 @@ const AUDIO_ACTIVITY_PRESETS: VoiceoverAudioActivityPreset[] = [
     },
   },
 ]
+
+function clampNum(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v))
+}
+
+function applyDenoiseStrength(
+  cfg: VoiceoverAudioActivityConfig,
+  strength: number,
+): VoiceoverAudioActivityConfig {
+  // 0~100：值越大越严格，适合更嘈杂场景
+  const s = clampNum(strength, 0, 100) / 100
+  return {
+    activityDbThreshold: Math.round(clampNum(cfg.activityDbThreshold + s * 8, -70, -5)),
+    activityMinSilenceSec: Number(clampNum(cfg.activityMinSilenceSec + s * 0.2, 0.05, 2).toFixed(2)),
+    activityMinKeepSec: Number(clampNum(cfg.activityMinKeepSec + s * 0.3, 0.1, 10).toFixed(2)),
+    activityMergeGapSec: Number(clampNum(cfg.activityMergeGapSec - s * 0.12, 0, 2).toFixed(2)),
+    activityHeadPadSec: Number(clampNum(cfg.activityHeadPadSec - s * 0.05, 0, 1).toFixed(2)),
+    activityTailPadSec: Number(clampNum(cfg.activityTailPadSec - s * 0.06, 0, 1).toFixed(2)),
+  }
+}
+
+const PARAM_HELP_TEXT: Record<
+  'db' | 'minSilence' | 'minKeep' | 'mergeGap' | 'headPad' | 'tailPad',
+  ParamHelp
+> = {
+  db: {
+    title: '静音阈值 dB',
+    detail: '判断“多小的声音算静音”。数值越接近 0（例如 -28），越容易把弱声音当静音，剪得更狠；数值更低（例如 -42）会保留更多细碎声音。',
+  },
+  minSilence: {
+    title: '最短静音秒数',
+    detail: '只有连续静音达到这个时长，才会被当作“可切分停顿”。调大可避免频繁切碎，调小会让切点更敏感。',
+  },
+  minKeep: {
+    title: '最短保留秒数',
+    detail: '短于该时长的语音片段会被丢弃。调大可过滤口癖/噪声碎片，调小会保留更多短促发音。',
+  },
+  mergeGap: {
+    title: '段间合并阈值秒',
+    detail: '两段语音中间停顿小于该值会合并成一段。调大更连贯，调小会切得更碎更紧凑。',
+  },
+  headPad: {
+    title: '前置补偿秒',
+    detail: '在每段起点前多留一点，避免吃掉开头字。调大更稳但可能带入杂音。',
+  },
+  tailPad: {
+    title: '后置补偿秒',
+    detail: '在每段终点后多留一点，避免吃掉尾音。调大更自然但可能拖尾。',
+  },
+}
+
+function HelpLabel({ text, help }: { text: string; help: ParamHelp }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>{text}</span>
+      <span
+        title={`${help.title}\n\n${help.detail}`}
+        aria-label={`${help.title}说明：${help.detail}`}
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-500/70 text-[10px] text-slate-300 cursor-help"
+      >
+        ?
+      </span>
+    </span>
+  )
+}
 
 /**
  * v3 口播快剪：不经过「文案匹配」。流程为选视频 → 选模式 → 生成剪辑方案；时间轴微调与成片导出在下方 AutoEditPanel（与自动/模板一致）。
@@ -119,6 +202,7 @@ export function VoiceoverQuickCutPanel({
     activityTailPadSec: 0.12,
   })
   const [audioPresetId, setAudioPresetId] = useState<VoiceoverAudioActivityPreset['id'] | 'custom'>('custom')
+  const [denoiseStrength, setDenoiseStrength] = useState(0)
   /** 默认关闭：与后端一致，避免同一 clip 源时间重叠导致口播重复播放 */
   const [allowOverlappingSourceTimeline, setAllowOverlappingSourceTimeline] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -131,6 +215,10 @@ export function VoiceoverQuickCutPanel({
 
   const selectedCount = selectedVideoIds.length
   const selectedDoneCount = selectedVideos.length
+  const effectiveAudioConfig = useMemo(
+    () => applyDenoiseStrength(audioActivityConfig, denoiseStrength),
+    [audioActivityConfig, denoiseStrength],
+  )
 
   async function handleGenerate() {
     setInfo(null)
@@ -155,7 +243,7 @@ export function VoiceoverQuickCutPanel({
           strategy,
           userPrompt,
           allowOverlappingSourceTimeline,
-          audioActivityConfig: strategy === 'audio_activity_fast' ? audioActivityConfig : undefined,
+          audioActivityConfig: strategy === 'audio_activity_fast' ? effectiveAudioConfig : undefined,
         })
       } finally {
         setGenerating(false)
@@ -267,9 +355,27 @@ export function VoiceoverQuickCutPanel({
             <p className="text-[10px] text-slate-500 leading-relaxed">
               该模式通过静音检测保留语音活动区间。阈值越高越容易判静音；头尾补偿用于避免切字。
             </p>
+            <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-300">降噪强度（快速轴）</span>
+                <span className="text-violet-300">{denoiseStrength}</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={denoiseStrength}
+                onChange={(e) => setDenoiseStrength(Number(e.target.value || 0))}
+                className="w-full accent-violet-500"
+              />
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                越大越严格（更适合噪声大场景）：提高静音阈值/最短保留，降低段间合并与补偿。
+              </p>
+            </div>
             <div className="space-y-1.5">
               <p className="text-[11px] text-slate-300">参数预设</p>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-4">
                 {AUDIO_ACTIVITY_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
@@ -277,6 +383,7 @@ export function VoiceoverQuickCutPanel({
                     onClick={() => {
                       setAudioActivityConfig(preset.config)
                       setAudioPresetId(preset.id)
+                      setDenoiseStrength(0)
                     }}
                     className={`text-left rounded-lg border px-2.5 py-2 transition-colors ${
                       audioPresetId === preset.id
@@ -290,124 +397,122 @@ export function VoiceoverQuickCutPanel({
                 ))}
               </div>
             </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-[10px] text-slate-400">
+              生效参数：阈值 {effectiveAudioConfig.activityDbThreshold} dB / 最短静音 {effectiveAudioConfig.activityMinSilenceSec}s
+              / 最短保留 {effectiveAudioConfig.activityMinKeepSec}s / 合并阈值 {effectiveAudioConfig.activityMergeGapSec}s
+            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="text-[11px] text-slate-300 space-y-1">
-                <span>静音阈值 dB</span>
+                <HelpLabel text="静音阈值 dB" help={PARAM_HELP_TEXT.db} />
                 <input
                   type="number"
                   step={1}
                   min={-70}
                   max={-5}
-                  value={audioActivityConfig.activityDbThreshold}
-                  onChange={(e) =>
-                    setAudioActivityConfig((prev) => {
-                      setAudioPresetId('custom')
-                      return {
-                        ...prev,
-                        activityDbThreshold: Number(e.target.value || -36),
-                      }
+                  value={effectiveAudioConfig.activityDbThreshold}
+                  onChange={(e) => {
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({
+                      ...effectiveAudioConfig,
+                      activityDbThreshold: Number(e.target.value || -36),
                     })
-                  }
+                  }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
                 />
               </label>
               <label className="text-[11px] text-slate-300 space-y-1">
-                <span>最短静音秒数</span>
+                <HelpLabel text="最短静音秒数" help={PARAM_HELP_TEXT.minSilence} />
                 <input
                   type="number"
                   step={0.05}
                   min={0.05}
                   max={2}
-                  value={audioActivityConfig.activityMinSilenceSec}
-                  onChange={(e) =>
-                    setAudioActivityConfig((prev) => {
-                      setAudioPresetId('custom')
-                      return {
-                        ...prev,
-                        activityMinSilenceSec: Number(e.target.value || 0.25),
-                      }
+                  value={effectiveAudioConfig.activityMinSilenceSec}
+                  onChange={(e) => {
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({
+                      ...effectiveAudioConfig,
+                      activityMinSilenceSec: Number(e.target.value || 0.25),
                     })
-                  }
+                  }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
                 />
               </label>
               <label className="text-[11px] text-slate-300 space-y-1">
-                <span>最短保留秒数</span>
+                <HelpLabel text="最短保留秒数" help={PARAM_HELP_TEXT.minKeep} />
                 <input
                   type="number"
                   step={0.05}
                   min={0.1}
                   max={10}
-                  value={audioActivityConfig.activityMinKeepSec}
-                  onChange={(e) =>
-                    setAudioActivityConfig((prev) => {
-                      setAudioPresetId('custom')
-                      return {
-                        ...prev,
-                        activityMinKeepSec: Number(e.target.value || 0.35),
-                      }
+                  value={effectiveAudioConfig.activityMinKeepSec}
+                  onChange={(e) => {
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({
+                      ...effectiveAudioConfig,
+                      activityMinKeepSec: Number(e.target.value || 0.35),
                     })
-                  }
+                  }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
                 />
               </label>
               <label className="text-[11px] text-slate-300 space-y-1">
-                <span>段间合并阈值秒</span>
+                <HelpLabel text="段间合并阈值秒" help={PARAM_HELP_TEXT.mergeGap} />
                 <input
                   type="number"
                   step={0.05}
                   min={0}
                   max={2}
-                  value={audioActivityConfig.activityMergeGapSec}
-                  onChange={(e) =>
-                    setAudioActivityConfig((prev) => {
-                      setAudioPresetId('custom')
-                      return {
-                        ...prev,
-                        activityMergeGapSec: Number(e.target.value || 0.2),
-                      }
+                  value={effectiveAudioConfig.activityMergeGapSec}
+                  onChange={(e) => {
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({
+                      ...effectiveAudioConfig,
+                      activityMergeGapSec: Number(e.target.value || 0.2),
                     })
-                  }
+                  }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
                 />
               </label>
               <label className="text-[11px] text-slate-300 space-y-1">
-                <span>前置补偿秒</span>
+                <HelpLabel text="前置补偿秒" help={PARAM_HELP_TEXT.headPad} />
                 <input
                   type="number"
                   step={0.01}
                   min={0}
                   max={1}
-                  value={audioActivityConfig.activityHeadPadSec}
-                  onChange={(e) =>
-                    setAudioActivityConfig((prev) => {
-                      setAudioPresetId('custom')
-                      return {
-                        ...prev,
-                        activityHeadPadSec: Number(e.target.value || 0.08),
-                      }
+                  value={effectiveAudioConfig.activityHeadPadSec}
+                  onChange={(e) => {
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({
+                      ...effectiveAudioConfig,
+                      activityHeadPadSec: Number(e.target.value || 0.08),
                     })
-                  }
+                  }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
                 />
               </label>
               <label className="text-[11px] text-slate-300 space-y-1">
-                <span>后置补偿秒</span>
+                <HelpLabel text="后置补偿秒" help={PARAM_HELP_TEXT.tailPad} />
                 <input
                   type="number"
                   step={0.01}
                   min={0}
                   max={1}
-                  value={audioActivityConfig.activityTailPadSec}
-                  onChange={(e) =>
-                    setAudioActivityConfig((prev) => {
-                      setAudioPresetId('custom')
-                      return {
-                        ...prev,
-                        activityTailPadSec: Number(e.target.value || 0.12),
-                      }
+                  value={effectiveAudioConfig.activityTailPadSec}
+                  onChange={(e) => {
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({
+                      ...effectiveAudioConfig,
+                      activityTailPadSec: Number(e.target.value || 0.12),
                     })
-                  }
+                  }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
                 />
               </label>

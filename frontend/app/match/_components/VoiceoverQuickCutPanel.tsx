@@ -222,8 +222,17 @@ export function VoiceoverQuickCutPanel({
   const [waveEnergy, setWaveEnergy] = useState<number[]>([])
   const [waveLoading, setWaveLoading] = useState(false)
   const [waveError, setWaveError] = useState<string | null>(null)
+  const [loopEnabled, setLoopEnabled] = useState(false)
+  const [loopRange, setLoopRange] = useState<{ a: number; b: number } | null>(null)
+  const [selecting, setSelecting] = useState(false)
+  const [selectionPx, setSelectionPx] = useState<{ x1: number; x2: number } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const dragRef = useRef<
+    | { mode: 'threshold'; pointerId: number }
+    | { mode: 'select'; pointerId: number; x0: number }
+    | null
+  >(null)
   /** 默认关闭：与后端一致，避免同一 clip 源时间重叠导致口播重复播放 */
   const [allowOverlappingSourceTimeline, setAllowOverlappingSourceTimeline] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -307,6 +316,20 @@ export function VoiceoverQuickCutPanel({
   }, [previewSrc])
 
   useEffect(() => {
+    const a = audioRef.current
+    if (!a) return
+    if (!loopEnabled || !loopRange) return
+    const onTime = () => {
+      const t = a.currentTime || 0
+      if (t >= loopRange.b - 0.02) {
+        a.currentTime = loopRange.a
+      }
+    }
+    a.addEventListener('timeupdate', onTime)
+    return () => a.removeEventListener('timeupdate', onTime)
+  }, [loopEnabled, loopRange])
+
+  useEffect(() => {
     let cancelled = false
     async function buildWave() {
       if (strategy !== 'audio_activity_fast' || !previewSrc) {
@@ -383,6 +406,37 @@ export function VoiceoverQuickCutPanel({
       ctx.stroke()
     }
 
+    // selection / loop overlay
+    const drawSelection = (aSec: number, bSec: number) => {
+      const xa = ((aSec - waveStartSec) / visibleDurationSec) * w
+      const xb = ((bSec - waveStartSec) / visibleDurationSec) * w
+      const left = clampNum(Math.min(xa, xb), 0, w)
+      const right = clampNum(Math.max(xa, xb), 0, w)
+      if (right - left < 2) return
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.10)'
+      ctx.fillRect(left, 0, right - left, h)
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)'
+      ctx.lineWidth = 1
+      ctx.strokeRect(left + 0.5, 0.5, right - left - 1, h - 1)
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.85)'
+      ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
+      ctx.fillText('A', left + 6, 16)
+      ctx.fillText('B', Math.max(left + 18, right - 14), 16)
+    }
+    if (selectionPx) {
+      const x1 = clampNum(selectionPx.x1, 0, w)
+      const x2 = clampNum(selectionPx.x2, 0, w)
+      const left = Math.min(x1, x2)
+      const right = Math.max(x1, x2)
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.08)'
+      ctx.fillRect(left, 0, right - left, h)
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)'
+      ctx.lineWidth = 1
+      ctx.strokeRect(left + 0.5, 0.5, Math.max(0, right - left - 1), h - 1)
+    } else if (loopRange && loopRange.b > loopRange.a) {
+      drawSelection(loopRange.a, loopRange.b)
+    }
+
     const y = dbToY(effectiveAudioConfig.activityDbThreshold, h)
     ctx.strokeStyle = '#f59e0b'
     ctx.lineWidth = 1.5
@@ -390,6 +444,9 @@ export function VoiceoverQuickCutPanel({
     ctx.moveTo(0, y)
     ctx.lineTo(w, y)
     ctx.stroke()
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.9)'
+    ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
+    ctx.fillText(`${effectiveAudioConfig.activityDbThreshold} dB`, 8, Math.max(12, y - 6))
 
     const playX = ((previewCurrentSec - waveStartSec) / visibleDurationSec) * w
     if (playX >= 0 && playX <= w) {
@@ -408,6 +465,8 @@ export function VoiceoverQuickCutPanel({
     visibleDurationSec,
     effectiveAudioConfig.activityDbThreshold,
     previewCurrentSec,
+    loopRange,
+    selectionPx,
   ])
 
   return (
@@ -554,26 +613,89 @@ export function VoiceoverQuickCutPanel({
                 ref={canvasRef}
                 width={900}
                 height={140}
-                onClick={(e) => {
+                onPointerDown={(e) => {
                   if (!previewDurationSec) return
-                  const rect = e.currentTarget.getBoundingClientRect()
+                  const canvas = e.currentTarget
+                  const rect = canvas.getBoundingClientRect()
                   const x = e.clientX - rect.left
                   const y = e.clientY - rect.top
-                  const ratioX = clampNum(x / Math.max(1, rect.width), 0, 1)
-                  const sec = waveStartSec + ratioX * visibleDurationSec
                   const nearThreshold = Math.abs(y - dbToY(effectiveAudioConfig.activityDbThreshold, rect.height)) <= 10
+                  try {
+                    canvas.setPointerCapture(e.pointerId)
+                  } catch {}
                   if (nearThreshold) {
+                    dragRef.current = { mode: 'threshold', pointerId: e.pointerId }
+                    setSelecting(false)
+                    setSelectionPx(null)
                     const nextDb = yToDb(y, rect.height)
                     setAudioPresetId('custom')
                     setDenoiseStrength(0)
                     setAudioActivityConfig({ ...effectiveAudioConfig, activityDbThreshold: nextDb })
                     return
                   }
-                  const a = audioRef.current
-                  if (!a) return
-                  a.currentTime = clampNum(sec, 0, previewDurationSec)
+                  dragRef.current = { mode: 'select', pointerId: e.pointerId, x0: x }
+                  setSelecting(true)
+                  setSelectionPx({ x1: x, x2: x })
                 }}
-                className="w-full h-[140px] rounded-md border border-slate-800 bg-[#0b1020] cursor-crosshair"
+                onPointerMove={(e) => {
+                  const d = dragRef.current
+                  if (!d || d.pointerId !== e.pointerId) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const y = e.clientY - rect.top
+                  if (d.mode === 'threshold') {
+                    const nextDb = yToDb(y, rect.height)
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({ ...effectiveAudioConfig, activityDbThreshold: nextDb })
+                    return
+                  }
+                  setSelectionPx((prev) => (prev ? { ...prev, x2: x } : { x1: d.x0, x2: x }))
+                }}
+                onPointerUp={(e) => {
+                  const d = dragRef.current
+                  if (!d || d.pointerId !== e.pointerId) return
+                  dragRef.current = null
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId)
+                  } catch {}
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const ratioX = clampNum(x / Math.max(1, rect.width), 0, 1)
+                  if (d.mode === 'threshold') return
+                  const sp = selectionPx
+                  setSelecting(false)
+                  if (!sp) return
+                  const x1 = sp.x1
+                  const x2 = sp.x2
+                  const left = Math.min(x1, x2)
+                  const right = Math.max(x1, x2)
+                  if (right - left < 6) {
+                    setSelectionPx(null)
+                    const sec = waveStartSec + ratioX * visibleDurationSec
+                    const a = audioRef.current
+                    if (a) a.currentTime = clampNum(sec, 0, previewDurationSec)
+                    return
+                  }
+                  const aSec = clampNum(waveStartSec + (left / rect.width) * visibleDurationSec, 0, previewDurationSec)
+                  const bSec = clampNum(waveStartSec + (right / rect.width) * visibleDurationSec, 0, previewDurationSec)
+                  setSelectionPx(null)
+                  if (bSec - aSec >= 0.25) {
+                    setLoopRange({ a: aSec, b: bSec })
+                    setLoopEnabled(true)
+                    const aEl = audioRef.current
+                    if (aEl) aEl.currentTime = aSec
+                  }
+                }}
+                onPointerCancel={() => {
+                  dragRef.current = null
+                  setSelecting(false)
+                  setSelectionPx(null)
+                }}
+                className={[
+                  'w-full h-[140px] rounded-md border border-slate-800 bg-[#0b1020]',
+                  selecting ? 'cursor-ew-resize' : 'cursor-crosshair',
+                ].join(' ')}
               />
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="text-[10px] text-slate-400 space-y-1">
@@ -601,10 +723,37 @@ export function VoiceoverQuickCutPanel({
                   />
                 </label>
               </div>
+              <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                <button
+                  type="button"
+                  disabled={!loopRange}
+                  onClick={() => setLoopEnabled((v) => !v)}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 hover:border-emerald-500/70 disabled:opacity-40"
+                >
+                  {loopEnabled ? '循环：开' : '循环：关'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!loopRange}
+                  onClick={() => {
+                    setLoopEnabled(false)
+                    setLoopRange(null)
+                    setSelectionPx(null)
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 hover:border-slate-500 disabled:opacity-40"
+                >
+                  清除 A/B
+                </button>
+                {loopRange && (
+                  <span className="text-slate-500">
+                    A {fmt(loopRange.a)} · B {fmt(loopRange.b)}（{Math.max(0, loopRange.b - loopRange.a).toFixed(2)}s）
+                  </span>
+                )}
+              </div>
               {waveLoading && <p className="text-[10px] text-slate-500">正在解析音频波形...</p>}
               {waveError && <p className="text-[10px] text-amber-300">波形预览失败：{waveError}</p>}
               <p className="text-[10px] text-slate-500">
-                提示：点击波形可跳转播放位置；点击接近橙色阈值线的位置可快速设定静音阈值。
+                提示：拖拽橙色线可调阈值；在波形上拖拽框选可设置 A/B 循环试听；短拖拽视为跳转播放。
               </p>
             </div>
             <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">

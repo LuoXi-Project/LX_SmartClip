@@ -36,6 +36,7 @@ export const API_BASE = API_BASE_URL
 
 export const clipStreamUrl = (id: string) => `${API_BASE_URL}/api/videos/clips/${id}/stream`
 export const videoStreamUrl = (id: string) => `${API_BASE_URL}/api/videos/${id}/stream`
+export const videoAudioStreamUrl = (id: string) => `${API_BASE_URL}/api/videos/${id}/audio/stream`
 export const audioSrc = (f: string) => `${API_BASE_URL}/api/tts/audio/${f}`
 
 export function fmt(s: number) {

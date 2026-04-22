@@ -1,9 +1,10 @@
 'use client'
 
-import { useId, useMemo, useState } from 'react'
-import { MessageSquare, Mic2, Scissors, Sparkles, Video } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { MessageSquare, Mic2, Pause, Play, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
 import { Switch } from '@/components/ui/switch'
+import { fmt, videoAudioStreamUrl } from './types'
 
 export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic' | 'audio_activity_fast'
 
@@ -136,6 +137,16 @@ function applyDenoiseStrength(
   }
 }
 
+function dbToY(db: number, h: number): number {
+  const t = (clampNum(db, -70, -5) + 70) / 65
+  return h - t * h
+}
+
+function yToDb(y: number, h: number): number {
+  const t = clampNum(1 - y / Math.max(1, h), 0, 1)
+  return Math.round(-70 + t * 65)
+}
+
 const PARAM_HELP_TEXT: Record<
   'db' | 'minSilence' | 'minKeep' | 'mergeGap' | 'headPad' | 'tailPad',
   ParamHelp
@@ -203,6 +214,16 @@ export function VoiceoverQuickCutPanel({
   })
   const [audioPresetId, setAudioPresetId] = useState<VoiceoverAudioActivityPreset['id'] | 'custom'>('custom')
   const [denoiseStrength, setDenoiseStrength] = useState(0)
+  const [previewDurationSec, setPreviewDurationSec] = useState(0)
+  const [previewCurrentSec, setPreviewCurrentSec] = useState(0)
+  const [previewPlaying, setPreviewPlaying] = useState(false)
+  const [waveZoom, setWaveZoom] = useState(1)
+  const [waveStartSec, setWaveStartSec] = useState(0)
+  const [waveEnergy, setWaveEnergy] = useState<number[]>([])
+  const [waveLoading, setWaveLoading] = useState(false)
+  const [waveError, setWaveError] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   /** 默认关闭：与后端一致，避免同一 clip 源时间重叠导致口播重复播放 */
   const [allowOverlappingSourceTimeline, setAllowOverlappingSourceTimeline] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -215,9 +236,19 @@ export function VoiceoverQuickCutPanel({
 
   const selectedCount = selectedVideoIds.length
   const selectedDoneCount = selectedVideos.length
+  const previewVideoId = selectedVideos[0]?.id || ''
+  const previewSrc = previewVideoId ? videoAudioStreamUrl(previewVideoId) : ''
   const effectiveAudioConfig = useMemo(
     () => applyDenoiseStrength(audioActivityConfig, denoiseStrength),
     [audioActivityConfig, denoiseStrength],
+  )
+  const visibleDurationSec = useMemo(() => {
+    if (previewDurationSec <= 0) return 0
+    return Math.max(8, previewDurationSec / Math.max(1, waveZoom))
+  }, [previewDurationSec, waveZoom])
+  const maxStartSec = useMemo(
+    () => Math.max(0, previewDurationSec - visibleDurationSec),
+    [previewDurationSec, visibleDurationSec],
   )
 
   async function handleGenerate() {
@@ -252,6 +283,132 @@ export function VoiceoverQuickCutPanel({
     }
     setInfo('请从父页面传入 onGenerate，以调用口播快剪接口。')
   }
+
+  useEffect(() => {
+    const a = audioRef.current
+    if (!a) return
+    const onLoaded = () => setPreviewDurationSec(Number.isFinite(a.duration) ? a.duration : 0)
+    const onTime = () => setPreviewCurrentSec(a.currentTime || 0)
+    const onPlay = () => setPreviewPlaying(true)
+    const onPause = () => setPreviewPlaying(false)
+    const onEnded = () => setPreviewPlaying(false)
+    a.addEventListener('loadedmetadata', onLoaded)
+    a.addEventListener('timeupdate', onTime)
+    a.addEventListener('play', onPlay)
+    a.addEventListener('pause', onPause)
+    a.addEventListener('ended', onEnded)
+    return () => {
+      a.removeEventListener('loadedmetadata', onLoaded)
+      a.removeEventListener('timeupdate', onTime)
+      a.removeEventListener('play', onPlay)
+      a.removeEventListener('pause', onPause)
+      a.removeEventListener('ended', onEnded)
+    }
+  }, [previewSrc])
+
+  useEffect(() => {
+    let cancelled = false
+    async function buildWave() {
+      if (strategy !== 'audio_activity_fast' || !previewSrc) {
+        setWaveEnergy([])
+        return
+      }
+      setWaveLoading(true)
+      setWaveError(null)
+      try {
+        const resp = await fetch(previewSrc)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const buf = await resp.arrayBuffer()
+        const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (!Ctx) throw new Error('当前浏览器不支持 AudioContext')
+        const ctx = new Ctx()
+        const audioBuf = await ctx.decodeAudioData(buf.slice(0))
+        const ch0 = audioBuf.getChannelData(0)
+        const sampleRate = audioBuf.sampleRate
+        const frameSize = Math.max(128, Math.floor(sampleRate * 0.02))
+        const out: number[] = []
+        for (let i = 0; i < ch0.length; i += frameSize) {
+          let sum = 0
+          const end = Math.min(ch0.length, i + frameSize)
+          for (let j = i; j < end; j += 1) sum += ch0[j] * ch0[j]
+          const rms = Math.sqrt(sum / Math.max(1, end - i))
+          out.push(clampNum(rms, 0, 1))
+        }
+        await ctx.close()
+        if (!cancelled) setWaveEnergy(out)
+      } catch (e) {
+        if (!cancelled) setWaveError((e as Error)?.message || '波形解析失败')
+      } finally {
+        if (!cancelled) setWaveLoading(false)
+      }
+    }
+    void buildWave()
+    return () => {
+      cancelled = true
+    }
+  }, [strategy, previewSrc])
+
+  useEffect(() => {
+    if (waveStartSec > maxStartSec) setWaveStartSec(maxStartSec)
+  }, [maxStartSec, waveStartSec])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || strategy !== 'audio_activity_fast') return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const w = canvas.width
+    const h = canvas.height
+    ctx.clearRect(0, 0, w, h)
+    ctx.fillStyle = '#0b1020'
+    ctx.fillRect(0, 0, w, h)
+    if (!waveEnergy.length || previewDurationSec <= 0) return
+
+    const frameSec = previewDurationSec / waveEnergy.length
+    const viewEndSec = waveStartSec + visibleDurationSec
+    const startIdx = Math.max(0, Math.floor(waveStartSec / frameSec))
+    const endIdx = Math.min(waveEnergy.length, Math.ceil(viewEndSec / frameSec))
+
+    ctx.strokeStyle = '#6d28d9'
+    ctx.lineWidth = 1
+    for (let i = startIdx; i < endIdx; i += 1) {
+      const t = i * frameSec
+      const x = ((t - waveStartSec) / visibleDurationSec) * w
+      const amp = waveEnergy[i]
+      const barH = Math.max(1, amp * (h - 20))
+      const y1 = (h - barH) / 2
+      ctx.beginPath()
+      ctx.moveTo(x, y1)
+      ctx.lineTo(x, y1 + barH)
+      ctx.stroke()
+    }
+
+    const y = dbToY(effectiveAudioConfig.activityDbThreshold, h)
+    ctx.strokeStyle = '#f59e0b'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(w, y)
+    ctx.stroke()
+
+    const playX = ((previewCurrentSec - waveStartSec) / visibleDurationSec) * w
+    if (playX >= 0 && playX <= w) {
+      ctx.strokeStyle = '#22d3ee'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(playX, 0)
+      ctx.lineTo(playX, h)
+      ctx.stroke()
+    }
+  }, [
+    strategy,
+    waveEnergy,
+    previewDurationSec,
+    waveStartSec,
+    visibleDurationSec,
+    effectiveAudioConfig.activityDbThreshold,
+    previewCurrentSec,
+  ])
 
   return (
     <div className="space-y-6">
@@ -355,6 +512,101 @@ export function VoiceoverQuickCutPanel({
             <p className="text-[10px] text-slate-500 leading-relaxed">
               该模式通过静音检测保留语音活动区间。阈值越高越容易判静音；头尾补偿用于避免切字。
             </p>
+            <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                <button
+                  type="button"
+                  disabled={!previewSrc}
+                  onClick={() => {
+                    const a = audioRef.current
+                    if (!a) return
+                    if (a.paused) {
+                      void a.play().catch((e) => {
+                        setWaveError((e as Error)?.message || '播放失败')
+                      })
+                    } else {
+                      a.pause()
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 hover:border-violet-500/70 disabled:opacity-40"
+                >
+                  {previewPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  {previewPlaying ? '暂停' : '播放'}
+                </button>
+                <span className="text-slate-400">
+                  {fmt(previewCurrentSec)} / {fmt(previewDurationSec)}
+                </span>
+                <span className="text-slate-500">预览源：{selectedVideos[0]?.name || '未选择'}</span>
+              </div>
+              <audio
+                ref={audioRef}
+                src={previewSrc}
+                preload="metadata"
+                className="hidden"
+                onLoadedMetadata={(e) => setPreviewDurationSec(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
+                onTimeUpdate={(e) => setPreviewCurrentSec(e.currentTarget.currentTime || 0)}
+                onPlay={() => setPreviewPlaying(true)}
+                onPause={() => setPreviewPlaying(false)}
+                onEnded={() => setPreviewPlaying(false)}
+                onError={() => setWaveError('音频预览加载失败（请确认后端音频流可访问）')}
+              />
+              <canvas
+                ref={canvasRef}
+                width={900}
+                height={140}
+                onClick={(e) => {
+                  if (!previewDurationSec) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const y = e.clientY - rect.top
+                  const ratioX = clampNum(x / Math.max(1, rect.width), 0, 1)
+                  const sec = waveStartSec + ratioX * visibleDurationSec
+                  const nearThreshold = Math.abs(y - dbToY(effectiveAudioConfig.activityDbThreshold, rect.height)) <= 10
+                  if (nearThreshold) {
+                    const nextDb = yToDb(y, rect.height)
+                    setAudioPresetId('custom')
+                    setDenoiseStrength(0)
+                    setAudioActivityConfig({ ...effectiveAudioConfig, activityDbThreshold: nextDb })
+                    return
+                  }
+                  const a = audioRef.current
+                  if (!a) return
+                  a.currentTime = clampNum(sec, 0, previewDurationSec)
+                }}
+                className="w-full h-[140px] rounded-md border border-slate-800 bg-[#0b1020] cursor-crosshair"
+              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="text-[10px] text-slate-400 space-y-1">
+                  <span>时间轴缩放</span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    step={1}
+                    value={waveZoom}
+                    onChange={(e) => setWaveZoom(Number(e.target.value || 1))}
+                    className="w-full accent-violet-500"
+                  />
+                </label>
+                <label className="text-[10px] text-slate-400 space-y-1">
+                  <span>时间轴平移</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, maxStartSec)}
+                    step={0.01}
+                    value={waveStartSec}
+                    onChange={(e) => setWaveStartSec(Number(e.target.value || 0))}
+                    className="w-full accent-violet-500"
+                  />
+                </label>
+              </div>
+              {waveLoading && <p className="text-[10px] text-slate-500">正在解析音频波形...</p>}
+              {waveError && <p className="text-[10px] text-amber-300">波形预览失败：{waveError}</p>}
+              <p className="text-[10px] text-slate-500">
+                提示：点击波形可跳转播放位置；点击接近橙色阈值线的位置可快速设定静音阈值。
+              </p>
+            </div>
             <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-300">降噪强度（快速轴）</span>

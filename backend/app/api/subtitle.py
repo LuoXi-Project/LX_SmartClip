@@ -25,6 +25,7 @@ from app.models.subtitle import (
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
+from app.utils.ffprobe_utils import probe_duration
 from app.utils.paths import ensure_storage_subpath, get_fonts_dir, get_storage_root, resolve_stored_path, storage_public_url_for_file
 from app.core.subtitle.srt import build_srt, parse_srt
 from app.core.subtitle.timeline import (
@@ -50,6 +51,95 @@ def _burned_output_dir_for_clip_rows(rows: list) -> str:
         raise HTTPException(400, "segments 中的片段必须属于同一素材视频")
     material_id = next(iter(video_ids))
     return ensure_storage_subpath(material_id, "burned_videos")
+
+
+async def _load_clip_rows_with_raw_fallback(
+    db: aiosqlite.Connection,
+    ids: List[str],
+) -> list[dict]:
+    """
+    读取 clip 元数据；兼容 raw_<video_id> 这种“未预处理视频”虚拟片段。
+    返回字段与 clips join videos 查询一致：id/video_id/clip_path/duration/start_time/end_time/video_file_path。
+    """
+    if not ids:
+        return []
+
+    normal_ids = [cid for cid in ids if not str(cid).startswith("raw_")]
+    raw_ids = [cid for cid in ids if str(cid).startswith("raw_")]
+
+    out: list[dict] = []
+
+    if normal_ids:
+        async with db.execute(
+            f"""
+            SELECT c.id AS id, c.video_id AS video_id, c.clip_path AS clip_path, c.duration AS duration,
+                   c.start_time AS start_time, c.end_time AS end_time, v.file_path AS video_file_path
+            FROM clips c
+            LEFT JOIN videos v ON v.id = c.video_id
+            WHERE c.id IN ({','.join(['?'] * len(normal_ids))})
+            """,
+            normal_ids,
+        ) as cur:
+            rows = await cur.fetchall()
+        for r in rows:
+            out.append(
+                {
+                    "id": str(r["id"]),
+                    "video_id": str(r["video_id"]),
+                    "clip_path": str(r["clip_path"] or ""),
+                    "duration": float(r["duration"] or 0.0),
+                    "start_time": float(r["start_time"] or 0.0),
+                    "end_time": float(r["end_time"] or 0.0),
+                    "video_file_path": str(r["video_file_path"] or ""),
+                }
+            )
+
+    if raw_ids:
+        raw_video_ids = list(
+            dict.fromkeys(
+                [
+                    rid[len("raw_") :]
+                    for rid in raw_ids
+                    if len(rid) > len("raw_") and rid[len("raw_") :]
+                ]
+            )
+        )
+        video_map: dict[str, dict] = {}
+        if raw_video_ids:
+            async with db.execute(
+                f"SELECT id, file_path, duration FROM videos WHERE id IN ({','.join(['?'] * len(raw_video_ids))})",
+                raw_video_ids,
+            ) as cur:
+                vrows = await cur.fetchall()
+            for v in vrows:
+                video_map[str(v["id"])] = {
+                    "file_path": str(v["file_path"] or ""),
+                    "duration": float(v["duration"] or 0.0),
+                }
+
+        for rid in raw_ids:
+            vid = rid[len("raw_") :]
+            v = video_map.get(vid)
+            if not v:
+                continue
+            src_path = resolve_stored_path(v["file_path"])
+            dur = float(v["duration"] or 0.0)
+            if dur <= 0:
+                dur = float(probe_duration(src_path, log_on_failure=True) or 0.0)
+            out.append(
+                {
+                    "id": rid,
+                    "video_id": vid,
+                    # raw 片段直接指向原视频文件，后续按 clip_start_sec/duration_sec 裁剪
+                    "clip_path": v["file_path"],
+                    "duration": dur,
+                    "start_time": 0.0,
+                    "end_time": max(0.0, dur),
+                    "video_file_path": v["file_path"],
+                }
+            )
+
+    return out
 
 
 async def _get_config_value(db, key: str, default: str) -> str:
@@ -137,14 +227,13 @@ async def generate_srt(req: GenerateSRTRequest):
         if seg.clip_ids:
             ids.extend([cid for cid in seg.clip_ids if cid])
     ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise HTTPException(400, "segments 缺少 clip_id/clip_ids")
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            f"SELECT id,duration FROM clips WHERE id IN ({','.join(['?']*len(ids))})", ids
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await _load_clip_rows_with_raw_fallback(db, ids)
 
-    clip_dur = {r["id"]: float(r["duration"] or 5.0) for r in rows}
+    clip_dur = {str(r["id"]): float(r.get("duration") or 5.0) for r in rows}
     max_chars = req.style.max_chars_per_line if req.style else 20
 
     durs, src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, req.use_tts_timing)
@@ -196,17 +285,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     ids = list(dict.fromkeys(ids))
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            f"""
-            SELECT c.id AS id, c.video_id AS video_id, c.clip_path AS clip_path, c.duration AS duration,
-                   c.start_time AS start_time, c.end_time AS end_time, v.file_path AS video_file_path
-            FROM clips c
-            LEFT JOIN videos v ON v.id = c.video_id
-            WHERE c.id IN ({','.join(['?']*len(ids))})
-            """,
-            ids,
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await _load_clip_rows_with_raw_fallback(db, ids)
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
         export_backend_cfg = await _load_export_backend(db)
@@ -218,13 +297,13 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
 
     clip_map = {}
     for r in rows:
-        vfp = (r["video_file_path"] or "").strip() if r["video_file_path"] is not None else ""
+        vfp = (r.get("video_file_path") or "").strip()
         clip_map[str(r["id"])] = {
-            "path": resolve_stored_path(r["clip_path"]),
-            "dur": float(r["duration"] or 5),
+            "path": resolve_stored_path(str(r.get("clip_path") or "")),
+            "dur": float(r.get("duration") or 5),
             "src_video_path": resolve_stored_path(vfp) if vfp else "",
-            "src_start": float(r["start_time"] or 0.0),
-            "src_end": float(r["end_time"] or 0.0),
+            "src_start": float(r.get("start_time") or 0.0),
+            "src_end": float(r.get("end_time") or 0.0),
         }
     clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
 
@@ -361,17 +440,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            f"""
-            SELECT c.id AS id, c.video_id AS video_id, c.clip_path AS clip_path, c.duration AS duration,
-                   c.start_time AS start_time, c.end_time AS end_time, v.file_path AS video_file_path
-            FROM clips c
-            LEFT JOIN videos v ON v.id = c.video_id
-            WHERE c.id IN ({','.join(['?']*len(ids))})
-            """,
-            ids,
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await _load_clip_rows_with_raw_fallback(db, ids)
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
         export_backend_cfg = await _load_export_backend(db)
@@ -383,13 +452,13 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
 
     clip_map = {}
     for r in rows:
-        vfp = (r["video_file_path"] or "").strip() if r["video_file_path"] is not None else ""
+        vfp = (r.get("video_file_path") or "").strip()
         clip_map[str(r["id"])] = {
-            "path": resolve_stored_path(r["clip_path"]),
-            "dur": float(r["duration"] or 5),
+            "path": resolve_stored_path(str(r.get("clip_path") or "")),
+            "dur": float(r.get("duration") or 5),
             "src_video_path": resolve_stored_path(vfp) if vfp else "",
-            "src_start": float(r["start_time"] or 0.0),
-            "src_end": float(r["end_time"] or 0.0),
+            "src_start": float(r.get("start_time") or 0.0),
+            "src_end": float(r.get("end_time") or 0.0),
         }
     clip_dur = {cid: float(info["dur"] or 5) for cid, info in clip_map.items()}
 

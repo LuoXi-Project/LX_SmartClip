@@ -932,6 +932,7 @@ async def realize_auto_edit_plan(
         raise HTTPException(status_code=400, detail="所有段落均已标记为弃用，无法成片")
 
     requested_clip_ids = collect_plan_clip_ids(plan)
+    requested_raw_clip_ids = [cid for cid in requested_clip_ids if str(cid).startswith("raw_")]
     valid_clip_ids: Set[str] = set()
     clip_id_to_video: Dict[str, str] = {}
     candidate_videos: Set[str] = set()
@@ -953,6 +954,10 @@ async def realize_auto_edit_plan(
                 clip_id_to_video[cid] = str(row["video_id"])
 
         invalid_clip_ids = [cid for cid in requested_clip_ids if cid not in valid_clip_ids]
+        # raw_<video_id> 为“未预处理视频”虚拟片段：不在 clips 表内，但允许进入后续裁剪链路。
+        for rid in requested_raw_clip_ids:
+            valid_clip_ids.add(rid)
+        invalid_clip_ids = [cid for cid in invalid_clip_ids if cid not in requested_raw_clip_ids]
 
         # 2) 构造回退候选池（优先 segment.clip_group 的 video_id，其次已命中 clip 的 video_id）
         for seg in plan.segments:

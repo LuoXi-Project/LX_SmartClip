@@ -577,7 +577,11 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
                 )
 
             video_names = await _load_video_names(db, req.video_ids)
-            groups = await load_clip_groups_by_videos(db, req.video_ids)
+            groups = await load_clip_groups_by_videos(
+                db,
+                req.video_ids,
+                include_raw_video_fallback=(req.strategy == "audio_activity_fast"),
+            )
             llm_cfg: dict | None = None
             if req.strategy == "semantic":
                 try:
@@ -649,6 +653,7 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
                 "merge_gap_sec": float(req.activity_merge_gap_sec),
                 "head_pad_sec": float(req.activity_head_pad_sec),
                 "tail_pad_sec": float(req.activity_tail_pad_sec),
+                "keep_ranges": req.activity_keep_ranges,
             },
         }
         if req.strategy == "audio_activity_fast":
@@ -659,6 +664,11 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
         plan, allow_overlaps=req.allow_overlapping_source_timeline
     )
     if not plan.segments:
+        if req.strategy == "audio_activity_fast":
+            raise HTTPException(
+                status_code=400,
+                detail="音频粗剪未检测到可保留语音片段：请检查源视频是否有可用音轨，或适当下调阈值后重试",
+            )
         raise HTTPException(
             status_code=400,
             detail="没有可保留的片段：请确认已对选中视频跑过 ASR，且至少一个 clip 含有识别文本",

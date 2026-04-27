@@ -21,6 +21,7 @@ from app.models.auto_edit import (
 )
 from app.models.subtitle import ClipTrimPart
 from app.utils.bin_paths import ffmpeg_bin
+from app.utils.ffprobe_utils import probe_duration
 from app.utils.paths import resolve_stored_path
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,9 @@ def detect_voice_ranges_by_silencedetect(
     tail_pad_sec: float,
 ) -> list[tuple[float, float]]:
     dur = max(0.0, float(clip_dur or 0.0))
+    if dur <= 0:
+        # 未预处理视频/元数据缺失时，尝试直接探测真实媒体时长
+        dur = max(0.0, float(probe_duration(clip_path, log_on_failure=True) or 0.0))
     if dur <= 0:
         return []
     cmd = [
@@ -416,9 +420,12 @@ def apply_voiceover_source_timeline_dedupe(plan: Plan, *, allow_overlaps: bool) 
 
 
 async def load_clip_groups_by_videos(
-    db: aiosqlite.Connection, video_ids: List[str]
-) -> List[List[aiosqlite.Row]]:
-    groups: List[List[aiosqlite.Row]] = []
+    db: aiosqlite.Connection,
+    video_ids: List[str],
+    *,
+    include_raw_video_fallback: bool = False,
+) -> List[List[aiosqlite.Row | dict[str, Any]]]:
+    groups: List[List[aiosqlite.Row | dict[str, Any]]] = []
     for vid in video_ids:
         async with db.execute(
             "SELECT id, video_id, clip_path, start_time, duration, asr_text, asr_segments "
@@ -426,7 +433,33 @@ async def load_clip_groups_by_videos(
             (vid,),
         ) as cur:
             rows = await cur.fetchall()
-        groups.append(list(rows))
+        clip_rows = list(rows)
+        if clip_rows or not include_raw_video_fallback:
+            groups.append(clip_rows)
+            continue
+
+        # 音频粗剪兼容：未做预处理（无 clips）时，回退为“原视频单段 clip”参与静音检测。
+        async with db.execute(
+            "SELECT id, file_path, duration FROM videos WHERE id = ?",
+            (vid,),
+        ) as cur:
+            vrow = await cur.fetchone()
+        if not vrow:
+            groups.append([])
+            continue
+        groups.append(
+            [
+                {
+                    "id": f"raw_{vid}",
+                    "video_id": str(vrow["id"]),
+                    "clip_path": str(vrow["file_path"] or ""),
+                    "start_time": 0.0,
+                    "duration": float(vrow["duration"] or 0.0),
+                    "asr_text": None,
+                    "asr_segments": None,
+                }
+            ]
+        )
     return groups
 
 
@@ -455,6 +488,8 @@ def build_plan_from_clip_groups(
     aa_merge_gap = float(aa_cfg.get("merge_gap_sec", 0.2))
     aa_head_pad = float(aa_cfg.get("head_pad_sec", 0.08))
     aa_tail_pad = float(aa_cfg.get("tail_pad_sec", 0.12))
+    # keep_ranges: 前端预计算的“绝对保留区间”。注意：空数组 [] 也代表“用户明确要保留 0 段”，不能回退静音检测。
+    keep_ranges = aa_cfg.get("keep_ranges", None)
 
     segments: List[SegmentPlan] = []
     total_sec = 0.0
@@ -470,8 +505,66 @@ def build_plan_from_clip_groups(
             asr_segments_json = row["asr_segments"]
             seg_items = _parse_asr_segments(asr_segments_json)
             clip_path = resolve_stored_path(str(row["clip_path"] or ""))
+            if clip_dur <= 0:
+                clip_dur = max(0.0, float(probe_duration(clip_path, log_on_failure=True) or 0.0))
 
             if strategy == "audio_activity_fast":
+                # 前端若提供了“绝对保留区间”，则直接按区间与 clip 求交生成 segments（无需后端再做静音检测）
+                if keep_ranges is not None:
+                    try:
+                        kr = [
+                            r
+                            for r in keep_ranges
+                            if isinstance(r, dict)
+                            and str(r.get("video_id") or "") == vid
+                        ]
+                    except Exception:
+                        kr = []
+                    if not kr:
+                        # 没有命中本 video_id 的保留区间：严格按 keep_ranges 输出为空（不回退静音检测）
+                        continue
+
+                    clip_abs_st = clip_base
+                    clip_abs_et = clip_base + max(0.0, clip_dur)
+                    for idx2, r in enumerate(kr):
+                        try:
+                            rs = float(r.get("start") or 0.0)
+                            re2 = float(r.get("end") or rs)
+                        except Exception:
+                            continue
+                        if re2 <= rs:
+                            continue
+                        st_abs2 = max(clip_abs_st, rs)
+                        et_abs2 = min(clip_abs_et, re2)
+                        if et_abs2 <= st_abs2:
+                            continue
+                        st_rel2 = max(0.0, st_abs2 - clip_base)
+                        et_rel2 = max(st_rel2, et_abs2 - clip_base)
+                        dur2 = et_rel2 - st_rel2
+                        if dur2 < aa_min_keep:
+                            continue
+                        total_sec += dur2
+                        segments.append(
+                            SegmentPlan(
+                                id=f"vq_{order:04d}_{cid[:6]}_p{idx2:03d}",
+                                order=order,
+                                clip_group=[ClipRef(clip_id=cid, video_id=vid, weight=1.0)],
+                                selected_clip_ids=[cid],
+                                start_time_sec=clip_base + st_rel2,
+                                end_time_sec=clip_base + et_rel2,
+                                override_duration_sec=dur2,
+                                clip_start_offset_sec=st_rel2,
+                                audio_mode="original",
+                                subtitle=SubtitlePlan(
+                                    strategy="none",
+                                    text="（音高/活动保留片段）",
+                                    source="asr",
+                                    timing_hint=TimingHint(start=clip_base + st_rel2, end=clip_base + et_rel2),
+                                ),
+                            )
+                        )
+                        order += 1
+                    continue
                 detected = detect_voice_ranges_by_silencedetect(
                     clip_path=clip_path,
                     clip_dur=clip_dur,

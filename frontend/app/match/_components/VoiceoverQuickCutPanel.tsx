@@ -15,6 +15,7 @@ export type VoiceoverAudioActivityConfig = {
   activityMergeGapSec: number
   activityHeadPadSec: number
   activityTailPadSec: number
+  activityKeepRanges?: Array<{ video_id: string; start: number; end: number }>
 }
 
 type VoiceoverAudioActivityPreset = {
@@ -147,6 +148,21 @@ function yToDb(y: number, h: number): number {
   return Math.round(-70 + t * 65)
 }
 
+function hzToY(hz: number, h: number): number {
+  const minHz = 50
+  const maxHz = 350
+  const v = clampNum(hz, minHz, maxHz)
+  const t = (v - minHz) / (maxHz - minHz)
+  return h - t * h
+}
+
+function yToHz(y: number, h: number): number {
+  const minHz = 50
+  const maxHz = 350
+  const t = clampNum(1 - y / Math.max(1, h), 0, 1)
+  return Math.round(minHz + t * (maxHz - minHz))
+}
+
 const PARAM_HELP_TEXT: Record<
   'db' | 'minSilence' | 'minKeep' | 'mergeGap' | 'headPad' | 'tailPad',
   ParamHelp
@@ -222,6 +238,11 @@ export function VoiceoverQuickCutPanel({
   const [waveEnergy, setWaveEnergy] = useState<number[]>([])
   const [waveLoading, setWaveLoading] = useState(false)
   const [waveError, setWaveError] = useState<string | null>(null)
+  const [pitchHz, setPitchHz] = useState<number[]>([])
+  const [pitchLoading, setPitchLoading] = useState(false)
+  const [pitchError, setPitchError] = useState<string | null>(null)
+  const [pitchThresholdHz, setPitchThresholdHz] = useState(120)
+  const [pitchGateEnabled, setPitchGateEnabled] = useState(true)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [loopRange, setLoopRange] = useState<{ a: number; b: number } | null>(null)
   const [selecting, setSelecting] = useState(false)
@@ -229,7 +250,8 @@ export function VoiceoverQuickCutPanel({
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const dragRef = useRef<
-    | { mode: 'threshold'; pointerId: number }
+    | { mode: 'db_threshold'; pointerId: number }
+    | { mode: 'pitch_threshold'; pointerId: number }
     | { mode: 'select'; pointerId: number; x0: number }
     | null
   >(null)
@@ -245,12 +267,121 @@ export function VoiceoverQuickCutPanel({
 
   const selectedCount = selectedVideoIds.length
   const selectedDoneCount = selectedVideos.length
+  const selectedNotReadyCount = useMemo(
+    () => selectedVideos.filter((v) => v.status !== 'done').length,
+    [selectedVideos],
+  )
+  const selectedUnprocessedCount = useMemo(
+    () => selectedVideos.filter((v) => v.status === 'done' && Number(v.total_clips || 0) <= 0).length,
+    [selectedVideos],
+  )
   const previewVideoId = selectedVideos[0]?.id || ''
   const previewSrc = previewVideoId ? videoAudioStreamUrl(previewVideoId) : ''
   const effectiveAudioConfig = useMemo(
     () => applyDenoiseStrength(audioActivityConfig, denoiseStrength),
     [audioActivityConfig, denoiseStrength],
   )
+
+  const pitchKeepRanges = useMemo(() => {
+    if (!pitchGateEnabled || !pitchHz.length || !previewDurationSec || !previewVideoId) return null
+    const frameSec = previewDurationSec / pitchHz.length
+    const minKeep = Math.max(0.2, effectiveAudioConfig.activityMinKeepSec || 0.35)
+    const gap = Math.max(0, effectiveAudioConfig.activityMergeGapSec || 0.2)
+    const headPad = Math.max(0, effectiveAudioConfig.activityHeadPadSec || 0)
+    const tailPad = Math.max(0, effectiveAudioConfig.activityTailPadSec || 0)
+    const ranges: Array<{ video_id: string; start: number; end: number }> = []
+
+    // 1) 先做轻量平滑（中值窗），降低逐帧抖动导致的“看着过线但判不到连续段”
+    const median = (arr: number[]) => {
+      const a = [...arr].sort((x, y) => x - y)
+      return a[Math.floor(a.length / 2)] || 0
+    }
+    const smooth: number[] = new Array(pitchHz.length).fill(0)
+    for (let i = 0; i < pitchHz.length; i += 1) {
+      const win: number[] = []
+      for (let k = -2; k <= 2; k += 1) {
+        const j = i + k
+        if (j >= 0 && j < pitchHz.length) {
+          const v = pitchHz[j] || 0
+          if (v > 0) win.push(v)
+        }
+      }
+      smooth[i] = win.length ? median(win) : 0
+    }
+
+    // 2) 音高校验使用双阈值（迟滞）：进入高阈值，保持低阈值，避免边缘抖动
+    const onThr = pitchThresholdHz
+    const offThr = Math.max(50, pitchThresholdHz * 0.85)
+    // 允许短缺口（无音高/跌破）桥接，避免把一句话切碎
+    const bridgeSec = 0.12
+    const maxGapFrames = Math.max(1, Math.round(bridgeSec / Math.max(0.001, frameSec)))
+
+    let inSeg = false
+    let segStart = 0
+    let silentRun = 0
+    for (let i = 0; i < smooth.length; i += 1) {
+      const hz = smooth[i] || 0
+      const t = i * frameSec
+      const voicedNow = hz > 0 && (inSeg ? hz >= offThr : hz >= onThr)
+
+      if (voicedNow) {
+        if (!inSeg) {
+          inSeg = true
+          segStart = t
+        }
+        silentRun = 0
+        continue
+      }
+
+      if (!inSeg) continue
+      silentRun += 1
+      if (silentRun <= maxGapFrames) {
+        continue
+      }
+      const segEnd = Math.max(segStart, t - silentRun * frameSec)
+      inSeg = false
+      silentRun = 0
+      if (segEnd - segStart >= minKeep) {
+        ranges.push({
+          video_id: previewVideoId,
+          start: Math.max(0, segStart - headPad),
+          end: Math.min(previewDurationSec, segEnd + tailPad),
+        })
+      }
+    }
+    if (inSeg) {
+      const segEnd = previewDurationSec
+      if (segEnd - segStart >= minKeep) {
+        ranges.push({
+          video_id: previewVideoId,
+          start: Math.max(0, segStart - headPad),
+          end: Math.min(previewDurationSec, segEnd + tailPad),
+        })
+      }
+    }
+    // merge small gaps
+    ranges.sort((a, b) => a.start - b.start)
+    const merged: typeof ranges = []
+    for (const r of ranges) {
+      const last = merged[merged.length - 1]
+      if (last && r.start <= last.end + gap) {
+        last.end = Math.max(last.end, r.end)
+      } else {
+        merged.push({ ...r })
+      }
+    }
+    return merged
+  }, [
+    pitchGateEnabled,
+    pitchHz,
+    previewDurationSec,
+    previewVideoId,
+    pitchThresholdHz,
+    effectiveAudioConfig.activityMinKeepSec,
+    effectiveAudioConfig.activityMergeGapSec,
+    effectiveAudioConfig.activityHeadPadSec,
+    effectiveAudioConfig.activityTailPadSec,
+  ])
   const visibleDurationSec = useMemo(() => {
     if (previewDurationSec <= 0) return 0
     return Math.max(8, previewDurationSec / Math.max(1, waveZoom))
@@ -264,8 +395,36 @@ export function VoiceoverQuickCutPanel({
     setInfo(null)
     const videoIds = selectedVideos.map((v) => v.id)
     if (videoIds.length === 0) {
-      setInfo('请先在上方勾选至少一个已处理完成的视频。')
+      setInfo('请先在上方勾选至少一个视频。')
       return
+    }
+    if (strategy !== 'audio_activity_fast') {
+      const needPreprocessed = selectedVideos.filter(
+        (v) => v.status !== 'done' || Number(v.total_clips || 0) <= 0,
+      )
+      if (needPreprocessed.length > 0) {
+        setInfo('极速/智能快剪依赖预处理片段（ASR/clip）。请先处理视频，或切换到「音频粗剪」直接按原音频检测。')
+        return
+      }
+    }
+    if (strategy === 'audio_activity_fast' && pitchGateEnabled) {
+      if (pitchLoading) {
+        setInfo('音高轨仍在解析中，请稍等 1~3 秒后再生成。')
+        return
+      }
+      if (pitchError) {
+        setInfo(`音高轨解析失败：${pitchError}（可先关闭音高门控再生成，或刷新重试）`)
+        return
+      }
+      if (!pitchHz.length) {
+        setInfo('音高轨为空：当前无法按音高门控生成（可先关闭音高门控再生成）。')
+        return
+      }
+      if (pitchKeepRanges && pitchKeepRanges.length === 0) {
+        // 允许“明确生成空方案”——这是用户主动调参得到的合法结果。
+        // 保持提示但不阻塞，继续向后端提交 activity_keep_ranges=[]
+        setInfo('当前音高阈值过高：按门控将不会保留任何片段。将继续生成空方案。')
+      }
     }
     if (strategy === 'semantic') {
       const p = semanticUserPrompt.trim()
@@ -283,7 +442,15 @@ export function VoiceoverQuickCutPanel({
           strategy,
           userPrompt,
           allowOverlappingSourceTimeline,
-          audioActivityConfig: strategy === 'audio_activity_fast' ? effectiveAudioConfig : undefined,
+          audioActivityConfig:
+            strategy === 'audio_activity_fast'
+              ? {
+                  ...effectiveAudioConfig,
+                  // 只要开启音高门控，就始终显式下发 keep_ranges（即使为空 []），
+                  // 方便在 Network 面板验证，并避免“字段被省略看起来没生效”。
+                  activityKeepRanges: pitchGateEnabled ? (pitchKeepRanges ?? []) : undefined,
+                }
+              : undefined,
         })
       } finally {
         setGenerating(false)
@@ -372,6 +539,71 @@ export function VoiceoverQuickCutPanel({
   }, [strategy, previewSrc])
 
   useEffect(() => {
+    let cancelled = false
+    async function buildPitch() {
+      if (strategy !== 'audio_activity_fast' || !previewSrc) {
+        setPitchHz([])
+        return
+      }
+      setPitchLoading(true)
+      setPitchError(null)
+      try {
+        const resp = await fetch(previewSrc)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const buf = await resp.arrayBuffer()
+        const Ctx =
+          window.AudioContext ||
+          (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (!Ctx) throw new Error('当前浏览器不支持 AudioContext')
+        const ctx = new Ctx()
+        const audioBuf = await ctx.decodeAudioData(buf.slice(0))
+        const data = audioBuf.getChannelData(0)
+        const sr = audioBuf.sampleRate
+        const hop = Math.max(128, Math.floor(sr * 0.02))
+        const minHz = 70
+        const maxHz = 320
+        const minLag = Math.floor(sr / maxHz)
+        const maxLag = Math.floor(sr / minHz)
+        const out: number[] = []
+
+        for (let i = 0; i + maxLag < data.length; i += hop) {
+          // 能量过低直接判无音高
+          let sum = 0
+          const end = Math.min(data.length, i + hop)
+          for (let j = i; j < end; j += 1) sum += data[j] * data[j]
+          const rms = Math.sqrt(sum / Math.max(1, end - i))
+          if (rms < 0.01) {
+            out.push(0)
+            continue
+          }
+          let bestLag = 0
+          let best = 0
+          for (let lag = minLag; lag <= maxLag; lag += 1) {
+            let c = 0
+            for (let j = 0; j < hop; j += 1) c += data[i + j] * data[i + j + lag]
+            if (c > best) {
+              best = c
+              bestLag = lag
+            }
+          }
+          const hz = bestLag > 0 ? sr / bestLag : 0
+          out.push(hz >= minHz && hz <= maxHz ? hz : 0)
+        }
+        await ctx.close()
+        if (!cancelled) setPitchHz(out)
+      } catch (e) {
+        if (!cancelled) setPitchError((e as Error)?.message || '音高解析失败')
+      } finally {
+        if (!cancelled) setPitchLoading(false)
+      }
+    }
+    void buildPitch()
+    return () => {
+      cancelled = true
+    }
+  }, [strategy, previewSrc])
+
+  useEffect(() => {
     if (waveStartSec > maxStartSec) setWaveStartSec(maxStartSec)
   }, [maxStartSec, waveStartSec])
 
@@ -387,23 +619,75 @@ export function VoiceoverQuickCutPanel({
     ctx.fillRect(0, 0, w, h)
     if (!waveEnergy.length || previewDurationSec <= 0) return
 
+    // Split lanes: top = pitch, bottom = waveform (and A/B selection)
+    const gap = 6
+    const pitchH = Math.round(h * 0.42)
+    const waveTop = pitchH + gap
+    const waveH = h - waveTop
+
     const frameSec = previewDurationSec / waveEnergy.length
     const viewEndSec = waveStartSec + visibleDurationSec
     const startIdx = Math.max(0, Math.floor(waveStartSec / frameSec))
     const endIdx = Math.min(waveEnergy.length, Math.ceil(viewEndSec / frameSec))
 
-    ctx.strokeStyle = '#6d28d9'
+    // waveform lane background
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.55)'
+    ctx.fillRect(0, waveTop, w, waveH)
+    ctx.strokeStyle = 'rgba(167, 139, 250, 0.75)'
     ctx.lineWidth = 1
     for (let i = startIdx; i < endIdx; i += 1) {
       const t = i * frameSec
       const x = ((t - waveStartSec) / visibleDurationSec) * w
       const amp = waveEnergy[i]
-      const barH = Math.max(1, amp * (h - 20))
-      const y1 = (h - barH) / 2
+      const barH = Math.max(1, amp * (waveH - 10))
+      const y1 = waveTop + (waveH - barH) / 2
       ctx.beginPath()
       ctx.moveTo(x, y1)
       ctx.lineTo(x, y1 + barH)
       ctx.stroke()
+    }
+
+    // pitch curve (Hz) - cyan
+    if (pitchHz.length) {
+      // pitch lane background
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.35)'
+      ctx.fillRect(0, 0, w, pitchH)
+      const pitchFrameSec = previewDurationSec / pitchHz.length
+      const pStart = Math.max(0, Math.floor(waveStartSec / pitchFrameSec))
+      const pEnd = Math.min(pitchHz.length, Math.ceil((waveStartSec + visibleDurationSec) / pitchFrameSec))
+      // Downsample to ~1px per step to avoid "filled with lines"
+      const step = Math.max(1, Math.floor((pEnd - pStart) / Math.max(1, w)))
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.95)'
+      ctx.lineWidth = 1.4
+      ctx.beginPath()
+      let started = false
+      for (let i = pStart; i < pEnd; i += step) {
+        const hz = pitchHz[i] || 0
+        if (hz <= 0) continue
+        const t = i * pitchFrameSec
+        const x = ((t - waveStartSec) / visibleDurationSec) * w
+        const y = hzToY(hz, pitchH)
+        if (!started) {
+          ctx.moveTo(x, y)
+          started = true
+        } else {
+          ctx.lineTo(x, y)
+        }
+      }
+      if (started) ctx.stroke()
+
+      // pitch threshold line
+      const py = hzToY(pitchThresholdHz, pitchH)
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.65)'
+      ctx.setLineDash([6, 5])
+      ctx.beginPath()
+      ctx.moveTo(0, py)
+      ctx.lineTo(w, py)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.9)'
+      ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
+      ctx.fillText(`${pitchThresholdHz} Hz`, 8, Math.max(12, py - 6))
     }
 
     // selection / loop overlay
@@ -414,14 +698,14 @@ export function VoiceoverQuickCutPanel({
       const right = clampNum(Math.max(xa, xb), 0, w)
       if (right - left < 2) return
       ctx.fillStyle = 'rgba(16, 185, 129, 0.10)'
-      ctx.fillRect(left, 0, right - left, h)
+      ctx.fillRect(left, waveTop, right - left, waveH)
       ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)'
       ctx.lineWidth = 1
-      ctx.strokeRect(left + 0.5, 0.5, right - left - 1, h - 1)
+      ctx.strokeRect(left + 0.5, waveTop + 0.5, right - left - 1, waveH - 1)
       ctx.fillStyle = 'rgba(16, 185, 129, 0.85)'
       ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
-      ctx.fillText('A', left + 6, 16)
-      ctx.fillText('B', Math.max(left + 18, right - 14), 16)
+      ctx.fillText('A', left + 6, waveTop + 16)
+      ctx.fillText('B', Math.max(left + 18, right - 14), waveTop + 16)
     }
     if (selectionPx) {
       const x1 = clampNum(selectionPx.x1, 0, w)
@@ -429,15 +713,15 @@ export function VoiceoverQuickCutPanel({
       const left = Math.min(x1, x2)
       const right = Math.max(x1, x2)
       ctx.fillStyle = 'rgba(16, 185, 129, 0.08)'
-      ctx.fillRect(left, 0, right - left, h)
+      ctx.fillRect(left, waveTop, right - left, waveH)
       ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)'
       ctx.lineWidth = 1
-      ctx.strokeRect(left + 0.5, 0.5, Math.max(0, right - left - 1), h - 1)
+      ctx.strokeRect(left + 0.5, waveTop + 0.5, Math.max(0, right - left - 1), waveH - 1)
     } else if (loopRange && loopRange.b > loopRange.a) {
       drawSelection(loopRange.a, loopRange.b)
     }
 
-    const y = dbToY(effectiveAudioConfig.activityDbThreshold, h)
+    const y = waveTop + dbToY(effectiveAudioConfig.activityDbThreshold, waveH)
     ctx.strokeStyle = '#f59e0b'
     ctx.lineWidth = 1.5
     ctx.beginPath()
@@ -467,6 +751,8 @@ export function VoiceoverQuickCutPanel({
     previewCurrentSec,
     loopRange,
     selectionPx,
+    pitchHz,
+    pitchThresholdHz,
   ])
 
   return (
@@ -488,15 +774,32 @@ export function VoiceoverQuickCutPanel({
           {selectedCount === 0 ? (
             <p className="text-xs text-amber-400/90">未选择视频。</p>
           ) : selectedDoneCount === 0 ? (
-            <p className="text-xs text-amber-400/90">你已选择 {selectedCount} 个，但它们尚未出现在已完成列表中。</p>
+            <p className="text-xs text-amber-400/90">你已选择 {selectedCount} 个，但当前不可用于口播快剪。</p>
           ) : (
             <ul className="text-xs text-slate-400 space-y-1 max-h-28 overflow-y-auto">
               {selectedVideos.map((v) => (
                 <li key={v.id} className="truncate">
-                  · {v.name || v.id}
+                  · {v.name || v.id}{' '}
+                  <span className="text-slate-500">
+                    {v.status === 'done'
+                      ? Number(v.total_clips || 0) > 0
+                        ? `（${v.total_clips}片）`
+                        : '（未预处理）'
+                      : v.status === 'processing'
+                        ? '（处理中）'
+                        : v.status === 'pending'
+                          ? '（待处理）'
+                          : '（状态异常）'}
+                  </span>
                 </li>
               ))}
             </ul>
+          )}
+          {selectedCount > 0 && (selectedNotReadyCount > 0 || selectedUnprocessedCount > 0) && (
+            <p className="text-[10px] text-amber-300/90 leading-relaxed">
+              当前选中包含 {selectedNotReadyCount} 个未完成、{selectedUnprocessedCount} 个未预处理视频。
+              「极速快剪/智能快剪」需先完成预处理；「音频粗剪」可直接使用。
+            </p>
           )}
         </div>
 
@@ -597,6 +900,18 @@ export function VoiceoverQuickCutPanel({
                 </span>
                 <span className="text-slate-500">预览源：{selectedVideos[0]?.name || '未选择'}</span>
               </div>
+              <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                <button
+                  type="button"
+                  onClick={() => setPitchGateEnabled((v) => !v)}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 hover:border-cyan-500/70"
+                >
+                  音高门控：{pitchGateEnabled ? '开' : '关'}
+                </button>
+                <span className="text-slate-500">
+                  阈值线：拖动青色虚线（Hz）选“说话音高下限”；生成方案会优先按该门控保留区间（对当前预览视频生效）。
+                </span>
+              </div>
               <audio
                 ref={audioRef}
                 src={previewSrc}
@@ -619,15 +934,31 @@ export function VoiceoverQuickCutPanel({
                   const rect = canvas.getBoundingClientRect()
                   const x = e.clientX - rect.left
                   const y = e.clientY - rect.top
-                  const nearThreshold = Math.abs(y - dbToY(effectiveAudioConfig.activityDbThreshold, rect.height)) <= 10
+                  const gap = 6
+                  const pitchH = Math.round(rect.height * 0.42)
+                  const waveTop = pitchH + gap
+                  const waveH = rect.height - waveTop
+                  const nearDb =
+                    y >= waveTop - 6 &&
+                    Math.abs(y - (waveTop + dbToY(effectiveAudioConfig.activityDbThreshold, waveH))) <= 10
+                  const nearPitch =
+                    y <= pitchH + 6 &&
+                    Math.abs(y - hzToY(pitchThresholdHz, pitchH)) <= 10
                   try {
                     canvas.setPointerCapture(e.pointerId)
                   } catch {}
-                  if (nearThreshold) {
-                    dragRef.current = { mode: 'threshold', pointerId: e.pointerId }
+                  if (nearPitch && pitchHz.length) {
+                    dragRef.current = { mode: 'pitch_threshold', pointerId: e.pointerId }
                     setSelecting(false)
                     setSelectionPx(null)
-                    const nextDb = yToDb(y, rect.height)
+                    setPitchThresholdHz(yToHz(y, pitchH))
+                    return
+                  }
+                  if (nearDb) {
+                    dragRef.current = { mode: 'db_threshold', pointerId: e.pointerId }
+                    setSelecting(false)
+                    setSelectionPx(null)
+                    const nextDb = yToDb(y - waveTop, waveH)
                     setAudioPresetId('custom')
                     setDenoiseStrength(0)
                     setAudioActivityConfig({ ...effectiveAudioConfig, activityDbThreshold: nextDb })
@@ -643,8 +974,17 @@ export function VoiceoverQuickCutPanel({
                   const rect = e.currentTarget.getBoundingClientRect()
                   const x = e.clientX - rect.left
                   const y = e.clientY - rect.top
-                  if (d.mode === 'threshold') {
-                    const nextDb = yToDb(y, rect.height)
+                  if (d.mode === 'pitch_threshold') {
+                    const pitchH = Math.round(rect.height * 0.42)
+                    setPitchThresholdHz(yToHz(y, pitchH))
+                    return
+                  }
+                  if (d.mode === 'db_threshold') {
+                    const gap = 6
+                    const pitchH = Math.round(rect.height * 0.42)
+                    const waveTop = pitchH + gap
+                    const waveH = rect.height - waveTop
+                    const nextDb = yToDb(y - waveTop, waveH)
                     setAudioPresetId('custom')
                     setDenoiseStrength(0)
                     setAudioActivityConfig({ ...effectiveAudioConfig, activityDbThreshold: nextDb })
@@ -662,7 +1002,7 @@ export function VoiceoverQuickCutPanel({
                   const rect = e.currentTarget.getBoundingClientRect()
                   const x = e.clientX - rect.left
                   const ratioX = clampNum(x / Math.max(1, rect.width), 0, 1)
-                  if (d.mode === 'threshold') return
+                  if (d.mode === 'pitch_threshold' || d.mode === 'db_threshold') return
                   const sp = selectionPx
                   setSelecting(false)
                   if (!sp) return
@@ -752,6 +1092,8 @@ export function VoiceoverQuickCutPanel({
               </div>
               {waveLoading && <p className="text-[10px] text-slate-500">正在解析音频波形...</p>}
               {waveError && <p className="text-[10px] text-amber-300">波形预览失败：{waveError}</p>}
+              {pitchLoading && <p className="text-[10px] text-slate-500">正在解析音高轨（Hz）...</p>}
+              {pitchError && <p className="text-[10px] text-amber-300">音高预览失败：{pitchError}</p>}
               <p className="text-[10px] text-slate-500">
                 提示：拖拽橙色线可调阈值；在波形上拖拽框选可设置 A/B 循环试听；短拖拽视为跳转播放。
               </p>

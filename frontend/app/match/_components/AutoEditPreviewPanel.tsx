@@ -17,8 +17,12 @@ export function AutoEditPreviewPanel({ selectedPreview, setSelectedPreview, clip
 
   /** 仅使用库中 clip→video；方案 JSON 里的 video_id 不得用于 /stream */
   const resolvedVideoId = useMemo(() => {
-    if (!selectedPreview?.clipId) return null
-    return clipMetaByClip[selectedPreview.clipId]?.video_id ?? null
+    if (!selectedPreview) return null
+    if (selectedPreview.clipId) {
+      const byClip = clipMetaByClip[selectedPreview.clipId]?.video_id
+      if (byClip) return byClip
+    }
+    return selectedPreview.videoId ?? null
   }, [clipMetaByClip, selectedPreview])
 
   /** 预览/成片对齐：原视频轴用库内绝对时间；片段文件轴为 [0, end−start] */
@@ -128,6 +132,7 @@ export function AutoEditPreviewPanel({ selectedPreview, setSelectedPreview, clip
               <button
                 type="button"
                 onClick={() => {
+                  setPreviewVideoErr(false)
                   setSelectedPreview((prev) => (prev && resolvedVideoId ? { ...prev, source: 'video' } : prev))
                 }}
                 disabled={!resolvedVideoId}
@@ -143,7 +148,10 @@ export function AutoEditPreviewPanel({ selectedPreview, setSelectedPreview, clip
 
               <button
                 type="button"
-                onClick={() => setSelectedPreview((prev) => (prev ? { ...prev, source: 'clip' } : prev))}
+                onClick={() => {
+                  setPreviewVideoErr(false)
+                  setSelectedPreview((prev) => (prev ? { ...prev, source: 'clip' } : prev))
+                }}
                 className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
                   selectedPreview.source === 'clip'
                     ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-200'
@@ -201,7 +209,20 @@ export function AutoEditPreviewPanel({ selectedPreview, setSelectedPreview, clip
               src={previewSrc}
               controls
               className="w-full max-h-[45vh] object-contain"
-              onError={() => setPreviewVideoErr(true)}
+              onError={() => {
+                // raw_* 是“未预处理视频”的虚拟片段 ID，本身没有 /clips/{id}/stream。
+                // 若用户切到片段预览触发错误，自动回退到原视频预览，避免界面卡在错误态。
+                if (
+                  selectedPreview?.source === 'clip' &&
+                  selectedPreview.clipId?.startsWith('raw_') &&
+                  resolvedVideoId
+                ) {
+                  setPreviewVideoErr(false)
+                  setSelectedPreview((prev) => (prev ? { ...prev, source: 'video' } : prev))
+                  return
+                }
+                setPreviewVideoErr(true)
+              }}
             />
           ) : (
             <div className="px-4 py-10 text-center text-sm text-slate-500">

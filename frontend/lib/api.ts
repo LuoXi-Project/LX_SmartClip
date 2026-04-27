@@ -769,6 +769,8 @@ export interface VoiceoverQuickCutRequestApi {
   activity_merge_gap_sec?: number
   activity_head_pad_sec?: number
   activity_tail_pad_sec?: number
+  /** strategy=audio_activity_fast 时可选：前端预计算的“保留区间”（绝对时间秒） */
+  activity_keep_ranges?: Array<{ video_id: string; start: number; end: number }>
 }
 
 export const autoEditApi = {

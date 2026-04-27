@@ -278,9 +278,42 @@ export default function MatchPage() {
   }, [autoLoading, autoPlanStartedAt])
 
   useEffect(() => {
-    apiClient.get<unknown, { items: Video[] } | Video[]>('/api/videos')
-      .then((d) => { if (Array.isArray(d)) setVideos(d); else setVideos((d as { items: Video[] })?.items || []) })
-      .catch(console.error)
+    const loadAllVideos = async () => {
+      try {
+        const first = await apiClient.get<unknown, {
+          items?: Video[]
+          total_pages?: number
+          page?: number
+          page_size?: number
+        } | Video[]>('/api/videos')
+        if (Array.isArray(first)) {
+          setVideos(first)
+          return
+        }
+        const firstItems = first?.items || []
+        const totalPages = Number(first?.total_pages || 1)
+        const currentPage = Number(first?.page || 1)
+        const pageSize = Number(first?.page_size || firstItems.length || 12)
+        if (totalPages <= currentPage) {
+          setVideos(firstItems)
+          return
+        }
+        const restPages = await Promise.all(
+          Array.from({ length: totalPages - currentPage }, (_, i) => currentPage + i + 1).map((p) =>
+            apiClient.get<unknown, { items?: Video[] }>('/api/videos', {
+              params: { page: p, page_size: pageSize },
+            }),
+          ),
+        )
+        setVideos([
+          ...firstItems,
+          ...restPages.flatMap((res) => res?.items || []),
+        ])
+      } catch (e) {
+        console.error(e)
+      }
+    }
+    void loadAllVideos()
   }, [])
 
   useEffect(() => {
@@ -308,12 +341,17 @@ export default function MatchPage() {
     () => videos.filter((v) => v.status === 'done' && v.total_clips > 0),
     [videos]
   )
+  const voiceoverScopeVideos = useMemo(
+    () => videos.filter((v) => v.status !== 'error'),
+    [videos]
+  )
+  const scopeVideos = mode === 'voiceover' ? voiceoverScopeVideos : doneVideos
   const selectedOrAllDoneVideos = useMemo(
     () =>
       selectedVideoIds.length > 0
-        ? doneVideos.filter((v) => selectedVideoIds.includes(v.id))
-        : doneVideos,
-    [doneVideos, selectedVideoIds]
+        ? scopeVideos.filter((v) => selectedVideoIds.includes(v.id))
+        : scopeVideos,
+    [scopeVideos, selectedVideoIds]
   )
   const estimatedTotalClips = useMemo(
     () => selectedOrAllDoneVideos.reduce((sum, v) => sum + Number(v.total_clips || 0), 0),
@@ -339,23 +377,23 @@ export default function MatchPage() {
   const estimatedSeconds = Math.max(20, 10 + estimatedBatches * 18)
 
   useEffect(() => {
-    const valid = new Set(doneVideos.map((v) => v.id))
+    const valid = new Set(scopeVideos.map((v) => v.id))
     const prev = useMatchStore.getState().selectedVideoIds
     const next = prev.filter((id) => valid.has(id))
     if (next.length !== prev.length) {
       setMatchSelectedVideoIds(next)
     }
-  }, [doneVideos, setMatchSelectedVideoIds])
-  const filteredDoneVideos = useMemo(() => {
+  }, [scopeVideos, setMatchSelectedVideoIds])
+  const filteredScopeVideos = useMemo(() => {
     const q = videoSearch.trim().toLowerCase()
-    return q ? doneVideos.filter((v) => v.name.toLowerCase().includes(q)) : doneVideos
-  }, [doneVideos, videoSearch])
+    return q ? scopeVideos.filter((v) => v.name.toLowerCase().includes(q)) : scopeVideos
+  }, [scopeVideos, videoSearch])
   const effectiveCopyGenVideoIds = useMemo(
     () => (selectedVideoIds.length > 0 ? selectedVideoIds : doneVideos.map((v) => v.id)),
     [selectedVideoIds, doneVideos]
   )
-  const videoTotalPages = Math.max(1, Math.ceil(filteredDoneVideos.length / VIDEO_PAGE_SIZE))
-  const pagedDoneVideos = filteredDoneVideos.slice((videoPage - 1) * VIDEO_PAGE_SIZE, videoPage * VIDEO_PAGE_SIZE)
+  const videoTotalPages = Math.max(1, Math.ceil(filteredScopeVideos.length / VIDEO_PAGE_SIZE))
+  const pagedScopeVideos = filteredScopeVideos.slice((videoPage - 1) * VIDEO_PAGE_SIZE, videoPage * VIDEO_PAGE_SIZE)
   const handleVideoSearch = (val: string) => { setVideoSearch(val); setVideoPage(1) }
 
   function makeSeg(id: string, text = ''): Segment {
@@ -948,6 +986,7 @@ export default function MatchPage() {
       activityMergeGapSec: number
       activityHeadPadSec: number
       activityTailPadSec: number
+      activityKeepRanges?: Array<{ video_id: string; start: number; end: number }>
     }
   }) {
     setAutoError('')
@@ -964,6 +1003,7 @@ export default function MatchPage() {
         activity_merge_gap_sec: payload.audioActivityConfig?.activityMergeGapSec,
         activity_head_pad_sec: payload.audioActivityConfig?.activityHeadPadSec,
         activity_tail_pad_sec: payload.audioActivityConfig?.activityTailPadSec,
+        activity_keep_ranges: payload.audioActivityConfig?.activityKeepRanges,
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
@@ -1035,9 +1075,9 @@ export default function MatchPage() {
             </div>
           )}
           <VideoScopeSelector
-            doneVideos={doneVideos}
-            filteredDoneVideos={filteredDoneVideos}
-            pagedDoneVideos={pagedDoneVideos}
+            scopeVideos={scopeVideos}
+            filteredScopeVideos={filteredScopeVideos}
+            pagedScopeVideos={pagedScopeVideos}
             videoSearch={videoSearch}
             videoPage={videoPage}
             videoTotalPages={videoTotalPages}
@@ -1212,7 +1252,7 @@ export default function MatchPage() {
             <>
               <VoiceoverQuickCutPanel
                 selectedVideoIds={selectedVideoIds}
-                doneVideos={doneVideos}
+                doneVideos={scopeVideos}
                 onGenerate={handleVoiceoverQuickCut}
               />
               <AutoEditPanel

@@ -4,9 +4,9 @@ import { ChevronLeft, ChevronRight, Film, Search } from 'lucide-react'
 import { type Video } from '@/lib/api'
 
 type VideoScopeSelectorProps = {
-  doneVideos: Video[]
-  filteredDoneVideos: Video[]
-  pagedDoneVideos: Video[]
+  scopeVideos: Video[]
+  filteredScopeVideos: Video[]
+  pagedScopeVideos: Video[]
   videoSearch: string
   videoPage: number
   videoTotalPages: number
@@ -18,9 +18,9 @@ type VideoScopeSelectorProps = {
 }
 
 export function VideoScopeSelector({
-  doneVideos,
-  filteredDoneVideos,
-  pagedDoneVideos,
+  scopeVideos,
+  filteredScopeVideos,
+  pagedScopeVideos,
   videoSearch,
   videoPage,
   videoTotalPages,
@@ -30,7 +30,13 @@ export function VideoScopeSelector({
   onPrevPage,
   onNextPage,
 }: VideoScopeSelectorProps) {
-  if (doneVideos.length === 0) return null
+  if (scopeVideos.length === 0) return null
+  const statusLabel = (s: Video['status']) => {
+    if (s === 'done') return '已完成'
+    if (s === 'processing') return '处理中'
+    if (s === 'pending') return '待处理'
+    return '异常'
+  }
 
   return (
     <section className="space-y-3">
@@ -40,7 +46,7 @@ export function VideoScopeSelector({
           <span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
         </p>
         <span className="text-xs text-slate-600">
-          {videoSearch ? `${filteredDoneVideos.length} / ${doneVideos.length}` : doneVideos.length} 个视频
+          {videoSearch ? `${filteredScopeVideos.length} / ${scopeVideos.length}` : scopeVideos.length} 个视频
         </span>
       </div>
       <div className="relative">
@@ -61,12 +67,12 @@ export function VideoScopeSelector({
           </button>
         )}
       </div>
-      {filteredDoneVideos.length === 0 ? (
+      {filteredScopeVideos.length === 0 ? (
         <p className="text-slate-500 text-sm">未找到「{videoSearch}」。</p>
       ) : (
         <>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {pagedDoneVideos.map((v) => (
+            {pagedScopeVideos.map((v) => (
               <button
                 key={v.id}
                 onClick={() => onToggleVideo(v.id)}
@@ -78,7 +84,9 @@ export function VideoScopeSelector({
               >
                 <Film className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">{v.name}</span>
-                <span className="ml-auto shrink-0 text-slate-600">{v.total_clips}片</span>
+                <span className="ml-auto shrink-0 text-slate-600">
+                  {v.status === 'done' ? (v.total_clips > 0 ? `${v.total_clips}片` : '未预处理') : statusLabel(v.status)}
+                </span>
               </button>
             ))}
           </div>

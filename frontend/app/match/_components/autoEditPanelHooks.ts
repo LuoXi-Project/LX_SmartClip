@@ -40,11 +40,27 @@ export function useAutoEditClipMetaByPlans(autoPlans: AutoEditPlanApi[]) {
     if (!autoPlans.length) return
 
     const ids = new Set<string>()
+    const virtualMeta: ClipMetaByClip = {}
     for (const p of autoPlans) {
       for (const s of p.segments ?? []) {
         const cid = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id
-        if (cid) ids.add(cid)
+        if (!cid) continue
+        if (cid.startsWith('raw_')) {
+          const vid = s.clip_group?.[0]?.video_id
+          if (vid) {
+            virtualMeta[cid] = {
+              video_id: vid,
+              start_time: Number(s.start_time_sec) || 0,
+              end_time: Number(s.end_time_sec) || Number(s.start_time_sec) || 0,
+            }
+          }
+          continue
+        }
+        ids.add(cid)
       }
+    }
+    if (Object.keys(virtualMeta).length > 0) {
+      setClipMetaByClip((prev) => ({ ...virtualMeta, ...prev }))
     }
 
     const ac = new AbortController()

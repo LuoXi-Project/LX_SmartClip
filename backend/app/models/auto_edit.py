@@ -223,6 +223,10 @@ class VoiceoverQuickCutRequest(BaseModel):
         le=1.0,
         description="audio_activity_fast: 每段后置补偿时长(秒)",
     )
+    activity_keep_ranges: Optional[List[dict]] = Field(
+        None,
+        description="audio_activity_fast: 可选，前端预计算的“保留区间”（绝对时间秒）。格式：[{\"video_id\":\"...\",\"start\":0.0,\"end\":1.0}]。提供时优先使用该区间生成方案（用于 pitch 轨调参）。",
+    )
 
 
 class AutoEditPlanResponse(BaseModel):

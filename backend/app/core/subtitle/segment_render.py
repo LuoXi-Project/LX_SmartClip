@@ -93,6 +93,16 @@ def _force_audio_copy(codec_args: List[str]) -> List[str]:
     return cleaned
 
 
+def _is_nvenc(codec_args: List[str]) -> bool:
+    try:
+        v_idx = codec_args.index("-c:v")
+    except ValueError:
+        return False
+    if v_idx + 1 >= len(codec_args):
+        return False
+    return (codec_args[v_idx + 1] or "").strip().lower() in ("h264_nvenc", "hevc_nvenc")
+
+
 def materialize_clip_paths_for_group(
     *,
     seg,
@@ -116,6 +126,8 @@ def materialize_clip_paths_for_group(
     # 优化1（最重要）：提前统一尺寸/SAR，避免后续 filter_complex 对每路反复 scale。
     # 这里固定输出到 1920x1080 + setsar=1（像素方形）。
     # 若上层还配置了额外滤镜（如 fps），继续追加；但避免重复 scale。
+    #
+    # 进一步优化：当使用 NVENC 时，优先尝试走 CUDA 解码 + scale_cuda（失败自动回退 CPU scale）。
     base_norm_filters = ["scale=1920:1080", "setsar=1"]
     extra_filters = build_extra_video_filters(render_opts)
     extra_filters = [f for f in extra_filters if not (f or "").strip().lower().startswith("scale=")]
@@ -273,20 +285,63 @@ def materialize_clip_paths_for_group(
                 # 中间预处理没有音频滤镜，音频尽量 copy，显著减少每段处理耗时。
                 seg_codec_args = _force_audio_copy(seg_codec_args)
                 logger.info(f"FFmpeg pretrim(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 参数: {seg_codec_args}")
-                run_ffmpeg(
-                    [
-                        "-i",
-                        src_path,
-                        # 不裁剪时不要带 -ss/-t，避免不必要的 seek/精度差异
-                        *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
-                        *seg_vf_args,
-                        *seg_codec_args,
-                        "-movflags",
-                        "+faststart",
-                        trim_tmp,
-                    ],
-                    desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
-                )
+                # 优先走 CUDA：NVDEC 解码到 GPU + scale_cuda 缩放 + NVENC 编码。
+                # 若环境不支持（无 NVDEC / filter 不可用 / 驱动问题），自动回退 CPU scale。
+                if seg_filter_parts and _is_nvenc(seg_codec_args):
+                    cuda_filters = []
+                    for f in seg_filter_parts:
+                        if (f or "").strip().lower().startswith("scale="):
+                            cuda_filters.append("scale_cuda=1920:1080")
+                        else:
+                            cuda_filters.append(f)
+                    cuda_vf_args = ["-vf", ",".join(cuda_filters)]
+                    try:
+                        run_ffmpeg(
+                            [
+                                "-hwaccel",
+                                "cuda",
+                                "-hwaccel_output_format",
+                                "cuda",
+                                "-i",
+                                src_path,
+                                *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
+                                *cuda_vf_args,
+                                *seg_codec_args,
+                                "-movflags",
+                                "+faststart",
+                                trim_tmp,
+                            ],
+                            desc=f"pre{tmp_name}(encode,cuda) clip {cid} seg{(int(seg_idx) + 1)}",
+                        )
+                    except Exception:
+                        run_ffmpeg(
+                            [
+                                "-i",
+                                src_path,
+                                *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
+                                *seg_vf_args,
+                                *seg_codec_args,
+                                "-movflags",
+                                "+faststart",
+                                trim_tmp,
+                            ],
+                            desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
+                        )
+                else:
+                    run_ffmpeg(
+                        [
+                            "-i",
+                            src_path,
+                            # 不裁剪时不要带 -ss/-t，避免不必要的 seek/精度差异
+                            *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
+                            *seg_vf_args,
+                            *seg_codec_args,
+                            "-movflags",
+                            "+faststart",
+                            trim_tmp,
+                        ],
+                        desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
+                    )
                 logger.info(f"FFmpeg pre{tmp_name}(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 完成")
 
             paths_out.append(trim_tmp)

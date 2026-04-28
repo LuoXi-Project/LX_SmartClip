@@ -67,6 +67,32 @@ def _trim_list_from_seg(seg, clip_ids: List[str]) -> Optional[List[Tuple[float, 
     return out
 
 
+def _force_audio_copy(codec_args: List[str]) -> List[str]:
+    """
+    仅用于无音频滤镜的中间预处理：将音频设置为 stream copy，避免重复 AAC 编码。
+    """
+    out = list(codec_args)
+    try:
+        a_idx = out.index("-c:a")
+    except ValueError:
+        out += ["-c:a", "copy"]
+    else:
+        if a_idx + 1 >= len(out):
+            out += ["copy"]
+        else:
+            out[a_idx + 1] = "copy"
+    # 音频 copy 场景移除显式码率参数，避免与 copy 冲突/冗余。
+    cleaned: List[str] = []
+    i = 0
+    while i < len(out):
+        if out[i] == "-b:a":
+            i += 2
+            continue
+        cleaned.append(out[i])
+        i += 1
+    return cleaned
+
+
 def materialize_clip_paths_for_group(
     *,
     seg,
@@ -244,6 +270,8 @@ def materialize_clip_paths_for_group(
                 seg_codec_args = build_render_codec_args(trim_opts)
                 if seg_filter_parts:
                     seg_codec_args = force_video_reencode(seg_codec_args, render_opts=trim_opts)
+                # 中间预处理没有音频滤镜，音频尽量 copy，显著减少每段处理耗时。
+                seg_codec_args = _force_audio_copy(seg_codec_args)
                 logger.info(f"FFmpeg pretrim(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 参数: {seg_codec_args}")
                 run_ffmpeg(
                     [
@@ -374,6 +402,9 @@ def render_original_segment(
 
     desired_dur = resolve_desired_dur(seg)
     trim_dur = min(desired_dur, source_total_after) if desired_dur else None
+    # 误差内视为“无需再裁剪”，避免单段触发二次重编码。
+    if trim_dur is not None and abs(float(trim_dur) - float(source_total_after)) <= 0.03:
+        trim_dur = None
 
     # 快路径：单段且不需要再裁剪 → 直接复用（避免无意义的重编码）
     if len(paths_group) == 1 and not trim_dur:

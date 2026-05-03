@@ -256,6 +256,13 @@ DEFAULT_CONFIG = [
     ("llm_max_tokens", "20480", "number", "LLM 最大输出 tokens", None),
     ("llm_max_context_tokens", "128000", "number", "LLM 最大输入上下文 tokens", None),
     ("llm_concurrency", "3", "number", "LLM 并发数量", None),
+    (
+        "pexels_api_key",
+        "",
+        "string",
+        "Pexels API Key（文案素材成片，见 https://www.pexels.com/api/ ）",
+        None,
+    ),
     ("match_top_k", "12", "number", "初筛数量 top_k", None),
     ("match_top_n", "5", "number", "推荐数量 top_n", None),
     ("tts_voice", "zh-CN-XiaoxiaoNeural", "string", "TTS 语音角色", None),

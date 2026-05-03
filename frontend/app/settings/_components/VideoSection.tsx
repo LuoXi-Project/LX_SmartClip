@@ -86,6 +86,8 @@ const PARAM_HINTS: Record<string, string> = {
   export_scale_width: '成片输出宽度（0=不限制）',
   export_scale_height: '成片输出高度（0=不限制）',
   export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
+  pexels_api_key:
+    '在 Pexels 官网申请免费 API Key；用于「智能剪辑 → 文案素材成片」搜索并下载无版权短视频（下载文件单独存放在 stock_media/pexels）',
 }
 
 /** 三种流程模板共用的成片目标：切片/切分仍可省资源，最终成片统一高质量重编码（与切片 clip_* 解耦）。 */
@@ -286,6 +288,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
   const EXPORT_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('export_'))
+  const STOCK_KEYS = ['pexels_api_key']
   const presetDirty = (values: Record<string, string>) =>
     Object.entries(values).some(([key, val]) => hasConfig(key) && v(key) !== val)
   const presetMatchStats = (values: Record<string, string>) => {
@@ -557,6 +560,18 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
           >
             {renderFields(EXPORT_KEYS)}
           </SettingsDetails>
+        )}
+
+        {STOCK_KEYS.some((k) => config[k]) && (
+          <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-slate-200">在线素材（文案成片）</p>
+              <p className="text-xs text-slate-500 mt-1">
+                与切片参数无关；仅用于智能剪辑页的「文案素材成片」从 Pexels 拉取视频到本地隔离目录。
+              </p>
+            </div>
+            {renderFields(STOCK_KEYS)}
+          </div>
         )}
 
       </div>

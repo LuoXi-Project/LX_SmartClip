@@ -118,7 +118,9 @@ export function ExportSidebar({
       <div className="px-5 py-5 space-y-3">
         {isAutoLikeMode(matchMode) ? (
           <p className="text-[11px] text-slate-500 leading-snug text-center">
-            自动 / 模板 / 口播快剪：在主工作区生成并微调方案后，于方案卡片使用「一键成片」导出（口播快剪接口接入后与此一致）。
+            {matchMode === 'script_stock'
+              ? '文案素材成片：选好素材与配音模式后，使用「合成配音成片」导出（含 TTS / 原声 / 混合；文件在 storage/stock_media/exports）。'
+              : '自动 / 模板 / 口播快剪：在主工作区生成并微调方案后，于方案卡片使用「一键成片」导出（口播快剪接口接入后与此一致）。'}
           </p>
         ) : (
           <>

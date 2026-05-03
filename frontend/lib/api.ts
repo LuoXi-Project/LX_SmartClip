@@ -1,6 +1,7 @@
 import axios, { AxiosHeaders, type AxiosRequestHeaders } from 'axios'
 
 import { API_BASE_URL } from './runtime-config'
+import type { SubtitleStyle } from './subtitle-types'
 
 export { API_BASE_URL }
 
@@ -855,6 +856,87 @@ export const autoEditApi = {
     tts_align?: TtsVideoAlignConfigApi | null
   }) =>
     apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
+}
+
+/** 文案 + Pexels / 本地素材成片 */
+export interface ScriptStockPexelsVideoFileApi {
+  quality: string
+  width: number
+  height: number
+  link: string
+}
+
+export interface ScriptStockPexelsVideoApi {
+  id: number
+  width: number
+  height: number
+  duration: number
+  image: string
+  user_name?: string
+  video_files: ScriptStockPexelsVideoFileApi[]
+}
+
+export type ScriptStockAudioMode = 'tts_only' | 'original_only' | 'mix'
+
+export type ScriptStockTimelineMode = 'follow_narration' | 'follow_material'
+
+export type ScriptStockVideoExtendPolicy = 'loop_video_to_cover' | 'freeze_last_frame'
+
+export type ScriptStockMaterialTtsFill = 'pad_silence' | 'loop_audio'
+
+export type ScriptStockMaterialTtsLonger = 'trim_tts' | 'stretch_audio'
+
+export interface ScriptStockComposeSegmentApi {
+  kind: 'library' | 'pexels'
+  video_id?: string | null
+  /** 本地多段按顺序拼接（仅「仅 TTS」）；非空时优先于 video_id */
+  library_video_ids?: string[] | null
+  stored_rel_path?: string | null
+  trim_sec?: number
+  /** 该段配音文案；tts_only / mix 时使用 */
+  text?: string | null
+}
+
+export const scriptStockApi = {
+  split: (body: { script: string; mode?: 'paragraph' | 'line' }) =>
+    apiClient.post<unknown, { segments: string[] }>('/api/script-stock/split', body),
+  generateScript: (body: { topic: string; style_hint?: string; num_paragraphs?: number }) =>
+    apiClient.post<unknown, { script: string }>('/api/script-stock/generate-script', body),
+  suggestQueries: (body: { segments: string[] }) =>
+    apiClient.post<unknown, { queries: string[] }>('/api/script-stock/suggest-queries', body),
+  pexelsSearch: (params: { query: string; page?: number; per_page?: number }) =>
+    apiClient.get<unknown, {
+      page: number
+      per_page: number
+      total_results: number
+      videos: ScriptStockPexelsVideoApi[]
+    }>('/api/script-stock/pexels/search', { params }),
+  pexelsDownload: (body: { pexels_video_id: number; preferred_quality?: 'medium' | 'hd' | 'sd' | 'hls' }) =>
+    apiClient.post<unknown, { stored_rel_path: string; public_url: string; filename: string }>(
+      '/api/script-stock/pexels/download',
+      body,
+    ),
+  compose: (body: {
+    segments: ScriptStockComposeSegmentApi[]
+    project_name?: string
+    audio_mode?: ScriptStockAudioMode
+    tts_volume_db?: number
+    original_volume_db?: number
+    tts_voice?: string | null
+    tts_rate?: string | null
+    tts_volume?: string | null
+    timeline_mode?: ScriptStockTimelineMode
+    video_extend_policy?: ScriptStockVideoExtendPolicy
+    material_tts_fill?: ScriptStockMaterialTtsFill
+    material_tts_longer?: ScriptStockMaterialTtsLonger
+    include_subtitle?: boolean
+    /** 与侧栏字幕样式一致；include_subtitle 为 true 时建议传入 */
+    subtitle_style?: SubtitleStyle
+  }) =>
+    apiClient.post<unknown, { filename: string; public_url: string; stored_rel_path: string }>(
+      '/api/script-stock/compose',
+      body,
+    ),
 }
 
 // BGM 音乐库管理

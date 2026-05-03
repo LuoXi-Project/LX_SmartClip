@@ -39,6 +39,7 @@ import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { useToast } from '@/components/ui/toast-provider'
 import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
 import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
+import { ScriptStockPanel } from './_components/ScriptStockPanel'
 import {
   buildVoiceoverRedubPlan,
   DEFAULT_VOICEOVER_TTS_ALIGN,
@@ -368,7 +369,7 @@ export default function MatchPage() {
     () => videos.filter((v) => v.status !== 'error'),
     [videos]
   )
-  const scopeVideos = mode === 'voiceover' ? voiceoverScopeVideos : doneVideos
+  const scopeVideos = mode === 'voiceover' || mode === 'script_stock' ? voiceoverScopeVideos : doneVideos
   const selectedOrAllDoneVideos = useMemo(
     () =>
       selectedVideoIds.length > 0
@@ -1107,7 +1108,7 @@ export default function MatchPage() {
       <div className="pr-64">
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
           <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
-          {doneVideos.length === 0 && (
+          {doneVideos.length === 0 && mode !== 'script_stock' && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />
               <p className="text-sm text-slate-300">暂无可匹配素材，请先在<Link href="/process" className="mx-1 text-indigo-400 hover:underline">素材处理</Link>完成。</p>
@@ -1177,6 +1178,12 @@ export default function MatchPage() {
                 </p>
               </div>
             </div>
+          ) : mode === 'script_stock' ? (
+            <ScriptStockPanel
+              libraryVideos={scopeVideos}
+              subtitleEnabled={subtitleEnabled}
+              subtitleStyle={subtitleStyle}
+            />
           ) : mode === 'auto' || mode === 'template' ? (
             <>
               {autoPrompt.trim().startsWith('【复刻模板约束】') ? (

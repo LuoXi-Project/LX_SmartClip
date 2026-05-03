@@ -10,15 +10,27 @@ from app.utils.bin_paths import ffmpeg_bin
 logger = logging.getLogger(__name__)
 
 
+def ffmpeg_subprocess_timeout_sec() -> int:
+    """子进程超时（秒）。环境变量 SMARTCLIP_FFMPEG_TIMEOUT_SEC 可覆盖，默认 3600。"""
+    raw = (os.environ.get("SMARTCLIP_FFMPEG_TIMEOUT_SEC") or "").strip()
+    if not raw:
+        return 3600
+    try:
+        return max(120, int(raw))
+    except ValueError:
+        return 3600
+
+
 def run_ffmpeg(args: List[str], desc: str = "") -> None:
     """运行 FFmpeg 命令，失败时抛出 RuntimeError 并附带 stderr 输出。"""
     cmd = [ffmpeg_bin(), "-y"] + args
+    timeout_sec = ffmpeg_subprocess_timeout_sec()
     logger.info("FFmpeg%s: %s", f" [{desc}]" if desc else "", " ".join(cmd))
     result = subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=3600,
+        timeout=timeout_sec,
     )
     if result.returncode != 0:
         raise RuntimeError(

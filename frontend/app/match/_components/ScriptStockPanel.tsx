@@ -1,19 +1,26 @@
 'use client'
 
-import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import {
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  ChevronsDown,
+  ChevronsUp,
   Clapperboard,
   Copy,
   Download,
   ExternalLink,
   Film,
+  GripVertical,
   Layers,
   Loader2,
   Mic,
+  Plus,
   Search,
   Sparkles,
+  SplitSquareHorizontal,
   Trash2,
 } from 'lucide-react'
 import type { Video } from '@/lib/api'
@@ -82,6 +89,8 @@ function bestCachedRelForPexelsId(items: ScriptStockPexelsCacheItemApi[], videoI
   return hits[0].stored_rel_path
 }
 
+const STOCK_SEG_DRAG_MIME = 'application/x-smartclip-stock-seg-id'
+
 export function ScriptStockPanel({
   libraryVideos,
   subtitleEnabled = false,
@@ -115,6 +124,85 @@ export function ScriptStockPanel({
   const [materialTtsLonger, setMaterialTtsLonger] = useState<ScriptStockMaterialTtsLonger>('stretch_audio')
   const [pexelsCacheItems, setPexelsCacheItems] = useState<ScriptStockPexelsCacheItemApi[]>([])
   const [pexelsCacheLoading, setPexelsCacheLoading] = useState(false)
+
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const flashClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flashRow = useCallback((id: string) => {
+    if (flashClearRef.current) clearTimeout(flashClearRef.current)
+    setFlashId(id)
+    flashClearRef.current = setTimeout(() => {
+      setFlashId(null)
+      flashClearRef.current = null
+    }, 1100)
+  }, [])
+
+  useEffect(() => () => {
+    if (flashClearRef.current) clearTimeout(flashClearRef.current)
+  }, [])
+
+  /** 拖动靠近视口上下边缘时自动滚动（与手动匹配一致） */
+  useEffect(() => {
+    if (!draggingId) return
+    const margin = 88
+    const maxStep = 22
+    const onDragOver = (e: DragEvent) => {
+      const y = e.clientY
+      if (y < margin) {
+        const k = 1 - y / margin
+        window.scrollBy(0, -Math.ceil(maxStep * k))
+      } else if (y > window.innerHeight - margin) {
+        const k = 1 - (window.innerHeight - y) / margin
+        window.scrollBy(0, Math.ceil(maxStep * k))
+      }
+    }
+    document.addEventListener('dragover', onDragOver)
+    return () => document.removeEventListener('dragover', onDragOver)
+  }, [draggingId])
+
+  const addSegment = () => {
+    setSegments((prev) => [...prev, newSeg('')])
+  }
+
+  const removeSegment = (segId: string) => {
+    setSegments((prev) => prev.filter((s) => s.id !== segId))
+  }
+
+  const clearAllSegments = () => {
+    setSegments([])
+  }
+
+  const moveStockSegment = (fromId: string, toId: string) => {
+    setSegments((prev) => {
+      const list = [...prev]
+      const from = list.findIndex((s) => s.id === fromId)
+      const to = list.findIndex((s) => s.id === toId)
+      if (from < 0 || to < 0 || from === to) return prev
+      const [item] = list.splice(from, 1)
+      list.splice(to, 0, item)
+      return list
+    })
+  }
+
+  const moveSegmentRel = (segId: string, action: 'up' | 'down' | 'top' | 'bottom') => {
+    setSegments((prev) => {
+      const list = [...prev]
+      const from = list.findIndex((s) => s.id === segId)
+      if (from < 0) return prev
+      let to = from
+      if (action === 'up') to = Math.max(0, from - 1)
+      else if (action === 'down') to = Math.min(list.length - 1, from + 1)
+      else if (action === 'top') to = 0
+      else if (action === 'bottom') to = list.length - 1
+      if (to === from) return prev
+      const [item] = list.splice(from, 1)
+      list.splice(to, 0, item)
+      return list
+    })
+    flashRow(segId)
+  }
 
   const loadPexelsCache = useCallback(async () => {
     setPexelsCacheLoading(true)
@@ -190,7 +278,7 @@ export function ScriptStockPanel({
         return
       }
       setSegments(segs)
-      toast.success(`已分为 ${segs.length} 段`)
+      toast.success(`已分为 ${segs.length} 段，可在下方拖拽或箭头调整顺序、增删段落`)
     } catch (e) {
       toast.error(formatFastApiDetail(e))
     } finally {
@@ -423,7 +511,12 @@ export function ScriptStockPanel({
       </div>
 
       <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 space-y-2">
-        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">文案正文</p>
+        <div className="flex flex-wrap items-center gap-2 justify-between">
+          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">文案正文</p>
+          <p className="text-[10px] text-slate-600 hidden sm:block">
+            拆分后可拖拽段落排序，与手动匹配一致
+          </p>
+        </div>
         <textarea
           value={fullScript}
           onChange={(e) => setFullScript(e.target.value)}
@@ -431,7 +524,7 @@ export function ScriptStockPanel({
           placeholder="粘贴完整文案，或先用上方 AI 生成…"
           className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500 resize-y min-h-[140px]"
         />
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={splitting}
@@ -447,7 +540,16 @@ export function ScriptStockPanel({
             onClick={() => void handleSplit('line')}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-600 hover:border-sky-500 text-sm text-slate-200"
           >
+            {splitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <SplitSquareHorizontal className="w-4 h-4 text-sky-400" />}
             按单行分段
+          </button>
+          <button
+            type="button"
+            onClick={addSegment}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-300"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            手动添加段落
           </button>
         </div>
       </div>
@@ -455,16 +557,40 @@ export function ScriptStockPanel({
       {segments.length > 0 && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-slate-400">分段素材（共 {segments.length} 段）</p>
-            <button
-              type="button"
-              disabled={suggesting}
-              onClick={() => void handleSuggestAllQueries()}
-              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-50"
-            >
-              {suggesting ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" /> : null}
-              一键生成英文搜索词
-            </button>
+            <div className="space-y-0.5 min-w-0">
+              <p className="text-xs font-semibold text-slate-400">
+                分段素材（共 {segments.length} 段）
+              </p>
+              <p className="text-[10px] text-slate-600 hidden sm:block">
+                可拖拽左侧手柄排序，或使用每段顶部箭头；支持新增、删除、清空
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={addSegment}
+                className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 inline-flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                添加段落
+              </button>
+              <button
+                type="button"
+                onClick={clearAllSegments}
+                className="text-xs px-3 py-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10"
+              >
+                清空全部
+              </button>
+              <button
+                type="button"
+                disabled={suggesting}
+                onClick={() => void handleSuggestAllQueries()}
+                className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-50"
+              >
+                {suggesting ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" /> : null}
+                一键生成英文搜索词
+              </button>
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-4 space-y-3">
@@ -510,10 +636,123 @@ export function ScriptStockPanel({
           </div>
 
           <div className="space-y-4">
-            {segments.map((seg, idx) => (
-              <div key={seg.id} className="rounded-xl border border-slate-700 bg-slate-950/50 p-4 space-y-3">
+            {segments.map((seg, idx) => {
+              const canUp = idx > 0
+              const canDown = segments.length > 0 && idx < segments.length - 1
+              return (
+              <div
+                key={seg.id}
+                className={[
+                  'rounded-2xl transition-[opacity,box-shadow] duration-200',
+                  draggingId === seg.id ? 'opacity-45' : '',
+                  draggingId && draggingId !== seg.id && dropTargetId === seg.id
+                    ? 'ring-2 ring-indigo-400/90 shadow-[0_0_0_1px_rgba(129,140,248,0.35),0_8px_28px_-6px_rgba(99,102,241,0.45)]'
+                    : '',
+                  flashId === seg.id
+                    ? 'ring-2 ring-emerald-400 shadow-[0_0_24px_-4px_rgba(52,211,153,0.55)]'
+                    : '',
+                ].join(' ')}
+                onDragOver={(e) => {
+                  if (!draggingId || draggingId === seg.id) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  setDropTargetId(seg.id)
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTargetId(null)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const fromId =
+                    e.dataTransfer.getData(STOCK_SEG_DRAG_MIME) || e.dataTransfer.getData('text/plain')
+                  setDropTargetId(null)
+                  setDraggingId(null)
+                  if (!fromId || fromId === seg.id) return
+                  moveStockSegment(fromId, seg.id)
+                  flashRow(fromId)
+                }}
+              >
+              <div className="rounded-xl border border-slate-700 bg-slate-950/50 overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2.5 bg-slate-900/60 border-b border-slate-800">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    title="拖动排序"
+                    aria-label="拖动排序"
+                    className="shrink-0 p-0.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none select-none"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(STOCK_SEG_DRAG_MIME, seg.id)
+                      e.dataTransfer.setData('text/plain', seg.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                      setDraggingId(seg.id)
+                      setDropTargetId(null)
+                    }}
+                    onDragEnd={() => {
+                      setDraggingId(null)
+                      setDropTargetId(null)
+                    }}
+                  >
+                    <GripVertical className="w-4 h-4" />
+                  </div>
+                  <div className="w-6 h-6 rounded-lg bg-sky-500/20 text-sky-300 text-xs font-bold flex items-center justify-center shrink-0">
+                    {idx + 1}
+                  </div>
+                  <span className="text-xs text-slate-400 font-medium">段落 {idx + 1}</span>
+                  <div className="flex-1 min-w-0" />
+                  {segments.length > 1 ? (
+                    <div className="flex items-center gap-0.5 shrink-0 rounded-lg border border-slate-700/80 bg-slate-900/50 p-0.5">
+                      <button
+                        type="button"
+                        title="移至顶部"
+                        disabled={!canUp}
+                        onClick={() => moveSegmentRel(seg.id, 'top')}
+                        className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+                      >
+                        <ChevronsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="上移"
+                        disabled={!canUp}
+                        onClick={() => moveSegmentRel(seg.id, 'up')}
+                        className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="下移"
+                        disabled={!canDown}
+                        onClick={() => moveSegmentRel(seg.id, 'down')}
+                        className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="移至底部"
+                        disabled={!canDown}
+                        onClick={() => moveSegmentRel(seg.id, 'bottom')}
+                        className="p-1 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+                      >
+                        <ChevronsDown className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    title="删除本段"
+                    onClick={() => removeSegment(seg.id)}
+                    className="shrink-0 p-1 rounded-md text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-4 space-y-3">
                 <div className="space-y-1.5">
-                  <p className="text-[11px] text-slate-500">第 {idx + 1} 段 · 配音文案（可改）</p>
+                  <p className="text-[11px] text-slate-500">配音文案（可改）</p>
                   <textarea
                     value={seg.text}
                     onChange={(e) =>
@@ -674,8 +913,11 @@ export function ScriptStockPanel({
                     </div>
                   </div>
                 )}
+                </div>
               </div>
-            ))}
+              </div>
+              )
+            })}
           </div>
 
           <div className="rounded-xl border border-emerald-500/25 bg-emerald-950/30 p-4 space-y-4">

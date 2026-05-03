@@ -50,6 +50,56 @@ apiClient.interceptors.response.use(
 
 export default apiClient
 
+/**
+ * 将 axios/FastAPI 错误解析为可读文案（支持 detail 为 string、校验错误数组或结构化对象）。
+ */
+export function formatFastApiDetail(error: unknown): string {
+  const ax = error as {
+    response?: { data?: { detail?: unknown } }
+    message?: string
+  }
+  const detail = ax.response?.data?.detail
+  if (detail === undefined || detail === null || detail === '') {
+    return ax.message || '请求失败'
+  }
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item: unknown) => {
+        if (item && typeof item === 'object' && 'msg' in item) {
+          const loc = (item as { loc?: unknown[] }).loc
+          const msg = (item as { msg?: unknown }).msg
+          const locStr = Array.isArray(loc) ? loc.filter(Boolean).join('.') : ''
+          return locStr ? `${locStr}: ${String(msg)}` : String(msg)
+        }
+        return JSON.stringify(item)
+      })
+      .join('; ')
+  }
+  if (typeof detail === 'object') {
+    const o = detail as {
+      message?: string
+      invalid_clip_ids?: string[]
+      tts_failures?: Array<{ segment_id?: string; error?: string }>
+    }
+    const parts: string[] = []
+    if (o.message) parts.push(o.message)
+    if (o.invalid_clip_ids?.length) {
+      parts.push(`无效 clip_id: ${o.invalid_clip_ids.join(', ')}`)
+    }
+    if (o.tts_failures?.length) {
+      parts.push(o.tts_failures.map((f) => `[${f.segment_id ?? '段落'}] ${f.error ?? ''}`).join('\n'))
+    }
+    if (parts.length) return parts.join('\n')
+    try {
+      return JSON.stringify(detail)
+    } catch {
+      return String(detail)
+    }
+  }
+  return String(detail)
+}
+
 const WS_BASE_URL = typeof window !== 'undefined'
   ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
   : 'ws://localhost:8000'
@@ -756,6 +806,20 @@ export interface VoiceoverAudioActivityConfigApi {
   activity_tail_pad_sec?: number
 }
 
+export type TtsVideoAlignPolicyApi =
+  | 'freeze_last_frame'
+  | 'loop_video_to_cover'
+  | 'stretch_audio'
+  | 'stretch_video'
+
+export interface TtsVideoAlignConfigApi {
+  policy: TtsVideoAlignPolicyApi
+  max_audio_atempo?: number
+  min_audio_atempo?: number
+  max_video_pts_factor?: number
+  min_video_pts_factor?: number
+}
+
 export interface VoiceoverQuickCutRequestApi {
   video_ids: string[]
   strategy: VoiceoverQuickCutStrategyApi
@@ -782,7 +846,14 @@ export const autoEditApi = {
     apiClient.post<unknown, AutoEditPlanSessionResponseApi>('/api/auto-edit/plan/session', payload),
   voiceoverQuickCut: (payload: VoiceoverQuickCutRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/voiceover-quick-cut', payload),
-  realize: (payload: { plan: AutoEditPlanApi; project_name?: string; include_subtitle?: boolean; style?: import('./subtitle-types').SubtitleStyle }) =>
+  realize: (payload: {
+    plan: AutoEditPlanApi
+    project_name?: string
+    include_subtitle?: boolean
+    style?: import('./subtitle-types').SubtitleStyle
+    force_tts_pipeline?: boolean
+    tts_align?: TtsVideoAlignConfigApi | null
+  }) =>
     apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
 }
 

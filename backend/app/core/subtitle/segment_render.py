@@ -4,9 +4,15 @@ import logging
 import os
 from typing import Dict, List, Optional, Tuple
 
+from app.models.subtitle import TtsVideoAlignConfig
 from app.utils.ffprobe_utils import probe_duration, probe_keyframes_times, probe_video_dimensions
 
 from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
+from app.core.subtitle.tts_align import (
+    build_atempo_filter_chain,
+    resolve_stretch_audio_atempo,
+    resolve_stretch_video_pts_factor,
+)
 from .render_opts import (
     build_extra_video_filters,
     build_render_codec_args,
@@ -591,6 +597,7 @@ def render_tts_segment(
     keyframe_cache: Optional[Dict[str, List[float]]] = None,
     materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
     from_source_video: bool = True,
+    tts_align: Optional[TtsVideoAlignConfig] = None,
 ) -> str:
     from fastapi import HTTPException
 
@@ -658,19 +665,29 @@ def render_tts_segment(
     if base_video_dur <= 0.05:
         raise HTTPException(400, f"分段 seg_{(int(seg_idx) + 1)} 视频时长无效，无法对齐 TTS")
 
+    if tts_align is None:
+        policy = "loop_video_to_cover"
+        cfg = TtsVideoAlignConfig()
+    else:
+        cfg = tts_align
+        policy = str(cfg.policy or "loop_video_to_cover")
+    eps = 0.02
+    video_shorter = base_video_dur + eps < audio_dur
+
     need_pad_sec = 0.0
-    if base_video_dur + 0.02 < audio_dur:
+    paths_group = list(paths_group)
+
+    if video_shorter and policy == "loop_video_to_cover":
         import math
 
         need = audio_dur - base_video_dur
-        # 重复“整组素材”，避免依赖单段 probe；上限防止异常音频时长导致无限膨胀
         rep = int(math.ceil(need / base_video_dur)) + 1
         rep = max(1, min(200, rep))
         paths_group = [*paths_group, *([*paths_group] * rep)]
-        # 仍然给出 pad 兜底（concat/探测误差/编码尾帧等都会导致视频比预期短一点点）
         need_pad_sec = max(0.0, audio_dur - (base_video_dur * (rep + 1)))
-    else:
-        # 允许微小误差；若视频仍比音频短，则后续用 tpad 冻帧补齐
+    elif video_shorter and policy == "freeze_last_frame":
+        need_pad_sec = max(0.0, audio_dur - base_video_dur)
+    elif not video_shorter:
         need_pad_sec = max(0.0, audio_dur - base_video_dur)
 
     # concat 要求所有输入视频参数一致（分辨率/SAR 等），否则会报
@@ -678,17 +695,24 @@ def render_tts_segment(
     seg_codec_args = force_video_reencode(build_render_codec_args(render_opts), render_opts=render_opts)
     seg_codec_args = _force_audio_reencode(seg_codec_args, acodec="aac", abitrate_kbps=128)
 
-    # 优化2：尽量避免 filter_complex concat，优先 concat demuxer。
-    # 前提是输入视频规格一致（分辨率/编码参数/SAR 等）。materialize 已按导出缩放或组内基准分辨率拉齐 + SAR=1。
     concat_list = os.path.join(tmp, f"seg_{seg_idx:03d}_vconcat.txt")
     write_concat_list(paths_group, concat_list)
-    try:
-        logger.info(f"FFmpeg tts(seg concat demuxer) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
-        # 关键：不要让视频长度决定输出长度（-shortest 会截断音频）。
-        # 若视频仍短于音频，用 tpad 冻帧补齐到 audio_dur，确保配音完整输出。
-        vf_pad = []
-        if need_pad_sec > 0.02:
-            vf_pad = ["-vf", f"tpad=stop_mode=clone:stop_duration={need_pad_sec:.3f},setsar=1"]
+
+    use_stretch_fc = (
+        tts_align is not None
+        and policy in ("stretch_audio", "stretch_video")
+        and abs(audio_dur - base_video_dur) > eps
+    )
+
+    def _run_stretch_fc(*, output_dur: float, v_filters: str, a_filters: str) -> None:
+        fc = f"[0:v]{v_filters}[vout];[1:a]{a_filters}[aout]"
+        logger.info(
+            "FFmpeg tts(seg stretch_fc) 段#%s policy=%s output_dur=%.3f fc=%s",
+            int(seg_idx) + 1,
+            policy,
+            output_dur,
+            fc,
+        )
         run_ffmpeg(
             [
                 "-fflags",
@@ -701,22 +725,81 @@ def render_tts_segment(
                 concat_list,
                 "-i",
                 tts_path,
-                # 只取拼接后的 video + 独立 tts audio
+                "-filter_complex",
+                fc,
                 "-map",
-                "0:v:0",
+                "[vout]",
                 "-map",
-                "1:a:0",
-                *vf_pad,
-                # 精准控制总时长为音频时长；视频将被重编码（避免关键帧限制）
+                "[aout]",
                 "-t",
-                f"{audio_dur:.3f}",
+                f"{output_dur:.3f}",
                 *seg_codec_args,
                 "-movflags",
                 "+faststart",
                 seg_out,
             ],
-            desc=f"tts seg {(int(seg_idx) + 1)} (concat demuxer)",
+            desc=f"tts seg {(int(seg_idx) + 1)} (stretch_fc)",
         )
+
+    try:
+        if use_stretch_fc:
+            if policy == "stretch_audio":
+                atempo_eff, out_audio = resolve_stretch_audio_atempo(
+                    tts_sec=audio_dur, video_sec=base_video_dur, cfg=cfg
+                )
+                out_dur = max(base_video_dur, out_audio)
+                a_chain = build_atempo_filter_chain(atempo_eff)
+                v_body = "setpts=PTS-STARTPTS"
+                if base_video_dur + eps < out_audio:
+                    v_body += f",tpad=stop_mode=clone:stop_duration={out_audio - base_video_dur:.3f}"
+                elif base_video_dur > out_dur + eps:
+                    v_body += f",trim=0:{out_dur:.3f},setpts=PTS-STARTPTS"
+                v_body += ",setsar=1"
+                a_body = f"{a_chain},asetpts=PTS-STARTPTS"
+                _run_stretch_fc(output_dur=out_dur, v_filters=v_body, a_filters=a_body)
+            else:  # stretch_video
+                fac, out_v = resolve_stretch_video_pts_factor(
+                    tts_sec=audio_dur, video_sec=base_video_dur, cfg=cfg
+                )
+                v_body = f"setpts=PTS-STARTPTS,setpts=PTS*{fac:.6f}"
+                if audio_dur + eps < out_v:
+                    v_body += f",trim=0:{audio_dur:.3f},setpts=PTS-STARTPTS"
+                elif audio_dur > out_v + eps:
+                    v_body += f",tpad=stop_mode=clone:stop_duration={audio_dur - out_v:.3f}"
+                v_body += ",setsar=1"
+                a_body = "asetpts=PTS-STARTPTS"
+                _run_stretch_fc(output_dur=audio_dur, v_filters=v_body, a_filters=a_body)
+        else:
+            logger.info(f"FFmpeg tts(seg concat demuxer) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
+            vf_pad = []
+            if need_pad_sec > 0.02:
+                vf_pad = ["-vf", f"tpad=stop_mode=clone:stop_duration={need_pad_sec:.3f},setsar=1"]
+            run_ffmpeg(
+                [
+                    "-fflags",
+                    "+genpts",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    concat_list,
+                    "-i",
+                    tts_path,
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    *vf_pad,
+                    "-t",
+                    f"{audio_dur:.3f}",
+                    *seg_codec_args,
+                    "-movflags",
+                    "+faststart",
+                    seg_out,
+                ],
+                desc=f"tts seg {(int(seg_idx) + 1)} (concat demuxer)",
+            )
     except Exception:
         # fallback：仍走 filter_complex concat，但不再做多路 scale/pad（尺寸/SAR 已在 materialize 统一）
         cmd = []

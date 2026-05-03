@@ -24,7 +24,7 @@ from .segment_render import (
 )
 
 if TYPE_CHECKING:
-    from app.models.subtitle import SubtitleStyle
+    from app.models.subtitle import SubtitleStyle, TtsVideoAlignConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ def burn_to_mp4(
     normalize_audio: bool = False,
     output_dir: str = None,
     materialize_from_source: bool = True,
+    tts_align: Optional["TtsVideoAlignConfig"] = None,
 ) -> tuple:
     from fastapi import HTTPException
 
@@ -93,6 +94,7 @@ def burn_to_mp4(
                     render_opts=segment_render_opts,
                     keyframe_cache=keyframe_cache,
                     from_source_video=materialize_from_source,
+                    tts_align=tts_align,
                 )
             else:
                 seg_out = render_original_segment(

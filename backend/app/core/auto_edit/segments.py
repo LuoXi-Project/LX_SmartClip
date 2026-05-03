@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
 import aiosqlite
+from fastapi import HTTPException
 
 from app.api.tts import SynthesizeRequest, SynthesizeResponse, synthesize as tts_synthesize
 from app.db.database import DB_PATH
@@ -180,6 +181,8 @@ async def segments_from_plan(
     valid_clip_ids: Set[str],
     candidates_by_video: Dict[str, List[ClipCandidate]],
     all_candidates: List[ClipCandidate],
+    *,
+    fail_fast_on_tts_error: bool = False,
 ) -> List[SubtitleSegmentInput]:
     """
     将 Plan.segments 转换为现有 SubtitleSegmentInput 列表。
@@ -189,6 +192,7 @@ async def segments_from_plan(
     - 如果为空，则回退到 clip_group[0].clip_id
     - 若 audio_mode == 'tts'，直接用段落文案调用一次 TTS 合成
     - 若 selected_clip_ids 无效，则按 segment 时间窗自动回退到最接近的素材片段
+    - fail_fast_on_tts_error=True：任一段 TTS 失败则抛出 HTTPException（503），便于前端展示原因；默认 False 时失败段落降级为无配音文件（旧行为）
     """
     tts_concurrency_raw: str = "3"
     async with aiosqlite.connect(DB_PATH) as db:
@@ -219,26 +223,49 @@ async def segments_from_plan(
     tts_concurrency = _parse_positive_int(str(tts_concurrency_raw), default=3, min_v=1, max_v=16)
     sem = asyncio.Semaphore(tts_concurrency)
 
-    async def _maybe_tts(seg: SegmentPlan) -> Optional[str]:
-        if seg.audio_mode != "tts" or not seg.subtitle or not seg.subtitle.text:
-            return None
+    async def _maybe_tts(seg: SegmentPlan) -> Tuple[Optional[str], Optional[str]]:
+        """返回 (tts_filename, error_message)。未请求 TTS 时为 (None, None)。"""
+        if seg.audio_mode != "tts" or not seg.subtitle or not (seg.subtitle.text or "").strip():
+            return None, None
         async with sem:
             try:
                 tts_req = SynthesizeRequest(text=seg.subtitle.text)
                 tts_res: SynthesizeResponse = await tts_synthesize(tts_req)
-                return tts_res.filename
+                return tts_res.filename, None
             except Exception as e:
-                # 单段 TTS 失败不应阻塞整条一键成片链路：降级为无 tts_filename，
-                # 后续时间轴会自动回落到 clip 时长。
-                logger.warning("segment %s TTS 失败，已降级为原片时长: %s", seg.id, e)
-                return None
+                logger.warning("segment %s TTS 失败: %s", seg.id, e)
+                return None, str(e)
 
     active_segments = [s for s in plan.segments if not s.exclude_from_output]
-    tts_filenames = await asyncio.gather(*[_maybe_tts(seg) for seg in active_segments])
+    tts_rows: List[Tuple[Optional[str], Optional[str]]] = await asyncio.gather(
+        *[_maybe_tts(seg) for seg in active_segments]
+    )
+
+    tts_failures: List[Dict[str, str]] = []
+    for seg, (tts_fn, tts_err) in zip(active_segments, tts_rows):
+        if seg.audio_mode != "tts" or not seg.subtitle or not (seg.subtitle.text or "").strip():
+            continue
+        if not tts_fn:
+            tts_failures.append(
+                {
+                    "segment_id": seg.id,
+                    "error": (tts_err or "").strip() or "TTS 未生成音频文件",
+                }
+            )
+
+    if fail_fast_on_tts_error and tts_failures:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "TTS 合成失败，无法继续成片（请检查 TTS 服务是否可达、API/网络配置后重试）",
+                "tts_failures": tts_failures,
+            },
+        )
+
     candidate_by_id: Dict[str, ClipCandidate] = {c.id: c for c in all_candidates}
 
     seg_inputs: List[SubtitleSegmentInput] = []
-    for seg, tts_filename in zip(active_segments, tts_filenames):
+    for seg, (tts_filename, _) in zip(active_segments, tts_rows):
         raw_trims = getattr(seg, "clip_trims", None)
         if raw_trims:
             plan_trims = list(raw_trims)

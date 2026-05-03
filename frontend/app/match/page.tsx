@@ -5,7 +5,21 @@ import Link from 'next/link'
 import {
   AlertCircle, Loader2,
 } from 'lucide-react'
-import apiClient, { API_BASE_URL, bgmApi, exportApi, ttsApi, subtitleApi, type MatchClip, type Video, autoEditApi, type AutoEditPlanApi, type AutoEditBgmPlanApi, type BgmTrack } from '@/lib/api'
+import apiClient, {
+  API_BASE_URL,
+  bgmApi,
+  exportApi,
+  ttsApi,
+  subtitleApi,
+  formatFastApiDetail,
+  type MatchClip,
+  type Video,
+  autoEditApi,
+  type AutoEditPlanApi,
+  type AutoEditBgmPlanApi,
+  type BgmTrack,
+  type TtsVideoAlignConfigApi,
+} from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { ClipInOutDialog } from './_components/ClipInOutDialog'
 import { buildClipTrimsForApi } from './_components/clipTrim'
@@ -25,6 +39,11 @@ import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { useToast } from '@/components/ui/toast-provider'
 import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
 import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
+import {
+  buildVoiceoverRedubPlan,
+  DEFAULT_VOICEOVER_TTS_ALIGN,
+  voiceoverPlanSupportsRedub,
+} from '@/lib/voiceoverRedub'
 
 const VIDEO_PAGE_SIZE = 9
 const REPLICA_LOCKED_TEMPLATE_PRESET = 'replica_locked'
@@ -147,8 +166,8 @@ export default function MatchPage() {
     setAutoPlanLogs,
   } = useMatchStore()
 
+  
   const toast = useToast()
-
   const setSelectedVideoIds = (fn: string[] | ((prev: string[]) => string[])) =>
     setMatchSelectedVideoIds(typeof fn === 'function' ? fn(useMatchStore.getState().selectedVideoIds) : fn)
   const setGlobalQuery = setMatchGlobalQuery
@@ -194,6 +213,10 @@ export default function MatchPage() {
   const [voiceoverBgmTimelineSegments, setVoiceoverBgmTimelineSegments] = useState<
     Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
   >([])
+  const [voiceoverRedubEnabled, setVoiceoverRedubEnabled] = useState(false)
+  const [voiceoverTtsAlign, setVoiceoverTtsAlign] = useState<TtsVideoAlignConfigApi>(() => ({
+    ...DEFAULT_VOICEOVER_TTS_ALIGN,
+  }))
   const [autoCustomBgmEnabled, setAutoCustomBgmEnabled] = useState(false)
   const [autoCustomBgmTrackIds, setAutoCustomBgmTrackIds] = useState<string[]>([])
   const [autoCustomBgmVolumeByTrackId, setAutoCustomBgmVolumeByTrackId] = useState<Record<string, number>>({})
@@ -1029,8 +1052,22 @@ export default function MatchPage() {
     setAutoRealizingId(plan.plan_id)
     try {
       let planForRealize = applyAutoBgmRealizeOptions(plan)
+      let forceTtsPipeline = false
+      let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
       if (mode === 'voiceover') {
         const voBgm = showVoiceoverBgmConfig ? buildVoiceoverBgmPlanPayload() : null
+        if (voiceoverRedubEnabled) {
+          if (!voiceoverPlanSupportsRedub(planForRealize)) {
+            const msg =
+              '重新配音要求每一段成片均有 ASR 文案。当前方案含有非 ASR 段（例如音频粗剪占位），请改用极速/智能快剪或完成语音识别后再试。'
+            setAutoRealizeMsg(msg)
+            toast.error(msg)
+            return
+          }
+          planForRealize = buildVoiceoverRedubPlan(planForRealize)
+          forceTtsPipeline = true
+          ttsAlignPayload = { ...voiceoverTtsAlign }
+        }
         if (voBgm) {
           planForRealize = { ...planForRealize, bgm: voBgm }
         }
@@ -1040,6 +1077,7 @@ export default function MatchPage() {
         project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
         include_subtitle: subtitleEnabled,
         style: subtitleStyle,
+        ...(forceTtsPipeline ? { force_tts_pipeline: true, tts_align: ttsAlignPayload } : {}),
       })
       const downloadUrl = `${API_BASE_URL}${res.url}`
       setAutoRealizeDownloads((prev) => ({
@@ -1048,8 +1086,9 @@ export default function MatchPage() {
       }))
       setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '一键成片失败'
+      const msg = formatFastApiDetail(e)
       setAutoRealizeMsg(msg)
+      toast.error(msg)
     } finally {
       setAutoRealizingId(null)
     }
@@ -1254,6 +1293,15 @@ export default function MatchPage() {
                 selectedVideoIds={selectedVideoIds}
                 doneVideos={scopeVideos}
                 onGenerate={handleVoiceoverQuickCut}
+                redubEnabled={voiceoverRedubEnabled}
+                onRedubEnabledChange={setVoiceoverRedubEnabled}
+                ttsAlign={voiceoverTtsAlign}
+                onTtsAlignChange={(patch) =>
+                  setVoiceoverTtsAlign((prev) => ({
+                    ...prev,
+                    ...patch,
+                  }))
+                }
               />
               <AutoEditPanel
                 hideLlmPlannerUi

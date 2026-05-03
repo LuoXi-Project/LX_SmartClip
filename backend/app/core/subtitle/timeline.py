@@ -68,6 +68,16 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
         if manual_v is not None and manual_v <= 0:
             manual_v = None
 
+        tl_raw = getattr(seg, "timeline_duration_sec", None)
+        try:
+            tl_v = float(tl_raw) if tl_raw is not None else None
+        except Exception:
+            tl_v = None
+        if tl_v is not None and tl_v > 0.05:
+            durs.append(tl_v)
+            srcs.append("timeline_override")
+            continue
+
         tts_d = None
         if use_tts and getattr(seg, "tts_filename", None):
             p = os.path.join(tts_audio_dir, os.path.basename(seg.tts_filename))

@@ -41,6 +41,12 @@ export function useToast(): ToastAPI {
 
 // ─── Single Toast Item ────────────────────────────────────────────────────────
 
+const DEFAULT_DURATION_MS: Record<ToastVariant, number> = {
+  success: 3500,
+  error: 10000,
+  info: 3500,
+}
+
 const VARIANT_STYLES: Record<ToastVariant, { container: string; icon: typeof CheckCircle2 }> = {
   success: {
     container:
@@ -117,13 +123,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
-  const add = useCallback(
-    (message: string, variant: ToastVariant, duration = 3500) => {
-      const id = `toast-${Date.now()}-${Math.random()}`
-      setToasts((prev) => [...prev, { id, message, variant, duration }])
-    },
-    []
-  )
+  const add = useCallback((message: string, variant: ToastVariant, duration?: number) => {
+    const id = `toast-${Date.now()}-${Math.random()}`
+    const dur = duration ?? DEFAULT_DURATION_MS[variant]
+    setToasts((prev) => [...prev, { id, message, variant, duration: dur }])
+  }, [])
 
   const api: ToastAPI = {
     success: (msg, dur) => add(msg, 'success', dur),

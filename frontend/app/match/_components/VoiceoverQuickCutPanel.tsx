@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { MessageSquare, Mic2, Pause, Play, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
 import { Switch } from '@/components/ui/switch'
+import type { TtsVideoAlignConfigApi, TtsVideoAlignPolicyApi } from '@/lib/api'
 import { fmt, videoAudioStreamUrl } from './types'
 
 export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic' | 'audio_activity_fast'
@@ -43,6 +44,11 @@ type VoiceoverQuickCutPanelProps = {
       audioActivityConfig?: VoiceoverAudioActivityConfig
     }
   ) => void | Promise<void>
+  /** 成片使用系统 TTS 按 ASR 重新配音 */
+  redubEnabled?: boolean
+  onRedubEnabledChange?: (v: boolean) => void
+  ttsAlign?: TtsVideoAlignConfigApi
+  onTtsAlignChange?: (patch: Partial<TtsVideoAlignConfigApi>) => void
 }
 
 const STRATEGY_OPTIONS = [
@@ -211,10 +217,37 @@ function HelpLabel({ text, help }: { text: string; help: ParamHelp }) {
 /**
  * v3 口播快剪：不经过「文案匹配」。流程为选视频 → 选模式 → 生成剪辑方案；时间轴微调与成片导出在下方 AutoEditPanel（与自动/模板一致）。
  */
+const TTS_ALIGN_OPTIONS: { id: TtsVideoAlignPolicyApi; label: string; hint: string }[] = [
+  {
+    id: 'freeze_last_frame',
+    label: '不循环素材，末尾定格',
+    hint: '画面正常播完后停在最后一帧，直到配音结束（口型可能提前结束）。',
+  },
+  {
+    id: 'loop_video_to_cover',
+    label: '循环拼接所选画面',
+    hint: '与旧版 TTS 成片类似：重复拼接本段素材直至盖住整段配音。',
+  },
+  {
+    id: 'stretch_audio',
+    label: '变速配音贴画面',
+    hint: '通过加速/减速 TTS，使口播时长接近所选画面长度；超出限制时仍会定格补偿。',
+  },
+  {
+    id: 'stretch_video',
+    label: '变速画面贴配音',
+    hint: '通过快放/慢放画面，使视频时长接近 TTS；超出限制时尾部定格补齐。',
+  },
+]
+
 export function VoiceoverQuickCutPanel({
   selectedVideoIds,
   doneVideos,
   onGenerate,
+  redubEnabled = false,
+  onRedubEnabledChange,
+  ttsAlign,
+  onTtsAlignChange,
 }: VoiceoverQuickCutPanelProps) {
   const overlapSwitchId = useId()
   const overlapLabelId = `${overlapSwitchId}-label`
@@ -845,6 +878,117 @@ export function VoiceoverQuickCutPanel({
               disabled={generating}
             />
           </div>
+        </div>
+
+        <div className="rounded-xl border border-cyan-500/25 bg-slate-950/35 px-4 py-3 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs font-medium text-slate-200">重新配音成片</p>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                导出时使用系统 TTS 朗读各段的 ASR 文案（需在下方成片卡片点击导出）。无 ASR 的段落（例如「音频粗剪」占位）不满足条件。
+              </p>
+            </div>
+            <Switch
+              checked={redubEnabled}
+              onCheckedChange={(v) => onRedubEnabledChange?.(v)}
+              disabled={generating}
+            />
+          </div>
+          {redubEnabled && ttsAlign && onTtsAlignChange && (
+            <>
+              <div className="space-y-1">
+                <label className="text-[11px] text-slate-400">画面时长 ≠ 配音时长时</label>
+                <select
+                  value={ttsAlign.policy}
+                  onChange={(e) =>
+                    onTtsAlignChange({ policy: e.target.value as TtsVideoAlignPolicyApi })
+                  }
+                  className="w-full rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2 py-2 outline-none focus:border-cyan-500/50"
+                >
+                  {TTS_ALIGN_OPTIONS.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  {TTS_ALIGN_OPTIONS.find((o) => o.id === ttsAlign.policy)?.hint}
+                </p>
+              </div>
+              {strategy === 'audio_activity_fast' && (
+                <p className="text-[10px] text-amber-400/90 leading-relaxed">
+                  当前模式多为非 ASR 占位文案，重新配音通常会失败；请改用极速/智能快剪并确保已识别字幕。
+                </p>
+              )}
+              <details className="group text-[11px]">
+                <summary className="cursor-pointer text-cyan-300/90 select-none list-none flex items-center gap-1">
+                  <span className="opacity-70 group-open:rotate-90 transition-transform">▸</span>
+                  变速范围（可选）
+                </summary>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-0.5 text-[10px] text-slate-500">
+                    配音最快倍数
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={1}
+                      max={4}
+                      value={ttsAlign.max_audio_atempo ?? 2}
+                      onChange={(e) =>
+                        onTtsAlignChange({ max_audio_atempo: Number(e.target.value) || 2 })
+                      }
+                      className="rounded-md bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-[10px] text-slate-500">
+                    配音最慢倍数
+                    <input
+                      type="number"
+                      step={0.05}
+                      min={0.25}
+                      max={1}
+                      value={ttsAlign.min_audio_atempo ?? 0.5}
+                      onChange={(e) =>
+                        onTtsAlignChange({ min_audio_atempo: Number(e.target.value) || 0.5 })
+                      }
+                      className="rounded-md bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-[10px] text-slate-500">
+                    画面最慢相对倍数
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={1}
+                      max={4}
+                      value={ttsAlign.max_video_pts_factor ?? 2}
+                      onChange={(e) =>
+                        onTtsAlignChange({ max_video_pts_factor: Number(e.target.value) || 2 })
+                      }
+                      className="rounded-md bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-[10px] text-slate-500">
+                    画面最快相对倍数
+                    <input
+                      type="number"
+                      step={0.05}
+                      min={0.25}
+                      max={1}
+                      value={ttsAlign.min_video_pts_factor ?? 0.5}
+                      onChange={(e) =>
+                        onTtsAlignChange({ min_video_pts_factor: Number(e.target.value) || 0.5 })
+                      }
+                      className="rounded-md bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2 py-1"
+                    />
+                  </label>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-600 leading-relaxed">
+                  配音倍数对应 ffmpeg atempo；画面倍数对应时间轴拉伸系数上下限。仅在所选对齐策略需要变速时生效。
+                </p>
+              </details>
+            </>
+          )}
         </div>
 
         {strategy === 'semantic' && (

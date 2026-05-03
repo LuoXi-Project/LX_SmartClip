@@ -398,6 +398,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         output_dir=burn_output_dir,
         normalize_audio=False,
         materialize_from_source=req.materialize_from_source,
+        tts_align=getattr(req, "tts_align", None),
     )
 
     if not saved_path or not os.path.exists(saved_path):

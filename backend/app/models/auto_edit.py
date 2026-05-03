@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.models.subtitle import (
     ClipTrimPart,
     SubtitleStyle,
+    TtsVideoAlignConfig,
 )
 
 
@@ -243,6 +244,10 @@ class AutoEditRealizeRequest(BaseModel):
     project_name: Optional[str] = None
     include_subtitle: bool = True
     style: Optional[SubtitleStyle] = None
+    # 为 True 时：即使 plan.mode 为 original，也走 TTS 成片管线（用于口播快剪「重新配音」）
+    force_tts_pipeline: bool = False
+    # 与 force_tts_pipeline / voiceover 成片配合：画面与 TTS 时长对齐策略；None 表示沿用渲染默认（循环拼接素材）
+    tts_align: Optional[TtsVideoAlignConfig] = None
 
 
 class AutoEditRealizeResponse(BaseModel):

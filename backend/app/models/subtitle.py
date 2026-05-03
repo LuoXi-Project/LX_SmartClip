@@ -2,9 +2,47 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+
+class TtsVideoAlignConfig(BaseModel):
+    """成片段落：画面时长与系统 TTS 配音不一致时的对齐策略（主要针对「配音长于所选画面」）。"""
+
+    policy: Literal[
+        "freeze_last_frame",
+        "loop_video_to_cover",
+        "stretch_audio",
+        "stretch_video",
+    ] = Field(
+        "freeze_last_frame",
+        description="freeze_last_frame=不加速画面，末尾定格直至配音结束；loop_video_to_cover=重复拼接所选素材直至盖住配音；stretch_audio=变速压缩/拉伸配音以贴合画面时长；stretch_video=变速拉伸/压缩画面以贴合配音时长",
+    )
+    max_audio_atempo: float = Field(
+        2.0,
+        ge=1.0,
+        le=4.0,
+        description="stretch_audio：允许的最大配音加速倍数（越大越急促）",
+    )
+    min_audio_atempo: float = Field(
+        0.5,
+        ge=0.25,
+        le=1.0,
+        description="stretch_audio：允许的最小配音减速倍数（越小越拖沓）",
+    )
+    max_video_pts_factor: float = Field(
+        2.0,
+        ge=1.0,
+        le=4.0,
+        description="stretch_video：画面「变慢」时 setpts 倍数上限（约为慢放倍率上限）",
+    )
+    min_video_pts_factor: float = Field(
+        0.5,
+        ge=0.25,
+        le=1.0,
+        description="stretch_video：画面「变快」时 setpts 倍数下限（约为快放倍率上限）",
+    )
 
 
 class ClipTrimPart(BaseModel):
@@ -28,6 +66,8 @@ class SubtitleSegmentInput(BaseModel):
     duration_sec: Optional[float] = None
     # 多选素材时每条 clip 的入点与使用时长；存在时优先于单段的 clip_start_sec/duration_sec。
     clip_trims: Optional[List[ClipTrimPart]] = None
+    # 成片字幕时间轴用时长（秒）；由 TTS 对齐策略推导后写入，优先于 ffprobe(TTS) 与 duration_sec 的 min 规则
+    timeline_duration_sec: Optional[float] = None
 
 
 class SubtitleStyle(BaseModel):
@@ -107,6 +147,8 @@ class BurnSubtitleRequest(BaseModel):
     bgm: Optional[BgmMixConfig] = None
     # 默认 True：按 clips 在整片上的时间窗从「原始素材视频」裁剪；False 时用预处理 clip 文件（更快、画质取决于切片参数）
     materialize_from_source: bool = True
+    # TTS 成片：画面与配音时长对齐策略（默认 None 时保持旧行为：循环拼接素材组）
+    tts_align: Optional[TtsVideoAlignConfig] = None
 
 
 class ExportOriginalRequest(BaseModel):

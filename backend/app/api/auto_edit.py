@@ -45,7 +45,8 @@ from app.models.subtitle import (
     BurnSubtitleRequest,
     ExportOriginalRequest,
 )
-from app.api.subtitle import execute_burn_subtitle, execute_export_original
+from app.api.subtitle import TTS_AUDIO_DIR, execute_burn_subtitle, execute_export_original
+from app.core.subtitle.tts_align import apply_timeline_duration_overrides
 from app.models.auto_edit import (
     AutoEditPlanRequest,
     AutoEditPlanResponse,
@@ -990,11 +991,14 @@ async def realize_auto_edit_plan(
                 candidates.append(cand)
                 candidates_by_video.setdefault(cand.video_id, []).append(cand)
 
+    use_tts_branch = plan.mode in ("auto", "voiceover") or bool(getattr(req, "force_tts_pipeline", False))
+
     seg_inputs = await segments_from_plan(
         plan=plan,
         valid_clip_ids=valid_clip_ids,
         candidates_by_video=candidates_by_video,
         all_candidates=candidates,
+        fail_fast_on_tts_error=use_tts_branch,
     )
     if not seg_inputs:
         detail = {
@@ -1006,13 +1010,16 @@ async def realize_auto_edit_plan(
     if invalid_clip_ids:
         logger.warning("realize 检测到无效 clip_id，已尝试自动回退: %s", invalid_clip_ids)
 
+    align_cfg = getattr(req, "tts_align", None)
+    apply_timeline_duration_overrides(seg_inputs, align_cfg, TTS_AUDIO_DIR)
+
     project_name = req.project_name or f"auto_edit_{plan.plan_id}"
 
     # 字幕样式：优先使用前端传入，否则回退默认值
     style = req.style or SubtitleStyle()
 
-    # voiceover / auto -> 统一走配音管线（若某段未生成 TTS，会回落到 clip 时长）
-    if plan.mode in ("auto", "voiceover"):
+    # voiceover / auto / 强制 TTS -> 统一走配音管线（TTS 合成失败时在 segments_from_plan 阶段已 fail-fast）
+    if use_tts_branch:
         from app.api.subtitle import generate_srt as generate_srt_route
 
         if req.include_subtitle:
@@ -1025,23 +1032,20 @@ async def realize_auto_edit_plan(
                 srt_content=srt_res.srt_content,
                 style=style,
                 project_name=project_name,
+                tts_align=align_cfg,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         else:
             if await request.is_disconnected():
                 raise HTTPException(status_code=400, detail="客户端已断开连接")
-            export_req = ExportOriginalRequest(
+            burn_req = BurnSubtitleRequest(
                 segments=seg_inputs,
+                srt_content="",
                 style=style,
                 project_name=project_name,
-                include_subtitle=False,
-                normalize_audio=True,
+                tts_align=align_cfg,
             )
-            export_res = await execute_export_original(export_req)
-            burn_res = {
-                "filename": export_res.get("filename"),
-                "url": export_res.get("url"),
-            }
+            burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():
             raise HTTPException(status_code=400, detail="客户端已断开连接")
         final_filename, final_url = await run_heavy(

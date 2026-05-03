@@ -296,7 +296,7 @@ setlocal
 set LX_SMARTCLIP_HOME=%~dp0
 "%~dp0lx_smartclip_backend.exe" %*
 '@
-Set-Content -Path (Join-Path $BackendOutDir "start_backend.cmd") -Value $LauncherCmd -Encoding UTF8
+Set-Content -Path (Join-Path $BackendOutDir "双击我启动.cmd") -Value $LauncherCmd -Encoding UTF8
 
 Write-Host ""
 $OutExe = Join-Path $BackendOutDir ($AppName + ".exe")

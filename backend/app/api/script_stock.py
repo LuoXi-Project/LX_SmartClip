@@ -25,6 +25,10 @@ from app.models.script_stock import (
     ScriptStockComposeResponse,
     ScriptStockGenerateScriptRequest,
     ScriptStockGenerateScriptResponse,
+    ScriptStockPexelsCacheItem,
+    ScriptStockPexelsCacheResponse,
+    ScriptStockPexelsDeleteRequest,
+    ScriptStockPexelsDeleteResponse,
     ScriptStockPexelsDownloadRequest,
     ScriptStockPexelsDownloadResponse,
     ScriptStockPexelsSearchResponse,
@@ -40,6 +44,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/script-stock", tags=["script-stock"])
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/videos/search"
+_PEXELS_FN_ID = re.compile(r"^pexels_(\d+)_", re.IGNORECASE)
 
 
 async def _cfg(db: aiosqlite.Connection, key: str, default: str = "") -> str:
@@ -333,6 +338,64 @@ async def pexels_download(req: ScriptStockPexelsDownloadRequest) -> ScriptStockP
     )
 
 
+@router.get("/pexels/cache", response_model=ScriptStockPexelsCacheResponse)
+async def pexels_cache_list() -> ScriptStockPexelsCacheResponse:
+    """列出本地下载目录中的 Pexels 视频（用于前端展示已缓存、避免重复下载）。"""
+    root = ensure_storage_subpath("stock_media", "pexels")
+    items: List[ScriptStockPexelsCacheItem] = []
+    if not os.path.isdir(root):
+        return ScriptStockPexelsCacheResponse(items=[])
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return ScriptStockPexelsCacheResponse(items=[])
+    for name in names:
+        low = name.lower()
+        if not low.endswith((".mp4", ".mov", ".webm", ".mkv")):
+            continue
+        full = os.path.join(root, name)
+        if not os.path.isfile(full):
+            continue
+        try:
+            st = os.stat(full)
+            sz = int(st.st_size)
+            mt = float(st.st_mtime)
+        except OSError:
+            sz, mt = 0, 0.0
+        m = _PEXELS_FN_ID.match(name)
+        vid = int(m.group(1)) if m else 0
+        rel = to_stored_path(full)
+        items.append(
+            ScriptStockPexelsCacheItem(
+                pexels_video_id=vid,
+                stored_rel_path=rel,
+                filename=name,
+                size_bytes=sz,
+                mtime=mt,
+            )
+        )
+    items.sort(key=lambda x: -x.mtime)
+    return ScriptStockPexelsCacheResponse(items=items)
+
+
+@router.post("/pexels/delete-file", response_model=ScriptStockPexelsDeleteResponse)
+async def pexels_delete_file(req: ScriptStockPexelsDeleteRequest) -> ScriptStockPexelsDeleteResponse:
+    rel = (req.stored_rel_path or "").strip().replace("\\", "/")
+    if not rel:
+        raise HTTPException(400, "stored_rel_path 不能为空")
+    abs_path = resolve_stored_path(rel)
+    if not abs_path or not os.path.isfile(abs_path):
+        raise HTTPException(404, "文件不存在或已删除")
+    if not is_under_pexels_download_dir(abs_path):
+        raise HTTPException(403, "非法路径：仅允许删除 stock_media/pexels 下的文件")
+    try:
+        os.unlink(abs_path)
+    except OSError as e:
+        logger.warning("pexels delete failed: %s", e)
+        raise HTTPException(500, detail=str(e)) from e
+    return ScriptStockPexelsDeleteResponse(ok=True)
+
+
 async def _resolve_compose_rows(
     db: aiosqlite.Connection, req: ScriptStockComposeRequest
 ) -> List[Tuple[List[str], float, str]]:
@@ -367,15 +430,26 @@ async def _resolve_compose_rows(
                 paths.append(abs_path)
             out.append((paths, trim, "library"))
         elif seg.kind == "pexels":
-            rel = (seg.stored_rel_path or "").strip().replace("\\", "/")
-            if not rel:
-                raise HTTPException(400, "pexels 分段缺少 stored_rel_path")
-            abs_path = resolve_stored_path(rel)
-            if not abs_path or not os.path.isfile(abs_path):
-                raise HTTPException(400, "Pexels 本地文件不存在，请先下载")
-            if not is_under_pexels_download_dir(abs_path):
-                raise HTTPException(403, "非法素材路径：仅允许使用 stock_media/pexels 下的下载文件")
-            out.append(([abs_path], trim, "pexels"))
+            rels: List[str] = []
+            if seg.pexels_stored_rel_paths:
+                rels = [str(x).strip().replace("\\", "/") for x in seg.pexels_stored_rel_paths if str(x).strip()]
+            if not rels:
+                one = (seg.stored_rel_path or "").strip().replace("\\", "/")
+                if one:
+                    rels = [one]
+            if not rels:
+                raise HTTPException(400, "pexels 分段缺少 stored_rel_path 或 pexels_stored_rel_paths")
+            if len(rels) > 12:
+                raise HTTPException(400, "单段最多拼接 12 条 Pexels 文件")
+            paths: List[str] = []
+            for rel in rels:
+                abs_path = resolve_stored_path(rel)
+                if not abs_path or not os.path.isfile(abs_path):
+                    raise HTTPException(400, f"Pexels 本地文件不存在: {rel}")
+                if not is_under_pexels_download_dir(abs_path):
+                    raise HTTPException(403, "非法素材路径：仅允许使用 stock_media/pexels 下的下载文件")
+                paths.append(abs_path)
+            out.append((paths, trim, "pexels"))
         else:
             raise HTTPException(400, "未知分段类型")
     return out
@@ -388,14 +462,21 @@ async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeRes
 
     if req.audio_mode != "tts_only":
         for seg in req.segments:
-            if seg.kind != "library":
-                continue
-            n = len([x for x in (seg.library_video_ids or []) if str(x).strip()])
-            if n > 1:
-                raise HTTPException(
-                    400,
-                    "多段本地素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条素材。",
-                )
+            if seg.kind == "library":
+                n = len([x for x in (seg.library_video_ids or []) if str(x).strip()])
+                if n > 1:
+                    raise HTTPException(
+                        400,
+                        "多段本地素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条素材。",
+                    )
+            elif seg.kind == "pexels":
+                rels = [str(x).strip() for x in (seg.pexels_stored_rel_paths or []) if str(x).strip()]
+                n = len(rels) if rels else (1 if (seg.stored_rel_path or "").strip() else 0)
+                if n > 1:
+                    raise HTTPException(
+                        400,
+                        "多段 Pexels 素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条文件。",
+                    )
 
     tts_paths: List[Optional[str]] = []
     if req.audio_mode in ("tts_only", "mix"):

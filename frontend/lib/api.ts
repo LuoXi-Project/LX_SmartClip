@@ -886,12 +886,22 @@ export type ScriptStockMaterialTtsFill = 'pad_silence' | 'loop_audio'
 
 export type ScriptStockMaterialTtsLonger = 'trim_tts' | 'stretch_audio'
 
+export interface ScriptStockPexelsCacheItemApi {
+  pexels_video_id: number
+  stored_rel_path: string
+  filename: string
+  size_bytes: number
+  mtime: number
+}
+
 export interface ScriptStockComposeSegmentApi {
   kind: 'library' | 'pexels'
   video_id?: string | null
   /** 本地多段按顺序拼接（仅「仅 TTS」）；非空时优先于 video_id */
   library_video_ids?: string[] | null
   stored_rel_path?: string | null
+  /** Pexels 多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path */
+  pexels_stored_rel_paths?: string[] | null
   trim_sec?: number
   /** 该段配音文案；tts_only / mix 时使用 */
   text?: string | null
@@ -916,6 +926,10 @@ export const scriptStockApi = {
       '/api/script-stock/pexels/download',
       body,
     ),
+  pexelsListCache: () =>
+    apiClient.get<unknown, { items: ScriptStockPexelsCacheItemApi[] }>('/api/script-stock/pexels/cache'),
+  pexelsDeleteFile: (body: { stored_rel_path: string }) =>
+    apiClient.post<unknown, { ok: boolean }>('/api/script-stock/pexels/delete-file', body),
   compose: (body: {
     segments: ScriptStockComposeSegmentApi[]
     project_name?: string

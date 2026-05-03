@@ -89,7 +89,14 @@ class ScriptStockComposeSegment(BaseModel):
         None,
         description="kind=library 时可选：按顺序多段拼接（仅允许与「仅 TTS」同时使用）；非空时优先于 video_id",
     )
-    stored_rel_path: Optional[str] = Field(None, description="kind=pexels 时必填，须为 storage/stock_media/pexels/ 下路径")
+    stored_rel_path: Optional[str] = Field(
+        None,
+        description="kind=pexels 时单文件路径；与 pexels_stored_rel_paths 二选一",
+    )
+    pexels_stored_rel_paths: Optional[List[str]] = Field(
+        None,
+        description="kind=pexels 时可选：多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path",
+    )
     trim_sec: float = Field(
         0,
         ge=0,
@@ -149,3 +156,23 @@ class ScriptStockComposeResponse(BaseModel):
     filename: str
     public_url: str
     stored_rel_path: str
+
+
+class ScriptStockPexelsCacheItem(BaseModel):
+    pexels_video_id: int = Field(0, description="从文件名解析；无法解析时为 0")
+    stored_rel_path: str
+    filename: str
+    size_bytes: int = 0
+    mtime: float = Field(0, description="修改时间 Unix 秒，用于同 id 多文件时选最新")
+
+
+class ScriptStockPexelsCacheResponse(BaseModel):
+    items: List[ScriptStockPexelsCacheItem]
+
+
+class ScriptStockPexelsDeleteRequest(BaseModel):
+    stored_rel_path: str = Field(..., description="须为 stock_media/pexels 下的相对存储路径")
+
+
+class ScriptStockPexelsDeleteResponse(BaseModel):
+    ok: bool = True

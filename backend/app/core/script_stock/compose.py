@@ -149,30 +149,35 @@ def _silence_wav(path: str, duration: float) -> None:
 def _normalize_multi_source_parts(
     *,
     src_list: List[str],
+    trim_pairs: List[Tuple[float, float]],
     tmp: str,
     seg_idx: int,
     target_w: int,
     target_h: int,
 ) -> List[str]:
     """
-    多段拼接前逐段归一化；**同源绝对路径只编码一次**，其余位次复制已生成文件（组内复用，省 CPU）。
+    多段拼接前逐段归一化；同源路径且同一选用区间只编码一次，其余位次复制文件。
+    trim_pairs[j] = (in_sec, out_sec) 源时间轴绝对秒。
     """
     parts_norm: List[str] = []
-    encoded: dict[str, str] = {}
+    encoded: dict[Tuple[str, float, float], str] = {}
     for j, sabs in enumerate(src_list):
-        key = os.path.normcase(os.path.normpath(os.path.abspath(sabs)))
+        ins, outs = trim_pairs[j]
+        path_k = os.path.normcase(os.path.normpath(os.path.abspath(sabs)))
+        cache_k = (path_k, round(float(ins), 4), round(float(outs), 4))
         pj = os.path.join(tmp, f"v_part_{seg_idx:03d}_{j:02d}.mp4")
-        if key in encoded:
-            shutil.copyfile(encoded[key], pj)
+        if cache_k in encoded:
+            shutil.copyfile(encoded[cache_k], pj)
         else:
             _normalize_segment_video_only(
                 src_abs=sabs,
                 dst_mp4=pj,
-                trim_sec=0,
                 target_w=target_w,
                 target_h=target_h,
+                in_sec=ins,
+                out_sec=outs,
             )
-            encoded[key] = pj
+            encoded[cache_k] = pj
         parts_norm.append(pj)
     return parts_norm
 
@@ -181,18 +186,26 @@ def _normalize_segment_video_only(
     *,
     src_abs: str,
     dst_mp4: str,
-    trim_sec: float,
     target_w: int,
     target_h: int,
+    in_sec: float = 0.0,
+    out_sec: Optional[float] = None,
 ) -> None:
+    """无声画面规范化；in_sec/out_sec 为源素材上的绝对时刻（秒），out_sec None 表示直至文件末尾。"""
     os.makedirs(os.path.dirname(dst_mp4), exist_ok=True)
-    trim_sec = float(trim_sec or 0)
+    ins = max(0.0, float(in_sec or 0.0))
     vf = _build_normalize_vf(target_w, target_h)
+    ss_args: List[str] = []
+    if ins >= 0.001:
+        ss_args = ["-ss", f"{ins:.6f}"]
     t_args: List[str] = []
-    if trim_sec > 0:
-        t_args = ["-t", str(trim_sec)]
+    if out_sec is not None:
+        oe = float(out_sec)
+        span = max(0.05, oe - ins)
+        t_args = ["-t", f"{span:.6f}"]
     run_ffmpeg(
         [
+            *ss_args,
             "-i",
             src_abs,
             "-vf",
@@ -308,19 +321,31 @@ def _extract_original_voice_track(
     target_dur: float,
     vol_db: float,
     out_wav: str,
+    in_sec: float = 0.0,
+    out_sec: Optional[float] = None,
 ) -> None:
-    """从素材视频抽取完整原声并对齐到 target_dur（无音轨则静音）。与手动匹配一致：不按「前若干秒」截素材。"""
+    """从素材视频抽取原声片段并对齐到 target_dur；可选 in_sec/out_sec 与画面选用区间一致（首条素材）。"""
     if not _ffprobe_has_audio_stream(src_video):
         _silence_wav(out_wav, target_dur)
         return
+    ins = max(0.0, float(in_sec or 0.0))
+    ss_args: List[str] = []
+    if ins >= 0.001:
+        ss_args = ["-ss", f"{ins:.6f}"]
+    t_args: List[str] = []
+    if out_sec is not None:
+        span = max(0.05, float(out_sec) - ins)
+        t_args = ["-t", f"{span:.6f}"]
     fd, raw_extract = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
         run_ffmpeg(
             [
+                *ss_args,
                 "-i",
                 src_video,
                 "-vn",
+                *t_args,
                 "-ac",
                 "2",
                 "-ar",
@@ -540,7 +565,7 @@ def _adjust_video_to_duration(
 
 def compose_stock_video_sync(
     *,
-    segment_rows: List[Tuple[List[str], str]],
+    segment_rows: List[Tuple[List[str], str, List[Tuple[float, float]]]],
     tts_paths: List[Optional[str]],
     audio_mode: StockAudioMode,
     tts_volume_db: float,
@@ -556,7 +581,7 @@ def compose_stock_video_sync(
     project_name: str,
 ) -> str:
     """
-    segment_rows: ([素材绝对路径…], kind)；library 可多路径顺序拼接（仅 TTS）。素材均用完整时长，无「成片截取秒」。
+    segment_rows: ([素材绝对路径…], kind, trim_pairs)；trim_pairs 与路径等长，每项为源文件上的 (in_sec, out_sec) 秒。
     tts_paths: 与分段等长；None 表示未生成 TTS。
     timeline_mode: follow_narration 与手动匹配一致（以配音时长裁/补画面）；follow_material 以素材时长为准。
     """
@@ -566,23 +591,28 @@ def compose_stock_video_sync(
     try:
         prepared: List[str] = []
         segment_durations: List[float] = []
-        for i, (src_list, _kind) in enumerate(segment_rows):
+        for i, (src_list, _kind, trim_pairs) in enumerate(segment_rows):
             if not src_list or any(not p or not os.path.isfile(p) for p in src_list):
                 raise FileNotFoundError(f"素材不存在: {src_list}")
+            if len(trim_pairs) != len(src_list):
+                raise ValueError("trim_pairs 与素材路径数量不一致")
             audio_src = src_list[0]
+            first_in, first_out = trim_pairs[0]
 
             vid_base = os.path.join(tmp, f"v_base_{i:03d}.mp4")
             if len(src_list) == 1:
                 _normalize_segment_video_only(
                     src_abs=src_list[0],
                     dst_mp4=vid_base,
-                    trim_sec=0,
                     target_w=tw,
                     target_h=th,
+                    in_sec=trim_pairs[0][0],
+                    out_sec=trim_pairs[0][1],
                 )
             else:
                 parts_norm = _normalize_multi_source_parts(
                     src_list=src_list,
+                    trim_pairs=trim_pairs,
                     tmp=tmp,
                     seg_idx=i,
                     target_w=tw,
@@ -593,9 +623,10 @@ def compose_stock_video_sync(
                 _normalize_segment_video_only(
                     src_abs=merged,
                     dst_mp4=vid_base,
-                    trim_sec=0,
                     target_w=tw,
                     target_h=th,
+                    in_sec=0.0,
+                    out_sec=None,
                 )
 
             V = float(probe_duration(vid_base) or 0.0)
@@ -635,6 +666,8 @@ def compose_stock_video_sync(
                     target_dur=out_dur,
                     vol_db=original_volume_db,
                     out_wav=aud_final,
+                    in_sec=first_in,
+                    out_sec=first_out,
                 )
             elif audio_mode == "tts_only":
                 if use_tts:
@@ -675,6 +708,8 @@ def compose_stock_video_sync(
                     target_dur=out_dur,
                     vol_db=original_volume_db,
                     out_wav=orig_fit,
+                    in_sec=first_in,
+                    out_sec=first_out,
                 )
                 _mix_two_wavs(tts_fit, orig_fit, aud_final, out_dur)
 

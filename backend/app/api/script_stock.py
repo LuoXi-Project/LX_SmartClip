@@ -37,6 +37,7 @@ from app.models.script_stock import (
     ScriptStockSuggestQueriesRequest,
     ScriptStockSuggestQueriesResponse,
 )
+from app.utils.ffprobe_utils import probe_duration
 from app.utils.paths import ensure_storage_subpath, resolve_stored_path, storage_public_url_for_file, to_stored_path
 
 logger = logging.getLogger(__name__)
@@ -396,11 +397,18 @@ async def pexels_delete_file(req: ScriptStockPexelsDeleteRequest) -> ScriptStock
     return ScriptStockPexelsDeleteResponse(ok=True)
 
 
+def _default_pair_for_path(abs_path: str) -> Tuple[float, float]:
+    d = float(probe_duration(abs_path) or 0.0)
+    if d <= 0.02:
+        d = 60.0
+    return (0.0, d)
+
+
 async def _resolve_compose_rows(
     db: aiosqlite.Connection, req: ScriptStockComposeRequest
-) -> List[Tuple[List[str], str]]:
-    """返回 ([素材绝对路径…], library|pexels)；library 可多路径顺序拼接。成片素材时长与手动匹配一致：使用完整素材，不设「前若干秒截取」。"""
-    out: List[Tuple[List[str], str]] = []
+) -> List[Tuple[List[str], str, List[Tuple[float, float]]]]:
+    """返回 ([素材绝对路径…], kind, [(in_sec,out_sec),…])；与 manual 出入点类似，library 可传 library_trims。"""
+    out: List[Tuple[List[str], str, List[Tuple[float, float]]]] = []
     for seg in req.segments:
         if seg.kind == "library":
             raw_ids: List[str] = []
@@ -427,7 +435,19 @@ async def _resolve_compose_rows(
                 if not abs_path or not os.path.isfile(abs_path):
                     raise HTTPException(400, f"视频文件缺失: {vid}")
                 paths.append(abs_path)
-            out.append((paths, "library"))
+            lt = seg.library_trims
+            if lt is not None and len(lt) != len(paths):
+                raise HTTPException(400, "library_trims 与 library_video_ids 数量须一致")
+            trim_pairs: List[Tuple[float, float]] = []
+            for j, p in enumerate(paths):
+                if lt and j < len(lt):
+                    a, b = float(lt[j].in_sec), float(lt[j].out_sec)
+                    if b <= a + 0.02:
+                        raise HTTPException(400, f"选用区间无效：out_sec 须大于 in_sec（第 {j + 1} 条）")
+                    trim_pairs.append((a, b))
+                else:
+                    trim_pairs.append(_default_pair_for_path(p))
+            out.append((paths, "library", trim_pairs))
         elif seg.kind == "pexels":
             rels: List[str] = []
             if seg.pexels_stored_rel_paths:
@@ -448,7 +468,8 @@ async def _resolve_compose_rows(
                 if not is_under_pexels_download_dir(abs_path):
                     raise HTTPException(403, "非法素材路径：仅允许使用 stock_media/pexels 下的下载文件")
                 paths.append(abs_path)
-            out.append((paths, "pexels"))
+            trim_pairs_px: List[Tuple[float, float]] = [_default_pair_for_path(p) for p in paths]
+            out.append((paths, "pexels", trim_pairs_px))
         else:
             raise HTTPException(400, "未知分段类型")
     return out

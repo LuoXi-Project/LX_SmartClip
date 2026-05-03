@@ -1,4 +1,4 @@
-import type { MatchClip, SubtitleClipTrimPart } from '@/lib/api'
+import type { MatchClip, SubtitleClipTrimPart, Video } from '@/lib/api'
 import type { ClipTrimRange, Segment } from './types'
 
 const EPS = 0.03
@@ -88,6 +88,54 @@ export function trimIsCustomForSlot(seg: Segment, clip: MatchClip, slotIndex: nu
 /**
  * 按 clip_ids 顺序生成 API 的 clip_trims（与 burn 拼接顺序一致）。
  */
+/** 素材库整段视频默认选用区间（元数据时长；未知时用占位便于滑条） */
+export function defaultLibraryTrimForVideo(videos: Video[], videoId: string): ClipTrimRange {
+  const v = videos.find((x) => x.id === videoId)
+  const d = Number(v?.duration)
+  if (!Number.isFinite(d) || d <= 0) return { inSec: 0, outSec: 120 }
+  return { inSec: 0, outSec: Math.max(0.08, d) }
+}
+
+export function computeNextLibraryTrimSlots(
+  prevIds: string[],
+  prevSlots: ClipTrimRange[] | undefined,
+  nextIds: string[],
+  videos: Video[],
+): ClipTrimRange[] | undefined {
+  if (nextIds.length === 0) return undefined
+  const prevPairs = prevIds.map((id, i) => ({
+    id,
+    trim: prevSlots?.[i] ?? defaultLibraryTrimForVideo(videos, id),
+  }))
+  const used = new Set<number>()
+  const result: ClipTrimRange[] = []
+  for (const nid of nextIds) {
+    let found = -1
+    for (let j = 0; j < prevPairs.length; j++) {
+      if (used.has(j)) continue
+      if (prevPairs[j].id === nid) {
+        found = j
+        break
+      }
+    }
+    if (found >= 0) {
+      used.add(found)
+      result.push(prevPairs[found].trim)
+    } else {
+      result.push(defaultLibraryTrimForVideo(videos, nid))
+    }
+  }
+  return result
+}
+
+/** 是否相对素材库声明时长做过裁剪（无时长元数据时仅以入点判断） */
+export function libraryTrimSlotIsCustom(videos: Video[], videoId: string, slot: ClipTrimRange): boolean {
+  const v = videos.find((x) => x.id === videoId)
+  const dur = Number(v?.duration)
+  if (!Number.isFinite(dur) || dur <= 0.08) return slot.inSec > EPS
+  return slot.inSec > EPS || slot.outSec < dur - EPS
+}
+
 export function buildClipTrimsForApi(seg: Segment, clipIdsOrdered: string[]): SubtitleClipTrimPart[] {
   const out: SubtitleClipTrimPart[] = []
   clipIdsOrdered.forEach((id, slotIndex) => {

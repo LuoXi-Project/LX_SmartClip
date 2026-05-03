@@ -157,6 +157,8 @@ export const processJobsApi = {
 export interface VideoListParams {
   q?: string
   status?: string
+  /** 排除某状态（如 error），与 status 互斥；服务端分页计数与列表一致 */
+  exclude_status?: string
   sort?: string
   page?: number
   page_size?: number
@@ -902,6 +904,8 @@ export interface ScriptStockComposeSegmentApi {
   stored_rel_path?: string | null
   /** Pexels 多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path */
   pexels_stored_rel_paths?: string[] | null
+  /** 与 library_video_ids 同序；本地素材选用区间（秒），不传则服务端按整文件探测 */
+  library_trims?: Array<{ in_sec: number; out_sec: number }> | null
   /** 该段配音文案；tts_only / mix 时使用 */
   text?: string | null
 }

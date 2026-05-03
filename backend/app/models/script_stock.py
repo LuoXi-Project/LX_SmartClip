@@ -82,12 +82,23 @@ StockMaterialTtsFill = Literal["pad_silence", "loop_audio"]
 StockTtsLongerThanMaterial = Literal["trim_tts", "stretch_audio"]
 
 
+class ScriptStockLibraryTrimPart(BaseModel):
+    """与 library_video_ids 同序；对该条素材在源文件时间轴上的选用区间（秒）。"""
+
+    in_sec: float = Field(0.0, ge=0, description="入点（秒）")
+    out_sec: float = Field(..., gt=0, description="出点（秒），须大于入点")
+
+
 class ScriptStockComposeSegment(BaseModel):
     kind: Literal["library", "pexels"] = Field(..., description="library=素材库整段视频；pexels=已下载到隔离目录的文件")
     video_id: Optional[str] = Field(None, description="kind=library 时与 library_video_ids 二选一（单段）")
     library_video_ids: Optional[List[str]] = Field(
         None,
         description="kind=library 时可选：按顺序多段拼接（仅允许与「仅 TTS」同时使用）；非空时优先于 video_id",
+    )
+    library_trims: Optional[List[ScriptStockLibraryTrimPart]] = Field(
+        None,
+        description="与 library_video_ids 等长时可省略（服务端按整段探测）；指定时每槽选用区间（秒）",
     )
     stored_rel_path: Optional[str] = Field(
         None,

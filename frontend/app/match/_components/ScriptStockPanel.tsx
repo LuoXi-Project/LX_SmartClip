@@ -1,9 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import {
-  AlertCircle,
   ChevronDown,
   ChevronUp,
   ChevronsDown,
@@ -18,6 +17,7 @@ import {
   Loader2,
   Mic,
   Plus,
+  Scissors,
   Search,
   Sparkles,
   SplitSquareHorizontal,
@@ -34,16 +34,24 @@ import {
   type ScriptStockPexelsCacheItemApi,
   type ScriptStockPexelsVideoApi,
   type ScriptStockTimelineMode,
+  type ScriptStockComposeSegmentApi,
   type ScriptStockVideoExtendPolicy,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
-import { DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from './types'
+import { DEFAULT_SUBTITLE_STYLE, type ClipTrimRange, type SubtitleStyle } from './types'
 import {
   appendIdToOrderedList,
   orderPositionsForKey,
   toggleIdInOrderedList,
 } from '@/lib/match/orderedSelection'
 import { OrderedPickCard } from './OrderedPickCard'
+import { SegmentLocalLibraryBlock } from './SegmentLocalLibraryBlock'
+import { StockLibraryTrimDialog } from './StockLibraryTrimDialog'
+import {
+  computeNextLibraryTrimSlots,
+  defaultLibraryTrimForVideo,
+  libraryTrimSlotIsCustom,
+} from './clipTrim'
 
 type SourceTab = 'local' | 'pexels'
 
@@ -54,6 +62,8 @@ type StockSegState = {
   searchQuery: string
   /** 本地素材库多选，顺序即成片拼接顺序（仅「仅 TTS」允许多条） */
   localVideoIds: string[]
+  /** 与 localVideoIds 同序的选用区间（秒） */
+  libraryTrimSlots?: ClipTrimRange[]
   pexelsResults: ScriptStockPexelsVideoApi[]
   searching: boolean
   downloadingId: number | null
@@ -68,6 +78,7 @@ function newSeg(text: string): StockSegState {
     sourceTab: 'pexels',
     searchQuery: '',
     localVideoIds: [],
+    libraryTrimSlots: undefined,
     pexelsResults: [],
     searching: false,
     downloadingId: null,
@@ -92,11 +103,9 @@ function bestCachedRelForPexelsId(items: ScriptStockPexelsCacheItemApi[], videoI
 const STOCK_SEG_DRAG_MIME = 'application/x-smartclip-stock-seg-id'
 
 export function ScriptStockPanel({
-  libraryVideos,
   subtitleEnabled = false,
   subtitleStyle,
 }: {
-  libraryVideos: Video[]
   /** 与智能剪辑侧栏「字幕成片」一致；开启时合成会硬烧字幕 */
   subtitleEnabled?: boolean
   subtitleStyle?: SubtitleStyle
@@ -125,10 +134,25 @@ export function ScriptStockPanel({
   const [pexelsCacheItems, setPexelsCacheItems] = useState<ScriptStockPexelsCacheItemApi[]>([])
   const [pexelsCacheLoading, setPexelsCacheLoading] = useState(false)
 
+  /** 本地素材库「自选区间」弹窗对应的段落 id */
+  const [trimDialogSegId, setTrimDialogSegId] = useState<string | null>(null)
+
+  /** 各段拉取的素材元数据合并（自选区间 / 合成） */
+  const [libraryVideoMap, setLibraryVideoMap] = useState<Record<string, Video>>({})
+  const mergeLibraryListItems = useCallback((items: Video[]) => {
+    setLibraryVideoMap((prev) => {
+      const next = { ...prev }
+      for (const v of items) next[v.id] = v
+      return next
+    })
+  }, [])
+
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
   const flashClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const libraryVideos = useMemo(() => Object.values(libraryVideoMap), [libraryVideoMap])
 
   const flashRow = useCallback((id: string) => {
     if (flashClearRef.current) clearTimeout(flashClearRef.current)
@@ -161,6 +185,17 @@ export function ScriptStockPanel({
     document.addEventListener('dragover', onDragOver)
     return () => document.removeEventListener('dragover', onDragOver)
   }, [draggingId])
+
+  const trimDialogSeg = useMemo(
+    () => (trimDialogSegId ? segments.find((s) => s.id === trimDialogSegId) ?? null : null),
+    [trimDialogSegId, segments],
+  )
+  const trimDialogInitialSlots = useMemo(() => {
+    if (!trimDialogSeg?.localVideoIds.length) return [] as ClipTrimRange[]
+    return trimDialogSeg.localVideoIds.map(
+      (id, i) => trimDialogSeg.libraryTrimSlots?.[i] ?? defaultLibraryTrimForVideo(libraryVideos, id),
+    )
+  }, [trimDialogSeg, libraryVideos])
 
   const addSegment = () => {
     setSegments((prev) => [...prev, newSeg('')])
@@ -244,7 +279,8 @@ export function ScriptStockPanel({
         const next = e.shiftKey
           ? appendIdToOrderedList(cur, videoId)
           : toggleIdInOrderedList(cur, videoId)
-        return { ...s, localVideoIds: next }
+        const nextSlots = computeNextLibraryTrimSlots(cur, s.libraryTrimSlots, next, libraryVideos)
+        return { ...s, localVideoIds: next, libraryTrimSlots: nextSlots }
       }),
     )
   }
@@ -381,14 +417,7 @@ export function ScriptStockPanel({
       toast.error('请先准备分段与素材')
       return
     }
-    const payload: Array<{
-      kind: 'library' | 'pexels'
-      video_id?: string
-      library_video_ids?: string[]
-      stored_rel_path?: string
-      pexels_stored_rel_paths?: string[]
-      text: string
-    }> = []
+    const payload: ScriptStockComposeSegmentApi[] = []
     for (const s of segments) {
       if (s.sourceTab === 'local') {
         if (!s.localVideoIds.length) {
@@ -399,9 +428,12 @@ export function ScriptStockPanel({
           toast.error('多段本地素材按顺序拼接仅支持「仅 TTS」；请改为单条或切换为仅 TTS。')
           return
         }
+        const slotTrims =
+          s.libraryTrimSlots ?? s.localVideoIds.map((id) => defaultLibraryTrimForVideo(libraryVideos, id))
         payload.push({
           kind: 'library',
           library_video_ids: s.localVideoIds,
+          library_trims: slotTrims.map((t) => ({ in_sec: t.inSec, out_sec: t.outSec })),
           text: (s.text || '').trim(),
         })
       } else {
@@ -792,35 +824,39 @@ export function ScriptStockPanel({
                 </div>
 
                 {seg.sourceTab === 'local' ? (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <p className="text-[10px] text-slate-500">
-                      点击勾选或整类取消；<strong className="text-slate-400">Shift+点击</strong>
-                      再叠一段同素材。角标为成片顺序（与手动匹配一致）。多条拼接仅「仅 TTS」模式可用。
+                      本段独立搜索、分页；点击卡片勾选或取消。<strong className="text-slate-400">Shift+点击</strong>
+                      可叠同素材。多条拼接仅「仅 TTS」模式可用。
                     </p>
-                    {libraryVideos.length === 0 ? (
-                      <div className="flex items-center gap-2 text-xs text-amber-300">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
-                        暂无可用本地视频，请先上传或在素材处理中完成解析。
+                    <SegmentLocalLibraryBlock
+                      localVideoIds={seg.localVideoIds}
+                      onToggleVideo={(videoId, e) => toggleLocalVideo(seg.id, videoId, e)}
+                      onListItems={mergeLibraryListItems}
+                    />
+                    {seg.localVideoIds.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTrimDialogSegId(seg.id)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-600 hover:border-violet-500 text-[11px] text-slate-200 transition-colors"
+                        >
+                          <Scissors className="w-3.5 h-3.5 shrink-0" />
+                          自选区间（时间轴）
+                        </button>
+                        {seg.localVideoIds.some((vid, i) =>
+                          libraryTrimSlotIsCustom(
+                            libraryVideos,
+                            vid,
+                            seg.libraryTrimSlots?.[i] ?? defaultLibraryTrimForVideo(libraryVideos, vid),
+                          ),
+                        ) ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/35">
+                            已裁切
+                          </span>
+                        ) : null}
                       </div>
-                    ) : (
-                      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-                        {libraryVideos.map((v) => {
-                          const positions = orderPositionsForKey(seg.localVideoIds, v.id)
-                          const thumb = `${API_BASE_URL}/api/videos/${v.id}/thumbnail`
-                          return (
-                            <OrderedPickCard
-                              key={v.id}
-                              imageUrl={thumb}
-                              title={v.name}
-                              subtitle={v.status === 'done' ? '已处理' : v.status}
-                              orderPositions={positions}
-                              selected={positions.length > 0}
-                              onClick={(e) => toggleLocalVideo(seg.id, v.id, e)}
-                            />
-                          )
-                        })}
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1186,6 +1222,20 @@ export function ScriptStockPanel({
           ) : null}
         </div>
       ) : null}
+
+      <StockLibraryTrimDialog
+        open={trimDialogSegId !== null && !!trimDialogSeg?.localVideoIds.length}
+        onClose={() => setTrimDialogSegId(null)}
+        videoIdsOrdered={trimDialogSeg?.localVideoIds ?? []}
+        videos={libraryVideos}
+        initialSlots={trimDialogInitialSlots}
+        onSave={(slots) => {
+          const id = trimDialogSegId
+          if (!id) return
+          setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, libraryTrimSlots: slots } : s)))
+          setTrimDialogSegId(null)
+        }}
+      />
     </div>
   )
 }

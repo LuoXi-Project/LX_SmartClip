@@ -1191,11 +1191,7 @@ export default function MatchPage() {
               </div>
             </div>
           ) : mode === 'script_stock' ? (
-            <ScriptStockPanel
-              libraryVideos={scopeVideos}
-              subtitleEnabled={subtitleEnabled}
-              subtitleStyle={subtitleStyle}
-            />
+            <ScriptStockPanel subtitleEnabled={subtitleEnabled} subtitleStyle={subtitleStyle} />
           ) : mode === 'auto' || mode === 'template' ? (
             <>
               {autoPrompt.trim().startsWith('【复刻模板约束】') ? (

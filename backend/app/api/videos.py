@@ -302,6 +302,7 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
 async def list_videos(
     q: str = "",
     status: str = "",
+    exclude_status: str = "",
     sort: str = "upload_at_desc",
     page: int = 1,
     page_size: int = 12,
@@ -311,6 +312,7 @@ async def list_videos(
     Params:
     - q: name substring search (case-insensitive)
     - status: pending | processing | done | error | "" (all)
+    - exclude_status: pending | processing | done | error — exclude this status (e.g. error for clip UI)
     - sort: upload_at_desc | upload_at_asc | name_asc | name_desc
     - page: 1-based
     - page_size: 1-100
@@ -328,6 +330,9 @@ async def list_videos(
     if status.strip() in ("pending", "processing", "done", "error"):
         conditions.append("status = ?")
         params.append(status.strip())
+    elif exclude_status.strip() in ("pending", "processing", "done", "error"):
+        conditions.append("status <> ?")
+        params.append(exclude_status.strip())
 
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 

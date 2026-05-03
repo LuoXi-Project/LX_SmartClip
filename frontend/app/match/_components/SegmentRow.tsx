@@ -1,4 +1,4 @@
-import type { HTMLAttributes } from 'react'
+import type { HTMLAttributes, MouseEvent } from 'react'
 import {
   ChevronDown,
   ChevronUp,
@@ -16,8 +16,9 @@ import {
 } from 'lucide-react'
 import type { MatchClip } from '@/lib/api'
 import type { Segment } from './types'
-import { trimIsCustom } from './clipTrim'
+import { trimIsCustomForSlot } from './clipTrim'
 import { ClipCard } from './ClipCard'
+import { orderPositionsForKey } from '@/lib/match/orderedSelection'
 
 export function SegmentRow({
   seg, index, segmentCount = 0, onReorder,
@@ -41,7 +42,7 @@ export function SegmentRow({
   onTextChange: (t: string) => void
   onRemove: () => void
   onMatch: () => void
-  onToggleSelect: (clipId: string) => void
+  onToggleSelect: (clipId: string, e: MouseEvent) => void
   onTts: () => void
   onPlayAudio: () => void
   onStopAudio: () => void
@@ -60,13 +61,11 @@ export function SegmentRow({
   const canDown = segmentCount > 0 && index < segmentCount - 1
   const primaryId = seg.selectedClipIds?.[0] ?? ''
   const chosen = primaryId ? (seg.clips.find((c) => c.clip_id === primaryId) ?? null) : null
-  const trimCustom =
-    (seg.selectedClipIds ?? []).some((id) => {
-      const c = seg.clips.find((x) => x.clip_id === id)
-      return c ? trimIsCustom(seg, c) : false
-    })
+  const trimCustom = (seg.selectedClipIds ?? []).some((id, slotIdx) => {
+    const c = seg.clips.find((x) => x.clip_id === id)
+    return c ? trimIsCustomForSlot(seg, c, slotIdx) : false
+  })
   const selectedCount = seg.selectedClipIds?.length ?? 0
-  const orderIndexOf = (clipId: string) => (seg.selectedClipIds?.indexOf(clipId) ?? -1)
 
   const fmtTime = (s: number) => {
     if (!Number.isFinite(s) || s < 0) return '0:00'
@@ -180,22 +179,26 @@ export function SegmentRow({
           <div>
             <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2.5">
               候选视频 · {seg.clips.length} 个
-              <span className="normal-case font-normal ml-1 text-slate-600">— 点击勾选序号</span>
+              <span className="normal-case font-normal ml-1 text-slate-600">
+                — 点击勾选顺序；Shift+点击再叠同一条
+              </span>
             </p>
             <div className="flex gap-3 overflow-x-auto pb-2">
-              {seg.clips.map((clip, ci) => (
-                <ClipCard
-                  key={clip.clip_id}
-                  clip={clip}
-                  chosen={clip.clip_id === primaryId || (primaryId === '' && seg.chosenIdx === ci)}
-                  order={(() => {
-                    const idx = orderIndexOf(clip.clip_id)
-                    return idx >= 0 ? idx + 1 : undefined
-                  })()}
-                  onChoose={() => onToggleSelect(clip.clip_id)}
-                  onPreview={() => onPreview(clip)}
-                />
-              ))}
+              {seg.clips.map((clip) => {
+                const ordered = seg.selectedClipIds ?? []
+                const positions = orderPositionsForKey(ordered, clip.clip_id)
+                const inSelection = positions.length > 0
+                return (
+                  <ClipCard
+                    key={clip.clip_id}
+                    clip={clip}
+                    chosen={inSelection}
+                    orderPositions={positions.length ? positions : undefined}
+                    onChoose={(e) => onToggleSelect(clip.clip_id, e)}
+                    onPreview={() => onPreview(clip)}
+                  />
+                )
+              })}
             </div>
           </div>
         )}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import {
   AlertCircle,
@@ -31,13 +31,18 @@ import {
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
 import { DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from './types'
+import {
+  appendIdToOrderedList,
+  orderPositionsForKey,
+  toggleIdInOrderedList,
+} from '@/lib/match/orderedSelection'
+import { OrderedPickCard } from './OrderedPickCard'
 
 type SourceTab = 'local' | 'pexels'
 
 type StockSegState = {
   id: string
   text: string
-  trimSec: number
   sourceTab: SourceTab
   searchQuery: string
   /** 本地素材库多选，顺序即成片拼接顺序（仅「仅 TTS」允许多条） */
@@ -53,7 +58,6 @@ function newSeg(text: string): StockSegState {
   return {
     id: `ss_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
     text,
-    trimSec: 5,
     sourceTab: 'pexels',
     searchQuery: '',
     localVideoIds: [],
@@ -144,24 +148,28 @@ export function ScriptStockPanel({
     }
   }
 
-  const toggleLocalVideo = (segId: string, videoId: string) => {
+  const toggleLocalVideo = (segId: string, videoId: string, e: MouseEvent) => {
     setSegments((prev) =>
       prev.map((s) => {
         if (s.id !== segId) return s
         const cur = s.localVideoIds
-        const next = cur.includes(videoId) ? cur.filter((x) => x !== videoId) : [...cur, videoId]
+        const next = e.shiftKey
+          ? appendIdToOrderedList(cur, videoId)
+          : toggleIdInOrderedList(cur, videoId)
         return { ...s, localVideoIds: next }
       }),
     )
   }
 
-  const togglePexelsRel = (segId: string, rel: string) => {
+  const togglePexelsRel = (segId: string, rel: string, e: MouseEvent) => {
     if (!rel) return
     setSegments((prev) =>
       prev.map((s) => {
         if (s.id !== segId) return s
         const cur = s.pexelsStoredRelPaths
-        const next = cur.includes(rel) ? cur.filter((x) => x !== rel) : [...cur, rel]
+        const next = e.shiftKey
+          ? appendIdToOrderedList(cur, rel)
+          : toggleIdInOrderedList(cur, rel)
         return { ...s, pexelsStoredRelPaths: next }
       }),
     )
@@ -268,14 +276,12 @@ export function ScriptStockPanel({
                 ...s,
                 downloadingId: null,
                 sourceTab: 'pexels',
-                pexelsStoredRelPaths: s.pexelsStoredRelPaths.includes(rel)
-                  ? s.pexelsStoredRelPaths
-                  : [...s.pexelsStoredRelPaths, rel],
+                pexelsStoredRelPaths: appendIdToOrderedList(s.pexelsStoredRelPaths, rel),
               }
             : s,
         ),
       )
-      toast.success('已下载，已加入本段选用列表（可点击卡片取消勾选）')
+      toast.success('已下载并追加到本段顺序（Shift+点击可再叠同一条）')
     } catch (e) {
       setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, downloadingId: null } : s)))
       toast.error(formatFastApiDetail(e))
@@ -293,11 +299,9 @@ export function ScriptStockPanel({
       library_video_ids?: string[]
       stored_rel_path?: string
       pexels_stored_rel_paths?: string[]
-      trim_sec: number
       text: string
     }> = []
     for (const s of segments) {
-      const trim = Math.max(0, Number(s.trimSec) || 0)
       if (s.sourceTab === 'local') {
         if (!s.localVideoIds.length) {
           toast.error('存在未选择本地视频的段落')
@@ -310,7 +314,6 @@ export function ScriptStockPanel({
         payload.push({
           kind: 'library',
           library_video_ids: s.localVideoIds,
-          trim_sec: trim,
           text: (s.text || '').trim(),
         })
       } else {
@@ -321,7 +324,6 @@ export function ScriptStockPanel({
         payload.push({
           kind: 'pexels',
           pexels_stored_rel_paths: s.pexelsStoredRelPaths,
-          trim_sec: trim,
           text: (s.text || '').trim(),
         })
       }
@@ -370,7 +372,9 @@ export function ScriptStockPanel({
           <p className="text-[11px] text-slate-500 leading-relaxed max-w-xl">
             为每一段匹配画面并合成<strong className="text-slate-300"> TTS 配音</strong>
             （下方可选仅配音 / 仅原声 / 混合及分贝调节）。本地与 <strong className="text-slate-300">Pexels</strong>{' '}
-            均为卡片多选、数字为拼接顺序（同手动匹配）；Pexels 已下载会显示「已缓存」，可在上方缓存区管理删除。
+            均为卡片多选、角标为拼接顺序（与手动匹配一致）；<strong className="text-slate-300">Shift+点击</strong>
+            可在同组内再叠一段相同素材。成片画面时长由下方「以配音为准 / 以素材为准」及延伸策略决定，始终使用所选素材的完整画面（无额外截取秒数）。
+            Pexels 已下载会显示「已缓存」，可在上方缓存区管理删除。
           </p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0 text-[11px]">
@@ -523,23 +527,6 @@ export function ScriptStockPanel({
                   />
                 </div>
 
-                <div className="flex gap-2">
-                  <label className="text-[10px] text-slate-500 shrink-0 pt-2">成片截取(秒)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={600}
-                    step={0.5}
-                    value={seg.trimSec}
-                    onChange={(e) => {
-                      const v = Math.max(0, Number(e.target.value) || 0)
-                      setSegments((prev) => prev.map((s) => (s.id === seg.id ? { ...s, trimSec: v } : s)))
-                    }}
-                    className="w-24 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-sm text-slate-200"
-                  />
-                  <span className="text-[10px] text-slate-600 pt-2">0 = 使用整段素材时长</span>
-                </div>
-
                 <div className="flex rounded-lg border border-slate-700 overflow-hidden w-fit">
                   <button
                     type="button"
@@ -568,7 +555,8 @@ export function ScriptStockPanel({
                 {seg.sourceTab === 'local' ? (
                   <div className="space-y-2">
                     <p className="text-[10px] text-slate-500">
-                      点击卡片勾选/取消，数字为成片拼接顺序（与手动匹配一致）。多条拼接仅「仅 TTS」模式可用。
+                      点击勾选或整类取消；<strong className="text-slate-400">Shift+点击</strong>
+                      再叠一段同素材。角标为成片顺序（与手动匹配一致）。多条拼接仅「仅 TTS」模式可用。
                     </p>
                     {libraryVideos.length === 0 ? (
                       <div className="flex items-center gap-2 text-xs text-amber-300">
@@ -578,33 +566,18 @@ export function ScriptStockPanel({
                     ) : (
                       <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
                         {libraryVideos.map((v) => {
-                          const chosen = seg.localVideoIds.includes(v.id)
-                          const ord = chosen ? seg.localVideoIds.indexOf(v.id) + 1 : 0
+                          const positions = orderPositionsForKey(seg.localVideoIds, v.id)
                           const thumb = `${API_BASE_URL}/api/videos/${v.id}/thumbnail`
                           return (
-                            <button
+                            <OrderedPickCard
                               key={v.id}
-                              type="button"
-                              onClick={() => toggleLocalVideo(seg.id, v.id)}
-                              className={`relative flex-shrink-0 w-52 rounded-xl border text-left transition-all ${
-                                chosen
-                                  ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/40'
-                                  : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'
-                              }`}
-                            >
-                              {chosen && ord > 0 ? (
-                                <div className="absolute top-2 right-2 min-w-5 h-5 px-1 rounded-full bg-indigo-500 flex items-center justify-center z-10">
-                                  <span className="text-[10px] text-white font-semibold tabular-nums">{ord}</span>
-                                </div>
-                              ) : null}
-                              <div className="w-full h-24 rounded-t-xl bg-slate-800 overflow-hidden flex items-center justify-center">
-                                <img src={thumb} alt="" className="w-full h-full object-cover" loading="lazy" />
-                              </div>
-                              <div className="px-3 py-2 space-y-0.5">
-                                <p className="text-xs text-slate-200 font-medium truncate">{v.name}</p>
-                                <p className="text-[10px] text-slate-500">{v.status === 'done' ? '已处理' : v.status}</p>
-                              </div>
-                            </button>
+                              imageUrl={thumb}
+                              title={v.name}
+                              subtitle={v.status === 'done' ? '已处理' : v.status}
+                              orderPositions={positions}
+                              selected={positions.length > 0}
+                              onClick={(e) => toggleLocalVideo(seg.id, v.id, e)}
+                            />
                           )
                         })}
                       </div>
@@ -640,66 +613,62 @@ export function ScriptStockPanel({
                       </p>
                     ) : (
                       <p className="text-[11px] text-slate-500">
-                        已缓存的可直接点卡片勾选；未缓存的先点「下载」。勾选顺序为成片拼接顺序。
+                        已缓存的点卡片勾选（<strong className="text-slate-400">Shift+点击</strong>
+                        再叠同文件）；未缓存的先「下载」并追加到顺序。
                       </p>
                     )}
                     <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
                       {seg.pexelsResults.map((pv) => {
                         const cachedRel = bestCachedRelForPexelsId(pexelsCacheItems, pv.id)
                         const cached = Boolean(cachedRel)
-                        const ord = cachedRel ? seg.pexelsStoredRelPaths.indexOf(cachedRel) + 1 : 0
-                        const chosen = ord > 0
+                        const positions =
+                          cachedRel != null && cached
+                            ? orderPositionsForKey(seg.pexelsStoredRelPaths, cachedRel)
+                            : []
+                        if (!cached) {
+                          return (
+                            <OrderedPickCard
+                              key={pv.id}
+                              imageUrl={pv.image}
+                              title={`${pv.duration}s`}
+                              subtitle="未下载"
+                              orderPositions={[]}
+                              selected={false}
+                              disabled
+                              onClick={() => {}}
+                              footer={
+                                <div className="px-2 pb-2">
+                                  <button
+                                    type="button"
+                                    disabled={seg.downloadingId === pv.id}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void downloadPexels(seg.id, pv.id)
+                                    }}
+                                    className="w-full flex items-center justify-center gap-1 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-[11px] text-white disabled:opacity-50"
+                                  >
+                                    {seg.downloadingId === pv.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3 h-3" />
+                                    )}
+                                    下载
+                                  </button>
+                                </div>
+                              }
+                            />
+                          )
+                        }
                         return (
-                          <div
+                          <OrderedPickCard
                             key={pv.id}
-                            className={`relative flex-shrink-0 w-52 rounded-xl border overflow-hidden transition-all ${
-                              chosen
-                                ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/40'
-                                : 'border-slate-700 bg-slate-900/80'
-                            }`}
-                          >
-                            {chosen ? (
-                              <div className="absolute top-2 right-2 min-w-5 h-5 px-1 rounded-full bg-indigo-500 flex items-center justify-center z-10">
-                                <span className="text-[10px] text-white font-semibold tabular-nums">{ord}</span>
-                              </div>
-                            ) : null}
-                            <button
-                              type="button"
-                              disabled={!cached}
-                              onClick={() => cachedRel && togglePexelsRel(seg.id, cachedRel)}
-                              className={`block w-full text-left ${cached ? 'cursor-pointer' : 'cursor-default'}`}
-                            >
-                              <img src={pv.image} alt="" className="w-full h-24 object-cover" />
-                              <div className="p-2 space-y-1">
-                                <p className="text-[10px] text-slate-500 truncate">{pv.duration}s</p>
-                                {cached ? (
-                                  <p className="text-[10px] text-emerald-400 font-medium">已缓存 · 点卡片勾选</p>
-                                ) : (
-                                  <p className="text-[10px] text-slate-500">未下载</p>
-                                )}
-                              </div>
-                            </button>
-                            {!cached ? (
-                              <div className="px-2 pb-2">
-                                <button
-                                  type="button"
-                                  disabled={seg.downloadingId === pv.id}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    void downloadPexels(seg.id, pv.id)
-                                  }}
-                                  className="w-full flex items-center justify-center gap-1 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-[11px] text-white disabled:opacity-50"
-                                >
-                                  {seg.downloadingId === pv.id ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Download className="w-3 h-3" />
-                                  )}
-                                  下载
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
+                            imageUrl={pv.image}
+                            title={`${pv.duration}s`}
+                            subtitle="已缓存 · 点击勾选（Shift+再叠一段）"
+                            orderPositions={positions}
+                            selected={positions.length > 0}
+                            onClick={(e) => cachedRel && togglePexelsRel(seg.id, cachedRel, e)}
+                          />
                         )
                       })}
                     </div>

@@ -398,11 +398,10 @@ async def pexels_delete_file(req: ScriptStockPexelsDeleteRequest) -> ScriptStock
 
 async def _resolve_compose_rows(
     db: aiosqlite.Connection, req: ScriptStockComposeRequest
-) -> List[Tuple[List[str], float, str]]:
-    """返回 ([素材绝对路径…], trim_sec, library|pexels)；library 可多路径顺序拼接。"""
-    out: List[Tuple[List[str], float, str]] = []
+) -> List[Tuple[List[str], str]]:
+    """返回 ([素材绝对路径…], library|pexels)；library 可多路径顺序拼接。成片素材时长与手动匹配一致：使用完整素材，不设「前若干秒截取」。"""
+    out: List[Tuple[List[str], str]] = []
     for seg in req.segments:
-        trim = float(seg.trim_sec or 0)
         if seg.kind == "library":
             raw_ids: List[str] = []
             if seg.library_video_ids:
@@ -428,7 +427,7 @@ async def _resolve_compose_rows(
                 if not abs_path or not os.path.isfile(abs_path):
                     raise HTTPException(400, f"视频文件缺失: {vid}")
                 paths.append(abs_path)
-            out.append((paths, trim, "library"))
+            out.append((paths, "library"))
         elif seg.kind == "pexels":
             rels: List[str] = []
             if seg.pexels_stored_rel_paths:
@@ -449,7 +448,7 @@ async def _resolve_compose_rows(
                 if not is_under_pexels_download_dir(abs_path):
                     raise HTTPException(403, "非法素材路径：仅允许使用 stock_media/pexels 下的下载文件")
                 paths.append(abs_path)
-            out.append((paths, trim, "pexels"))
+            out.append((paths, "pexels"))
         else:
             raise HTTPException(400, "未知分段类型")
     return out

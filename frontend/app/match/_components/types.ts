@@ -13,8 +13,10 @@ export interface Segment {
   chosenIdx: number
   /** 已按勾选顺序记录的 clip_id 列表（第一个为当前展示/主选） */
   selectedClipIds: string[]
-  /** 按 clip_id 记录出入点；仅「单选素材」时参与成片，多选拼接暂不用 */
+  /** 按 clip_id 记录出入点（无槽位数据时的回退；旧数据） */
   clipTrimByClipId?: Record<string, ClipTrimRange>
+  /** 与 selectedClipIds 等长，第 i 条选用素材的出入点（同 clip_id 多次出现时各槽独立） */
+  clipTrimSlots?: ClipTrimRange[]
   ttsFilename: string | null
   ttsLoading: boolean
   ttsError: string

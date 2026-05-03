@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pause, Play, RotateCcw, X } from 'lucide-react'
 import type { MatchClip } from '@/lib/api'
 import { clipStreamUrl, fmt, type ClipTrimRange, type Segment } from './types'
-import { getClipTrim } from './clipTrim'
+import { getClipTrimForSlot } from './clipTrim'
 
 const MIN_SPAN = 0.08
 const TRIM_BADGE_EPS = 0.03
@@ -27,13 +27,13 @@ export function ClipInOutDialog({
   open: boolean
   segment: Segment | null
   onClose: () => void
-  /** 写入段落 clipTrimByClipId（仅包含当前勾选素材的 id） */
-  onSave: (trims: Record<string, ClipTrimRange>) => void
+  /** 写入段落 clipTrimSlots（与 selectedClipIds 等长，每槽独立裁剪） */
+  onSave: (slots: ClipTrimRange[]) => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const lastVideoTimeRef = useRef(0)
-  const [localTrims, setLocalTrims] = useState<Record<string, ClipTrimRange>>({})
-  const [activeId, setActiveId] = useState<string>('')
+  const [localSlotTrims, setLocalSlotTrims] = useState<ClipTrimRange[]>([])
+  const [activeSlotIndex, setActiveSlotIndex] = useState(0)
   const [dur, setDur] = useState(MIN_SPAN)
   const [inSec, setInSec] = useState(0)
   const [outSec, setOutSec] = useState(MIN_SPAN)
@@ -51,29 +51,35 @@ export function ClipInOutDialog({
   }, [segment])
 
   const activeClip = useMemo(
-    () => orderedClips.find((c) => c.clip_id === activeId) ?? null,
-    [orderedClips, activeId],
+    () => orderedClips[activeSlotIndex] ?? null,
+    [orderedClips, activeSlotIndex],
   )
 
   const resetFromSegment = useCallback(() => {
     if (!segment || !orderedClips.length) return
-    const next: Record<string, ClipTrimRange> = {}
-    for (const c of orderedClips) {
-      next[c.clip_id] = getClipTrim(segment, c)
-    }
-    setLocalTrims(next)
-    const firstId = orderedClips[0].clip_id
-    setActiveId(firstId)
-    const t0 = next[firstId] ?? { inSec: 0, outSec: orderedClips[0].duration }
-    setInSec(t0.inSec)
-    setOutSec(t0.outSec)
+    const arr = orderedClips.map((c, i) => getClipTrimForSlot(segment, c, i))
+    setLocalSlotTrims(arr)
+    setActiveSlotIndex(0)
+    const t0 = arr[0]
     const d0 = Math.max(MIN_SPAN, Number(orderedClips[0].duration) || MIN_SPAN)
     setDur(d0)
+    setInSec(clamp(t0.inSec, 0, d0 - MIN_SPAN))
+    setOutSec(clamp(t0.outSec, t0.inSec + MIN_SPAN, d0))
   }, [segment, orderedClips])
+
+  const slotTrimSig =
+    segment?.clipTrimSlots?.map((t) => `${t.inSec}:${t.outSec}`).join('|') ?? ''
 
   useEffect(() => {
     if (open && segment && orderedClips.length) resetFromSegment()
-  }, [open, segment?.id, segment?.selectedClipIds?.join(','), resetFromSegment, orderedClips.length])
+  }, [
+    open,
+    segment?.id,
+    segment?.selectedClipIds?.join(','),
+    slotTrimSig,
+    resetFromSegment,
+    orderedClips.length,
+  ])
 
   useEffect(() => {
     if (!open) {
@@ -87,7 +93,7 @@ export function ClipInOutDialog({
     const v = videoRef.current
     if (!v || !open) return
     v.playbackRate = playbackRate
-  }, [playbackRate, activeClip?.clip_id, open])
+  }, [playbackRate, activeSlotIndex, activeClip?.clip_id, open])
 
   useEffect(() => {
     if (!open) return
@@ -98,19 +104,25 @@ export function ClipInOutDialog({
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
 
-  const switchToClip = (cid: string) => {
-    if (cid === activeId || !activeClip || !segment) return
-    const dPrev = Math.max(MIN_SPAN, Number(activeClip.duration) || MIN_SPAN)
+  const switchToSlot = (newIdx: number) => {
+    if (newIdx === activeSlotIndex || !segment || !orderedClips.length) return
+    const curClip = orderedClips[activeSlotIndex]
+    if (!curClip) return
+    const dPrev = Math.max(MIN_SPAN, Number(curClip.duration) || MIN_SPAN)
     const ins = clamp(inSec, 0, dPrev - MIN_SPAN)
     const out = clamp(outSec, ins + MIN_SPAN, dPrev)
-    const updated = { ...localTrims, [activeId]: { inSec: ins, outSec: out } }
-    setLocalTrims(updated)
-    setActiveId(cid)
-    const clip = orderedClips.find((c) => c.clip_id === cid)
+    const merged = [...localSlotTrims]
+    while (merged.length < orderedClips.length) {
+      merged.push({ inSec: 0, outSec: MIN_SPAN })
+    }
+    merged[activeSlotIndex] = { inSec: ins, outSec: out }
+    setLocalSlotTrims(merged)
+    setActiveSlotIndex(newIdx)
+    const clip = orderedClips[newIdx]
     if (!clip) return
     const d = Math.max(MIN_SPAN, Number(clip.duration) || MIN_SPAN)
     setDur(d)
-    const t = updated[cid] ?? getClipTrim(segment, clip)
+    const t = merged[newIdx] ?? getClipTrimForSlot(segment, clip, newIdx)
     setInSec(clamp(t.inSec, 0, d - MIN_SPAN))
     setOutSec(clamp(t.outSec, t.inSec + MIN_SPAN, d))
     videoRef.current?.pause()
@@ -163,7 +175,7 @@ export function ClipInOutDialog({
       v.removeEventListener('pause', onPause)
       v.removeEventListener('play', onPlay)
     }
-  }, [open, activeClip?.clip_id])
+  }, [open, activeSlotIndex, activeClip?.clip_id])
 
   useEffect(() => {
     const v = videoRef.current
@@ -204,14 +216,18 @@ export function ClipInOutDialog({
       v.removeEventListener('timeupdate', tick)
       v.removeEventListener('seeked', syncLast)
     }
-  }, [open, inSec, outSec, activeClip?.clip_id])
+  }, [open, inSec, outSec, activeSlotIndex, activeClip?.clip_id])
 
   const setInFromPlayhead = () => {
     const v = videoRef.current
     if (!v) return
     const t = clamp(v.currentTime, 0, outSec - MIN_SPAN)
     setInSec(t)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec: t, outSec } }))
+    setLocalSlotTrims((prev) => {
+      const n = [...prev]
+      n[activeSlotIndex] = { inSec: t, outSec }
+      return n
+    })
   }
 
   const setOutFromPlayhead = () => {
@@ -219,21 +235,33 @@ export function ClipInOutDialog({
     if (!v) return
     const t = clamp(v.currentTime, inSec + MIN_SPAN, dur)
     setOutSec(t)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec, outSec: t } }))
+    setLocalSlotTrims((prev) => {
+      const n = [...prev]
+      n[activeSlotIndex] = { inSec, outSec: t }
+      return n
+    })
   }
 
   const onInSlider = (v: number) => {
     const nextIn = clamp(v, 0, outSec - MIN_SPAN)
     setInSec(nextIn)
     seek(nextIn)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec: nextIn, outSec } }))
+    setLocalSlotTrims((prev) => {
+      const n = [...prev]
+      n[activeSlotIndex] = { inSec: nextIn, outSec }
+      return n
+    })
   }
 
   const onOutSlider = (v: number) => {
     const nextOut = clamp(v, inSec + MIN_SPAN, dur)
     setOutSec(nextOut)
     seek(nextOut)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec, outSec: nextOut } }))
+    setLocalSlotTrims((prev) => {
+      const n = [...prev]
+      n[activeSlotIndex] = { inSec, outSec: nextOut }
+      return n
+    })
   }
 
   const resetFull = () => {
@@ -241,16 +269,27 @@ export function ClipInOutDialog({
     const d = Math.max(MIN_SPAN, Number(activeClip.duration) || MIN_SPAN)
     setInSec(0)
     setOutSec(d)
-    setLocalTrims((prev) => ({ ...prev, [activeId]: { inSec: 0, outSec: d } }))
+    setLocalSlotTrims((prev) => {
+      const n = [...prev]
+      n[activeSlotIndex] = { inSec: 0, outSec: d }
+      return n
+    })
     seek(0)
   }
 
   const apply = () => {
-    if (!activeClip || !activeId) return
+    if (!activeClip || !segment || orderedClips.length === 0) return
     const d = Math.max(MIN_SPAN, Number(activeClip.duration) || MIN_SPAN)
     const ins = clamp(inSec, 0, d - MIN_SPAN)
     const out = clamp(outSec, ins + MIN_SPAN, d)
-    const merged = { ...localTrims, [activeId]: { inSec: ins, outSec: out } }
+    const merged: ClipTrimRange[] = []
+    for (let i = 0; i < orderedClips.length; i++) {
+      if (i === activeSlotIndex) merged.push({ inSec: ins, outSec: out })
+      else {
+        const c = orderedClips[i]
+        merged.push(localSlotTrims[i] ?? getClipTrimForSlot(segment, c, i))
+      }
+    }
     onSave(merged)
     onClose()
   }
@@ -268,7 +307,7 @@ export function ClipInOutDialog({
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-100 truncate">片段出入点</p>
             <p className="text-[11px] text-slate-500 truncate">
-              下方切换已勾选素材，分别设置入点/出点；导出时按勾选顺序拼接并应用各段裁剪
+              下方按选用顺序切换（同一片段多次选用时各有独立编号）；导出按序拼接并应用各槽裁剪
             </p>
           </div>
           <button
@@ -283,15 +322,17 @@ export function ClipInOutDialog({
 
         <div className="px-4 pt-3 flex flex-wrap gap-1.5 border-b border-slate-800/80 pb-3 bg-slate-900/30">
           {orderedClips.map((c, idx) => {
-            const t = localTrims[c.clip_id] ?? (segment ? getClipTrim(segment, c) : { inSec: 0, outSec: c.duration })
+            const t =
+              localSlotTrims[idx] ??
+              (segment ? getClipTrimForSlot(segment, c, idx) : { inSec: 0, outSec: c.duration })
             const cd = Math.max(MIN_SPAN, Number(c.duration) || MIN_SPAN)
             const custom = t.inSec > TRIM_BADGE_EPS || t.outSec < cd - TRIM_BADGE_EPS
-            const isActive = c.clip_id === activeId
+            const isActive = idx === activeSlotIndex
             return (
               <button
-                key={c.clip_id}
+                key={`slot-${idx}-${c.clip_id}`}
                 type="button"
-                onClick={() => switchToClip(c.clip_id)}
+                onClick={() => switchToSlot(idx)}
                 className={`px-2.5 py-1 rounded-lg text-[11px] border transition-colors ${
                   isActive
                     ? 'bg-indigo-600/30 border-indigo-500/60 text-indigo-100'
@@ -312,7 +353,7 @@ export function ClipInOutDialog({
           <div className="relative rounded-xl overflow-hidden bg-black border border-slate-800 aspect-video">
             <video
               ref={videoRef}
-              key={activeClip.clip_id}
+              key={`${activeSlotIndex}-${activeClip.clip_id}`}
               className="w-full h-full object-contain"
               src={clipStreamUrl(activeClip.clip_id)}
               preload="metadata"

@@ -902,7 +902,6 @@ export interface ScriptStockComposeSegmentApi {
   stored_rel_path?: string | null
   /** Pexels 多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path */
   pexels_stored_rel_paths?: string[] | null
-  trim_sec?: number
   /** 该段配音文案；tts_only / mix 时使用 */
   text?: string | null
 }

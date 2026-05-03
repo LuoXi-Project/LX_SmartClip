@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Loader2, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
 import { type BgmTrack, type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
@@ -30,7 +30,7 @@ export type ManualMatchPanelProps = {
   onSegmentTextChange: (segId: string, text: string) => void
   onRemoveSegment: (segId: string) => void
   onMatchSegment: (segId: string) => void
-  onToggleClipSelected: (segId: string, clipId: string) => void
+  onToggleClipSelected: (segId: string, clipId: string, e: MouseEvent) => void
   onSynthesiseTts: (segId: string) => void
   onPlayAudio: (segId: string) => void
   onStopAudio: () => void
@@ -298,7 +298,7 @@ export function ManualMatchPanel({
                 onTextChange={(text) => onSegmentTextChange(seg.id, text)}
                 onRemove={() => onRemoveSegment(seg.id)}
                 onMatch={() => onMatchSegment(seg.id)}
-                onToggleSelect={(clipId) => onToggleClipSelected(seg.id, clipId)}
+                onToggleSelect={(clipId, e) => onToggleClipSelected(seg.id, clipId, e)}
                 onTts={() => onSynthesiseTts(seg.id)}
                 onPlayAudio={() => onPlayAudio(seg.id)}
                 onStopAudio={onStopAudio}

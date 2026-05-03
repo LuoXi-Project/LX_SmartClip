@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import {
   AlertCircle, Loader2,
@@ -22,7 +22,7 @@ import apiClient, {
 } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { ClipInOutDialog } from './_components/ClipInOutDialog'
-import { buildClipTrimsForApi } from './_components/clipTrim'
+import { buildClipTrimsForApi, computeNextTrimSlots } from './_components/clipTrim'
 import { PreviewModal } from './_components/ClipCard'
 import { ExportSidebar } from './_components/ExportSidebar'
 import { MatchPageHeader } from './_components/MatchPageHeader'
@@ -45,6 +45,7 @@ import {
   DEFAULT_VOICEOVER_TTS_ALIGN,
   voiceoverPlanSupportsRedub,
 } from '@/lib/voiceoverRedub'
+import { appendIdToOrderedList, toggleIdInOrderedList } from '@/lib/match/orderedSelection'
 
 const VIDEO_PAGE_SIZE = 9
 const REPLICA_LOCKED_TEMPLATE_PRESET = 'replica_locked'
@@ -422,7 +423,7 @@ export default function MatchPage() {
 
   function makeSeg(id: string, text = ''): Segment {
     return {
-      id, text, clips: [], chosenIdx: 0, selectedClipIds: [], clipTrimByClipId: {},
+      id, text, clips: [], chosenIdx: 0, selectedClipIds: [], clipTrimByClipId: {}, clipTrimSlots: undefined,
       ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false,
     }
   }
@@ -493,7 +494,13 @@ export default function MatchPage() {
       const clips = data.recommended?.length ? data.recommended : data.candidates
       // 匹配后默认把最高分 clip 设为唯一选中（保留用户之前手动勾选的逻辑由 toggleClipSelected 管理）
       const defaultSelected = clips.length > 0 ? [clips[0].clip_id] : []
-      patchSeg(id, { clips, chosenIdx: 0, selectedClipIds: defaultSelected, matchLoading: false })
+      patchSeg(id, {
+        clips,
+        chosenIdx: 0,
+        selectedClipIds: defaultSelected,
+        matchLoading: false,
+        clipTrimSlots: undefined,
+      })
     } catch (e: unknown) {
       patchSeg(id, { matchLoading: false, matchError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '匹配失败' })
     }
@@ -805,15 +812,20 @@ export default function MatchPage() {
   const showAutoCustomBgmConfig =
     autoBgmMixEnabled && (autoBgmPlanPolicy === 'user' || (autoBgmTrackFilename || '').trim().length > 0)
 
-  function toggleClipSelected(segId: string, clipId: string) {
+  function toggleClipSelected(segId: string, clipId: string, e: MouseEvent) {
     const seg = useMatchStore.getState().segments.find((s) => s.id === segId)
     if (!seg) return
 
     const prev = seg.selectedClipIds ?? []
-    const next = prev.includes(clipId) ? prev.filter((x) => x !== clipId) : [...prev, clipId]
+    const next = e.shiftKey ? appendIdToOrderedList(prev, clipId) : toggleIdInOrderedList(prev, clipId)
     const primaryId = next[0] ?? ''
     const nextChosenIdx = primaryId ? Math.max(0, seg.clips.findIndex((c) => c.clip_id === primaryId)) : 0
-    patchSeg(segId, { selectedClipIds: next, chosenIdx: nextChosenIdx })
+    const nextSlots = computeNextTrimSlots(seg, prev, seg.clipTrimSlots, next)
+    patchSeg(segId, {
+      selectedClipIds: next,
+      clipTrimSlots: nextSlots,
+      chosenIdx: nextChosenIdx,
+    })
   }
 
   function toggleAutoExpandedPlan(planId: string) {
@@ -1578,11 +1590,11 @@ export default function MatchPage() {
         open={Boolean(clipInOutSegId && clipInOutSeg && (clipInOutSeg.selectedClipIds?.length ?? 0) > 0)}
         segment={clipInOutSeg ?? null}
         onClose={() => setClipInOutSegId(null)}
-        onSave={(trims) => {
+        onSave={(slots) => {
           if (!clipInOutSegId) return
           const seg = useMatchStore.getState().segments.find((s) => s.id === clipInOutSegId)
           if (!seg) return
-          patchSeg(seg.id, { clipTrimByClipId: { ...(seg.clipTrimByClipId ?? {}), ...trims } })
+          patchSeg(seg.id, { clipTrimSlots: slots })
         }}
       />
       <VideoResultDrawer

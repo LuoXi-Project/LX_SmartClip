@@ -1,5 +1,5 @@
-import { CheckCircle2, Play, X } from 'lucide-react'
-import { useState } from 'react'
+import { Play, X } from 'lucide-react'
+import { useState, type MouseEvent } from 'react'
 import type { MatchClip } from '@/lib/api'
 import { clipStreamUrl, fmt } from './types'
 
@@ -23,16 +23,20 @@ export function ScoreBar({ score }: { score: number }) {
 
 // ── ClipCard ──────────────────────────────────────────────────────────────────
 export function ClipCard({
-  clip, chosen, order, onChoose, onPreview,
+  clip, chosen, orderPositions, onChoose, onPreview,
 }: {
   clip: MatchClip
   chosen: boolean
-  order?: number
-  onChoose: () => void
+  /** 本段成组顺序中的 1-based 位次，同 clip 多选时可为多项（如 1·3） */
+  orderPositions?: number[]
+  onChoose: (e: MouseEvent) => void
   onPreview: () => void
 }) {
   const [thumbErr, setThumbErr] = useState(false)
   const name = clip.clip_path.split(/[/\\]/).pop() ?? clip.clip_path
+
+  const posLabel =
+    orderPositions && orderPositions.length > 0 ? orderPositions.join('·') : null
 
   return (
     <div
@@ -43,14 +47,18 @@ export function ClipCard({
           : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'
       }`}
     >
-      {typeof order === 'number' && order > 0 && (
-        <div className="absolute top-2 right-2 min-w-5 h-5 px-1 rounded-full bg-indigo-500 flex items-center justify-center z-10">
-          <span className="text-[10px] text-white font-semibold tabular-nums">{order}</span>
-        </div>
-      )}
-      {chosen && typeof order !== 'number' && (
-        <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center z-10">
-          <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+      {posLabel !== null && (
+        <div
+          className="absolute top-2 right-2 z-10 max-w-[4.5rem] min-h-5 px-1 rounded-full bg-indigo-500 flex items-center justify-center"
+          title={
+            (orderPositions?.length ?? 0) > 1
+              ? `本段内顺序位次：第 ${(orderPositions ?? []).join('、')} 段`
+              : `本段内第 ${(orderPositions ?? [])[0]} 段`
+          }
+        >
+          <span className="text-[10px] text-white font-semibold tabular-nums leading-tight text-center px-0.5">
+            {posLabel}
+          </span>
         </div>
       )}
       <div className="w-full h-24 rounded-t-xl bg-slate-800 relative overflow-hidden flex items-center justify-center">

@@ -97,12 +97,6 @@ class ScriptStockComposeSegment(BaseModel):
         None,
         description="kind=pexels 时可选：多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path",
     )
-    trim_sec: float = Field(
-        0,
-        ge=0,
-        le=600,
-        description="截取前若干秒；0 表示使用整段素材时长",
-    )
     text: Optional[str] = Field(
         None,
         description="该段配音文案（tts_only/mix 时使用；空则该段为静音配音）",

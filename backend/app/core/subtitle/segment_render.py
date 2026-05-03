@@ -24,6 +24,34 @@ def _make_even(x: int, *, min_v: int = 2) -> int:
     return x if (x % 2 == 0) else (x - 1)
 
 
+def _opts_clip_scale_wh(render_opts: Optional[Dict[str, str]]) -> Tuple[int, int]:
+    opts = render_opts or {}
+    try:
+        sw = int(float(str(opts.get("clip_scale_width") or "").strip() or 0))
+    except Exception:
+        sw = 0
+    try:
+        sh = int(float(str(opts.get("clip_scale_height") or "").strip() or 0))
+    except Exception:
+        sh = 0
+    return sw, sh
+
+
+def _explicit_norm_target_wh(scale_w: int, scale_h: int, src_w: int, src_h: int) -> Tuple[int, int]:
+    """与 build_extra_video_filters 中单边 -2 语义一致，输出偶数宽高。"""
+    src_w = max(1, int(src_w))
+    src_h = max(1, int(src_h))
+    if scale_w > 0 and scale_h > 0:
+        return _make_even(scale_w), _make_even(scale_h)
+    if scale_w > 0:
+        th = int(round(src_h * scale_w / src_w))
+        return _make_even(scale_w), _make_even(th)
+    if scale_h > 0:
+        tw = int(round(src_w * scale_h / src_h))
+        return _make_even(tw), _make_even(scale_h)
+    return src_w, src_h
+
+
 def _is_near_keyframe(ts: float, keyframes: List[float], *, threshold_sec: float = 0.04) -> bool:
     if not keyframes:
         return False
@@ -123,21 +151,17 @@ def materialize_clip_paths_for_group(
     在「切片文件时间轴」上解析出的入点会映射到整片素材上的绝对时间，从原片裁剪（成片画质不受预处理 clip 影响）。
     """
     trim_list = _trim_list_from_seg(seg, clip_ids)
-    # 优化1（最重要）：提前统一尺寸/SAR，避免后续 filter_complex 对每路反复 scale。
-    # 这里固定输出到 1920x1080 + setsar=1（像素方形）。
-    # 若上层还配置了额外滤镜（如 fps），继续追加；但避免重复 scale。
-    #
-    # 进一步优化：当使用 NVENC 时，优先尝试走 CUDA 解码 + scale_cuda（失败自动回退 CPU scale）。
-    base_norm_filters = ["scale=1920:1080", "setsar=1"]
+    # clip_scale_* 全 0：以组内第一段素材分辨率为 concat 基准（不默认改 1080p）。
+    # 任一 >0：按成片导出缩放统一到计算出的 tw×th；scale= 只在此处生效，避免与 extra 重复。
+    scale_w, scale_h = _opts_clip_scale_wh(render_opts)
     extra_filters = build_extra_video_filters(render_opts)
     extra_filters = [f for f in extra_filters if not (f or "").strip().lower().startswith("scale=")]
-    seg_filter_parts = [*base_norm_filters, *extra_filters]
-    seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
 
     kf_cache = keyframe_cache if keyframe_cache is not None else {}
     mat_cache = materialize_cache if materialize_cache is not None else {}
     paths_out: List[str] = []
     total_dur = 0.0
+    group_ref_wh: Optional[Tuple[int, int]] = None
     for j, (cid, info) in enumerate(zip(clip_ids, infos)):
         clip_disk_path = info["path"]
         clip_probe_total = float(probe_duration(clip_disk_path, log_on_failure=True) or 0.0)
@@ -196,7 +220,18 @@ def materialize_clip_paths_for_group(
         # 即便不裁剪，只要尺寸不一致也先 materialize 成统一规格，便于后续 concat demuxer/copy。
         # 已是目标尺寸时可直通（节省一次重编码）；SAR 这里不探测，依赖绝大多数素材已为 1:1。
         w, h = probe_video_dimensions(src_path, default=(1920, 1080), logger_=logger)
-        need_norm = (w, h) != (1920, 1080)
+        if scale_w <= 0 and scale_h <= 0:
+            if group_ref_wh is None:
+                group_ref_wh = (w, h)
+            tw, th = group_ref_wh
+        else:
+            tw, th = _explicit_norm_target_wh(scale_w, scale_h, w, h)
+        need_norm = (w, h) != (tw, th)
+        norm_vf = (
+            [f"scale={tw}:{th}:flags=lanczos", "setsar=1"] if need_norm else []
+        )
+        seg_filter_parts = [*norm_vf, *extra_filters]
+        seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
 
         if (not force_materialize) and (not need_trim) and (not need_norm):
             paths_out.append(src_path)
@@ -291,7 +326,7 @@ def materialize_clip_paths_for_group(
                     cuda_filters = []
                     for f in seg_filter_parts:
                         if (f or "").strip().lower().startswith("scale="):
-                            cuda_filters.append("scale_cuda=1920:1080")
+                            cuda_filters.append(f"scale_cuda={tw}:{th}")
                         else:
                             cuda_filters.append(f)
                     cuda_vf_args = ["-vf", ",".join(cuda_filters)]
@@ -644,7 +679,7 @@ def render_tts_segment(
     seg_codec_args = _force_audio_reencode(seg_codec_args, acodec="aac", abitrate_kbps=128)
 
     # 优化2：尽量避免 filter_complex concat，优先 concat demuxer。
-    # 前提是输入视频规格一致（分辨率/编码参数/SAR 等）。我们已在 materialize 阶段统一到 1920x1080 + SAR=1，成功率很高。
+    # 前提是输入视频规格一致（分辨率/编码参数/SAR 等）。materialize 已按导出缩放或组内基准分辨率拉齐 + SAR=1。
     concat_list = os.path.join(tmp, f"seg_{seg_idx:03d}_vconcat.txt")
     write_concat_list(paths_group, concat_list)
     try:

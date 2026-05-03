@@ -121,7 +121,7 @@ def sanitize_merged_opts_for_final_burn(
 ) -> Dict[str, str]:
     """
     成片最后一道 encode 前：merged_opts 里的 clip_scale_* 来自 export_scale_*，
-    常与「切片/预览」共用为 960×540；而分段 materialize 已统一到 1080p 时，
+    常与「切片/预览」共用为 960×540；而分段 materialize 已按导出分辨率或素材基准拉齐时，
     再套 scale=960:540 会严重发糊。此时去掉缩放，保持与拼接一致的分辨率。
 
     仍允许显式导出 1280×720 等（宽或高大于 960）的合理下采样。

@@ -100,6 +100,14 @@ function bestCachedRelForPexelsId(items: ScriptStockPexelsCacheItemApi[], videoI
   return hits[0].stored_rel_path
 }
 
+/** 本机已下载 Pexels（storage 相对路径）→ 浏览器可 `<video src>` 的同源 URL */
+function storageBrowserVideoUrl(storedRelPath: string): string {
+  const r = (storedRelPath || '').replace(/\\/g, '/').replace(/^\/+/, '')
+  const webPath = r.startsWith('storage/') ? `/${r}` : `/storage/${r}`
+  const base = API_BASE_URL.replace(/\/$/, '')
+  return base ? `${base}${webPath}` : webPath
+}
+
 const STOCK_SEG_DRAG_MIME = 'application/x-smartclip-stock-seg-id'
 
 export function ScriptStockPanel({
@@ -888,8 +896,10 @@ export function ScriptStockPanel({
                       </p>
                     ) : (
                       <p className="text-[11px] text-slate-500">
-                        已缓存的点卡片勾选（<strong className="text-slate-400">Shift+点击</strong>
-                        再叠同文件）；未缓存的先「下载」并追加到顺序。
+                        已缓存：左下角<strong className="text-slate-400">播放</strong>
+                        预览；缩略图其余区域或<strong className="text-slate-400">下方标题区</strong>
+                        均可勾选（<strong className="text-slate-400">Shift+点击</strong>
+                        再叠同文件）。未缓存的先「下载」。
                       </p>
                     )}
                     <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
@@ -934,15 +944,17 @@ export function ScriptStockPanel({
                             />
                           )
                         }
+                        const rel = cachedRel as string
                         return (
                           <OrderedPickCard
                             key={pv.id}
                             imageUrl={pv.image}
                             title={`${pv.duration}s`}
-                            subtitle="已缓存 · 点击勾选（Shift+再叠一段）"
+                            subtitle="已缓存 · 点缩略图（除播放钮）或下方文字勾选（Shift+再叠）"
                             orderPositions={positions}
                             selected={positions.length > 0}
-                            onClick={(e) => cachedRel && togglePexelsRel(seg.id, cachedRel, e)}
+                            previewVideoUrl={storageBrowserVideoUrl(rel)}
+                            onClick={(e) => togglePexelsRel(seg.id, rel, e)}
                           />
                         )
                       })}

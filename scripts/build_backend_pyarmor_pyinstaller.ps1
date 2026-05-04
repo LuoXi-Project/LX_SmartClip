@@ -1,4 +1,4 @@
-﻿chcp 65001 > nul
+﻿chcp 65001 > $null
 param(
     [string]$HostIP = "127.0.0.1"
 )

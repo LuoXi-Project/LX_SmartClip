@@ -894,6 +894,12 @@ export interface ScriptStockPexelsCacheItemApi {
   filename: string
   size_bytes: number
   mtime: number
+  /** 下载时记录的搜索词 */
+  search_query?: string
+  /** Pexels 缩略图（外链可能过期） */
+  pexels_image?: string
+  /** Pexels 标注时长（秒） */
+  duration_sec?: number
 }
 
 export interface ScriptStockComposeSegmentApi {
@@ -924,7 +930,12 @@ export const scriptStockApi = {
       total_results: number
       videos: ScriptStockPexelsVideoApi[]
     }>('/api/script-stock/pexels/search', { params }),
-  pexelsDownload: (body: { pexels_video_id: number; preferred_quality?: 'medium' | 'hd' | 'sd' | 'hls' }) =>
+  pexelsDownload: (body: {
+    pexels_video_id: number
+    preferred_quality?: 'medium' | 'hd' | 'sd' | 'hls'
+    /** 当前段搜索使用的关键词，便于缓存列表展示 */
+    search_query?: string
+  }) =>
     apiClient.post<unknown, { stored_rel_path: string; public_url: string; filename: string }>(
       '/api/script-stock/pexels/download',
       body,
@@ -933,6 +944,8 @@ export const scriptStockApi = {
     apiClient.get<unknown, { items: ScriptStockPexelsCacheItemApi[] }>('/api/script-stock/pexels/cache'),
   pexelsDeleteFile: (body: { stored_rel_path: string }) =>
     apiClient.post<unknown, { ok: boolean }>('/api/script-stock/pexels/delete-file', body),
+  pexelsClearCache: () =>
+    apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/pexels/clear-cache'),
   compose: (body: {
     segments: ScriptStockComposeSegmentApi[]
     project_name?: string

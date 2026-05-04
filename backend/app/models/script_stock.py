@@ -68,6 +68,10 @@ class ScriptStockPexelsDownloadRequest(BaseModel):
         "hd",
         description="优先选取的 video_files.quality",
     )
+    search_query: str = Field(
+        "",
+        description="下载时使用的搜索关键词，写入缓存元数据便于列表识别",
+    )
 
 
 class ScriptStockPexelsDownloadResponse(BaseModel):
@@ -169,6 +173,9 @@ class ScriptStockPexelsCacheItem(BaseModel):
     filename: str
     size_bytes: int = 0
     mtime: float = Field(0, description="修改时间 Unix 秒，用于同 id 多文件时选最新")
+    search_query: str = Field("", description="下载时记录的搜索词（来自 pexels/download）")
+    pexels_image: str = Field("", description="Pexels 缩略图 URL，下载时写入")
+    duration_sec: int = Field(0, description="Pexels 标注时长（秒）")
 
 
 class ScriptStockPexelsCacheResponse(BaseModel):
@@ -181,3 +188,8 @@ class ScriptStockPexelsDeleteRequest(BaseModel):
 
 class ScriptStockPexelsDeleteResponse(BaseModel):
     ok: bool = True
+
+
+class ScriptStockPexelsClearCacheResponse(BaseModel):
+    ok: bool = True
+    deleted_files: int = Field(0, description="已删除的视频文件数")

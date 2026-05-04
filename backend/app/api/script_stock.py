@@ -27,6 +27,7 @@ from app.models.script_stock import (
     ScriptStockGenerateScriptResponse,
     ScriptStockPexelsCacheItem,
     ScriptStockPexelsCacheResponse,
+    ScriptStockPexelsClearCacheResponse,
     ScriptStockPexelsDeleteRequest,
     ScriptStockPexelsDeleteResponse,
     ScriptStockPexelsDownloadRequest,
@@ -46,6 +47,31 @@ router = APIRouter(prefix="/api/script-stock", tags=["script-stock"])
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/videos/search"
 _PEXELS_FN_ID = re.compile(r"^pexels_(\d+)_", re.IGNORECASE)
+_PEXELS_META_FILENAME = "pexels_cache_meta.json"
+
+
+def _pexels_meta_path(root: str) -> str:
+    return os.path.join(root, _PEXELS_META_FILENAME)
+
+
+def _read_pexels_meta(root: str) -> dict[str, Any]:
+    mp = _pexels_meta_path(root)
+    if not os.path.isfile(mp):
+        return {}
+    try:
+        with open(mp, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_pexels_meta(root: str, data: dict[str, Any]) -> None:
+    mp = _pexels_meta_path(root)
+    tmp = mp + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, mp)
 
 
 async def _cfg(db: aiosqlite.Connection, key: str, default: str = "") -> str:
@@ -332,6 +358,18 @@ async def pexels_download(req: ScriptStockPexelsDownloadRequest) -> ScriptStockP
         raise HTTPException(502, detail=f"下载失败: {e}")
 
     rel = to_stored_path(dest_abs)
+    try:
+        meta = _read_pexels_meta(dest_dir)
+        sq = (req.search_query or "").strip()[:500]
+        meta[rel] = {
+            "search_query": sq,
+            "pexels_image": (summary.image or "").strip()[:2000],
+            "duration_sec": int(summary.duration or 0),
+        }
+        _write_pexels_meta(dest_dir, meta)
+    except Exception as e:
+        logger.warning("pexels meta write skipped: %s", e)
+
     return ScriptStockPexelsDownloadResponse(
         stored_rel_path=rel,
         public_url=storage_public_url_for_file(dest_abs),
@@ -346,11 +384,14 @@ async def pexels_cache_list() -> ScriptStockPexelsCacheResponse:
     items: List[ScriptStockPexelsCacheItem] = []
     if not os.path.isdir(root):
         return ScriptStockPexelsCacheResponse(items=[])
+    meta = _read_pexels_meta(root)
     try:
         names = sorted(os.listdir(root))
     except OSError:
         return ScriptStockPexelsCacheResponse(items=[])
     for name in names:
+        if name == _PEXELS_META_FILENAME or name.endswith(".tmp"):
+            continue
         low = name.lower()
         if not low.endswith((".mp4", ".mov", ".webm", ".mkv")):
             continue
@@ -366,6 +407,15 @@ async def pexels_cache_list() -> ScriptStockPexelsCacheResponse:
         m = _PEXELS_FN_ID.match(name)
         vid = int(m.group(1)) if m else 0
         rel = to_stored_path(full)
+        row = meta.get(rel) if isinstance(meta.get(rel), dict) else {}
+        if not isinstance(row, dict):
+            row = {}
+        sq = str(row.get("search_query") or "")[:500]
+        img = str(row.get("pexels_image") or "")[:2000]
+        try:
+            dsec = int(row.get("duration_sec") or row.get("duration") or 0)
+        except (TypeError, ValueError):
+            dsec = 0
         items.append(
             ScriptStockPexelsCacheItem(
                 pexels_video_id=vid,
@@ -373,6 +423,9 @@ async def pexels_cache_list() -> ScriptStockPexelsCacheResponse:
                 filename=name,
                 size_bytes=sz,
                 mtime=mt,
+                search_query=sq,
+                pexels_image=img,
+                duration_sec=dsec,
             )
         )
     items.sort(key=lambda x: -x.mtime)
@@ -394,7 +447,51 @@ async def pexels_delete_file(req: ScriptStockPexelsDeleteRequest) -> ScriptStock
     except OSError as e:
         logger.warning("pexels delete failed: %s", e)
         raise HTTPException(500, detail=str(e)) from e
+    try:
+        root = ensure_storage_subpath("stock_media", "pexels")
+        meta = _read_pexels_meta(root)
+        if rel in meta:
+            del meta[rel]
+            _write_pexels_meta(root, meta)
+    except Exception as e:
+        logger.warning("pexels meta delete skipped: %s", e)
     return ScriptStockPexelsDeleteResponse(ok=True)
+
+
+@router.post("/pexels/clear-cache", response_model=ScriptStockPexelsClearCacheResponse)
+async def pexels_clear_cache() -> ScriptStockPexelsClearCacheResponse:
+    """删除 stock_media/pexels 下全部已下载视频及缓存元数据（前端需二次确认）。"""
+    root = ensure_storage_subpath("stock_media", "pexels")
+    deleted = 0
+    if not os.path.isdir(root):
+        return ScriptStockPexelsClearCacheResponse(ok=True, deleted_files=0)
+    try:
+        names = list(os.listdir(root))
+    except OSError:
+        return ScriptStockPexelsClearCacheResponse(ok=True, deleted_files=0)
+    for name in names:
+        if name == _PEXELS_META_FILENAME or name.endswith(".tmp"):
+            continue
+        low = name.lower()
+        if not low.endswith((".mp4", ".mov", ".webm", ".mkv")):
+            continue
+        full = os.path.join(root, name)
+        if not os.path.isfile(full):
+            continue
+        if not is_under_pexels_download_dir(full):
+            continue
+        try:
+            os.unlink(full)
+            deleted += 1
+        except OSError as e:
+            logger.warning("pexels clear unlink %s: %s", full, e)
+    mp = _pexels_meta_path(root)
+    try:
+        if os.path.isfile(mp):
+            os.unlink(mp)
+    except OSError as e:
+        logger.warning("pexels clear meta: %s", e)
+    return ScriptStockPexelsClearCacheResponse(ok=True, deleted_files=deleted)
 
 
 def _default_pair_for_path(abs_path: str) -> Tuple[float, float]:

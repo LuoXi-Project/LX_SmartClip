@@ -1,5 +1,6 @@
 'use client'
 
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import {
@@ -10,18 +11,21 @@ import {
   Clapperboard,
   Copy,
   Download,
+  Eraser,
   ExternalLink,
   Film,
   GripVertical,
   Layers,
   Loader2,
   Mic,
+  Play,
   Plus,
   Scissors,
   Search,
   Sparkles,
   SplitSquareHorizontal,
   Trash2,
+  X,
 } from 'lucide-react'
 import type { Video } from '@/lib/api'
 import {
@@ -38,6 +42,7 @@ import {
   type ScriptStockVideoExtendPolicy,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 import { DEFAULT_SUBTITLE_STYLE, type ClipTrimRange, type SubtitleStyle } from './types'
 import {
   appendIdToOrderedList,
@@ -119,6 +124,7 @@ export function ScriptStockPanel({
   subtitleStyle?: SubtitleStyle
 }) {
   const toast = useToast()
+  const confirm = useConfirm()
   const [fullScript, setFullScript] = useState('')
   const [topic, setTopic] = useState('')
   const [styleHint, setStyleHint] = useState('')
@@ -141,6 +147,9 @@ export function ScriptStockPanel({
   const [materialTtsLonger, setMaterialTtsLonger] = useState<ScriptStockMaterialTtsLonger>('stretch_audio')
   const [pexelsCacheItems, setPexelsCacheItems] = useState<ScriptStockPexelsCacheItemApi[]>([])
   const [pexelsCacheLoading, setPexelsCacheLoading] = useState(false)
+  const [pexelsCacheClearing, setPexelsCacheClearing] = useState(false)
+  const [pexelsPreviewUrl, setPexelsPreviewUrl] = useState<string | null>(null)
+  const pexelsPreviewVideoRef = useRef<HTMLVideoElement>(null)
 
   /** 本地素材库「自选区间」弹窗对应的段落 id */
   const [trimDialogSegId, setTrimDialogSegId] = useState<string | null>(null)
@@ -262,6 +271,49 @@ export function ScriptStockPanel({
   useEffect(() => {
     void loadPexelsCache()
   }, [loadPexelsCache])
+
+  const closePexelsPreview = useCallback(() => {
+    setPexelsPreviewUrl(null)
+    const v = pexelsPreviewVideoRef.current
+    if (v) {
+      v.pause()
+      v.currentTime = 0
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!pexelsPreviewUrl) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closePexelsPreview()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pexelsPreviewUrl, closePexelsPreview])
+
+  const handleClearPexelsCacheAll = async () => {
+    const ok = await confirm({
+      title: '清空全部 Pexels 本地下载？',
+      description:
+        '将删除缓存目录内所有已下载视频及搜索记录，操作不可恢复。各段落里已勾选的 Pexels 文件也会被取消勾选。',
+      variant: 'danger',
+      confirmLabel: '确定清空',
+      cancelLabel: '取消',
+    })
+    if (!ok) return
+    setPexelsCacheClearing(true)
+    try {
+      const res = await scriptStockApi.pexelsClearCache()
+      const n = Number(res.deleted_files) || 0
+      toast.success(n > 0 ? `已清空 ${n} 个缓存文件` : '缓存目录已为空')
+      setPexelsCacheItems([])
+      setSegments((prev) => prev.map((s) => ({ ...s, pexelsStoredRelPaths: [] })))
+      await loadPexelsCache()
+    } catch (e) {
+      toast.error(formatFastApiDetail(e))
+    } finally {
+      setPexelsCacheClearing(false)
+    }
+  }
 
   const handleDeletePexelsCache = async (storedRelPath: string) => {
     try {
@@ -396,9 +448,15 @@ export function ScriptStockPanel({
   }
 
   const downloadPexels = async (segId: string, videoId: number) => {
+    const seg = segments.find((s) => s.id === segId)
+    const search_query = ((seg?.searchQuery || seg?.text) || '').trim()
     setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, downloadingId: videoId } : s)))
     try {
-      const res = await scriptStockApi.pexelsDownload({ pexels_video_id: videoId, preferred_quality: 'hd' })
+      const res = await scriptStockApi.pexelsDownload({
+        pexels_video_id: videoId,
+        preferred_quality: 'hd',
+        search_query: search_query || undefined,
+      })
       const rel = res.stored_rel_path
       await loadPexelsCache()
       setSegments((prev) =>
@@ -636,42 +694,88 @@ export function ScriptStockPanel({
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold text-slate-400">Pexels 本地下载缓存</p>
-              <button
-                type="button"
-                disabled={pexelsCacheLoading}
-                onClick={() => void loadPexelsCache()}
-                className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-              >
-                {pexelsCacheLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" /> : null}
-                刷新列表
-              </button>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={pexelsCacheLoading || pexelsCacheClearing || pexelsCacheItems.length === 0}
+                  onClick={() => void handleClearPexelsCacheAll()}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10 disabled:opacity-40 inline-flex items-center gap-1"
+                >
+                  {pexelsCacheClearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eraser className="w-3.5 h-3.5" />}
+                  清空缓存
+                </button>
+                <button
+                  type="button"
+                  disabled={pexelsCacheLoading}
+                  onClick={() => void loadPexelsCache()}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {pexelsCacheLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" /> : null}
+                  刷新列表
+                </button>
+              </div>
             </div>
             {pexelsCacheItems.length === 0 ? (
-              <p className="text-[11px] text-slate-500">暂无已下载文件。搜索并下载后此处会列出，可删除释放磁盘。</p>
+              <p className="text-[11px] text-slate-500">暂无已下载文件。搜索并下载后此处会列出搜索词与预览；可单条删除或一键清空（需确认）。</p>
             ) : (
-              <ul className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
-                {pexelsCacheItems.map((it) => (
-                  <li
-                    key={it.stored_rel_path}
-                    className="flex items-center gap-2 rounded-lg bg-slate-900/80 border border-slate-700/80 px-2 py-1.5 text-[11px]"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-slate-300" title={it.stored_rel_path}>
-                      ID {it.pexels_video_id || '?'} · {it.filename} · {fmtBytes(it.size_bytes)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeletePexelsCache(it.stored_rel_path)}
-                      className="shrink-0 p-1.5 rounded text-rose-400 hover:bg-rose-500/15 hover:text-rose-300"
-                      title="从本机删除"
+              <ul className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                {pexelsCacheItems.map((it) => {
+                  const thumb = (it.pexels_image || '').trim()
+                  const q = (it.search_query || '').trim()
+                  const dur = Number(it.duration_sec) > 0 ? `${it.duration_sec}s` : '—'
+                  const playUrl = storageBrowserVideoUrl(it.stored_rel_path)
+                  return (
+                    <li
+                      key={it.stored_rel_path}
+                      className="flex items-stretch gap-2 rounded-lg bg-slate-900/80 border border-slate-700/80 p-2 text-[11px]"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </li>
-                ))}
+                      <div className="relative w-[88px] h-[52px] shrink-0 rounded-md overflow-hidden bg-slate-800 border border-slate-700/80">
+                        {thumb ? (
+                          <img src={thumb} alt="" className="w-full h-full object-cover pointer-events-none" loading="lazy" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-600">
+                            <Film className="w-6 h-6" />
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setPexelsPreviewUrl(playUrl)
+                          }}
+                          className="absolute bottom-0.5 left-0.5 z-[1] flex items-center justify-center rounded-full bg-black/75 text-white p-1 ring-1 ring-white/25 hover:bg-black/90"
+                          title="预览本地文件"
+                          aria-label="预览"
+                        >
+                          <Play className="w-3 h-3 fill-current shrink-0" />
+                        </button>
+                      </div>
+                      <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
+                        <p className="text-[10px] text-sky-300/95 truncate" title={q || undefined}>
+                          <span className="text-slate-500">搜索：</span>
+                          {q || '（旧文件无记录，可再下载一次以保存关键词）'}
+                        </p>
+                        <p className="text-slate-400 truncate" title={it.stored_rel_path}>
+                          ID {it.pexels_video_id || '?'} · {dur} · {fmtBytes(it.size_bytes)}
+                        </p>
+                        <p className="text-[10px] text-slate-600 truncate">{it.filename}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeletePexelsCache(it.stored_rel_path)}
+                        className="shrink-0 self-center p-1.5 rounded text-rose-400 hover:bg-rose-500/15 hover:text-rose-300"
+                        title="从本机删除"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             )}
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              已缓存的视频在下方结果卡片上会显示「已缓存」，可直接点卡片勾选进成片，无需重复下载。删除文件后各段已勾选的该路径会自动取消。
+              已缓存的在下方结果卡片显示「已缓存」。列表展示下载时的搜索词；缩略图左下角可预览本地文件。删除或清空后各段已勾选路径会自动取消。
             </p>
           </div>
 
@@ -1234,6 +1338,41 @@ export function ScriptStockPanel({
           ) : null}
         </div>
       ) : null}
+
+      {pexelsPreviewUrl && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/80 p-4"
+              role="presentation"
+              onClick={closePexelsPreview}
+            >
+              <div
+                className="relative w-full max-w-3xl rounded-xl border border-slate-600 bg-black overflow-hidden shadow-2xl"
+                role="dialog"
+                aria-modal="true"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={closePexelsPreview}
+                  className="absolute top-2 right-2 z-10 p-2 rounded-lg bg-slate-900/90 text-slate-200 hover:bg-slate-800 border border-slate-600"
+                  aria-label="关闭预览"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <video
+                  ref={pexelsPreviewVideoRef}
+                  src={pexelsPreviewUrl}
+                  className="w-full max-h-[min(80vh,560px)] object-contain bg-black"
+                  controls
+                  playsInline
+                  autoPlay
+                />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       <StockLibraryTrimDialog
         open={trimDialogSegId !== null && !!trimDialogSeg?.localVideoIds.length}

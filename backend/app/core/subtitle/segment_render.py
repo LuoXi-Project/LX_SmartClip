@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.subtitle import TtsVideoAlignConfig
 from app.utils.ffprobe_utils import probe_duration, probe_keyframes_times, probe_video_dimensions
@@ -21,6 +21,27 @@ from .render_opts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _materialize_decode_hwaccel_prefix() -> List[str]:
+    """
+    解码阶段可选硬件加速（帧仍会交给 CPU 做 trim 等滤镜）。
+
+    默认关闭：在部分 Windows 环境下「-hwaccel auto + filter_complex + 多路输出」可能长时间无进度（卡死），
+    与软解相比属于不稳定增益。
+
+    环境变量 SMARTCLIP_MATERIALIZE_DECODE_HWACCEL：
+      未设置 / 空 → 不加 -hwaccel（推荐）
+      auto → -hwaccel auto（需自担风险）
+      cuda / d3d11va / qsv 等 → -hwaccel <名称>
+      0 / false / off / none → 关闭
+    """
+    raw = (os.environ.get("SMARTCLIP_MATERIALIZE_DECODE_HWACCEL") or "").strip().lower()
+    if raw in ("0", "false", "no", "off", "none", ""):
+        return []
+    if raw == "auto":
+        return ["-hwaccel", "auto"]
+    return ["-hwaccel", raw]
 
 
 def _make_even(x: int, *, min_v: int = 2) -> int:
@@ -127,6 +148,46 @@ def _force_audio_copy(codec_args: List[str]) -> List[str]:
     return cleaned
 
 
+def _codec_args_for_filtered_audio(
+    codec_args: List[str],
+    render_opts: Optional[Dict[str, str]],
+) -> List[str]:
+    """
+    filter_complex 中对音轨做了 atrim 等处理时，输出并非「原始 packet」，不能使用 -c:a copy。
+    （否则会报：Filtering and streamcopy cannot be used together.）
+    """
+    opts = render_opts or {}
+    try:
+        br = max(32, int(float(str(opts.get("clip_audio_bitrate_kbps") or "128").strip() or 128)))
+    except Exception:
+        br = 128
+    fallback_acodec = (opts.get("clip_acodec") or "aac").strip().lower()
+    if fallback_acodec == "copy":
+        fallback_acodec = "aac"
+
+    out = list(codec_args)
+    try:
+        ai = out.index("-c:a")
+    except ValueError:
+        return out + ["-c:a", fallback_acodec, "-b:a", f"{br}k"]
+
+    cur = (out[ai + 1] or "").strip().lower() if ai + 1 < len(out) else ""
+    if cur != "copy":
+        return out
+
+    out[ai + 1] = fallback_acodec
+    cleaned: List[str] = []
+    i = 0
+    while i < len(out):
+        if out[i] == "-b:a":
+            i += 2
+            continue
+        cleaned.append(out[i])
+        i += 1
+    cleaned.extend(["-b:a", f"{br}k"])
+    return cleaned
+
+
 def _is_nvenc(codec_args: List[str]) -> bool:
     try:
         v_idx = codec_args.index("-c:v")
@@ -135,6 +196,182 @@ def _is_nvenc(codec_args: List[str]) -> bool:
     if v_idx + 1 >= len(codec_args):
         return False
     return (codec_args[v_idx + 1] or "").strip().lower() in ("h264_nvenc", "hevc_nvenc")
+
+
+def _materialize_opts_use_nvenc(trim_opts: Dict[str, str], seg_codec_args: List[str]) -> bool:
+    """是否使用 NVENC：优先看 clip_vcodec（与成片配置一致），再兜底解析已生成的 argv。"""
+    vc = (trim_opts.get("clip_vcodec") or "").strip().lower()
+    if vc in ("h264_nvenc", "hevc_nvenc"):
+        return True
+    if vc == "":
+        # build_render_codec_args 默认 libx264；若 opts 未带 clip_vcodec 仍以 argv 为准
+        return _is_nvenc(seg_codec_args)
+    return False
+
+
+def _predict_trim_kind(
+    *,
+    seg_filter_parts: List[str],
+    kfs: List[float],
+    src_total: float,
+    start: float,
+    span: float,
+) -> str:
+    """
+    copy_def / copy_try / encode — 与 materialize 里 stream copy 分支的判定一致（encode 可走批量单解码）。
+    """
+    end = start + span
+    can_try_copy = not seg_filter_parts
+    if not can_try_copy:
+        return "encode"
+    start_aligned = start <= 0.01 or _is_near_keyframe(start, kfs)
+    end_aligned = (src_total - end) <= 0.05 or _is_near_keyframe(end, kfs)
+    if start_aligned and end_aligned:
+        return "copy_def"
+    near_enough = _nearest_keyframe_distance(start, kfs) <= 0.20 and _nearest_keyframe_distance(end, kfs) <= 0.20
+    if near_enough:
+        return "copy_try"
+    return "encode"
+
+
+def _materialize_one_encode(
+    *,
+    src_path: str,
+    start: float,
+    span: float,
+    need_trim: bool,
+    trim_tmp: str,
+    cid: str,
+    seg_idx: int,
+    tmp_name: str,
+    seg_filter_parts: List[str],
+    seg_vf_args: List[str],
+    tw: int,
+    th: int,
+    render_opts: Optional[Dict[str, str]],
+) -> None:
+    trim_opts = sanitize_no_stream_copy(dict(render_opts or {}))
+    seg_codec_args = build_render_codec_args(trim_opts)
+    if seg_filter_parts:
+        seg_codec_args = force_video_reencode(seg_codec_args, render_opts=trim_opts)
+    seg_codec_args = _force_audio_copy(seg_codec_args)
+    logger.info(f"FFmpeg pre{tmp_name}(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 参数: {seg_codec_args}")
+    if seg_filter_parts and _is_nvenc(seg_codec_args):
+        cuda_filters = []
+        for f in seg_filter_parts:
+            if (f or "").strip().lower().startswith("scale="):
+                cuda_filters.append(f"scale_cuda={tw}:{th}")
+            else:
+                cuda_filters.append(f)
+        cuda_vf_args = ["-vf", ",".join(cuda_filters)]
+        try:
+            run_ffmpeg(
+                [
+                    "-hwaccel",
+                    "cuda",
+                    "-hwaccel_output_format",
+                    "cuda",
+                    "-i",
+                    src_path,
+                    *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
+                    *cuda_vf_args,
+                    *seg_codec_args,
+                    "-movflags",
+                    "+faststart",
+                    trim_tmp,
+                ],
+                desc=f"pre{tmp_name}(encode,cuda) clip {cid} seg{(int(seg_idx) + 1)}",
+            )
+        except Exception:
+            run_ffmpeg(
+                [
+                    *_materialize_decode_hwaccel_prefix(),
+                    "-i",
+                    src_path,
+                    *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
+                    *seg_vf_args,
+                    *seg_codec_args,
+                    "-movflags",
+                    "+faststart",
+                    trim_tmp,
+                ],
+                desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
+            )
+    else:
+        run_ffmpeg(
+            [
+                *_materialize_decode_hwaccel_prefix(),
+                "-i",
+                src_path,
+                *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
+                *seg_vf_args,
+                *seg_codec_args,
+                "-movflags",
+                "+faststart",
+                trim_tmp,
+            ],
+            desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
+        )
+    logger.info(f"FFmpeg pre{tmp_name}(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 完成")
+
+
+def _materialize_encode_batch_trim_filter(
+    *,
+    src_path: str,
+    items: List[Dict[str, Any]],
+    seek_base: float,
+    input_read_sec: float,
+    seg_filter_parts: List[str],
+    seg_codec_args: List[str],
+    seg_idx: int,
+) -> None:
+    """
+    同一源文件、同一套视频滤镜、多段需重编码：一次解码 + trim/atrim 多输出。
+    items 每项含: start, span, trim_tmp, cid
+    """
+    n = len(items)
+    v_split = f"[0:v]split={n}" + "".join(f"[vin{i}]" for i in range(n))
+    a_split = f"[0:a]asplit={n}" + "".join(f"[ain{i}]" for i in range(n))
+    parts = [v_split, a_split]
+    vf_tail = ""
+    if seg_filter_parts:
+        vf_tail = "," + ",".join(seg_filter_parts)
+    for i, it in enumerate(items):
+        start = float(it["start"])
+        span = float(it["span"])
+        end = start + span
+        rs = max(0.0, start - seek_base)
+        re = max(rs + 0.05, end - seek_base)
+        parts.append(f"[vin{i}]trim=start={rs:.3f}:end={re:.3f},setpts=PTS-STARTPTS{vf_tail}[vout{i}]")
+        parts.append(f"[ain{i}]atrim=start={rs:.3f}:end={re:.3f},asetpts=PTS-STARTPTS[aout{i}]")
+    fc = ";".join(parts)
+    cmd: List[str] = [
+        *_materialize_decode_hwaccel_prefix(),
+        "-ss",
+        f"{seek_base:.3f}",
+        "-i",
+        src_path,
+        "-t",
+        f"{input_read_sec:.3f}",
+        "-filter_complex",
+        fc,
+    ]
+    for i, it in enumerate(items):
+        cmd += [
+            "-map",
+            f"[vout{i}]",
+            "-map",
+            f"[aout{i}]",
+            *seg_codec_args,
+            "-avoid_negative_ts",
+            "make_zero",
+            "-movflags",
+            "+faststart",
+            str(it["trim_tmp"]),
+        ]
+    cid_brief = "+".join(str(x.get("cid") or "")[:8] for x in items)
+    run_ffmpeg(cmd, desc=f"pretrim(encode,batch n={n}) seg{(int(seg_idx) + 1)} clips={cid_brief}")
+    logger.info("FFmpeg pretrim(encode,batch) 完成 seg=%s 输出=%d 路", int(seg_idx) + 1, n)
 
 
 def materialize_clip_paths_for_group(
@@ -168,6 +405,11 @@ def materialize_clip_paths_for_group(
     paths_out: List[str] = []
     total_dur = 0.0
     group_ref_wh: Optional[Tuple[int, int]] = None
+
+    # 阶段 1：只计算参数与 trim 策略；阶段 2：合并「同源 + 需重编码」为单次解码多输出（trim/atrim + 滤镜）。
+    max_encode_batch = 12
+    rows: List[Dict[str, Any]] = []
+
     for j, (cid, info) in enumerate(zip(clip_ids, infos)):
         clip_disk_path = info["path"]
         clip_probe_total = float(probe_duration(clip_disk_path, log_on_failure=True) or 0.0)
@@ -176,7 +418,6 @@ def materialize_clip_paths_for_group(
         if clip_probe_total <= 0.05:
             clip_probe_total = 0.05
 
-        # --- 先在「预处理 clip 文件」时间轴上得到 (clip_rel_start, clip_rel_span) ---
         if trim_list is not None:
             clip_rel_start, clip_rel_span = trim_list[j]
             if clip_rel_span <= 0.05:
@@ -223,8 +464,6 @@ def materialize_clip_paths_for_group(
             start, span = clip_rel_start, clip_rel_span
 
         need_trim = start > 0.001 or (span + 0.02) < (src_total - start - 0.001)
-        # 即便不裁剪，只要尺寸不一致也先 materialize 成统一规格，便于后续 concat demuxer/copy。
-        # 已是目标尺寸时可直通（节省一次重编码）；SAR 这里不探测，依赖绝大多数素材已为 1:1。
         w, h = probe_video_dimensions(src_path, default=(1920, 1080), logger_=logger)
         if scale_w <= 0 and scale_h <= 0:
             if group_ref_wh is None:
@@ -240,163 +479,276 @@ def materialize_clip_paths_for_group(
         seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
 
         if (not force_materialize) and (not need_trim) and (not need_norm):
-            paths_out.append(src_path)
-            piece_dur = src_total
-        else:
-            tmp_name = "trim" if need_trim else "norm"
-            # cache key：相同输入 + 相同裁剪参数 + 相同视频滤镜 → 复用同一个预处理文件（跨 seg）
-            # 注意：这里不把 seg_idx/j 写入 key，避免同素材重复引用时重复编码。
-            vf_key = ",".join(seg_filter_parts)
-            src_flag = "src1" if use_src else "src0"
-            cache_key = f"{src_path}|{tmp_name}|{start:.3f}|{span:.3f}|vf={vf_key}|{src_flag}"
-            cached = mat_cache.get(cache_key)
-            if cached and os.path.isfile(cached[0]):
-                paths_out.append(cached[0])
-                piece_dur = cached[1] if cached[1] > 0.05 else (span if need_trim else src_total)
-                total_dur += max(piece_dur, 0.05)
-                continue
+            rows.append({"kind": "pass", "src_path": src_path, "piece_dur": src_total})
+            continue
 
-            trim_tmp = os.path.join(tmp, f"seg_{seg_idx:03d}_p{j:02d}_{tmp_name}.mp4")
-            end = start + span
+        tmp_name = "trim" if need_trim else "norm"
+        vf_key = ",".join(seg_filter_parts)
+        src_flag = "src1" if use_src else "src0"
+        cache_key = f"{src_path}|{tmp_name}|{start:.3f}|{span:.3f}|vf={vf_key}|{src_flag}"
+        cached = mat_cache.get(cache_key)
+        if cached and os.path.isfile(cached[0]):
+            piece_dur = cached[1] if cached[1] > 0.05 else (span if need_trim else src_total)
+            rows.append({"kind": "cache", "path": cached[0], "piece_dur": float(piece_dur)})
+            continue
 
-            # 只有“纯裁剪”（不带视频滤镜）才可能安全 stream copy。
-            can_try_copy = not seg_filter_parts
-            did_copy = False
-            if can_try_copy:
-                if src_path not in kf_cache:
-                    kf_cache[src_path] = probe_keyframes_times(src_path, logger_=logger)
-                kfs = kf_cache.get(src_path) or []
+        trim_tmp = os.path.join(tmp, f"seg_{seg_idx:03d}_p{j:02d}_{tmp_name}.mp4")
+        end = start + span
+        can_try_copy = not seg_filter_parts
+        trim_kind = "encode"
+        if can_try_copy:
+            if src_path not in kf_cache:
+                kf_cache[src_path] = probe_keyframes_times(src_path, logger_=logger)
+            kfs = kf_cache.get(src_path) or []
+            trim_kind = _predict_trim_kind(
+                seg_filter_parts=seg_filter_parts,
+                kfs=kfs,
+                src_total=src_total,
+                start=start,
+                span=span,
+            )
 
-                start_aligned = start <= 0.01 or _is_near_keyframe(start, kfs)
-                end_aligned = (src_total - end) <= 0.05 or _is_near_keyframe(end, kfs)
-                near_enough = _nearest_keyframe_distance(start, kfs) <= 0.20 and _nearest_keyframe_distance(end, kfs) <= 0.20
+        rows.append(
+            {
+                "kind": "work",
+                "trim_kind": trim_kind,
+                "j": j,
+                "cid": cid,
+                "src_path": src_path,
+                "use_src": use_src,
+                "start": start,
+                "span": span,
+                "end": end,
+                "need_trim": need_trim,
+                "need_norm": need_norm,
+                "tmp_name": tmp_name,
+                "cache_key": cache_key,
+                "trim_tmp": trim_tmp,
+                "seg_filter_parts": list(seg_filter_parts),
+                "seg_vf_args": list(seg_vf_args),
+                "tw": tw,
+                "th": th,
+                "src_total": src_total,
+            }
+        )
 
-                # 情况1：关键帧对齐（或贴近片尾）→ 直接 copy（快且更可靠）
-                if start_aligned and end_aligned:
-                    run_ffmpeg(
-                        [
-                            "-ss",
-                            f"{start:.3f}",
-                            "-t",
-                            f"{span:.3f}",
-                            "-i",
-                            src_path,
-                            "-c",
-                            "copy",
-                            "-avoid_negative_ts",
-                            "make_zero",
-                            "-movflags",
-                            "+faststart",
-                            trim_tmp,
-                        ],
-                        desc=f"pretrim(copy) clip {cid} seg{(int(seg_idx) + 1)}",
-                    )
-                    did_copy = True
-                # 情况2：轻微偏移 → 先试 copy，失败/异常再回退重编码
-                elif near_enough:
-                    try:
-                        run_ffmpeg(
-                            [
-                                "-ss",
-                                f"{start:.3f}",
-                                "-t",
-                                f"{span:.3f}",
-                                "-i",
-                                src_path,
-                                "-c",
-                                "copy",
-                                "-avoid_negative_ts",
-                                "make_zero",
-                                "-movflags",
-                                "+faststart",
-                                trim_tmp,
-                            ],
-                            desc=f"pretrim(try_copy) clip {cid} seg{(int(seg_idx) + 1)}",
-                        )
-                        did_copy = True
-                    except Exception:
-                        did_copy = False
+    ri = 0
+    while ri < len(rows):
+        r = rows[ri]
+        if r["kind"] == "pass":
+            paths_out.append(str(r["src_path"]))
+            total_dur += max(float(r["piece_dur"]), 0.05)
+            ri += 1
+            continue
+        if r["kind"] == "cache":
+            paths_out.append(str(r["path"]))
+            total_dur += max(float(r["piece_dur"]), 0.05)
+            ri += 1
+            continue
 
-            if not did_copy:
-                # 精确裁剪：回退到重编码（保证切点准确）
-                trim_opts = sanitize_no_stream_copy(dict(render_opts or {}))
-                seg_codec_args = build_render_codec_args(trim_opts)
-                if seg_filter_parts:
-                    seg_codec_args = force_video_reencode(seg_codec_args, render_opts=trim_opts)
-                # 中间预处理没有音频滤镜，音频尽量 copy，显著减少每段处理耗时。
-                seg_codec_args = _force_audio_copy(seg_codec_args)
-                logger.info(f"FFmpeg pretrim(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 参数: {seg_codec_args}")
-                # 优先走 CUDA：NVDEC 解码到 GPU + scale_cuda 缩放 + NVENC 编码。
-                # 若环境不支持（无 NVDEC / filter 不可用 / 驱动问题），自动回退 CPU scale。
-                if seg_filter_parts and _is_nvenc(seg_codec_args):
-                    cuda_filters = []
-                    for f in seg_filter_parts:
-                        if (f or "").strip().lower().startswith("scale="):
-                            cuda_filters.append(f"scale_cuda={tw}:{th}")
-                        else:
-                            cuda_filters.append(f)
-                    cuda_vf_args = ["-vf", ",".join(cuda_filters)]
-                    try:
-                        run_ffmpeg(
-                            [
-                                "-hwaccel",
-                                "cuda",
-                                "-hwaccel_output_format",
-                                "cuda",
-                                "-i",
-                                src_path,
-                                *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
-                                *cuda_vf_args,
-                                *seg_codec_args,
-                                "-movflags",
-                                "+faststart",
-                                trim_tmp,
-                            ],
-                            desc=f"pre{tmp_name}(encode,cuda) clip {cid} seg{(int(seg_idx) + 1)}",
-                        )
-                    except Exception:
-                        run_ffmpeg(
-                            [
-                                "-i",
-                                src_path,
-                                *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
-                                *seg_vf_args,
-                                *seg_codec_args,
-                                "-movflags",
-                                "+faststart",
-                                trim_tmp,
-                            ],
-                            desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
-                        )
-                else:
-                    run_ffmpeg(
-                        [
-                            "-i",
-                            src_path,
-                            # 不裁剪时不要带 -ss/-t，避免不必要的 seek/精度差异
-                            *([] if not need_trim else ["-ss", f"{start:.3f}", "-t", f"{span:.3f}"]),
-                            *seg_vf_args,
-                            *seg_codec_args,
-                            "-movflags",
-                            "+faststart",
-                            trim_tmp,
-                        ],
-                        desc=f"pre{tmp_name}(encode) clip {cid} seg{(int(seg_idx) + 1)}",
-                    )
-                logger.info(f"FFmpeg pre{tmp_name}(encode) 剪辑片段 {cid} 第 {(int(seg_idx) + 1)} 段 完成")
-
-            paths_out.append(trim_tmp)
-            # 对“裁剪片段”，优先使用期望 span 作为时长来源：
-            # - ffprobe/容器 metadata 偶发不准会导致后续 TTS 段“补齐判断”失效，从而生成视频短、音频长的坏文件
-            # - span 已在上面按源文件总长做过 clamp，足够可信
+        tk = str(r.get("trim_kind") or "encode")
+        if tk == "copy_def":
+            run_ffmpeg(
+                [
+                    "-ss",
+                    f"{float(r['start']):.3f}",
+                    "-t",
+                    f"{float(r['span']):.3f}",
+                    "-i",
+                    str(r["src_path"]),
+                    "-c",
+                    "copy",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                    "-movflags",
+                    "+faststart",
+                    str(r["trim_tmp"]),
+                ],
+                desc=f"pretrim(copy) clip {r['cid']} seg{(int(seg_idx) + 1)}",
+            )
+            need_trim = bool(r["need_trim"])
+            span = float(r["span"])
+            src_total = float(r["src_total"])
             if need_trim:
                 piece_dur = float(span)
             else:
-                probed = float(probe_duration(trim_tmp, log_on_failure=True) or 0.0)
+                probed = float(probe_duration(str(r["trim_tmp"]), log_on_failure=True) or 0.0)
                 piece_dur = probed if probed > 0.05 else src_total
-            mat_cache[cache_key] = (trim_tmp, piece_dur)
+            mat_cache[str(r["cache_key"])] = (str(r["trim_tmp"]), piece_dur)
+            paths_out.append(str(r["trim_tmp"]))
+            total_dur += max(piece_dur, 0.05)
+            ri += 1
+            continue
 
-        total_dur += max(piece_dur, 0.05)
+        if tk == "copy_try":
+            did_copy = False
+            try:
+                run_ffmpeg(
+                    [
+                        "-ss",
+                        f"{float(r['start']):.3f}",
+                        "-t",
+                        f"{float(r['span']):.3f}",
+                        "-i",
+                        str(r["src_path"]),
+                        "-c",
+                        "copy",
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-movflags",
+                        "+faststart",
+                        str(r["trim_tmp"]),
+                    ],
+                    desc=f"pretrim(try_copy) clip {r['cid']} seg{(int(seg_idx) + 1)}",
+                )
+                did_copy = True
+            except Exception:
+                did_copy = False
+            if not did_copy:
+                _materialize_one_encode(
+                    src_path=str(r["src_path"]),
+                    start=float(r["start"]),
+                    span=float(r["span"]),
+                    need_trim=bool(r["need_trim"]),
+                    trim_tmp=str(r["trim_tmp"]),
+                    cid=str(r["cid"]),
+                    seg_idx=seg_idx,
+                    tmp_name=str(r["tmp_name"]),
+                    seg_filter_parts=list(r["seg_filter_parts"]),
+                    seg_vf_args=list(r["seg_vf_args"]),
+                    tw=int(r["tw"]),
+                    th=int(r["th"]),
+                    render_opts=render_opts,
+                )
+            need_trim = bool(r["need_trim"])
+            span = float(r["span"])
+            src_total = float(r["src_total"])
+            if need_trim:
+                piece_dur = float(span)
+            else:
+                probed = float(probe_duration(str(r["trim_tmp"]), log_on_failure=True) or 0.0)
+                piece_dur = probed if probed > 0.05 else src_total
+            mat_cache[str(r["cache_key"])] = (str(r["trim_tmp"]), piece_dur)
+            paths_out.append(str(r["trim_tmp"]))
+            total_dur += max(piece_dur, 0.05)
+            ri += 1
+            continue
+
+        # encode：尝试与后续连续同源、同滤镜的 encode 行合并为一次进程
+        batch: List[Dict[str, Any]] = [r]
+        bi = ri + 1
+        while bi < len(rows) and len(batch) < max_encode_batch:
+            r2 = rows[bi]
+            if str(r2.get("kind")) != "work" or str(r2.get("trim_kind")) != "encode":
+                break
+            if str(r2["src_path"]) != str(r["src_path"]):
+                logger.info(
+                    "pretrim(encode,batch) 合并结束：下一素材与当前批 src 不同（多为某 clip 仍用预处理文件而非整片）",
+                )
+                break
+            if list(r2["seg_filter_parts"]) != list(r["seg_filter_parts"]):
+                logger.info(
+                    "pretrim(encode,batch) 合并结束：视频滤镜链与当前批不一致（分辨率/组内基准不一致等）",
+                )
+                break
+            batch.append(r2)
+            bi += 1
+
+        trim_opts = sanitize_no_stream_copy(dict(render_opts or {}))
+        seg_codec_args0 = build_render_codec_args(trim_opts)
+        sfp0 = list(r["seg_filter_parts"])
+        if sfp0:
+            seg_codec_args0 = force_video_reencode(seg_codec_args0, render_opts=trim_opts)
+        nvenc = _materialize_opts_use_nvenc(trim_opts, seg_codec_args0)
+        # 单进程多路 NVENC（filter_complex 多 -map）在部分环境极慢或假死；默认改为逐段编码。
+        # 若需实验批量可设 SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH=1
+        nvenc_batch_ok = (os.environ.get("SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        # 同源批量默认关闭：多路 filter 输出在 NVENC/弱机上极易变慢或假死；需要时再开启。
+        # libx264 等：SMARTCLIP_MATERIALIZE_ENCODE_BATCH=1
+        # NVENC 多路：另需 SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH=1（不推荐）
+        batch_opt_in = (os.environ.get("SMARTCLIP_MATERIALIZE_ENCODE_BATCH") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        allow_batch = batch_opt_in and len(batch) >= 2 and (not nvenc or nvenc_batch_ok)
+        # 批量路径：音轨经 atrim，禁止 -c:a copy；逐段 encode 仍可用 copy（仅 -ss/-t + -vf）
+        seg_codec_args_batch = _codec_args_for_filtered_audio(seg_codec_args0, trim_opts)
+
+        if allow_batch:
+            try:
+                seek_base = max(0.0, min(float(x["start"]) for x in batch) - 0.5)
+                read_end = max(float(x["start"]) + float(x["span"]) for x in batch)
+                input_read_sec = max(0.5, read_end - seek_base + 0.25)
+                items = [
+                    {"start": float(x["start"]), "span": float(x["span"]), "trim_tmp": str(x["trim_tmp"]), "cid": str(x["cid"])}
+                    for x in batch
+                ]
+                logger.info(
+                    "FFmpeg pretrim(encode,batch) 段#%s 同源输出=%d 路 seek_base=%.3f read=%.3f",
+                    int(seg_idx) + 1,
+                    len(batch),
+                    seek_base,
+                    input_read_sec,
+                )
+                _materialize_encode_batch_trim_filter(
+                    src_path=str(r["src_path"]),
+                    items=items,
+                    seek_base=seek_base,
+                    input_read_sec=input_read_sec,
+                    seg_filter_parts=sfp0,
+                    seg_codec_args=seg_codec_args_batch,
+                    seg_idx=seg_idx,
+                )
+                for x in batch:
+                    need_trim = bool(x["need_trim"])
+                    span = float(x["span"])
+                    src_total = float(x["src_total"])
+                    if need_trim:
+                        piece_dur = float(span)
+                    else:
+                        probed = float(probe_duration(str(x["trim_tmp"]), log_on_failure=True) or 0.0)
+                        piece_dur = probed if probed > 0.05 else src_total
+                    mat_cache[str(x["cache_key"])] = (str(x["trim_tmp"]), piece_dur)
+                    paths_out.append(str(x["trim_tmp"]))
+                    total_dur += max(piece_dur, 0.05)
+                ri = bi
+                continue
+            except Exception as ex:
+                logger.warning("pretrim(encode,batch) 失败，回退逐段编码: %s", ex)
+
+        for x in batch:
+            _materialize_one_encode(
+                src_path=str(x["src_path"]),
+                start=float(x["start"]),
+                span=float(x["span"]),
+                need_trim=bool(x["need_trim"]),
+                trim_tmp=str(x["trim_tmp"]),
+                cid=str(x["cid"]),
+                seg_idx=seg_idx,
+                tmp_name=str(x["tmp_name"]),
+                seg_filter_parts=list(x["seg_filter_parts"]),
+                seg_vf_args=list(x["seg_vf_args"]),
+                tw=int(x["tw"]),
+                th=int(x["th"]),
+                render_opts=render_opts,
+            )
+            need_trim = bool(x["need_trim"])
+            span = float(x["span"])
+            src_total = float(x["src_total"])
+            if need_trim:
+                piece_dur = float(span)
+            else:
+                probed = float(probe_duration(str(x["trim_tmp"]), log_on_failure=True) or 0.0)
+                piece_dur = probed if probed > 0.05 else src_total
+            mat_cache[str(x["cache_key"])] = (str(x["trim_tmp"]), piece_dur)
+            paths_out.append(str(x["trim_tmp"]))
+            total_dur += max(piece_dur, 0.05)
+        ri = bi
 
     return paths_out, total_dur
 

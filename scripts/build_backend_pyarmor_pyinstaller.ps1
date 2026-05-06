@@ -1,7 +1,8 @@
-﻿chcp 65001 > $null
-param(
+﻿param(
     [string]$HostIP = "127.0.0.1"
 )
+
+chcp 65001 > $null
 
 $ErrorActionPreference = "Stop"
 

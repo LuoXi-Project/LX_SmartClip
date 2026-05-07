@@ -91,10 +91,12 @@ export type AutoEditPanelProps = {
   subtitleEnabled: boolean
   onGeneratePlans: () => void
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
+  /** 仅导出剪映草稿 ZIP（与成片互斥） */
+  autoJianyingDraftExportingId: string | null
+  autoJianyingDraftDownloads: Record<string, { filename: string; url: string }>
+  onExportJianyingDraft: (plan: AutoEditPlanApi, index: number) => void
   /** 口播快剪：隐藏 LLM 规划区，仅保留 BGM 与方案卡片（方案由上方快剪面板生成） */
   hideLlmPlannerUi?: boolean
-  alsoExportJianyingDraft?: boolean
-  onAlsoExportJianyingDraftChange?: (value: boolean) => void
 }
 
 export function AutoEditPanel({
@@ -174,9 +176,10 @@ export function AutoEditPanel({
   subtitleEnabled,
   onGeneratePlans,
   onRealizePlan,
+  autoJianyingDraftExportingId,
+  autoJianyingDraftDownloads,
+  onExportJianyingDraft,
   hideLlmPlannerUi = false,
-  alsoExportJianyingDraft = false,
-  onAlsoExportJianyingDraftChange,
 }: AutoEditPanelProps) {
   const [detailPlan, setDetailPlan] = useState<{
     plan: AutoEditPlanApi
@@ -304,8 +307,9 @@ export function AutoEditPanel({
           autoRealizingId={autoRealizingId}
           autoRealizeMsg={autoRealizeMsg}
           autoRealizeDownloads={autoRealizeDownloads}
-          alsoExportJianyingDraft={alsoExportJianyingDraft}
-          onAlsoExportJianyingDraftChange={onAlsoExportJianyingDraftChange}
+          autoJianyingDraftExportingId={autoJianyingDraftExportingId}
+          autoJianyingDraftDownloads={autoJianyingDraftDownloads}
+          onExportJianyingDraft={onExportJianyingDraft}
         />
       )}
 

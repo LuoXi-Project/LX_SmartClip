@@ -114,8 +114,27 @@ class GenerateSRTResponse(BaseModel):
 class BurnSubtitleResponse(BaseModel):
     filename: str
     url: str
-    jianying_draft_filename: Optional[str] = None
-    jianying_draft_url: Optional[str] = None
+
+
+class JianYingDraftExportRequest(BaseModel):
+    """仅导出剪映草稿 ZIP，不渲染成片 MP4。"""
+
+    mode: Literal["tts", "original"]
+    segments: List[SubtitleSegmentInput]
+    style: SubtitleStyle = Field(default_factory=SubtitleStyle)
+    project_name: Optional[str] = "smartclip_jianying"
+    # tts：与 burn 一致的字幕时间轴输入
+    srt_content: str = ""
+    strict_use_client_srt: bool = False
+    # original：是否在草稿中生成字幕轨
+    include_subtitle: bool = True
+    # 与成片一致的 TTS 时长对齐覆盖（可选）
+    tts_align: Optional[TtsVideoAlignConfig] = None
+
+
+class JianYingDraftExportResponse(BaseModel):
+    filename: str
+    url: str
 
 
 class BgmTimelineSegment(BaseModel):
@@ -142,10 +161,6 @@ class BurnSubtitleRequest(BaseModel):
     srt_content: str
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     project_name: Optional[str] = "smartclip_subtitled"
-    also_export_jianying_draft: bool = Field(
-        False,
-        description="为 True 时在成片生成后额外导出剪映草稿 ZIP（与成片同源时间轴与素材）",
-    )
     export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
     # 默认：成片阶段会按 TTS 校验并在必要时重建时间轴，确保最终对齐配音。
     # 若用户已在前端手动微调时间轴并希望“完全按传入 SRT 烧录”，则置为 True。
@@ -168,10 +183,6 @@ class ExportOriginalRequest(BaseModel):
 
     segments: List[SubtitleSegmentInput]
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
-    also_export_jianying_draft: bool = Field(
-        False,
-        description="为 True 时在成片生成后额外导出剪映草稿 ZIP",
-    )
     project_name: Optional[str] = "smartclip_original"
     include_subtitle: bool = True
     normalize_audio: bool = True

@@ -20,12 +20,12 @@ export type AutoEditPlanCardProps = {
   onOpenDetailPlan: (plan: AutoEditPlanApi, index: number) => void
   onSelectPreview: (next: SelectedPreviewState) => void
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
+  onExportJianyingDraft: (plan: AutoEditPlanApi, index: number) => void
   autoRealizingId: string | null
+  autoJianyingDraftExportingId: string | null
   autoRealizeMsg: string
-  autoRealizeDownloads: Record<
-    string,
-    { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
-  >
+  autoRealizeDownloads: Record<string, { filename: string; url: string }>
+  autoJianyingDraftDownloads: Record<string, { filename: string; url: string }>
 }
 
 export function AutoEditPlanCard({
@@ -41,9 +41,12 @@ export function AutoEditPlanCard({
   onOpenDetailPlan,
   onSelectPreview,
   onRealizePlan,
+  onExportJianyingDraft,
   autoRealizingId,
+  autoJianyingDraftExportingId,
   autoRealizeMsg,
   autoRealizeDownloads,
+  autoJianyingDraftDownloads,
 }: AutoEditPlanCardProps) {
   const planTitle = p.title || `方案 ${idx + 1}`
   const segs = p.segments ?? []
@@ -224,10 +227,12 @@ export function AutoEditPlanCard({
         )}
       </div>
 
-      <div className="pt-1 space-y-1">
+      <div className="pt-1 space-y-2">
         <button
           onClick={() => onRealizePlan(customPlanById[p.plan_id] ?? p, idx)}
-          disabled={autoRealizingId !== null || activeCount === 0}
+          disabled={
+            autoRealizingId !== null || autoJianyingDraftExportingId !== null || activeCount === 0
+          }
           title={activeCount === 0 ? '至少保留一段参与成片' : undefined}
           className="w-full inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-500/50 bg-emerald-500/10 text-[11px] text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 transition-colors"
         >
@@ -237,7 +242,25 @@ export function AutoEditPlanCard({
               成片生成中...
             </>
           ) : (
-            <>一键成片</>
+            <>一键成片（MP4）</>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => onExportJianyingDraft(customPlanById[p.plan_id] ?? p, idx)}
+          disabled={
+            autoRealizingId !== null || autoJianyingDraftExportingId !== null || activeCount === 0
+          }
+          title={activeCount === 0 ? '至少保留一段参与导出' : undefined}
+          className="w-full inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-teal-500/45 bg-teal-500/10 text-[11px] text-teal-200 hover:bg-teal-500/18 disabled:opacity-60 transition-colors"
+        >
+          {autoJianyingDraftExportingId === p.plan_id ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              草稿导出中...
+            </>
+          ) : (
+            <>仅导出剪映草稿（ZIP）</>
           )}
         </button>
         {autoRealizeMsg && <p className="text-[11px] text-emerald-300/80">{autoRealizeMsg}</p>}
@@ -252,19 +275,18 @@ export function AutoEditPlanCard({
             >
               下载成片：{autoRealizeDownloads[p.plan_id].filename}
             </a>
-            {autoRealizeDownloads[p.plan_id].jianyingDraftUrl ? (
-              <a
-                href={autoRealizeDownloads[p.plan_id].jianyingDraftUrl}
-                download={autoRealizeDownloads[p.plan_id].jianyingDraftFilename}
-                target="_blank"
-                rel="noreferrer"
-                className="block text-[11px] text-emerald-300/90 hover:text-emerald-200 underline underline-offset-2"
-              >
-                下载剪映草稿：
-                {autoRealizeDownloads[p.plan_id].jianyingDraftFilename || 'draft.zip'}
-              </a>
-            ) : null}
           </div>
+        )}
+        {autoJianyingDraftDownloads[p.plan_id] && (
+          <a
+            href={autoJianyingDraftDownloads[p.plan_id].url}
+            download={autoJianyingDraftDownloads[p.plan_id].filename}
+            target="_blank"
+            rel="noreferrer"
+            className="block text-[11px] text-teal-300/90 hover:text-teal-200 underline underline-offset-2"
+          >
+            下载剪映草稿：{autoJianyingDraftDownloads[p.plan_id].filename}
+          </a>
         )}
       </div>
     </div>

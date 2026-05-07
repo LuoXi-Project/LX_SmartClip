@@ -198,7 +198,6 @@ export default function MatchPage() {
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
   const [strictUseClientSrt, setStrictUseClientSrt] = useState(false)
-  const [alsoExportJianyingDraft, setAlsoExportJianyingDraft] = useState(false)
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
   const [resultOpen, setResultOpen] = useState(false)
   const [replicaTemplateRefreshSignal, setReplicaTemplateRefreshSignal] = useState(0)
@@ -231,6 +230,10 @@ export default function MatchPage() {
   const [autoLoading, setAutoLoading] = useState(false)
   const [autoError, setAutoError] = useState('')
   const [autoRealizingId, setAutoRealizingId] = useState<string | null>(null)
+  const [autoJianyingDraftExportingId, setAutoJianyingDraftExportingId] = useState<string | null>(null)
+  const [autoJianyingDraftDownloads, setAutoJianyingDraftDownloads] = useState<
+    Record<string, { filename: string; url: string }>
+  >({})
   const [autoRealizeMsg, setAutoRealizeMsg] = useState('')
   const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null)
   const [autoPlanElapsedSec, setAutoPlanElapsedSec] = useState(0)
@@ -248,7 +251,8 @@ export default function MatchPage() {
       })
   }, [])
 
-  const showStrictSrtToggle = exportMode === 'subtitle' && subtitleEnabled
+  const showStrictSrtToggle =
+    (exportMode === 'subtitle' || exportMode === 'jianying_tts') && subtitleEnabled
   useEffect(() => {
     if (!showStrictSrtToggle && strictUseClientSrt) setStrictUseClientSrt(false)
   }, [showStrictSrtToggle, strictUseClientSrt])
@@ -631,8 +635,8 @@ export default function MatchPage() {
     if (exporting) return
     const projectName = globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
     try {
-      // 一键成片（配音 + 字幕烧录）：先在前端拦截未完成配音，避免后端因缺音频报错
-      if (exportMode === 'subtitle') {
+      // 一键成片 / 剪映 TTS 草稿：先在前端拦截未完成配音，避免后端因缺音频报错
+      if (exportMode === 'subtitle' || exportMode === 'jianying_tts') {
         const needTtsSegs = readySegs
         const missingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename)
         const loadingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && s.ttsLoading)
@@ -683,20 +687,42 @@ export default function MatchPage() {
           export_backend: exportBackend,
           strict_use_client_srt: strictUseClientSrt,
           bgm: buildManualBgmPayload(),
-          also_export_jianying_draft: alsoExportJianyingDraft,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
         a.href = downloadUrl
         a.download = res.filename
         a.click()
-        if (res.jianying_draft_filename) {
-          const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.jianying_draft_filename)}`
-          const a2 = document.createElement('a')
-          a2.href = jyUrl
-          a2.download = res.jianying_draft_filename
-          a2.click()
-        }
+      } else if (exportMode === 'jianying_tts') {
+        if (readySegs.length === 0) return
+        const currentSrt = subtitleEnabled ? await generateSrt() : ''
+        const segsInput = readySegs
+          .map((s) => {
+            const cid = (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? ''
+            const clip_ids = (s.selectedClipIds?.length ? s.selectedClipIds : [cid]).filter(Boolean) as string[]
+            const clip_trims = buildClipTrimsForApi(s, clip_ids)
+            return {
+              copy_text: s.text,
+              clip_id: cid,
+              clip_ids: clip_ids.length > 1 ? clip_ids : undefined,
+              tts_filename: s.ttsFilename ?? undefined,
+              ...(clip_trims.length ? { clip_trims } : {}),
+            }
+          })
+          .filter((s) => s.clip_id)
+        const res = await subtitleApi.exportJianyingDraft({
+          mode: 'tts',
+          segments: segsInput,
+          srt_content: currentSrt,
+          style: subtitleStyle,
+          project_name: projectName,
+          strict_use_client_srt: strictUseClientSrt,
+        })
+        const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+        const a = document.createElement('a')
+        a.href = jyUrl
+        a.download = res.filename
+        a.click()
       } else if (exportMode === 'original') {
         const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
         if (exportSegs.length === 0) return
@@ -722,20 +748,41 @@ export default function MatchPage() {
           normalize_audio: true,
           export_backend: exportBackend,
           bgm: buildManualBgmPayload(),
-          also_export_jianying_draft: alsoExportJianyingDraft,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
         a.href = downloadUrl
         a.download = res.filename
         a.click()
-        if (res.jianying_draft_filename) {
-          const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.jianying_draft_filename)}`
-          const a2 = document.createElement('a')
-          a2.href = jyUrl
-          a2.download = res.jianying_draft_filename
-          a2.click()
-        }
+      } else if (exportMode === 'jianying_original') {
+        const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+        if (exportSegs.length === 0) return
+        const segsInput = exportSegs
+          .map((s) => {
+            const clip_ids = s.selectedClipIds
+            const cid = clip_ids[0] ?? ''
+            const clip_trims = buildClipTrimsForApi(s, clip_ids)
+            return {
+              copy_text: s.text,
+              clip_id: cid,
+              clip_ids,
+              tts_filename: undefined,
+              ...(clip_trims.length ? { clip_trims } : {}),
+            }
+          })
+          .filter((s) => s.clip_id)
+        const res = await subtitleApi.exportJianyingDraft({
+          mode: 'original',
+          segments: segsInput,
+          style: subtitleStyle,
+          project_name: projectName,
+          include_subtitle: subtitleEnabled,
+        })
+        const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+        const a = document.createElement('a')
+        a.href = jyUrl
+        a.download = res.filename
+        a.click()
       }
     } catch (e: unknown) {
       setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
@@ -1114,20 +1161,13 @@ export default function MatchPage() {
         include_subtitle: subtitleEnabled,
         style: subtitleStyle,
         ...(forceTtsPipeline ? { force_tts_pipeline: true, tts_align: ttsAlignPayload } : {}),
-        also_export_jianying_draft: alsoExportJianyingDraft,
       })
       const downloadUrl = `${API_BASE_URL}${res.url}`
-      const jyFn = res.jianying_draft_filename
-      const jyUrl = jyFn
-        ? `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(jyFn)}`
-        : undefined
       setAutoRealizeDownloads((prev) => ({
         ...prev,
         [plan.plan_id]: {
           filename: res.filename,
           url: downloadUrl,
-          jianyingDraftFilename: jyFn ?? undefined,
-          jianyingDraftUrl: jyUrl,
         },
       }))
       setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
@@ -1140,6 +1180,55 @@ export default function MatchPage() {
     }
   }
 
+  async function handleAutoExportJianyingDraft(plan: AutoEditPlanApi, index: number) {
+    setAutoRealizeMsg('')
+    setAutoJianyingDraftExportingId(plan.plan_id)
+    try {
+      let planForExport = applyAutoBgmRealizeOptions(plan)
+      let forceTtsPipeline = false
+      let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
+      if (mode === 'voiceover') {
+        const voBgm = showVoiceoverBgmConfig ? buildVoiceoverBgmPlanPayload() : null
+        if (voiceoverRedubEnabled) {
+          if (!voiceoverPlanSupportsRedub(planForExport)) {
+            const msg =
+              '重新配音要求每一段成片均有 ASR 文案。当前方案含有非 ASR 段（例如音频粗剪占位），请改用极速/智能快剪或完成语音识别后再试。'
+            setAutoRealizeMsg(msg)
+            toast.error(msg)
+            setAutoJianyingDraftExportingId(null)
+            return
+          }
+          planForExport = buildVoiceoverRedubPlan(planForExport)
+          forceTtsPipeline = true
+          ttsAlignPayload = { ...voiceoverTtsAlign }
+        }
+        if (voBgm) {
+          planForExport = { ...planForExport, bgm: voBgm }
+        }
+      }
+      const res = await autoEditApi.exportJianyingDraft({
+        plan: planForExport,
+        project_name: `autoedit_jy_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
+        include_subtitle: subtitleEnabled,
+        style: subtitleStyle,
+        ...(forceTtsPipeline ? { force_tts_pipeline: true, tts_align: ttsAlignPayload } : {}),
+      })
+      const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+      setAutoJianyingDraftDownloads((prev) => ({
+        ...prev,
+        [plan.plan_id]: { filename: res.filename, url: jyUrl },
+      }))
+      setAutoRealizeMsg('剪映草稿已生成，请点击方案卡片中的草稿下载链接。')
+      toast.success('剪映草稿已导出')
+    } catch (e: unknown) {
+      const msg = formatFastApiDetail(e)
+      setAutoRealizeMsg(msg)
+      toast.error(msg)
+    } finally {
+      setAutoJianyingDraftExportingId(null)
+    }
+  }
+
   // PLACEHOLDER_JSX
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
@@ -1148,8 +1237,6 @@ export default function MatchPage() {
         exporting={exporting} exportError={exportError} onExport={handleExport}
         subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
         srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
-        alsoExportJianyingDraft={alsoExportJianyingDraft}
-        onToggleAlsoExportJianyingDraft={setAlsoExportJianyingDraft}
         matchMode={mode}
       />
       <div className="pr-64">
@@ -1335,8 +1422,9 @@ export default function MatchPage() {
               }}
               onGeneratePlans={handleGenerateAutoPlans}
               onRealizePlan={handleAutoRealizePlan}
-              alsoExportJianyingDraft={alsoExportJianyingDraft}
-              onAlsoExportJianyingDraftChange={setAlsoExportJianyingDraft}
+              autoJianyingDraftExportingId={autoJianyingDraftExportingId}
+              autoJianyingDraftDownloads={autoJianyingDraftDownloads}
+              onExportJianyingDraft={handleAutoExportJianyingDraft}
             />
             </>
           ) : mode === 'voiceover' ? (
@@ -1472,8 +1560,9 @@ export default function MatchPage() {
                 subtitleEnabled={subtitleEnabled}
                 onGeneratePlans={() => {}}
                 onRealizePlan={handleAutoRealizePlan}
-                alsoExportJianyingDraft={alsoExportJianyingDraft}
-                onAlsoExportJianyingDraftChange={setAlsoExportJianyingDraft}
+                autoJianyingDraftExportingId={autoJianyingDraftExportingId}
+                autoJianyingDraftDownloads={autoJianyingDraftDownloads}
+                onExportJianyingDraft={handleAutoExportJianyingDraft}
               />
             </>
           ) : (
@@ -1575,12 +1664,20 @@ export default function MatchPage() {
           <MatchSubtitleWorkspace
             style={subtitleStyle}
             onStyleChange={setSubtitleStyle}
-            entries={isAutoLikeMode(mode) ? srtEntries : exportMode === 'subtitle' ? srtEntries : []}
+            entries={
+              isAutoLikeMode(mode) ? srtEntries : exportMode === 'subtitle' || exportMode === 'jianying_tts' ? srtEntries : []
+            }
             subtitleEnabled={subtitleEnabled}
             onSubtitleEnabledChange={setSubtitleEnabled}
             strictUseClientSrt={showStrictSrtToggle ? strictUseClientSrt : undefined}
             onStrictUseClientSrtChange={showStrictSrtToggle ? setStrictUseClientSrt : undefined}
-            timingSource={isAutoLikeMode(mode) ? timingSource : exportMode === 'subtitle' ? timingSource : ''}
+            timingSource={
+              isAutoLikeMode(mode)
+                ? timingSource
+                : exportMode === 'subtitle' || exportMode === 'jianying_tts'
+                  ? timingSource
+                  : ''
+            }
             previewVideoSize={previewVideoSize}
             previewFrameUrl={subtitlePreviewFrameUrl}
             srtError={srtError}

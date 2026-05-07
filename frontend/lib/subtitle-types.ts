@@ -38,4 +38,11 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   max_chars_per_line: 20,
 }
 
-export type ExportMode = 'zip' | 'subtitle' | 'original'
+export type ExportMode =
+  | 'zip'
+  | 'subtitle'
+  | 'original'
+  /** 仅剪映草稿 ZIP（TTS 时间轴），不导出 MP4 */
+  | 'jianying_tts'
+  /** 仅剪映草稿 ZIP（原声时间轴），不导出 MP4 */
+  | 'jianying_original'

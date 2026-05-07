@@ -9,7 +9,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Request
@@ -40,19 +40,24 @@ from app.core.auto_edit_v2.arrange import arrange_timeline_variants
 from app.core.bgm.auto_bgm import apply_bgm_postprocess_if_needed
 from app.api.copy_gen import _build_video_context_with_recall
 from app.models.subtitle import (
-    SubtitleStyle,
-    GenerateSRTRequest,
     BurnSubtitleRequest,
     ExportOriginalRequest,
+    GenerateSRTRequest,
+    JianYingDraftExportResponse,
+    SubtitleStyle,
+    TtsVideoAlignConfig,
 )
 from app.api.subtitle import TTS_AUDIO_DIR, execute_burn_subtitle, execute_export_original
+from app.core.jianying.export_pipeline import export_jianying_draft_zip_async
 from app.core.subtitle.tts_align import apply_timeline_duration_overrides
 from app.models.auto_edit import (
+    AutoEditExportJianyingDraftRequest,
     AutoEditPlanRequest,
     AutoEditPlanResponse,
     AutoEditPlanSessionResponse,
     AutoEditRealizeRequest,
     AutoEditRealizeResponse,
+    Plan,
     VoiceoverQuickCutRequest,
 )
 from app.models.auto_edit_timeline import FinalTimeline, StrategyDSL, TimelineItem
@@ -918,22 +923,15 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
     )
 
 
-@router.post("/realize", response_model=AutoEditRealizeResponse)
-async def realize_auto_edit_plan(
-    req: AutoEditRealizeRequest,
-    request: Request,
-) -> AutoEditRealizeResponse:
-    """
-    将一个 Plan 实际转为成片：
-    - voiceover 模式：TTS + 字幕 + burn 管线
-    - original 模式：保留原声，按段落平均切字幕，调用 export_original
-
-    当前版本：
-    - 忽略 Plan.keep_flags / BGM / transition，仅打通基础链路。
-    """
-    if await request.is_disconnected():
-        raise HTTPException(status_code=400, detail="客户端已断开连接")
-    plan = req.plan
+async def _prepare_auto_edit_segments_from_plan(
+    *,
+    plan: Plan,
+    project_name: Optional[str],
+    style: Optional[SubtitleStyle],
+    force_tts_pipeline: bool,
+    tts_align: Optional[TtsVideoAlignConfig],
+) -> tuple[list, SubtitleStyle, str, bool]:
+    """Plan → segments_from_plan + TTS 对齐覆盖；供 realize 与剪映草稿导出复用。"""
     if not plan.segments:
         raise HTTPException(status_code=400, detail="Plan 中没有任何 segments")
     if not any(not s.exclude_from_output for s in plan.segments):
@@ -948,7 +946,6 @@ async def realize_auto_edit_plan(
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        # 1) clip_id 预检：友好返回无效 ID 列表
         if requested_clip_ids:
             placeholders = ",".join(["?"] * len(requested_clip_ids))
             async with db.execute(
@@ -962,12 +959,10 @@ async def realize_auto_edit_plan(
                 clip_id_to_video[cid] = str(row["video_id"])
 
         invalid_clip_ids = [cid for cid in requested_clip_ids if cid not in valid_clip_ids]
-        # raw_<video_id> 为“未预处理视频”虚拟片段：不在 clips 表内，但允许进入后续裁剪链路。
         for rid in requested_raw_clip_ids:
             valid_clip_ids.add(rid)
         invalid_clip_ids = [cid for cid in invalid_clip_ids if cid not in requested_raw_clip_ids]
 
-        # 2) 构造回退候选池（优先 segment.clip_group 的 video_id，其次已命中 clip 的 video_id）
         for seg in plan.segments:
             for ref in seg.clip_group:
                 if ref.video_id:
@@ -998,7 +993,7 @@ async def realize_auto_edit_plan(
                 candidates.append(cand)
                 candidates_by_video.setdefault(cand.video_id, []).append(cand)
 
-    use_tts_branch = plan.mode in ("auto", "voiceover") or bool(getattr(req, "force_tts_pipeline", False))
+    use_tts_branch = plan.mode in ("auto", "voiceover") or bool(force_tts_pipeline)
 
     seg_inputs = await segments_from_plan(
         plan=plan,
@@ -1015,17 +1010,41 @@ async def realize_auto_edit_plan(
         raise HTTPException(status_code=400, detail=detail)
 
     if invalid_clip_ids:
-        logger.warning("realize 检测到无效 clip_id，已尝试自动回退: %s", invalid_clip_ids)
+        logger.warning("auto_edit Plan→segments 检测到无效 clip_id，已尝试自动回退: %s", invalid_clip_ids)
 
-    align_cfg = getattr(req, "tts_align", None)
-    apply_timeline_duration_overrides(seg_inputs, align_cfg, TTS_AUDIO_DIR)
+    apply_timeline_duration_overrides(seg_inputs, tts_align, TTS_AUDIO_DIR)
 
-    project_name = req.project_name or f"auto_edit_{plan.plan_id}"
+    resolved_name = project_name or f"auto_edit_{plan.plan_id}"
+    resolved_style = style or SubtitleStyle()
 
-    # 字幕样式：优先使用前端传入，否则回退默认值
-    style = req.style or SubtitleStyle()
+    return seg_inputs, resolved_style, resolved_name, use_tts_branch
 
-    # voiceover / auto / 强制 TTS -> 统一走配音管线（TTS 合成失败时在 segments_from_plan 阶段已 fail-fast）
+
+@router.post("/realize", response_model=AutoEditRealizeResponse)
+async def realize_auto_edit_plan(
+    req: AutoEditRealizeRequest,
+    request: Request,
+) -> AutoEditRealizeResponse:
+    """
+    将一个 Plan 实际转为成片：
+    - voiceover 模式：TTS + 字幕 + burn 管线
+    - original 模式：保留原声，按段落平均切字幕，调用 export_original
+
+    当前版本：
+    - 忽略 Plan.keep_flags / BGM / transition，仅打通基础链路。
+    """
+    if await request.is_disconnected():
+        raise HTTPException(status_code=400, detail="客户端已断开连接")
+    plan = req.plan
+    seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
+        plan=plan,
+        project_name=req.project_name,
+        style=req.style,
+        force_tts_pipeline=req.force_tts_pipeline,
+        tts_align=req.tts_align,
+    )
+    align_cfg = req.tts_align
+
     if use_tts_branch:
         from app.api.subtitle import generate_srt as generate_srt_route
 
@@ -1040,7 +1059,6 @@ async def realize_auto_edit_plan(
                 style=style,
                 project_name=project_name,
                 tts_align=align_cfg,
-                also_export_jianying_draft=bool(getattr(req, "also_export_jianying_draft", False)),
             )
             burn_res = await execute_burn_subtitle(burn_req)
         else:
@@ -1052,7 +1070,6 @@ async def realize_auto_edit_plan(
                 style=style,
                 project_name=project_name,
                 tts_align=align_cfg,
-                also_export_jianying_draft=bool(getattr(req, "also_export_jianying_draft", False)),
             )
             burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():
@@ -1067,8 +1084,6 @@ async def realize_auto_edit_plan(
             mode="voiceover",
             filename=final_filename,
             url=final_url,
-            jianying_draft_filename=burn_res.get("jianying_draft_filename"),
-            jianying_draft_url=burn_res.get("jianying_draft_url"),
         )
 
     export_req = ExportOriginalRequest(
@@ -1077,7 +1092,6 @@ async def realize_auto_edit_plan(
         project_name=project_name,
         include_subtitle=req.include_subtitle,
         normalize_audio=True,
-        also_export_jianying_draft=bool(getattr(req, "also_export_jianying_draft", False)),
     )
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
@@ -1094,7 +1108,54 @@ async def realize_auto_edit_plan(
         mode="original",
         filename=final_filename,
         url=final_url,
-        jianying_draft_filename=res.get("jianying_draft_filename"),
-        jianying_draft_url=res.get("jianying_draft_url"),
+    )
+
+
+@router.post("/export-jianying-draft", response_model=JianYingDraftExportResponse)
+async def export_jianying_draft_from_plan(
+    req: AutoEditExportJianyingDraftRequest,
+    request: Request,
+) -> JianYingDraftExportResponse:
+    """仅导出剪映草稿 ZIP，不调用 burn / export_original。"""
+    if await request.is_disconnected():
+        raise HTTPException(status_code=400, detail="客户端已断开连接")
+    plan = req.plan
+    seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
+        plan=plan,
+        project_name=req.project_name,
+        style=req.style,
+        force_tts_pipeline=req.force_tts_pipeline,
+        tts_align=req.tts_align,
+    )
+    if use_tts_branch:
+        from app.api.subtitle import generate_srt as generate_srt_route
+
+        if req.include_subtitle:
+            if await request.is_disconnected():
+                raise HTTPException(status_code=400, detail="客户端已断开连接")
+            srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True)
+            srt_res = await generate_srt_route(srt_req)
+            srt_content = srt_res.srt_content
+        else:
+            srt_content = ""
+        return await export_jianying_draft_zip_async(
+            segments=seg_inputs,
+            mode="tts",
+            project_name_base=project_name,
+            tts_audio_dir=TTS_AUDIO_DIR,
+            style=style,
+            client_srt_content=srt_content,
+            strict_use_client_srt=False,
+            include_subtitle=True,
+        )
+    return await export_jianying_draft_zip_async(
+        segments=seg_inputs,
+        mode="original",
+        project_name_base=project_name,
+        tts_audio_dir=TTS_AUDIO_DIR,
+        style=style,
+        client_srt_content="",
+        strict_use_client_srt=False,
+        include_subtitle=req.include_subtitle,
     )
 

@@ -68,10 +68,7 @@ export interface MatchPageState {
   /** 链接复刻：模板类型，驱动一键成片模板预设 */
   replicaTemplateType: 'short_video' | 'film_commentary' | 'scene_story' | ''
   autoPlans: AutoEditPlanApi[]
-  autoRealizeDownloads: Record<
-    string,
-    { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
-  >
+  autoRealizeDownloads: Record<string, { filename: string; url: string }>
   autoExpandedPlanIds: string[]
   autoPlanLogs: string[]
   setMatchSegments: (segments: Segment[]) => void
@@ -215,10 +212,7 @@ function mergeLegacyAutoEditCache(persisted: Partial<MatchPageState>): Partial<M
       j.autoRealizeDownloads &&
       typeof j.autoRealizeDownloads === 'object'
     ) {
-      next.autoRealizeDownloads = j.autoRealizeDownloads as Record<
-        string,
-        { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
-      >
+      next.autoRealizeDownloads = j.autoRealizeDownloads as Record<string, { filename: string; url: string }>
     }
     if (
       (!next.autoExpandedPlanIds || next.autoExpandedPlanIds.length === 0) &&
@@ -269,10 +263,7 @@ export const useMatchStore = create<MatchPageState>()(
       replicaTemplateGuide: '',
       replicaTemplateType: '',
       autoPlans: [] as AutoEditPlanApi[],
-      autoRealizeDownloads: {} as Record<
-        string,
-        { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
-      >,
+      autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
       autoExpandedPlanIds: [] as string[],
       autoPlanLogs: [] as string[],
       setMatchSegments: (segments) => set({ segments }),
@@ -427,7 +418,14 @@ export const useMatchStore = create<MatchPageState>()(
         if (typeof merged.topN !== 'number') merged.topN = 5
         if (typeof merged.subtitleEnabled !== 'boolean') merged.subtitleEnabled = false
         if (!merged.subtitleStyle || typeof merged.subtitleStyle !== 'object') merged.subtitleStyle = DEFAULT_SUBTITLE_STYLE
-        if (merged.exportMode !== 'zip' && merged.exportMode !== 'subtitle' && merged.exportMode !== 'original') {
+        const em = merged.exportMode
+        if (
+          em !== 'zip' &&
+          em !== 'subtitle' &&
+          em !== 'original' &&
+          em !== 'jianying_tts' &&
+          em !== 'jianying_original'
+        ) {
           merged.exportMode = 'zip'
         }
         if (!Array.isArray(merged.autoPlans)) merged.autoPlans = []

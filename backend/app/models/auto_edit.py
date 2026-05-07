@@ -254,12 +254,20 @@ class AutoEditRealizeRequest(BaseModel):
     force_tts_pipeline: bool = False
     # 与 force_tts_pipeline / voiceover 成片配合：画面与 TTS 时长对齐策略；None 表示沿用渲染默认（循环拼接素材）
     tts_align: Optional[TtsVideoAlignConfig] = None
-    also_export_jianying_draft: bool = False
 
 
 class AutoEditRealizeResponse(BaseModel):
     mode: Literal["voiceover", "original"]
     filename: str
     url: str
-    jianying_draft_filename: Optional[str] = None
-    jianying_draft_url: Optional[str] = None
+
+
+class AutoEditExportJianyingDraftRequest(BaseModel):
+    """一键成片方案 → 仅导出剪映草稿（字段与 realize 对齐，不含成片）。"""
+
+    plan: Plan
+    project_name: Optional[str] = None
+    include_subtitle: bool = True
+    style: Optional[SubtitleStyle] = None
+    force_tts_pipeline: bool = False
+    tts_align: Optional[TtsVideoAlignConfig] = None

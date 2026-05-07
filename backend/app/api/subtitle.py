@@ -18,6 +18,8 @@ from app.models.subtitle import (
     ExportOriginalRequest,
     GenerateSRTRequest,
     GenerateSRTResponse,
+    JianYingDraftExportRequest,
+    JianYingDraftExportResponse,
     SRTEntry,
     SubtitleSegmentInput,
     SubtitleStyle,  # noqa: F401 - 用于模块级 re-export
@@ -35,7 +37,8 @@ from app.core.subtitle.timeline import (
     rule_timeline_weighted_chars,
 )
 from app.core.subtitle.burn import burn_to_mp4
-from app.core.jianying.draft_export import build_jianying_draft_zip
+from app.core.subtitle.tts_align import apply_timeline_duration_overrides
+from app.core.jianying.export_pipeline import export_jianying_draft_zip_async
 from app.core.bgm.auto_bgm import apply_bgm_config_postprocess
 
 logger = logging.getLogger(__name__)
@@ -411,21 +414,6 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         "filename": filename,
         "url": storage_public_url_for_file(saved_path),
     }
-    if getattr(req, "also_export_jianying_draft", False):
-        jy_dir = ensure_storage_subpath("jianying_drafts")
-        jy_zip = os.path.join(jy_dir, f"{unique_project_name}_jianying.zip")
-        await run_heavy(
-            build_jianying_draft_zip,
-            segments=req.segments,
-            clip_map=clip_map,
-            mode="tts",
-            srt_entries=srt_entries,
-            tts_audio_dir=TTS_AUDIO_DIR,
-            project_name=unique_project_name,
-            output_zip_path=jy_zip,
-        )
-        result["jianying_draft_filename"] = os.path.basename(jy_zip)
-        result["jianying_draft_url"] = storage_public_url_for_file(jy_zip)
     if req.bgm and req.bgm.enabled:
         mixed_filename, mixed_url = await run_heavy(
             apply_bgm_config_postprocess,
@@ -560,21 +548,6 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         "filename": filename,
         "url": storage_public_url_for_file(saved_path),
     }
-    if getattr(req, "also_export_jianying_draft", False):
-        jy_dir = ensure_storage_subpath("jianying_drafts")
-        jy_zip = os.path.join(jy_dir, f"{unique_project_name}_jianying.zip")
-        await run_heavy(
-            build_jianying_draft_zip,
-            segments=segments_for_burn,
-            clip_map=clip_map,
-            mode="original",
-            srt_entries=srt_entries,
-            tts_audio_dir=TTS_AUDIO_DIR,
-            project_name=unique_project_name,
-            output_zip_path=jy_zip,
-        )
-        result["jianying_draft_filename"] = os.path.basename(jy_zip)
-        result["jianying_draft_url"] = storage_public_url_for_file(jy_zip)
     if req.bgm and req.bgm.enabled:
         mixed_filename, mixed_url = await run_heavy(
             apply_bgm_config_postprocess,
@@ -612,6 +585,29 @@ async def export_original(req: ExportOriginalRequest, request: Request):
     if await request.is_disconnected():
         raise HTTPException(400, "客户端已断开连接")
     return await execute_export_original(req)
+
+
+# ---------------------------------------------------------------------------
+# Route: 仅导出剪映草稿 ZIP（不渲染成片）
+# ---------------------------------------------------------------------------
+@router.post("/export_jianying_draft", response_model=JianYingDraftExportResponse)
+async def export_jianying_draft(req: JianYingDraftExportRequest, request: Request):
+    """生成剪映草稿 ZIP，不与 burn / export_original 并行。"""
+    if await request.is_disconnected():
+        raise HTTPException(400, "客户端已断开连接")
+    segs = list(req.segments)
+    if req.tts_align is not None and req.mode == "tts":
+        apply_timeline_duration_overrides(segs, req.tts_align, TTS_AUDIO_DIR)
+    return await export_jianying_draft_zip_async(
+        segments=segs,
+        mode=req.mode,
+        project_name_base=(req.project_name or "smartclip_jianying").strip(),
+        tts_audio_dir=TTS_AUDIO_DIR,
+        style=req.style,
+        client_srt_content=req.srt_content if req.mode == "tts" else "",
+        strict_use_client_srt=req.strict_use_client_srt if req.mode == "tts" else False,
+        include_subtitle=req.include_subtitle if req.mode == "original" else True,
+    )
 
 
 # ---------------------------------------------------------------------------

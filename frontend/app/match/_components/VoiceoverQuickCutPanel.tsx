@@ -40,6 +40,7 @@ type VoiceoverQuickCutPanelProps = {
       videoIds: string[]
       strategy: VoiceoverQuickCutStrategy
       userPrompt?: string
+      targetDurationSec?: number
       allowOverlappingSourceTimeline?: boolean
       audioActivityConfig?: VoiceoverAudioActivityConfig
     }
@@ -253,6 +254,8 @@ export function VoiceoverQuickCutPanel({
   const overlapLabelId = `${overlapSwitchId}-label`
   const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('asr_fast')
   const [semanticUserPrompt, setSemanticUserPrompt] = useState('')
+  /** 成片目标时长（秒），仅智能快剪；留空则后端从提示词解析 */
+  const [semanticTargetDurationSec, setSemanticTargetDurationSec] = useState('')
   const [audioActivityConfig, setAudioActivityConfig] = useState<VoiceoverAudioActivityConfig>({
     activityDbThreshold: -36,
     activityMinSilenceSec: 0.25,
@@ -467,6 +470,13 @@ export function VoiceoverQuickCutPanel({
       }
     }
     const userPrompt = strategy === 'semantic' ? semanticUserPrompt.trim() : undefined
+    let targetDurationSec: number | undefined
+    if (strategy === 'semantic' && semanticTargetDurationSec.trim()) {
+      const n = Number(semanticTargetDurationSec.trim())
+      if (Number.isFinite(n) && n >= 5 && n <= 7200) {
+        targetDurationSec = n
+      }
+    }
     if (onGenerate) {
       setGenerating(true)
       try {
@@ -474,6 +484,7 @@ export function VoiceoverQuickCutPanel({
           videoIds,
           strategy,
           userPrompt,
+          targetDurationSec,
           allowOverlappingSourceTimeline,
           audioActivityConfig:
             strategy === 'audio_activity_fast'
@@ -1007,6 +1018,22 @@ export function VoiceoverQuickCutPanel({
               rows={4}
               className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600 resize-y min-h-[88px]"
             />
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <label className="text-[10px] text-slate-400 shrink-0">目标成片时长（秒）</label>
+              <input
+                type="number"
+                min={5}
+                max={7200}
+                step={1}
+                value={semanticTargetDurationSec}
+                onChange={(e) => setSemanticTargetDurationSec(e.target.value)}
+                placeholder="留空则从提示词解析，如 2分钟 / 120秒"
+                className="w-40 rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1 text-xs text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600"
+              />
+              <span className="text-[10px] text-slate-500">
+                填写后优先于提示词中的时长；仍会与 LLM 筛选 + 程序末尾截断共同生效。
+              </span>
+            </div>
           </div>
         )}
 

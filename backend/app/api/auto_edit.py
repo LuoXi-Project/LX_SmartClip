@@ -632,12 +632,19 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
         if not llm_cfg:
             raise HTTPException(status_code=500, detail="内部错误：缺少 LLM 配置")
         try:
+            from app.core.auto_edit.duration_hint import resolve_voiceover_target_duration_sec
+
+            resolved_target_sec = resolve_voiceover_target_duration_sec(
+                explicit_sec=req.target_duration_sec,
+                user_prompt=(req.user_prompt or "").strip(),
+            )
             plan = await build_semantic_voiceover_plan(
                 clip_groups=groups,
                 user_prompt=(req.user_prompt or "").strip(),
                 cfg=llm_cfg,
                 video_title_hint=hint,
                 video_ids_order=list(req.video_ids),
+                target_duration_sec=resolved_target_sec,
             )
         except RuntimeError as e:
             # 把 LLM 鉴权/调用失败等关键异常透传到前端展示

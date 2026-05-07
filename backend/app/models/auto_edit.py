@@ -184,6 +184,12 @@ class VoiceoverQuickCutRequest(BaseModel):
         description="asr_fast=仅保留有 ASR 的片段；standard≈asr_fast；semantic=LLM 分块筛选句子；audio_activity_fast=按音频活动(静音检测)粗剪",
     )
     user_prompt: Optional[str] = Field(None, description="智能快剪必填：剪辑诉求，用于 LLM 筛选句子")
+    target_duration_sec: Optional[float] = Field(
+        None,
+        ge=5.0,
+        le=7200.0,
+        description="成片目标总时长（秒）；不设时尝试从 user_prompt 解析（如「2分钟」「120秒」）",
+    )
     allow_overlapping_source_timeline: bool = Field(
         False,
         description="是否允许同一素材视频 (video_id) 下多段成片在源文件绝对时间上重叠（默认否；否时先裁切重叠再合并相接段，跨 clip 用 clip_trims 导出）",

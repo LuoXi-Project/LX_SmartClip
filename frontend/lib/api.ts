@@ -827,6 +827,8 @@ export interface VoiceoverQuickCutRequestApi {
   video_ids: string[]
   strategy: VoiceoverQuickCutStrategyApi
   user_prompt?: string
+  /** 成片目标总时长（秒）；不传时尝试从 user_prompt 解析（如「2分钟」「120秒」），仅 strategy=semantic 时后端使用 */
+  target_duration_sec?: number
   /** 默认 false：同一 video 源绝对时间重叠（含跨 clip）时按成片顺序裁切，避免重复播放 */
   allow_overlapping_source_timeline?: boolean
   /** strategy=audio_activity_fast 时生效：音频活动检测参数 */

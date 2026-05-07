@@ -1014,6 +1014,8 @@ export default function MatchPage() {
     videoIds: string[]
     strategy: VoiceoverQuickCutStrategy
     userPrompt?: string
+    /** 秒；仅智能快剪生效；可与提示词内「2分钟」等同时存在，显式值优先 */
+    targetDurationSec?: number
     allowOverlappingSourceTimeline?: boolean
     audioActivityConfig?: {
       activityDbThreshold: number
@@ -1032,6 +1034,10 @@ export default function MatchPage() {
         video_ids: payload.videoIds,
         strategy: payload.strategy,
         user_prompt: payload.userPrompt,
+        target_duration_sec:
+          typeof payload.targetDurationSec === 'number' && Number.isFinite(payload.targetDurationSec)
+            ? payload.targetDurationSec
+            : undefined,
         allow_overlapping_source_timeline: Boolean(payload.allowOverlappingSourceTimeline),
         activity_db_threshold: payload.audioActivityConfig?.activityDbThreshold,
         activity_min_silence_sec: payload.audioActivityConfig?.activityMinSilenceSec,

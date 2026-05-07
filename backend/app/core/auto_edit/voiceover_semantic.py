@@ -33,6 +33,39 @@ from app.models.auto_edit import (
 
 logger = logging.getLogger(__name__)
 
+
+def _cap_kept_units_to_duration(units: List[SentenceUnit], max_sec: float) -> List[SentenceUnit]:
+    """
+    在保持时间顺序前提下，从末尾删句直到语音时长合计 ≤ max_sec。
+    （合并段落的 BUFFER 可能使成片略超几秒，max_sec 为句子级近似。）
+    """
+    if not units or max_sec <= 0:
+        return units
+    ordered = list(units)
+    total = sum(u.dur for u in ordered)
+    if total <= max_sec + 0.05:
+        return ordered
+    dropped = 0
+    while len(ordered) > 1 and total > max_sec + 0.05:
+        ordered.pop()
+        dropped += 1
+        total = sum(u.dur for u in ordered)
+    if total > max_sec + 0.05 and len(ordered) == 1:
+        logger.warning(
+            "智能快剪时长压制：单句时长 %.1fs 已超过目标 %.1fs，保留该句（请考虑改文案或切 ASR）",
+            total,
+            max_sec,
+        )
+    elif dropped:
+        logger.info(
+            "智能快剪时长压制：目标≤%.1fs，从末尾移除 %d 条句子，剩余约 %.1fs",
+            max_sec,
+            dropped,
+            total,
+        )
+    return ordered
+
+
 # 分块：按 token 上下文预算切批，避免上下文溢出
 MIN_UNITS_PER_CHUNK = 6
 MERGE_GAP_SEC = 0.25
@@ -594,6 +627,7 @@ async def build_semantic_voiceover_plan(
     cfg: dict[str, Any],
     video_title_hint: str | None,
     video_ids_order: Optional[List[str]] = None,
+    target_duration_sec: Optional[float] = None,
 ) -> Plan:
     def _cfg_int(name: str, default: int) -> int:
         try:
@@ -634,11 +668,25 @@ async def build_semantic_voiceover_plan(
     chapter_anchor_min = max(0, _cfg_int("chapter_anchor_min", 1))
     memory_style = _resolve_memory_style(cfg)
 
-    user_prefix_for_chunk = (
-        "【用户诉求】\n"
-        + (user_prompt.strip() if user_prompt else "")
-        + "\n\n【本批句子】\n"
-    )
+    target_cap: Optional[float] = None
+    if target_duration_sec is not None:
+        try:
+            tv = float(target_duration_sec)
+            if tv > 0:
+                target_cap = tv
+        except (TypeError, ValueError):
+            target_cap = None
+
+    raw_up = (user_prompt or "").strip()
+    duration_note = ""
+    if target_cap is not None:
+        duration_note = (
+            f"\n\n【成片时长约束】所选句子的语音时长（各句「结束秒−开始秒」之和）合计不得超过约 {target_cap:.0f} 秒；"
+            "宁可少保留也不要超出；难以取舍时优先保留最贴合诉求、信息密度最高的句子。"
+        )
+    llm_prompt_body = raw_up + duration_note
+
+    user_prefix_for_chunk = "【用户诉求】\n" + llm_prompt_body + "\n\n【本批句子】\n"
 
     llm = LLMClient(
         base_url=cfg["base_url"],
@@ -671,7 +719,7 @@ async def build_semantic_voiceover_plan(
         ]
 
     logger.info(
-        "voiceover semantic long-video mode: units=%d, speech=%.1fs, chapters=%d",
+        "口播快剪（长视频模式）：句子数=%d, 语音时长=%.1fs, 章节数=%d",
         len(ordered_units),
         total_speech,
         len(chapter_windows),
@@ -699,7 +747,7 @@ async def build_semantic_voiceover_plan(
             input_safety_tokens=input_safety_tokens,
         )
         logger.info(
-            "voiceover semantic stage1: %s units=%d chunk(s)=%d",
+            "口播快剪（长视频模式）：%s 分块阶段：句子数=%d 分批数=%d",
             cw.chapter_id,
             len(chapter_units),
             len(chunks),
@@ -709,7 +757,7 @@ async def build_semantic_voiceover_plan(
             async with sem:
                 return await _llm_keep_for_chunk(
                     llm=llm,
-                    user_prompt=user_prompt,
+                    user_prompt=llm_prompt_body,
                     chunk=ch,
                     chunk_index=i,
                     chunk_total=len(chunks),
@@ -749,7 +797,7 @@ async def build_semantic_voiceover_plan(
         chapter_prefix_for_final = (
             f"【章节】{cw.title}（{chapter_range}）\n"
             + "【用户诉求】\n"
-            + (user_prompt.strip() if user_prompt else "")
+            + llm_prompt_body
             + "\n\n【所有候选句子】\n"
         )
         final_chunks = chunk_units_by_token_budget(
@@ -762,7 +810,7 @@ async def build_semantic_voiceover_plan(
             input_safety_tokens=input_safety_tokens,
         )
         logger.info(
-            "voiceover semantic stage2: %s candidate=%d final_chunk(s)=%d",
+            "口播快剪（长视频模式）：%s 合并阶段：候选句子数=%d 分批数=%d",
             cw.chapter_id,
             len(candidate_units),
             len(final_chunks),
@@ -772,7 +820,7 @@ async def build_semantic_voiceover_plan(
             async with sem:
                 return await _llm_keep_for_final_chunk(
                     llm=llm,
-                    user_prompt=user_prompt,
+                    user_prompt=llm_prompt_body,
                     chunk=ch,
                     chunk_index=i,
                     chunk_total=len(final_chunks),
@@ -839,6 +887,12 @@ async def build_semantic_voiceover_plan(
         )
 
     kept_units = [u for u in ordered_units if u.sid in final_kept]
+    if target_cap is not None:
+        pre_dur = sum(u.dur for u in kept_units)
+        kept_units = _cap_kept_units_to_duration(kept_units, target_cap)
+        post_dur = sum(u.dur for u in kept_units)
+        if pre_dur > post_dur + 0.1:
+            final_kept = {u.sid for u in kept_units}
 
     merged_groups = _merge_units_to_segments(kept_units)
     segments: List[SegmentPlan] = []
@@ -876,8 +930,11 @@ async def build_semantic_voiceover_plan(
         )
     vt = (video_title_hint or "").strip()
     title = f"口播快剪（智能）· {vt}" if vt else "口播快剪（智能）"
+    cap_line = ""
+    if target_cap is not None:
+        cap_line = f"目标成片时长约 {target_cap:.0f}s；"
     summary = (
-        f"智能快剪（长视频模式）：按 {len(chapter_windows)} 章分治筛选，"
+        f"智能快剪（长视频模式）：{cap_line}按 {len(chapter_windows)} 章分治筛选，"
         f"最终保留 {len(final_kept)}/{len(units)} 条句子；"
         f"成片约 {total_sec:.1f}s（按上下文预算切批并分章合并）。"
     )
@@ -888,7 +945,7 @@ async def build_semantic_voiceover_plan(
         video_title=vt or None,
         video_description=None,
         mode="original",
-        target_duration_sec=None,
+        target_duration_sec=target_cap,
         estimated_duration_sec=round(total_sec, 2) if total_sec > 0 else None,
         chapters=chapter_meta or None,
         segments=segments,

@@ -68,7 +68,10 @@ export interface MatchPageState {
   /** 链接复刻：模板类型，驱动一键成片模板预设 */
   replicaTemplateType: 'short_video' | 'film_commentary' | 'scene_story' | ''
   autoPlans: AutoEditPlanApi[]
-  autoRealizeDownloads: Record<string, { filename: string; url: string }>
+  autoRealizeDownloads: Record<
+    string,
+    { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
+  >
   autoExpandedPlanIds: string[]
   autoPlanLogs: string[]
   setMatchSegments: (segments: Segment[]) => void
@@ -212,7 +215,10 @@ function mergeLegacyAutoEditCache(persisted: Partial<MatchPageState>): Partial<M
       j.autoRealizeDownloads &&
       typeof j.autoRealizeDownloads === 'object'
     ) {
-      next.autoRealizeDownloads = j.autoRealizeDownloads as Record<string, { filename: string; url: string }>
+      next.autoRealizeDownloads = j.autoRealizeDownloads as Record<
+        string,
+        { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
+      >
     }
     if (
       (!next.autoExpandedPlanIds || next.autoExpandedPlanIds.length === 0) &&
@@ -263,7 +269,10 @@ export const useMatchStore = create<MatchPageState>()(
       replicaTemplateGuide: '',
       replicaTemplateType: '',
       autoPlans: [] as AutoEditPlanApi[],
-      autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
+      autoRealizeDownloads: {} as Record<
+        string,
+        { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
+      >,
       autoExpandedPlanIds: [] as string[],
       autoPlanLogs: [] as string[],
       setMatchSegments: (segments) => set({ segments }),

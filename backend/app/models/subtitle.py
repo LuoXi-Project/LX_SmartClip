@@ -114,6 +114,8 @@ class GenerateSRTResponse(BaseModel):
 class BurnSubtitleResponse(BaseModel):
     filename: str
     url: str
+    jianying_draft_filename: Optional[str] = None
+    jianying_draft_url: Optional[str] = None
 
 
 class BgmTimelineSegment(BaseModel):
@@ -140,6 +142,10 @@ class BurnSubtitleRequest(BaseModel):
     srt_content: str
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     project_name: Optional[str] = "smartclip_subtitled"
+    also_export_jianying_draft: bool = Field(
+        False,
+        description="为 True 时在成片生成后额外导出剪映草稿 ZIP（与成片同源时间轴与素材）",
+    )
     export_backend: Optional[str] = None  # ffmpeg | moviepy（留空则使用 config.export_backend）
     # 默认：成片阶段会按 TTS 校验并在必要时重建时间轴，确保最终对齐配音。
     # 若用户已在前端手动微调时间轴并希望“完全按传入 SRT 烧录”，则置为 True。
@@ -162,6 +168,10 @@ class ExportOriginalRequest(BaseModel):
 
     segments: List[SubtitleSegmentInput]
     style: SubtitleStyle = Field(default_factory=SubtitleStyle)
+    also_export_jianying_draft: bool = Field(
+        False,
+        description="为 True 时在成片生成后额外导出剪映草稿 ZIP",
+    )
     project_name: Optional[str] = "smartclip_original"
     include_subtitle: bool = True
     normalize_audio: bool = True

@@ -14,6 +14,8 @@ export function ExportSidebar({
   onToggleSubtitle,
   srtReady,
   generatingSrt,
+  alsoExportJianyingDraft,
+  onToggleAlsoExportJianyingDraft,
   /** 方案驱动模式（自动 / 模板 / 口播快剪）：隐藏段落进度与底部导出，成片在主区方案卡片 */
   matchMode = 'manual',
 }: {
@@ -27,6 +29,8 @@ export function ExportSidebar({
   onToggleSubtitle: (v: boolean) => void
   srtReady: boolean
   generatingSrt: boolean
+  alsoExportJianyingDraft: boolean
+  onToggleAlsoExportJianyingDraft: (v: boolean) => void
   matchMode?: MatchWorkspaceMode
 }) {
   const readySegs  = segments.filter((s) => s.clips.length > 0)
@@ -80,6 +84,33 @@ export function ExportSidebar({
               </div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* 剪映草稿：手动匹配成片（ZIP 导出不适用） */}
+      {isManualLikeMode(matchMode) && exportMode !== 'zip' && (
+        <div className="px-5 py-3 border-b border-slate-800">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-300 leading-snug">
+              同时导出剪映草稿
+              <span className="block text-[10px] text-slate-500 mt-0.5 font-normal">
+                解压后将草稿文件夹放入剪映草稿目录即可编辑（素材已打包）
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onToggleAlsoExportJianyingDraft(!alsoExportJianyingDraft)}
+              className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${
+                alsoExportJianyingDraft ? 'bg-emerald-600' : 'bg-slate-700'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  alsoExportJianyingDraft ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
         </div>
       )}
 

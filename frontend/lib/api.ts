@@ -419,11 +419,15 @@ export interface BurnSubtitleRequest {
   bgm?: BgmMixConfigApi
   /** 默认 true：从原始完整视频裁剪；false：用预处理 clip */
   materialize_from_source?: boolean
+  /** 成片成功后额外生成剪映草稿 ZIP */
+  also_export_jianying_draft?: boolean
 }
 
 export interface BurnSubtitleResponse {
   filename: string
   url: string
+  jianying_draft_filename?: string | null
+  jianying_draft_url?: string | null
 }
 
 export interface ExportOriginalRequest {
@@ -436,6 +440,8 @@ export interface ExportOriginalRequest {
   bgm?: BgmMixConfigApi
   /** 默认 true：从原始完整视频裁剪；false：用预处理 clip */
   materialize_from_source?: boolean
+  /** 成片成功后额外生成剪映草稿 ZIP */
+  also_export_jianying_draft?: boolean
 }
 
 export interface BgmTimelineSegmentApi {
@@ -858,8 +864,18 @@ export const autoEditApi = {
     style?: import('./subtitle-types').SubtitleStyle
     force_tts_pipeline?: boolean
     tts_align?: TtsVideoAlignConfigApi | null
+    also_export_jianying_draft?: boolean
   }) =>
-    apiClient.post<unknown, { mode: 'voiceover' | 'original'; filename: string; url: string }>('/api/auto-edit/realize', payload),
+    apiClient.post<
+      unknown,
+      {
+        mode: 'voiceover' | 'original'
+        filename: string
+        url: string
+        jianying_draft_filename?: string | null
+        jianying_draft_url?: string | null
+      }
+    >('/api/auto-edit/realize', payload),
 }
 
 /** 文案 + Pexels / 本地素材成片 */

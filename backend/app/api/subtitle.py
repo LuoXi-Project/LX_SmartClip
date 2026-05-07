@@ -35,6 +35,7 @@ from app.core.subtitle.timeline import (
     rule_timeline_weighted_chars,
 )
 from app.core.subtitle.burn import burn_to_mp4
+from app.core.jianying.draft_export import build_jianying_draft_zip
 from app.core.bgm.auto_bgm import apply_bgm_config_postprocess
 
 logger = logging.getLogger(__name__)
@@ -410,6 +411,21 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         "filename": filename,
         "url": storage_public_url_for_file(saved_path),
     }
+    if getattr(req, "also_export_jianying_draft", False):
+        jy_dir = ensure_storage_subpath("jianying_drafts")
+        jy_zip = os.path.join(jy_dir, f"{unique_project_name}_jianying.zip")
+        await run_heavy(
+            build_jianying_draft_zip,
+            segments=req.segments,
+            clip_map=clip_map,
+            mode="tts",
+            srt_entries=srt_entries,
+            tts_audio_dir=TTS_AUDIO_DIR,
+            project_name=unique_project_name,
+            output_zip_path=jy_zip,
+        )
+        result["jianying_draft_filename"] = os.path.basename(jy_zip)
+        result["jianying_draft_url"] = storage_public_url_for_file(jy_zip)
     if req.bgm and req.bgm.enabled:
         mixed_filename, mixed_url = await run_heavy(
             apply_bgm_config_postprocess,
@@ -544,6 +560,21 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         "filename": filename,
         "url": storage_public_url_for_file(saved_path),
     }
+    if getattr(req, "also_export_jianying_draft", False):
+        jy_dir = ensure_storage_subpath("jianying_drafts")
+        jy_zip = os.path.join(jy_dir, f"{unique_project_name}_jianying.zip")
+        await run_heavy(
+            build_jianying_draft_zip,
+            segments=segments_for_burn,
+            clip_map=clip_map,
+            mode="original",
+            srt_entries=srt_entries,
+            tts_audio_dir=TTS_AUDIO_DIR,
+            project_name=unique_project_name,
+            output_zip_path=jy_zip,
+        )
+        result["jianying_draft_filename"] = os.path.basename(jy_zip)
+        result["jianying_draft_url"] = storage_public_url_for_file(jy_zip)
     if req.bgm and req.bgm.enabled:
         mixed_filename, mixed_url = await run_heavy(
             apply_bgm_config_postprocess,
@@ -587,6 +618,15 @@ async def export_original(req: ExportOriginalRequest, request: Request):
 # Route: 下载视频
 # ---------------------------------------------------------------------------
 
+def _find_jianying_zip_file(filename: str) -> str | None:
+    """查找 ``storage/jianying_drafts/<filename>.zip``。"""
+    base = os.path.basename(filename)
+    direct = os.path.join(ensure_storage_subpath("jianying_drafts"), base)
+    if os.path.isfile(direct):
+        return direct
+    return None
+
+
 def _find_burned_export_file(filename: str) -> str | None:
     """在旧版扁平目录或各素材 ``storage/<id>/burned_videos/`` 下查找成片。"""
     base = os.path.basename(filename)
@@ -602,6 +642,24 @@ def _find_burned_export_file(filename: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+@router.get("/download_jianying/{filename}")
+async def download_jianying_zip(filename: str):
+    """下载剪映草稿 ZIP"""
+    filepath = _find_jianying_zip_file(filename)
+    if not filepath:
+        raise HTTPException(404, "文件不存在")
+    encoded_filename = quote(filename)
+    content_disposition = (
+        'attachment; filename="jianying_draft.zip"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
+    return FileResponse(
+        filepath,
+        media_type="application/zip",
+        headers={"Content-Disposition": content_disposition},
+    )
 
 
 @router.get("/download/{filename}")

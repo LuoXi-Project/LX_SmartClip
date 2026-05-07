@@ -93,6 +93,8 @@ export type AutoEditPanelProps = {
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
   /** 口播快剪：隐藏 LLM 规划区，仅保留 BGM 与方案卡片（方案由上方快剪面板生成） */
   hideLlmPlannerUi?: boolean
+  alsoExportJianyingDraft?: boolean
+  onAlsoExportJianyingDraftChange?: (value: boolean) => void
 }
 
 export function AutoEditPanel({
@@ -173,6 +175,8 @@ export function AutoEditPanel({
   onGeneratePlans,
   onRealizePlan,
   hideLlmPlannerUi = false,
+  alsoExportJianyingDraft = false,
+  onAlsoExportJianyingDraftChange,
 }: AutoEditPanelProps) {
   const [detailPlan, setDetailPlan] = useState<{
     plan: AutoEditPlanApi
@@ -300,6 +304,8 @@ export function AutoEditPanel({
           autoRealizingId={autoRealizingId}
           autoRealizeMsg={autoRealizeMsg}
           autoRealizeDownloads={autoRealizeDownloads}
+          alsoExportJianyingDraft={alsoExportJianyingDraft}
+          onAlsoExportJianyingDraftChange={onAlsoExportJianyingDraftChange}
         />
       )}
 

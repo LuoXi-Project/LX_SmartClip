@@ -1040,6 +1040,7 @@ async def realize_auto_edit_plan(
                 style=style,
                 project_name=project_name,
                 tts_align=align_cfg,
+                also_export_jianying_draft=bool(getattr(req, "also_export_jianying_draft", False)),
             )
             burn_res = await execute_burn_subtitle(burn_req)
         else:
@@ -1051,6 +1052,7 @@ async def realize_auto_edit_plan(
                 style=style,
                 project_name=project_name,
                 tts_align=align_cfg,
+                also_export_jianying_draft=bool(getattr(req, "also_export_jianying_draft", False)),
             )
             burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():
@@ -1061,7 +1063,13 @@ async def realize_auto_edit_plan(
             burn_res["filename"],
             burn_res["url"],
         )
-        return AutoEditRealizeResponse(mode="voiceover", filename=final_filename, url=final_url)
+        return AutoEditRealizeResponse(
+            mode="voiceover",
+            filename=final_filename,
+            url=final_url,
+            jianying_draft_filename=burn_res.get("jianying_draft_filename"),
+            jianying_draft_url=burn_res.get("jianying_draft_url"),
+        )
 
     export_req = ExportOriginalRequest(
         segments=seg_inputs,
@@ -1069,6 +1077,7 @@ async def realize_auto_edit_plan(
         project_name=project_name,
         include_subtitle=req.include_subtitle,
         normalize_audio=True,
+        also_export_jianying_draft=bool(getattr(req, "also_export_jianying_draft", False)),
     )
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
@@ -1081,5 +1090,11 @@ async def realize_auto_edit_plan(
         res.get("filename") or "",
         res.get("url") or "",
     )
-    return AutoEditRealizeResponse(mode="original", filename=final_filename, url=final_url)
+    return AutoEditRealizeResponse(
+        mode="original",
+        filename=final_filename,
+        url=final_url,
+        jianying_draft_filename=res.get("jianying_draft_filename"),
+        jianying_draft_url=res.get("jianying_draft_url"),
+    )
 

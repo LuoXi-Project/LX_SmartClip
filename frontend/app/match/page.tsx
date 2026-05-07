@@ -198,6 +198,7 @@ export default function MatchPage() {
   const [generatingSrt, setGeneratingSrt] = useState(false)
   const [srtError, setSrtError] = useState('')
   const [strictUseClientSrt, setStrictUseClientSrt] = useState(false)
+  const [alsoExportJianyingDraft, setAlsoExportJianyingDraft] = useState(false)
   const [previewVideoSize, setPreviewVideoSize] = useState<{ width: number; height: number } | null>(null)
   const [resultOpen, setResultOpen] = useState(false)
   const [replicaTemplateRefreshSignal, setReplicaTemplateRefreshSignal] = useState(0)
@@ -682,12 +683,20 @@ export default function MatchPage() {
           export_backend: exportBackend,
           strict_use_client_srt: strictUseClientSrt,
           bgm: buildManualBgmPayload(),
+          also_export_jianying_draft: alsoExportJianyingDraft,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
         a.href = downloadUrl
         a.download = res.filename
         a.click()
+        if (res.jianying_draft_filename) {
+          const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.jianying_draft_filename)}`
+          const a2 = document.createElement('a')
+          a2.href = jyUrl
+          a2.download = res.jianying_draft_filename
+          a2.click()
+        }
       } else if (exportMode === 'original') {
         const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
         if (exportSegs.length === 0) return
@@ -713,12 +722,20 @@ export default function MatchPage() {
           normalize_audio: true,
           export_backend: exportBackend,
           bgm: buildManualBgmPayload(),
+          also_export_jianying_draft: alsoExportJianyingDraft,
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
         a.href = downloadUrl
         a.download = res.filename
         a.click()
+        if (res.jianying_draft_filename) {
+          const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.jianying_draft_filename)}`
+          const a2 = document.createElement('a')
+          a2.href = jyUrl
+          a2.download = res.jianying_draft_filename
+          a2.click()
+        }
       }
     } catch (e: unknown) {
       setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
@@ -1097,11 +1114,21 @@ export default function MatchPage() {
         include_subtitle: subtitleEnabled,
         style: subtitleStyle,
         ...(forceTtsPipeline ? { force_tts_pipeline: true, tts_align: ttsAlignPayload } : {}),
+        also_export_jianying_draft: alsoExportJianyingDraft,
       })
       const downloadUrl = `${API_BASE_URL}${res.url}`
+      const jyFn = res.jianying_draft_filename
+      const jyUrl = jyFn
+        ? `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(jyFn)}`
+        : undefined
       setAutoRealizeDownloads((prev) => ({
         ...prev,
-        [plan.plan_id]: { filename: res.filename, url: downloadUrl },
+        [plan.plan_id]: {
+          filename: res.filename,
+          url: downloadUrl,
+          jianyingDraftFilename: jyFn ?? undefined,
+          jianyingDraftUrl: jyUrl,
+        },
       }))
       setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
     } catch (e: unknown) {
@@ -1121,6 +1148,8 @@ export default function MatchPage() {
         exporting={exporting} exportError={exportError} onExport={handleExport}
         subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
         srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
+        alsoExportJianyingDraft={alsoExportJianyingDraft}
+        onToggleAlsoExportJianyingDraft={setAlsoExportJianyingDraft}
         matchMode={mode}
       />
       <div className="pr-64">
@@ -1306,6 +1335,8 @@ export default function MatchPage() {
               }}
               onGeneratePlans={handleGenerateAutoPlans}
               onRealizePlan={handleAutoRealizePlan}
+              alsoExportJianyingDraft={alsoExportJianyingDraft}
+              onAlsoExportJianyingDraftChange={setAlsoExportJianyingDraft}
             />
             </>
           ) : mode === 'voiceover' ? (
@@ -1441,6 +1472,8 @@ export default function MatchPage() {
                 subtitleEnabled={subtitleEnabled}
                 onGeneratePlans={() => {}}
                 onRealizePlan={handleAutoRealizePlan}
+                alsoExportJianyingDraft={alsoExportJianyingDraft}
+                onAlsoExportJianyingDraftChange={setAlsoExportJianyingDraft}
               />
             </>
           ) : (

@@ -22,7 +22,10 @@ export type AutoEditPlanCardProps = {
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
   autoRealizingId: string | null
   autoRealizeMsg: string
-  autoRealizeDownloads: Record<string, { filename: string; url: string }>
+  autoRealizeDownloads: Record<
+    string,
+    { filename: string; url: string; jianyingDraftFilename?: string; jianyingDraftUrl?: string }
+  >
 }
 
 export function AutoEditPlanCard({
@@ -239,15 +242,29 @@ export function AutoEditPlanCard({
         </button>
         {autoRealizeMsg && <p className="text-[11px] text-emerald-300/80">{autoRealizeMsg}</p>}
         {autoRealizeDownloads[p.plan_id] && (
-          <a
-            href={autoRealizeDownloads[p.plan_id].url}
-            download={autoRealizeDownloads[p.plan_id].filename}
-            target="_blank"
-            rel="noreferrer"
-            className="block text-[11px] text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
-          >
-            下载成片：{autoRealizeDownloads[p.plan_id].filename}
-          </a>
+          <div className="space-y-1">
+            <a
+              href={autoRealizeDownloads[p.plan_id].url}
+              download={autoRealizeDownloads[p.plan_id].filename}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-[11px] text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+            >
+              下载成片：{autoRealizeDownloads[p.plan_id].filename}
+            </a>
+            {autoRealizeDownloads[p.plan_id].jianyingDraftUrl ? (
+              <a
+                href={autoRealizeDownloads[p.plan_id].jianyingDraftUrl}
+                download={autoRealizeDownloads[p.plan_id].jianyingDraftFilename}
+                target="_blank"
+                rel="noreferrer"
+                className="block text-[11px] text-emerald-300/90 hover:text-emerald-200 underline underline-offset-2"
+              >
+                下载剪映草稿：
+                {autoRealizeDownloads[p.plan_id].jianyingDraftFilename || 'draft.zip'}
+              </a>
+            ) : null}
+          </div>
         )}
       </div>
     </div>

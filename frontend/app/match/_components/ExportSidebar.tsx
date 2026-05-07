@@ -62,7 +62,10 @@ export function ExportSidebar({
     <div className="fixed right-0 top-0 h-screen w-64 bg-[#0b0d12] border-l border-slate-800 flex flex-col z-40 shadow-2xl">
       {/* header */}
       <div className="px-5 pt-6 pb-4 border-b border-slate-800">
-        <p className="text-xs font-semibold text-slate-300 uppercase tracking-widest">导出成片</p>
+        <p className="text-xs font-semibold text-slate-300 uppercase tracking-widest">导出</p>
+        <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+          成片 MP4 与剪映草稿 ZIP 请分开选择，勿混在同一轮导出。
+        </p>
       </div>
 
       {/* progress — 仅手动匹配（段落级） */}
@@ -95,6 +98,23 @@ export function ExportSidebar({
           ))}
         </div>
       )}
+
+      {/* 剪映草稿：与一键成片 / 原声成片互斥，仅 ZIP */}
+      {isManualLikeMode(matchMode) &&
+        (exportMode === 'jianying_tts' || exportMode === 'jianying_original') && (
+          <div className="px-5 py-3 border-b border-slate-800 space-y-1.5">
+            <p className="text-xs font-medium text-emerald-200/90">剪映草稿说明</p>
+            <ul className="text-[10px] text-slate-400 leading-relaxed list-disc list-inside space-y-0.5">
+              <li>不调用 ffmpeg 烧录，只生成可导入剪映的草稿包（ZIP）。</li>
+              <li>
+                {exportMode === 'jianying_tts'
+                  ? '需各段配音已就绪；字幕时间轴与「一键成片」同源逻辑。'
+                  : '按已选素材拼接时间轴；字幕是否进草稿由下方「添加字幕」开关决定。'}
+              </li>
+              <li>解压后请按包内说明运行路径修补脚本，再将草稿文件夹放入剪映草稿目录。</li>
+            </ul>
+          </div>
+        )}
 
       {/* 添加字幕：方案模式在主内容区；此处仅服务手动匹配（zip 时隐藏） */}
       {isManualLikeMode(matchMode) && exportMode !== 'zip' && (
@@ -133,7 +153,7 @@ export function ExportSidebar({
           <p className="text-[11px] text-slate-500 leading-snug text-center">
             {matchMode === 'script_stock'
               ? '文案素材成片：选好素材与配音模式后，使用「合成配音成片」导出（含 TTS / 原声 / 混合；文件在 storage/stock_media/exports）。'
-              : '自动 / 模板 / 口播快剪：在主工作区生成并微调方案后，于方案卡片使用「一键成片」导出（口播快剪接口接入后与此一致）。'}
+              : '自动 / 模板 / 口播快剪：方案卡片上「一键成片」导出 MP4；「仅导出剪映草稿」单独生成 ZIP，二者互斥、勿同时当作一步完成。'}
           </p>
         ) : (
           <>

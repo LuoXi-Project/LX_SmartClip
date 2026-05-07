@@ -63,6 +63,9 @@ export function AutoEditCandidatesSection({
       <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
         候选方案 · {autoPlans.length} 个
       </p>
+      <p className="text-[10px] text-slate-500 leading-relaxed">
+        「一键成片」仅输出 MP4；「仅导出剪映草稿」单独请求 ZIP。二者互斥，需各点一次；草稿解压后请按包内说明修补路径再导入剪映。
+      </p>
 
       <AutoEditPreviewPanel
         selectedPreview={selectedPreview}

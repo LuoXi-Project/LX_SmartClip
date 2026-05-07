@@ -1712,6 +1712,44 @@ export default function MatchPage() {
                     </ol>
                   </div>
                 )}
+
+                {exportMode === 'jianying_tts' && readySegs.length > 0 && (
+                  <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-200/95 space-y-1">
+                    <p className="font-semibold">✂️ 剪映草稿（配音轨）</p>
+                    <p className="text-emerald-200/75 text-[11px] leading-relaxed">
+                      与侧栏「一键成片」互斥：本模式只打包剪映工程与素材引用，不生成 MP4。
+                    </p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-emerald-200/70">
+                      <li>各段须已合成 TTS；导出时按需生成与成片一致的字幕时间轴</li>
+                      <li>后端生成 ZIP，浏览器下载后解压</li>
+                      <li>按包内「路径说明」运行 patch 脚本，修正为本机绝对路径后再用剪映打开</li>
+                    </ol>
+                    {generatingSrt && subtitleEnabled && (
+                      <p className="flex items-center gap-2 text-amber-400/90 mt-1 text-[11px]">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        正在生成字幕时间轴（用于草稿字幕轨）…
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {exportMode === 'jianying_original' && readySegs.length > 0 && (
+                  <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-200/95 space-y-1">
+                    <p className="font-semibold">✂️ 剪映草稿（原声轨）</p>
+                    <p className="text-emerald-200/75 text-[11px] leading-relaxed">
+                      与侧栏「原声成片」互斥：仅 ZIP，不拼接/不烧录成片 MP4。
+                    </p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-emerald-200/70">
+                      <li>仅导出已勾选素材段落；时间轴按素材时长与侧栏「原声成片」同源逻辑</li>
+                      <li>
+                        {subtitleEnabled
+                          ? '草稿内可含字幕轨（文案按句/换行映射到各段时长）'
+                          : '不写入字幕轨，仅视频与原生音频时间线'}
+                      </li>
+                      <li>解压后同样需路径修补再导入剪映草稿目录</li>
+                    </ol>
+                  </div>
+                )}
               </>
             }
           />

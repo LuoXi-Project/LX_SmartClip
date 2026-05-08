@@ -235,11 +235,28 @@ def build_jianying_draft_zip(
     try:
         import pyJianYingDraft as draft
         from pyJianYingDraft import TrackType, VideoSegment, AudioSegment
+        from pyJianYingDraft.local_materials import VideoMaterial
         from pyJianYingDraft.time_util import Timerange
     except ImportError as e:
         raise RuntimeError("未安装 pyJianYingDraft，无法导出剪映草稿") from e
 
     from app.utils.ffprobe_utils import probe_duration
+
+    def _jy_material_total_us(mat_path: str, fallback_sec: float) -> int:
+        """
+        与 VideoSegment 内部校验使用同一套时长来源（VideoMaterial / pymediainfo）。
+        若仍用 ffprobe 当上限，常会多出几毫秒而触发「截取超出素材时长」；最终用户不应靠改代码规避。
+        """
+        try:
+            vm = VideoMaterial(mat_path)
+            if getattr(vm, "material_type", "") == "photo":
+                return max(1, int(round(max(fallback_sec, 0.05) * SEC)))
+            return max(1, int(vm.duration))
+        except Exception as ex:
+            logger.warning("VideoMaterial 时长失败，回退 ffprobe: %s", ex)
+            probe_us = int(round(max(fallback_sec, 0.05) * SEC))
+            guard_us = min(120_000, max(40_000, probe_us // 30))
+            return max(probe_us - guard_us, 1)
 
     if not segments:
         raise ValueError("segments 不能为空")
@@ -295,10 +312,15 @@ def build_jianying_draft_zip(
             starts_sec.append(acc)
             acc += float(d or 0.0)
 
+        # 主轨视频实际结束微秒；与 resolve_durations 计划起点若有漂移则后移起点，避免 SegmentOverlap
+        main_video_tail_us = 0
+
         for seg_idx, seg in enumerate(segments):
-            seg_start_us = int(round(starts_sec[seg_idx] * SEC))
             seg_dur_sec = float(seg_durs[seg_idx] or 0.0)
-            seg_end_us = seg_start_us + max(0, int(round(seg_dur_sec * SEC)))
+            seg_window_us = max(0, int(round(seg_dur_sec * SEC)))
+            seg_start_planned_us = int(round(starts_sec[seg_idx] * SEC))
+            seg_start_us = max(seg_start_planned_us, main_video_tail_us)
+            seg_end_us = seg_start_us + seg_window_us
             trims = _seg_trims(seg)
             if not trims:
                 raise ValueError(f"第 {seg_idx + 1} 段缺少 clip_trims/clip_id")
@@ -326,16 +348,23 @@ def build_jianying_draft_zip(
                 natural_dur_us = int(round(float(duration_sec) * SEC))
                 src_start_us = int(round(float(cs) * SEC))
 
-                # 截取越界则自动压到「从入点到素材总长」的最大可用长度（pyJianYing 要求 start+duration ≤ 素材时长）
-                cap_sec = float(info.get("dur") or 0.0)
+                cap_sec = float(
+                    probe_duration(mat_path, log_on_failure=True)
+                    or probe_duration(src_clip, log_on_failure=True)
+                    or info.get("dur")
+                    or 0.0
+                )
                 if cap_sec <= 0.02:
-                    cap_sec = float(probe_duration(src_clip, log_on_failure=True) or 5.0)
-                mat_total_us = max(int(round(max(cap_sec, 0.05) * SEC)), 1)
+                    cap_sec = 5.0
+                mat_total_us = _jy_material_total_us(mat_path, cap_sec)
+                src_start_us = max(0, min(src_start_us, max(0, mat_total_us - 1)))
                 max_span_us = max(0, mat_total_us - src_start_us)
-                natural_dur_us = min(natural_dur_us, max_span_us)
+                natural_dur_us = min(max(natural_dur_us, 0), max_span_us)
 
                 # 必须落在「本段成片时间窗」内，避免主轨与下一段重叠（与 TTS / resolve_durations 一致）
                 target_dur_us = min(natural_dur_us, remaining_us)
+                # 与主轨等长：源截取时长不得超过 target；否则 pyJianYing 仍按 natural 校验会越界，且变速语义也不应误触发
+                target_dur_us = min(target_dur_us, max_span_us)
                 if target_dur_us < 1000:
                     break
 
@@ -343,11 +372,13 @@ def build_jianying_draft_zip(
                 vs = VideoSegment(
                     mat_path,
                     Timerange(cursor_us, target_dur_us),
-                    source_timerange=Timerange(src_start_us, natural_dur_us),
+                    source_timerange=Timerange(src_start_us, target_dur_us),
                     volume=vol,
                 )
                 script.add_segment(vs)
                 cursor_us += target_dur_us
+
+            main_video_tail_us = max(main_video_tail_us, cursor_us)
 
             if mode == "tts":
                 tts_name = getattr(seg, "tts_filename", None)

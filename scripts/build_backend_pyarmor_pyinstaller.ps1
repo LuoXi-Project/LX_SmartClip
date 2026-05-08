@@ -196,6 +196,7 @@ try {
             "json_repair"
             "faiss"
             "yt_dlp"
+            "pyJianYingDraft"
         )
 
         $CollectAll = @(
@@ -216,6 +217,7 @@ try {
             "scenedetect"
             "faiss"
             "yt_dlp"
+            "pyJianYingDraft"
         )
 
         # PyInstaller：把 pip 包的元数据目录打进包，供 importlib.metadata 查询版本
@@ -231,6 +233,8 @@ try {
             "uvicorn.__main__"
             "secret"
             "yt_dlp"
+            "pyJianYingDraft"
+            "pyJianYingDraft.time_util"
         )
 
         $ForceCollectArgs = @()

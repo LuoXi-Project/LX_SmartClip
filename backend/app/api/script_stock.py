@@ -16,8 +16,10 @@ from app.api.tts import TTS_AUDIO_DIR, synthesize
 from app.core.blocking_pool import run_heavy
 from app.core.llm import LLMClient, LLMConfig
 from app.core.script_stock.compose import compose_stock_video_sync, is_under_pexels_download_dir
+from app.core.script_stock.jianying_export import build_script_stock_jianying_zip_sync
 from app.db.database import DB_PATH
 from app.models.tts import SynthesizeRequest
+from app.models.subtitle import JianYingDraftExportResponse, SubtitleStyle
 from app.models.script_stock import (
     PexelsVideoFile,
     PexelsVideoSummary,
@@ -657,4 +659,99 @@ async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeRes
         filename=os.path.basename(final_abs),
         public_url=storage_public_url_for_file(final_abs),
         stored_rel_path=rel,
+    )
+
+
+@router.post("/export-jianying-draft", response_model=JianYingDraftExportResponse)
+async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYingDraftExportResponse:
+    """
+    仅导出剪映草稿 ZIP（不渲染成片 MP4）。
+    请求体与 ``/compose`` 一致；``tts_only`` / ``mix`` 时各段须填写文案以便生成 TTS（与成片侧「静音段」策略不同）。
+    ``mix`` 草稿仅保留 TTS 主解说轨，成片中的「混合原声」需在剪映内自行叠加。
+    """
+    if not req.segments:
+        raise HTTPException(400, "segments 不能为空")
+
+    if req.audio_mode in ("tts_only", "mix"):
+        for idx, seg in enumerate(req.segments):
+            if not (seg.text or "").strip():
+                raise HTTPException(
+                    400,
+                    f"导出剪映草稿（配音轨）时，第 {idx + 1} 段须填写配音文案（与「成片可含静音段」不同）。",
+                )
+
+    if req.audio_mode != "tts_only":
+        for seg in req.segments:
+            if seg.kind == "library":
+                n = len([x for x in (seg.library_video_ids or []) if str(x).strip()])
+                if n > 1:
+                    raise HTTPException(
+                        400,
+                        "多段本地素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
+                    )
+            elif seg.kind == "pexels":
+                rels = [str(x).strip() for x in (seg.pexels_stored_rel_paths or []) if str(x).strip()]
+                n = len(rels) if rels else (1 if (seg.stored_rel_path or "").strip() else 0)
+                if n > 1:
+                    raise HTTPException(
+                        400,
+                        "多段 Pexels 素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
+                    )
+
+    tts_paths: List[Optional[str]] = []
+    if req.audio_mode in ("tts_only", "mix"):
+        for seg in req.segments:
+            txt = (seg.text or "").strip()
+            if not txt:
+                tts_paths.append(None)
+                continue
+            try:
+                res = await synthesize(
+                    SynthesizeRequest(
+                        text=txt,
+                        voice=req.tts_voice,
+                        rate=req.tts_rate,
+                        volume=req.tts_volume,
+                    )
+                )
+                tts_paths.append(os.path.join(TTS_AUDIO_DIR, res.filename))
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.exception("script-stock jianying TTS failed")
+                raise HTTPException(500, detail=f"TTS 合成失败: {e}") from e
+    else:
+        tts_paths = [None] * len(req.segments)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        rows = await _resolve_compose_rows(db, req)
+
+    base_name = (req.project_name or "stock_clip").replace(" ", "_")[:80]
+    unique = f"{base_name}_jy_{uuid.uuid4().hex[:10]}"
+    jy_dir = ensure_storage_subpath("jianying_drafts")
+    jy_zip = os.path.join(jy_dir, f"{unique}_jianying.zip")
+
+    try:
+        await run_heavy(
+            build_script_stock_jianying_zip_sync,
+            segment_rows=rows,
+            tts_paths=tts_paths,
+            segment_texts=[(s.text or "") for s in req.segments],
+            audio_mode=req.audio_mode,
+            timeline_mode=req.timeline_mode,
+            include_subtitle=bool(req.include_subtitle),
+            subtitle_style=req.subtitle_style or SubtitleStyle(),
+            project_name=unique,
+            tts_audio_dir=TTS_AUDIO_DIR,
+            output_zip_path=jy_zip,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("export_jianying_draft_stock failed")
+        raise HTTPException(500, detail=f"剪映草稿导出失败: {e}") from e
+
+    return JianYingDraftExportResponse(
+        filename=os.path.basename(jy_zip),
+        url=storage_public_url_for_file(jy_zip),
     )

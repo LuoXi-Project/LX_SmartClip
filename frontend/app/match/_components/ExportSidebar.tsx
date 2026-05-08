@@ -152,7 +152,7 @@ export function ExportSidebar({
         {isAutoLikeMode(matchMode) ? (
           <p className="text-[11px] text-slate-500 leading-snug text-center">
             {matchMode === 'script_stock'
-              ? '文案素材成片：选好素材与配音模式后，使用「合成配音成片」导出（含 TTS / 原声 / 混合；文件在 storage/stock_media/exports）。'
+              ? '文案素材成片：主区「合成配音成片」导出 MP4；「导出剪映草稿」单独生成 ZIP（与成片互斥）。自动 / 模板 / 口播快剪：方案卡片上同样分「一键成片」与「仅导出剪映草稿」。'
               : '自动 / 模板 / 口播快剪：方案卡片上「一键成片」导出 MP4；「仅导出剪映草稿」单独生成 ZIP，二者互斥、勿同时当作一步完成。'}
           </p>
         ) : (

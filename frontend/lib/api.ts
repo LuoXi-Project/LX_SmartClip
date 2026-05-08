@@ -1000,6 +1000,24 @@ export const scriptStockApi = {
       '/api/script-stock/compose',
       body,
     ),
+  /** 请求体与 compose 相同；仅生成剪映草稿 ZIP（下载走 /api/subtitle/download_jianying/） */
+  exportJianyingDraft: (body: {
+    segments: ScriptStockComposeSegmentApi[]
+    project_name?: string
+    audio_mode?: ScriptStockAudioMode
+    tts_volume_db?: number
+    original_volume_db?: number
+    tts_voice?: string | null
+    tts_rate?: string | null
+    tts_volume?: string | null
+    timeline_mode?: ScriptStockTimelineMode
+    video_extend_policy?: ScriptStockVideoExtendPolicy
+    material_tts_fill?: ScriptStockMaterialTtsFill
+    material_tts_longer?: ScriptStockMaterialTtsLonger
+    include_subtitle?: boolean
+    subtitle_style?: SubtitleStyle
+  }) =>
+    apiClient.post<unknown, JianYingDraftExportResponseApi>('/api/script-stock/export-jianying-draft', body),
 }
 
 // BGM 音乐库管理

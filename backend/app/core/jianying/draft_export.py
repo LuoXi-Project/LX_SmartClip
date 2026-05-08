@@ -319,11 +319,20 @@ def build_jianying_draft_zip(
                     raise FileNotFoundError(f"素材不存在: {cid}")
 
                 mat_path = _copy_into_materials(src_clip, materials_dir, path_cache)
+
                 duration_sec = du
                 if duration_sec <= 0:
-                    duration_sec = float(info.get("dur") or probe_duration(mat_path, log_on_failure=True) or 5.0)
+                    duration_sec = float(info.get("dur") or probe_duration(src_clip, log_on_failure=True) or 5.0)
                 natural_dur_us = int(round(float(duration_sec) * SEC))
                 src_start_us = int(round(float(cs) * SEC))
+
+                # 截取越界则自动压到「从入点到素材总长」的最大可用长度（pyJianYing 要求 start+duration ≤ 素材时长）
+                cap_sec = float(info.get("dur") or 0.0)
+                if cap_sec <= 0.02:
+                    cap_sec = float(probe_duration(src_clip, log_on_failure=True) or 5.0)
+                mat_total_us = max(int(round(max(cap_sec, 0.05) * SEC)), 1)
+                max_span_us = max(0, mat_total_us - src_start_us)
+                natural_dur_us = min(natural_dur_us, max_span_us)
 
                 # 必须落在「本段成片时间窗」内，避免主轨与下一段重叠（与 TTS / resolve_durations 一致）
                 target_dur_us = min(natural_dur_us, remaining_us)

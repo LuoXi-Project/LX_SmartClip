@@ -135,6 +135,7 @@ export function ScriptStockPanel({
   const [segments, setSegments] = useState<StockSegState[]>([])
   const [projectName, setProjectName] = useState('文案素材成片')
   const [composing, setComposing] = useState(false)
+  const [jianyingExporting, setJianyingExporting] = useState(false)
   /** 最近一次合成成功的完整访问 URL（弹窗被拦时仍可复制） */
   const [lastComposeUrl, setLastComposeUrl] = useState<string | null>(null)
   const [lastComposeFilename, setLastComposeFilename] = useState<string | null>(null)
@@ -478,21 +479,21 @@ export function ScriptStockPanel({
     }
   }
 
-  const handleCompose = async () => {
+  function buildComposePayload(): ScriptStockComposeSegmentApi[] | null {
     if (!segments.length) {
       toast.error('请先准备分段与素材')
-      return
+      return null
     }
     const payload: ScriptStockComposeSegmentApi[] = []
     for (const s of segments) {
       if (s.sourceTab === 'local') {
         if (!s.localVideoIds.length) {
           toast.error('存在未选择本地视频的段落')
-          return
+          return null
         }
         if (s.localVideoIds.length > 1 && audioMode !== 'tts_only') {
           toast.error('多段本地素材按顺序拼接仅支持「仅 TTS」；请改为单条或切换为仅 TTS。')
-          return
+          return null
         }
         const slotTrims =
           s.libraryTrimSlots ?? s.localVideoIds.map((id) => defaultLibraryTrimForVideo(libraryVideos, id))
@@ -505,7 +506,7 @@ export function ScriptStockPanel({
       } else {
         if (!s.pexelsStoredRelPaths.length) {
           toast.error('存在未选用 Pexels 素材的段落（请先下载并在卡片上勾选，顺序为成片拼接顺序）')
-          return
+          return null
         }
         payload.push({
           kind: 'pexels',
@@ -516,8 +517,14 @@ export function ScriptStockPanel({
     }
     if ((audioMode === 'tts_only' || audioMode === 'mix') && payload.every((p) => !p.text)) {
       toast.error('当前模式需要配音文案：请在各段填写文案，或改用「仅素材原声」')
-      return
+      return null
     }
+    return payload
+  }
+
+  const handleCompose = async () => {
+    const payload = buildComposePayload()
+    if (!payload) return
     setComposing(true)
     try {
       const res = await scriptStockApi.compose({
@@ -547,6 +554,46 @@ export function ScriptStockPanel({
     }
   }
 
+  const handleExportJianyingDraft = async () => {
+    const payload = buildComposePayload()
+    if (!payload) return
+    if (audioMode === 'tts_only' || audioMode === 'mix') {
+      for (let i = 0; i < payload.length; i++) {
+        if (!(payload[i].text || '').trim()) {
+          toast.error(`导出剪映草稿（配音轨）时，第 ${i + 1} 段须填写配音文案（不可留空）。`)
+          return
+        }
+      }
+    }
+    setJianyingExporting(true)
+    try {
+      const res = await scriptStockApi.exportJianyingDraft({
+        segments: payload,
+        project_name: projectName.trim() || 'stock_clip',
+        audio_mode: audioMode,
+        tts_volume_db: ttsVolumeDb,
+        original_volume_db: originalVolumeDb,
+        timeline_mode: timelineMode,
+        video_extend_policy: videoExtendPolicy,
+        material_tts_fill: materialTtsFill,
+        material_tts_longer: materialTtsLonger,
+        include_subtitle: subtitleEnabled,
+        subtitle_style: subtitleEnabled ? (subtitleStyle ?? DEFAULT_SUBTITLE_STYLE) : undefined,
+      })
+      const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+      const a = document.createElement('a')
+      a.href = jyUrl
+      a.download = res.filename
+      a.rel = 'noopener noreferrer'
+      a.click()
+      toast.success('剪映草稿已生成并开始下载')
+    } catch (e) {
+      toast.error(formatFastApiDetail(e))
+    } finally {
+      setJianyingExporting(false)
+    }
+  }
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -557,7 +604,8 @@ export function ScriptStockPanel({
           </p>
           <p className="text-[11px] text-slate-500 leading-relaxed max-w-xl">
             为每一段匹配画面并合成<strong className="text-slate-300"> TTS 配音</strong>
-            （下方可选仅配音 / 仅原声 / 混合及分贝调节）。本地与 <strong className="text-slate-300">Pexels</strong>{' '}
+            （下方可选仅配音 / 仅原声 / 混合及分贝调节）。可与「合成配音成片」分开使用<strong className="text-slate-300"> 导出剪映草稿</strong>
+            （仅 ZIP，不渲染 MP4；配音轨模式下每段须填文案）。本地与 <strong className="text-slate-300">Pexels</strong>{' '}
             均为卡片多选、角标为拼接顺序（与手动匹配一致）；<strong className="text-slate-300">Shift+点击</strong>
             可在同组内再叠一段相同素材。成片画面时长由下方「以配音为准 / 以素材为准」及延伸策略决定，始终使用所选素材的完整画面（无额外截取秒数）。
             Pexels 已下载会显示「已缓存」，可在上方缓存区管理删除。
@@ -1270,24 +1318,40 @@ export function ScriptStockPanel({
             )}
           </div>
 
-          <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
-            <div className="flex-1 space-y-1">
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider">成片文件名前缀</label>
-              <input
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200"
-              />
+          <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+              <div className="flex-1 space-y-1">
+                <label className="text-[10px] text-slate-500 uppercase tracking-wider">成片文件名前缀</label>
+                <input
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+                />
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={composing || jianyingExporting}
+                  onClick={() => void handleCompose()}
+                  className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-sm font-semibold"
+                >
+                  {composing ? <Loader2 className="w-5 h-5 animate-spin inline mr-2" /> : null}
+                  合成配音成片
+                </button>
+                <button
+                  type="button"
+                  disabled={composing || jianyingExporting}
+                  onClick={() => void handleExportJianyingDraft()}
+                  className="px-6 py-3 rounded-xl border border-teal-500/60 bg-teal-500/15 hover:bg-teal-500/25 disabled:opacity-50 text-teal-100 text-sm font-semibold"
+                >
+                  {jianyingExporting ? <Loader2 className="w-5 h-5 animate-spin inline mr-2" /> : null}
+                  导出剪映草稿
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              disabled={composing}
-              onClick={() => void handleCompose()}
-              className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-sm font-semibold shrink-0"
-            >
-              {composing ? <Loader2 className="w-5 h-5 animate-spin inline mr-2" /> : null}
-              合成配音成片
-            </button>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              混合模式下草稿仅含 TTS 解说轨（不含成片里的素材原声混合），可在剪映内再叠原声；解压后请按包内说明修补素材路径。
+            </p>
           </div>
         </div>
       )}

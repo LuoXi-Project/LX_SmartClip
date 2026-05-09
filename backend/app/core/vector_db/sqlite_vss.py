@@ -100,33 +100,38 @@ class SQLiteVSSDB(IVectorDB):
             conn = self._get_connection()
             vec_json = json.dumps(embedding)
 
-            # 搜索时获取足够多的候选，再做过滤
-            fetch_k = top_k * 5 if video_ids else top_k
-
-            rows = conn.execute(
-                f"""
-                SELECT m.clip_id
-                FROM clip_embeddings v
-                JOIN clip_embeddings_mapping m ON v.rowid = m.rowid
-                WHERE vss_search(v.embedding, vss_search_params(?, {fetch_k}))
-                ORDER BY vss_distance_l2(v.embedding, ?) 
-                LIMIT ?
-                """,
-                (vec_json, vec_json, fetch_k),
-            ).fetchall()
-
-            clip_ids = [r["clip_id"] for r in rows]
-
-            # 按 video_ids 过滤
-            if video_ids and clip_ids:
-                placeholders_c = ",".join("?" * len(clip_ids))
-                placeholders_v = ",".join("?" * len(video_ids))
-                filtered = conn.execute(
-                    f"SELECT id FROM clips WHERE id IN ({placeholders_c}) AND video_id IN ({placeholders_v})",
-                    clip_ids + video_ids,
+            def _search_with_limit(limit_k: int) -> List[str]:
+                fk = max(int(limit_k), top_k)
+                rows = conn.execute(
+                    f"""
+                    SELECT m.clip_id
+                    FROM clip_embeddings v
+                    JOIN clip_embeddings_mapping m ON v.rowid = m.rowid
+                    WHERE vss_search(v.embedding, vss_search_params(?, {fk}))
+                    ORDER BY vss_distance_l2(v.embedding, ?) 
+                    LIMIT ?
+                    """,
+                    (vec_json, vec_json, fk),
                 ).fetchall()
-                filtered_set = {r[0] for r in filtered}
-                clip_ids = [cid for cid in clip_ids if cid in filtered_set]
+                cids = [r["clip_id"] for r in rows]
+                if video_ids and cids:
+                    placeholders_c = ",".join("?" * len(cids))
+                    placeholders_v = ",".join("?" * len(video_ids))
+                    filtered = conn.execute(
+                        f"SELECT id FROM clips WHERE id IN ({placeholders_c}) AND video_id IN ({placeholders_v})",
+                        cids + video_ids,
+                    ).fetchall()
+                    filtered_set = {r[0] for r in filtered}
+                    cids = [cid for cid in cids if cid in filtered_set]
+                return cids
+
+            fetch_k = top_k * 5 if video_ids else top_k
+            clip_ids = _search_with_limit(fetch_k)
+            if video_ids and not clip_ids:
+                cnt_row = conn.execute("SELECT COUNT(*) AS c FROM clip_embeddings_mapping").fetchone()
+                fetch_all = int(cnt_row["c"]) if cnt_row else fetch_k
+                logger.info("向量搜索: video_ids 过滤后为空，扩大检索至 %s", fetch_all)
+                clip_ids = _search_with_limit(max(fetch_all, top_k))
 
             result = clip_ids[:top_k]
             logger.info(f"向量搜索完成: 返回 {len(result)} 个结果")

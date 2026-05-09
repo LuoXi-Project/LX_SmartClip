@@ -90,29 +90,37 @@ class FaissVectorDB(IVectorDB):
         if not self._clip_ids:
             return []
 
-        fetch_k = min(top_k * 5 if video_ids else top_k, len(self._clip_ids))
         query = np.array([embedding], dtype="float32")
-        _distances, indices = self._index.search(query, fetch_k)
 
-        clip_ids = []
-        for idx in indices[0].tolist():
-            if idx == -1:
-                continue
-            clip_ids.append(self._clip_ids[idx])
+        def _search_filtered(fetch_k: int) -> List[str]:
+            fk = min(max(int(fetch_k), 1), len(self._clip_ids))
+            _distances, indices = self._index.search(query, fk)
+            cids: List[str] = []
+            for idx in indices[0].tolist():
+                if idx == -1:
+                    continue
+                cids.append(self._clip_ids[idx])
+            if video_ids and cids:
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    placeholders_c = ",".join("?" * len(cids))
+                    placeholders_v = ",".join("?" * len(video_ids))
+                    rows = conn.execute(
+                        f"SELECT id FROM clips WHERE id IN ({placeholders_c}) AND video_id IN ({placeholders_v})",
+                        cids + video_ids,
+                    ).fetchall()
+                    filtered_set = {r[0] for r in rows}
+                    cids = [cid for cid in cids if cid in filtered_set]
+                finally:
+                    conn.close()
+            return cids
 
-        if video_ids and clip_ids:
-            conn = sqlite3.connect(self.db_path)
-            try:
-                placeholders_c = ",".join("?" * len(clip_ids))
-                placeholders_v = ",".join("?" * len(video_ids))
-                rows = conn.execute(
-                    f"SELECT id FROM clips WHERE id IN ({placeholders_c}) AND video_id IN ({placeholders_v})",
-                    clip_ids + video_ids,
-                ).fetchall()
-                filtered_set = {r[0] for r in rows}
-                clip_ids = [cid for cid in clip_ids if cid in filtered_set]
-            finally:
-                conn.close()
+        fetch_k = min(top_k * 5 if video_ids else top_k, len(self._clip_ids))
+        clip_ids = _search_filtered(fetch_k)
+        # 限定 video 时，仅用 top_k*5 的全局近邻容易全部被过滤掉；再按全索引顺序重试一次
+        if video_ids and not clip_ids:
+            logger.info("向量搜索(FAISS): video_ids 过滤后为空，改为全量向量序重试")
+            clip_ids = _search_filtered(len(self._clip_ids))
 
         result = clip_ids[:top_k]
         logger.info("向量搜索完成(FAISS): 返回 %d 个结果", len(result))

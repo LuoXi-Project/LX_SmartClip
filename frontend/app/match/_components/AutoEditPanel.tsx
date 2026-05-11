@@ -1,7 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { type AutoEditMode, type AutoEditPlanApi } from '@/lib/api'
+import {
+  type AutoEditMode,
+  type AutoEditPlanApi,
+  type AutoJianyingDraftDownloadEntryApi,
+} from '@/lib/api'
 import { useAutoEditBgmTracks, useAutoEditClipMetaByPlans } from './autoEditPanelHooks'
 import type { AutoPlanStage, SelectedPreviewState } from './autoEditTypes'
 import { AutoEditDetailModal } from './AutoEditDetailModal'
@@ -93,7 +97,7 @@ export type AutoEditPanelProps = {
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
   /** 仅导出剪映草稿 ZIP（与成片互斥） */
   autoJianyingDraftExportingId: string | null
-  autoJianyingDraftDownloads: Record<string, { filename: string; url: string }>
+  autoJianyingDraftDownloads: Record<string, AutoJianyingDraftDownloadEntryApi>
   onExportJianyingDraft: (plan: AutoEditPlanApi, index: number) => void
   /** 口播快剪：隐藏 LLM 规划区，仅保留 BGM 与方案卡片（方案由上方快剪面板生成） */
   hideLlmPlannerUi?: boolean

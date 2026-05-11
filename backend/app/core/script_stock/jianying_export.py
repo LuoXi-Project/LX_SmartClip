@@ -35,6 +35,7 @@ def build_script_stock_jianying_zip_sync(
     project_name: str,
     tts_audio_dir: str,
     output_zip_path: str,
+    jianying_draft_parent_dir: Optional[str] = None,
 ) -> str:
     """
     根据 script-stock 已解析的 segment_rows + TTS 路径生成剪映草稿 ZIP。
@@ -126,4 +127,5 @@ def build_script_stock_jianying_zip_sync(
         tts_audio_dir=tts_audio_dir,
         project_name=unique_name,
         output_zip_path=output_zip_path,
-    )
+        jianying_draft_parent_dir=jianying_draft_parent_dir,
+    )  # Tuple[str, Literal["zip", "direct"]]

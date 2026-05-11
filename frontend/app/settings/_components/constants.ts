@@ -100,6 +100,7 @@ export const VIDEO_KEYS = [
   'export_scale_height',
   'export_pix_fmt',
   'pexels_api_key',
+  'jianying_draft_parent_dir',
 ]
 export const ASR_LANGUAGE_PRESETS: { value: string; label: string }[] = [
   { value: '', label: '自动检测（留空）' },

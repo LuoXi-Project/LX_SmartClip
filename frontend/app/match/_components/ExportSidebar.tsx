@@ -99,19 +99,19 @@ export function ExportSidebar({
         </div>
       )}
 
-      {/* 剪映草稿：与一键成片 / 原声成片互斥，仅 ZIP */}
+      {/* 剪映草稿：与一键成片 / 原声成片互斥 */}
       {isManualLikeMode(matchMode) &&
         (exportMode === 'jianying_tts' || exportMode === 'jianying_original') && (
           <div className="px-5 py-3 border-b border-slate-800 space-y-1.5">
             <p className="text-xs font-medium text-emerald-200/90">剪映草稿说明</p>
             <ul className="text-[10px] text-slate-400 leading-relaxed list-disc list-inside space-y-0.5">
-              <li>不调用 ffmpeg 烧录，只生成可导入剪映的草稿包（ZIP）。</li>
+              <li>不调用 ffmpeg 烧录，生成可导入剪映的草稿（可在设置中配置父目录以跳过 ZIP、直接写入）。</li>
               <li>
                 {exportMode === 'jianying_tts'
                   ? '需各段配音已就绪；字幕时间轴与「一键成片」同源逻辑。'
                   : '按已选素材拼接时间轴；字幕是否进草稿由下方「添加字幕」开关决定。'}
               </li>
-              <li>解压后请按包内说明运行路径修补脚本，再将草稿文件夹放入剪映草稿目录。</li>
+              <li>未配置父目录时：下载 ZIP，解压后按包内 bat 修补路径；已配置时：无需解压，直接在目标文件夹生成草稿。</li>
             </ul>
           </div>
         )}

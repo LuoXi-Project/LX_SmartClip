@@ -133,8 +133,12 @@ class JianYingDraftExportRequest(BaseModel):
 
 
 class JianYingDraftExportResponse(BaseModel):
-    filename: str
-    url: str
+    """剪映草稿导出：未配置本地父目录时为 ZIP 下载；配置后为直接写入目录。"""
+
+    mode: Literal["zip", "direct"] = "zip"
+    filename: str = ""
+    url: str = ""
+    local_path: str = ""
 
 
 class BgmTimelineSegment(BaseModel):

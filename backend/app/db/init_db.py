@@ -263,6 +263,13 @@ DEFAULT_CONFIG = [
         "Pexels API Key（文案素材成片，见 https://www.pexels.com/api/ ）",
         None,
     ),
+    (
+        "jianying_draft_parent_dir",
+        "",
+        "string",
+        "剪映草稿解压目录（可选；见说明）",
+        None,
+    ),
     ("match_top_k", "12", "number", "初筛数量 top_k", None),
     ("match_top_n", "5", "number", "推荐数量 top_n", None),
     ("tts_voice", "zh-CN-XiaoxiaoNeural", "string", "TTS 语音角色", None),

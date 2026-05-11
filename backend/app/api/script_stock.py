@@ -41,7 +41,13 @@ from app.models.script_stock import (
     ScriptStockSuggestQueriesResponse,
 )
 from app.utils.ffprobe_utils import probe_duration
-from app.utils.paths import ensure_storage_subpath, resolve_stored_path, storage_public_url_for_file, to_stored_path
+from app.utils.paths import (
+    ensure_storage_subpath,
+    normalize_jianying_parent_dir,
+    resolve_stored_path,
+    storage_public_url_for_file,
+    to_stored_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -725,6 +731,13 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
 
     async with aiosqlite.connect(DB_PATH) as db:
         rows = await _resolve_compose_rows(db, req)
+        async with db.execute(
+            "SELECT value FROM config WHERE key = ?", ("jianying_draft_parent_dir",)
+        ) as cur:
+            cfg_row = await cur.fetchone()
+        jy_parent = (
+            normalize_jianying_parent_dir(str(cfg_row[0])) if cfg_row and cfg_row[0] is not None else ""
+        )
 
     base_name = (req.project_name or "stock_clip").replace(" ", "_")[:80]
     unique = f"{base_name}_jy_{uuid.uuid4().hex[:10]}"
@@ -732,7 +745,7 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
     jy_zip = os.path.join(jy_dir, f"{unique}_jianying.zip")
 
     try:
-        await run_heavy(
+        out_path, out_mode = await run_heavy(
             build_script_stock_jianying_zip_sync,
             segment_rows=rows,
             tts_paths=tts_paths,
@@ -744,6 +757,7 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
             project_name=unique,
             tts_audio_dir=TTS_AUDIO_DIR,
             output_zip_path=jy_zip,
+            jianying_draft_parent_dir=jy_parent or None,
         )
     except HTTPException:
         raise
@@ -751,7 +765,11 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
         logger.exception("export_jianying_draft_stock failed")
         raise HTTPException(500, detail=f"剪映草稿导出失败: {e}") from e
 
+    if out_mode == "direct":
+        return JianYingDraftExportResponse(mode="direct", filename="", url="", local_path=out_path)
     return JianYingDraftExportResponse(
-        filename=os.path.basename(jy_zip),
-        url=storage_public_url_for_file(jy_zip),
+        mode="zip",
+        filename=os.path.basename(out_path),
+        url=storage_public_url_for_file(out_path),
+        local_path="",
     )

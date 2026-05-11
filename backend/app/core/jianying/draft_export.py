@@ -1,7 +1,8 @@
 """
 剪映草稿导出：基于 pyJianYingDraft 生成本地可打开的草稿目录并打包为 ZIP。
 
-素材路径写入 draft_content.json 时尽可能转为相对草稿根目录的路径，便于解压后迁移。
+默认将素材 path 转为相对草稿根目录的路径并附带 patch_paths.bat，便于解压后迁移。
+若配置了「剪映草稿解压目录」，则直接把素材写成该目录下草稿文件夹的完整绝对路径，且不再附带 bat/ps1。
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import zipfile
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from app.utils.ffprobe_utils import probe_duration
+from app.utils.paths import normalize_jianying_parent_dir
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,58 @@ def _relativize_draft_json(draft_folder: str, draft_content_path: str) -> None:
                         o[k] = fix_val(v)
                     except Exception:
                         pass
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for i in o:
+                walk(i)
+
+    walk(data)
+    with open(draft_content_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+def _absolutize_draft_json_install_paths(
+    draft_folder: str, draft_content_path: str, install_parent_dir: str
+) -> None:
+    """
+    将 draft_content.json 内位于 draft_folder 下的素材 path 改写为「解压目标」下的绝对路径。
+
+    install_parent_dir：用户配置的目录；解压后草稿文件夹应位于
+    ``{install_parent_dir}/{草稿文件夹名}/``（与 ZIP 内顶层文件夹名一致）。
+    """
+    draft_folder = os.path.abspath(draft_folder)
+    parent = normalize_jianying_parent_dir(install_parent_dir)
+    if not parent:
+        raise ValueError("剪映草稿父目录无效")
+    draft_name = os.path.basename(draft_folder)
+    target_root = os.path.normpath(os.path.join(parent, draft_name))
+    draft_nc = os.path.normcase(draft_folder)
+
+    with open(draft_content_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    def map_path(v: str) -> str:
+        if not v or not isinstance(v, str):
+            return v
+        try:
+            if os.path.isabs(v):
+                ap = os.path.abspath(v)
+            else:
+                ap = os.path.abspath(os.path.join(draft_folder, v))
+            ap_nc = os.path.normcase(ap)
+            if ap_nc.startswith(draft_nc + os.sep) or ap_nc == draft_nc:
+                rel = os.path.relpath(ap, draft_folder)
+                return os.path.normpath(os.path.join(target_root, rel))
+            return v
+        except Exception:
+            return v
+
+    def walk(o: Any) -> None:
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "path" and isinstance(v, str) and v:
+                    o[k] = map_path(v)
                 else:
                     walk(v)
         elif isinstance(o, list):
@@ -295,14 +349,19 @@ def build_jianying_draft_zip(
     output_zip_path: str,
     fps: int = 30,
     export_segment_opts: Optional[Dict[str, str]] = None,
-) -> str:
+    jianying_draft_parent_dir: Optional[str] = None,
+) -> Tuple[str, Literal["zip", "direct"]]:
     """
-    生成剪映草稿 ZIP，返回输出 zip 绝对路径。
+    生成剪映草稿：未配置父目录时打包为 ZIP；配置后写入父目录下草稿子文件夹并跳过 ZIP。
+
+    返回 ``(路径, 模式)``：ZIP 模式为 zip 文件绝对路径；direct 模式为草稿文件夹绝对路径。
 
     :param segments: SubtitleSegmentInput 列表，顺序与成片一致。
     :param srt_entries: parse_srt 后的条目 [{"start","end","text"}, ...] 或 SRTEntry 对象列表。
     :param export_segment_opts: 已废弃，保留仅为兼容旧调用。剪映草稿只引用**原始视频/切片文件**与
         ``source_timerange`` 裁剪点，由剪映自行解码与预览，不再做 FFmpeg 成片式重编码。
+    :param jianying_draft_parent_dir: 非空时，将 ``draft_content.json`` 内素材 path 写为该目录下草稿
+        子文件夹的绝对路径，整夹复制到该目录且不生成 ZIP/bat；留空则打 ZIP + 相对路径 + bat。
     """
     try:
         import pyJianYingDraft as draft
@@ -475,7 +534,18 @@ def build_jianying_draft_zip(
             script.import_srt(srt_path, track_name="subtitle")
 
         script.save()
-        _relativize_draft_json(draft_folder, os.path.join(draft_folder, "draft_content.json"))
+        draft_json_path = os.path.join(draft_folder, "draft_content.json")
+        parent_cfg = normalize_jianying_parent_dir(jianying_draft_parent_dir or "")
+        if parent_cfg:
+            _absolutize_draft_json_install_paths(draft_folder, draft_json_path, parent_cfg)
+            os.makedirs(parent_cfg, exist_ok=True)
+            target_root = os.path.normpath(os.path.join(parent_cfg, draft_title))
+            if os.path.exists(target_root):
+                shutil.rmtree(target_root)
+            shutil.copytree(draft_folder, target_root)
+            return (target_root, "direct")
+
+        _relativize_draft_json(draft_folder, draft_json_path)
         _write_jianying_path_patch_helpers(draft_folder)
 
         os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)) or ".", exist_ok=True)
@@ -488,7 +558,7 @@ def build_jianying_draft_zip(
                     fp = os.path.join(root, fn)
                     arc = os.path.relpath(fp, tmp_parent).replace("\\", "/")
                     zf.write(fp, arcname=arc)
-        return basezip
+        return (basezip, "zip")
     finally:
         try:
             shutil.rmtree(tmp_parent, ignore_errors=True)

@@ -42,6 +42,7 @@ import {
   type ScriptStockVideoExtendPolicy,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { useConfirm } from '@/hooks/use-confirm'
 import { DEFAULT_SUBTITLE_STYLE, type ClipTrimRange, type SubtitleStyle } from './types'
 import {
@@ -580,13 +581,17 @@ export function ScriptStockPanel({
         include_subtitle: subtitleEnabled,
         subtitle_style: subtitleEnabled ? (subtitleStyle ?? DEFAULT_SUBTITLE_STYLE) : undefined,
       })
-      const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+      if (res.mode === 'direct' && res.local_path) {
+        toast.success(`剪映草稿已写入：${res.local_path}`)
+        return
+      }
       const a = document.createElement('a')
-      a.href = jyUrl
+      a.href = res.url
       a.download = res.filename
       a.rel = 'noopener noreferrer'
       a.click()
       toast.success('剪映草稿已生成并开始下载')
+      toastRecommendJianyingParentDir(toast)
     } catch (e) {
       toast.error(formatFastApiDetail(e))
     } finally {

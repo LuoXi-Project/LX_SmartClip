@@ -451,8 +451,25 @@ export interface JianYingDraftExportRequestApi {
 }
 
 export interface JianYingDraftExportResponseApi {
+  mode: 'zip' | 'direct'
   filename: string
   url: string
+  local_path: string
+}
+
+/** 自动剪辑等待下载用的剪映草稿信息（ZIP 或直写目录） */
+export type AutoJianyingDraftDownloadEntryApi =
+  | { mode: 'zip'; filename: string; url: string }
+  | { mode: 'direct'; local_path: string }
+
+export interface PickFolderResponseApi {
+  path: string
+  cancelled: boolean
+}
+
+/** 本机后端弹出系统文件夹选择（仅 localhost） */
+export function pickConfigFolder(): Promise<PickFolderResponseApi> {
+  return apiClient.post<unknown, PickFolderResponseApi>('/api/config/pick-folder', {})
 }
 
 export interface BgmTimelineSegmentApi {
@@ -1000,7 +1017,7 @@ export const scriptStockApi = {
       '/api/script-stock/compose',
       body,
     ),
-  /** 请求体与 compose 相同；仅生成剪映草稿 ZIP（下载走 /api/subtitle/download_jianying/） */
+  /** 请求体与 compose 相同；仅生成剪映草稿（未配置父目录时 ZIP+下载，已配置时直写本地目录） */
   exportJianyingDraft: (body: {
     segments: ScriptStockComposeSegmentApi[]
     project_name?: string

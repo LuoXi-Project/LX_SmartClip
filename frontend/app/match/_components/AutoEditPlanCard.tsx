@@ -1,7 +1,7 @@
 'use client'
 
 import { Loader2 } from 'lucide-react'
-import type { AutoEditPlanApi } from '@/lib/api'
+import type { AutoEditPlanApi, AutoJianyingDraftDownloadEntryApi } from '@/lib/api'
 import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
 import type { ClipMetaByClip, SelectedPreviewState } from './autoEditTypes'
 import { planSegmentPreviewAbsRange } from './planSegmentPreviewRange'
@@ -25,7 +25,7 @@ export type AutoEditPlanCardProps = {
   autoJianyingDraftExportingId: string | null
   autoRealizeMsg: string
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
-  autoJianyingDraftDownloads: Record<string, { filename: string; url: string }>
+  autoJianyingDraftDownloads: Record<string, AutoJianyingDraftDownloadEntryApi>
 }
 
 export function AutoEditPlanCard({
@@ -260,7 +260,7 @@ export function AutoEditPlanCard({
               草稿导出中...
             </>
           ) : (
-            <>仅导出剪映草稿（ZIP）</>
+            <>仅导出剪映草稿</>
           )}
         </button>
         {autoRealizeMsg && <p className="text-[11px] text-emerald-300/80">{autoRealizeMsg}</p>}
@@ -277,17 +277,28 @@ export function AutoEditPlanCard({
             </a>
           </div>
         )}
-        {autoJianyingDraftDownloads[p.plan_id] && (
-          <a
-            href={autoJianyingDraftDownloads[p.plan_id].url}
-            download={autoJianyingDraftDownloads[p.plan_id].filename}
-            target="_blank"
-            rel="noreferrer"
-            className="block text-[11px] text-teal-300/90 hover:text-teal-200 underline underline-offset-2"
-          >
-            下载剪映草稿：{autoJianyingDraftDownloads[p.plan_id].filename}
-          </a>
-        )}
+        {(() => {
+          const jy = autoJianyingDraftDownloads[p.plan_id]
+          if (!jy) return null
+          if (jy.mode === 'direct') {
+            return (
+              <p className="text-[11px] text-teal-300/90 break-all leading-snug">
+                剪映草稿目录：{jy.local_path}
+              </p>
+            )
+          }
+          return (
+            <a
+              href={jy.url}
+              download={jy.filename}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-[11px] text-teal-300/90 hover:text-teal-200 underline underline-offset-2"
+            >
+              下载剪映草稿：{jy.filename}
+            </a>
+          )
+        })()}
       </div>
     </div>
   )

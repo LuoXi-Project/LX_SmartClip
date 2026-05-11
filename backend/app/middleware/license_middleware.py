@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 # 公共路径 不需要进行授权检查就可访问
 PUBLIC_PREFIXES = (
     "/api/license",
+    "/api/config",
 )
 
 

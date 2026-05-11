@@ -19,6 +19,7 @@ import apiClient, {
   type AutoEditBgmPlanApi,
   type BgmTrack,
   type TtsVideoAlignConfigApi,
+  type AutoJianyingDraftDownloadEntryApi,
 } from '@/lib/api'
 import { type Segment, type SRTEntry, audioSrc } from './_components/types'
 import { ClipInOutDialog } from './_components/ClipInOutDialog'
@@ -37,6 +38,7 @@ import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { useToast } from '@/components/ui/toast-provider'
+import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
 import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
 import { ScriptStockPanel } from './_components/ScriptStockPanel'
@@ -232,7 +234,7 @@ export default function MatchPage() {
   const [autoRealizingId, setAutoRealizingId] = useState<string | null>(null)
   const [autoJianyingDraftExportingId, setAutoJianyingDraftExportingId] = useState<string | null>(null)
   const [autoJianyingDraftDownloads, setAutoJianyingDraftDownloads] = useState<
-    Record<string, { filename: string; url: string }>
+    Record<string, AutoJianyingDraftDownloadEntryApi>
   >({})
   const [autoRealizeMsg, setAutoRealizeMsg] = useState('')
   const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null)
@@ -718,11 +720,15 @@ export default function MatchPage() {
           project_name: projectName,
           strict_use_client_srt: strictUseClientSrt,
         })
-        const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+        if (res.mode === 'direct' && res.local_path) {
+          toast.success(`剪映草稿已写入：${res.local_path}`)
+          return
+        }
         const a = document.createElement('a')
-        a.href = jyUrl
+        a.href = res.url
         a.download = res.filename
         a.click()
+        toastRecommendJianyingParentDir(toast)
       } else if (exportMode === 'original') {
         const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
         if (exportSegs.length === 0) return
@@ -778,11 +784,15 @@ export default function MatchPage() {
           project_name: projectName,
           include_subtitle: subtitleEnabled,
         })
-        const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+        if (res.mode === 'direct' && res.local_path) {
+          toast.success(`剪映草稿已写入：${res.local_path}`)
+          return
+        }
         const a = document.createElement('a')
-        a.href = jyUrl
+        a.href = res.url
         a.download = res.filename
         a.click()
+        toastRecommendJianyingParentDir(toast)
       }
     } catch (e: unknown) {
       setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
@@ -1213,13 +1223,22 @@ export default function MatchPage() {
         style: subtitleStyle,
         ...(forceTtsPipeline ? { force_tts_pipeline: true, tts_align: ttsAlignPayload } : {}),
       })
-      const jyUrl = `${API_BASE_URL}/api/subtitle/download_jianying/${encodeURIComponent(res.filename)}`
+      if (res.mode === 'direct' && res.local_path) {
+        setAutoJianyingDraftDownloads((prev) => ({
+          ...prev,
+          [plan.plan_id]: { mode: 'direct', local_path: res.local_path },
+        }))
+        setAutoRealizeMsg('剪映草稿已写入本机目录，见方案卡片中的路径。')
+        toast.success('剪映草稿已导出到本地')
+        return
+      }
       setAutoJianyingDraftDownloads((prev) => ({
         ...prev,
-        [plan.plan_id]: { filename: res.filename, url: jyUrl },
+        [plan.plan_id]: { mode: 'zip', filename: res.filename, url: res.url },
       }))
       setAutoRealizeMsg('剪映草稿已生成，请点击方案卡片中的草稿下载链接。')
       toast.success('剪映草稿已导出')
+      toastRecommendJianyingParentDir(toast)
     } catch (e: unknown) {
       const msg = formatFastApiDetail(e)
       setAutoRealizeMsg(msg)

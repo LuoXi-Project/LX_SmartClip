@@ -2,10 +2,24 @@
 
 import { useEffect, useState } from 'react'
 
+import { pickConfigFolder } from '@/lib/api'
+import { useToast } from '@/components/ui/toast-provider'
+
 import { VIDEO_KEYS } from './constants'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
-import { Save, Scissors, Clock, Layers, Info, Zap, Crosshair, Gauge, Film } from 'lucide-react'
+import {
+  Save,
+  Scissors,
+  Clock,
+  Layers,
+  Info,
+  Zap,
+  Crosshair,
+  Gauge,
+  Film,
+  FolderOpen,
+} from 'lucide-react'
 import type { ConfigMap } from './types'
 import { SettingsDetails } from './SettingsDetails'
 
@@ -88,6 +102,8 @@ const PARAM_HINTS: Record<string, string> = {
   export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
   pexels_api_key:
     '在 Pexels 官网申请免费 API Key；用于「智能剪辑 → 文案素材成片」搜索并下载无版权短视频（下载文件单独存放在 stock_media/pexels）',
+  jianying_draft_parent_dir:
+    '填写或浏览本机文件夹路径（支持 / 与 \\\\）。导出时将在此目录下直接生成剪映草稿文件夹（无需 ZIP）；JSON 内为完整素材绝对路径。留空则仍导出 ZIP，并附带 patch_paths.bat',
 }
 
 /** 三种流程模板共用的成片目标：切片/切分仍可省资源，最终成片统一高质量重编码（与切片 clip_* 解耦）。 */
@@ -247,6 +263,8 @@ function impactBadgeClass(level: string) {
 }
 
 export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSaveGroup }: Props) {
+  const toast = useToast()
+  const [pickingFolder, setPickingFolder] = useState(false)
   const v = (k: string) => edits[k] ?? config[k]?.value ?? ''
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const hasConfig = (k: string) => Boolean(config[k])
@@ -289,6 +307,7 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
   const EXPORT_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('export_'))
   const STOCK_KEYS = ['pexels_api_key']
+  const JIANYING_EXPORT_KEYS = ['jianying_draft_parent_dir']
   const presetDirty = (values: Record<string, string>) =>
     Object.entries(values).some(([key, val]) => hasConfig(key) && v(key) !== val)
   const presetMatchStats = (values: Record<string, string>) => {
@@ -571,6 +590,76 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
               </p>
             </div>
             {renderFields(STOCK_KEYS)}
+          </div>
+        )}
+
+        {JIANYING_EXPORT_KEYS.some((k) => config[k]) && (
+          <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-slate-200">剪映草稿导出</p>
+              <p className="text-xs text-slate-500 mt-1">
+                与切片编码无关。填写父目录后导出将直接写入该目录（不再生成 ZIP）；留空则下载 ZIP。路径可与剪映「草稿位置」的父级一致。
+              </p>
+            </div>
+            {JIANYING_EXPORT_KEYS.map((key) => {
+              if (key !== 'jianying_draft_parent_dir' || !config[key]) return null
+              return (
+                <div key={key} className="space-y-1.5">
+                  <label className="text-xs text-slate-400">{config[key].label || key}</label>
+                  {PARAM_HINTS[key] && (
+                    <div className="flex items-start gap-1.5 text-xs text-slate-500 mb-1">
+                      <Info className="w-3 h-3 mt-0.5 shrink-0 text-slate-600" />
+                      <span>{PARAM_HINTS[key]}</span>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <div className="flex-1 min-w-0">
+                      <input
+                        type="text"
+                        value={v(key)}
+                        onChange={(e) => onSet(key, e.target.value)}
+                        placeholder="例如 D:\JianyingDraft 或 C:/Users/xxx/...（可选）"
+                        className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-mono"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={pickingFolder}
+                      onClick={async () => {
+                        setPickingFolder(true)
+                        try {
+                          const r = await pickConfigFolder()
+                          if (r.cancelled || !r.path) {
+                            if (!r.cancelled) toast.info('未选择文件夹')
+                            return
+                          }
+                          onSet(key, r.path)
+                          toast.success('已填入所选文件夹路径')
+                        } catch (e: unknown) {
+                          toast.error(
+                            (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+                              (e as Error).message ||
+                              '无法打开文件夹选择'
+                          )
+                        } finally {
+                          setPickingFolder(false)
+                        }
+                      }}
+                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-600 bg-slate-800/80 text-slate-200 text-xs font-medium hover:border-indigo-500/60 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      {pickingFolder ? '…' : '浏览'}
+                    </button>
+                    <SaveBtn
+                      dirty={isDirty(key)}
+                      saving={!!saving[key]}
+                      saved={!!saved[key]}
+                      onSave={() => onSave(key)}
+                    />
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
 

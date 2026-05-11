@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { AutoEditPlanApi } from '@/lib/api'
+import type { AutoEditPlanApi, AutoJianyingDraftDownloadEntryApi } from '@/lib/api'
 import type { ClipMetaByClip, SelectedPreviewState } from './autoEditTypes'
 import { AutoEditPreviewPanel } from './AutoEditPreviewPanel'
 import { AutoEditPlanCard } from './AutoEditPlanCard'
@@ -29,7 +29,7 @@ export type AutoEditCandidatesSectionProps = {
   autoJianyingDraftExportingId: string | null
   autoRealizeMsg: string
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
-  autoJianyingDraftDownloads: Record<string, { filename: string; url: string }>
+  autoJianyingDraftDownloads: Record<string, AutoJianyingDraftDownloadEntryApi>
 }
 
 export function AutoEditCandidatesSection({

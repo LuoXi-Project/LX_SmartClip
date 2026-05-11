@@ -18,7 +18,8 @@ from fastapi import HTTPException
 from app.core.blocking_pool import run_heavy
 from app.core.jianying.draft_export import build_jianying_draft_zip
 from app.db.database import DB_PATH
-from app.utils.paths import ensure_storage_subpath, storage_public_url_for_file
+from app.models.subtitle import JianYingDraftExportResponse
+from app.utils.paths import ensure_storage_subpath, normalize_jianying_parent_dir, storage_public_url_for_file
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,16 @@ _JY_EXPORT_RENDER_KEYS = (
     "export_container",
     "export_gpu",
 )
+
+
+async def _get_jianying_draft_parent_dir() -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT value FROM config WHERE key = ?", ("jianying_draft_parent_dir",))
+        row = await cur.fetchone()
+        if not row or row["value"] is None:
+            return ""
+        return normalize_jianying_parent_dir(str(row["value"]))
 
 
 async def load_jianying_export_segment_opts() -> Dict[str, str]:
@@ -273,9 +284,9 @@ async def export_jianying_draft_zip_async(
     strict_use_client_srt: bool = False,
     # original
     include_subtitle: bool = True,
-) -> dict:
+) -> JianYingDraftExportResponse:
     """
-    生成剪映草稿 ZIP，返回 { filename, url }。
+    生成剪映草稿：配置本地父目录时直接写入该目录，否则生成 ZIP 并提供下载 URL。
 
     :param segments: SubtitleSegmentInput 列表；original 模式内部会清除 tts_filename。
     """
@@ -308,7 +319,9 @@ async def export_jianying_draft_zip_async(
     jy_dir = ensure_storage_subpath("jianying_drafts")
     jy_zip = os.path.join(jy_dir, f"{unique_project_name}_jianying.zip")
 
-    await run_heavy(
+    jy_parent = await _get_jianying_draft_parent_dir()
+
+    out_path, out_mode = await run_heavy(
         build_jianying_draft_zip,
         segments=segs_for_draft,
         clip_map=clip_map,
@@ -317,9 +330,19 @@ async def export_jianying_draft_zip_async(
         tts_audio_dir=tts_audio_dir,
         project_name=unique_project_name,
         output_zip_path=jy_zip,
+        jianying_draft_parent_dir=jy_parent or None,
     )
 
-    return {
-        "filename": os.path.basename(jy_zip),
-        "url": storage_public_url_for_file(jy_zip),
-    }
+    if out_mode == "direct":
+        return JianYingDraftExportResponse(
+            mode="direct",
+            filename="",
+            url="",
+            local_path=out_path,
+        )
+    return JianYingDraftExportResponse(
+        mode="zip",
+        filename=os.path.basename(out_path),
+        url=storage_public_url_for_file(out_path),
+        local_path="",
+    )

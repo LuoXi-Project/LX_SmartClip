@@ -1,8 +1,13 @@
-from fastapi import APIRouter, HTTPException
-from app.models.config import ConfigUpdate, ModelsRequest
-import httpx
-from app.db.database import get_db_conn
+import asyncio
 import logging
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+
+from app.db.database import get_db_conn
+from app.models.config import ConfigUpdate, ModelsRequest
+from app.utils.folder_picker import pick_folder_native_blocking
+from app.utils.paths import normalize_jianying_parent_dir
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +56,38 @@ async def update_config(body: ConfigUpdate):
                 status_code=403,
                 detail="该配置项请使用 /api/license 接口管理",
             )
-        # 执行更新
+        val = body.value
+        if body.key == "jianying_draft_parent_dir":
+            val = normalize_jianying_parent_dir(val or "")
         await db.execute(
             "UPDATE config SET value = ? WHERE key = ?",
-            (body.value, body.key),
+            (val, body.key),
         )
         await db.commit()
-        return {"key": body.key, "value": body.value}
+        return {"key": body.key, "value": val}
     finally:
         await db.close()
+
+
+@router.post("/pick-folder")
+async def pick_folder(request: Request):
+    """
+    在本机弹出系统文件夹选择框，返回规范化后的绝对路径。
+    仅允许访问本机后端（127.0.0.1 / ::1），避免远程调用误触服务端桌面。
+    """
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "::1"):
+        raise HTTPException(
+            status_code=403,
+            detail="文件夹选择仅在后端运行于本机且浏览器访问本机地址时可用。",
+        )
+    raw = await asyncio.to_thread(
+        pick_folder_native_blocking,
+        "选择剪映草稿父目录（导出的草稿子文件夹将创建在此目录下）",
+    )
+    if not raw:
+        return {"path": "", "cancelled": True}
+    return {"path": normalize_jianying_parent_dir(raw), "cancelled": False}
 
 
 @router.post("/models")

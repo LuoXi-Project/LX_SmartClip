@@ -592,7 +592,7 @@ async def export_original(req: ExportOriginalRequest, request: Request):
 # ---------------------------------------------------------------------------
 @router.post("/export_jianying_draft", response_model=JianYingDraftExportResponse)
 async def export_jianying_draft(req: JianYingDraftExportRequest, request: Request):
-    """生成剪映草稿 ZIP，不与 burn / export_original 并行。"""
+    """生成剪映草稿（ZIP 下载或按设置直写目录），不与 burn / export_original 并行。"""
     if await request.is_disconnected():
         raise HTTPException(400, "客户端已断开连接")
     segs = list(req.segments)

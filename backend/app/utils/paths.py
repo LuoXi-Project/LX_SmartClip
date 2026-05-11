@@ -323,3 +323,18 @@ def get_render_tmp_base_dir(env_key: str = "LX_SMARTCLIP_TMP_DIR") -> str:
 
     return tempfile.gettempdir()
 
+
+def normalize_jianying_parent_dir(raw: str) -> str:
+    """
+    规范化「剪映草稿父目录」配置：兼容正斜杠/反斜杠与首尾引号，得到可用于本机写入的路径。
+    空字符串表示未配置。
+    """
+    s = (raw or "").strip().strip('"').strip("'")
+    if not s:
+        return ""
+    s = os.path.expanduser(s)
+    s = os.path.normpath(s)
+    if os.path.isabs(s):
+        return s
+    return os.path.abspath(s)
+

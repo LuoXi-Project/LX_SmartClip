@@ -195,6 +195,7 @@ export default function MatchPage() {
   const [exportError, setExportError] = useState('')
   const [exportBackend, setExportBackend] = useState<'moviepy' | 'ffmpeg'>('moviepy')
   const [globalMatching, setGlobalMatching] = useState(false)
+  const [globalTtsSynthesising, setGlobalTtsSynthesising] = useState(false)
   const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
   const [timingSource, setTimingSource] = useState('')
   const [generatingSrt, setGeneratingSrt] = useState(false)
@@ -523,6 +524,19 @@ export default function MatchPage() {
       patchSeg(id, { ttsLoading: false, ttsFilename: res.filename })
     } catch (e: unknown) {
       patchSeg(id, { ttsLoading: false, ttsError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'TTS失败' })
+    }
+  }
+
+  async function synthesiseAllTts() {
+    const ids = useMatchStore.getState().segments.filter((s) => s.text.trim()).map((s) => s.id)
+    if (!ids.length) return
+    setGlobalTtsSynthesising(true)
+    try {
+      for (const id of ids) {
+        await synthesiseTts(id)
+      }
+    } finally {
+      setGlobalTtsSynthesising(false)
     }
   }
 
@@ -1617,6 +1631,8 @@ export default function MatchPage() {
                 onSplit={splitGlobalQuery}
                 onMatchAll={matchAll}
                 globalMatching={globalMatching}
+                onSynthesiseAllTts={synthesiseAllTts}
+                globalTtsSynthesising={globalTtsSynthesising}
                 onAddSegment={() => addSegment()}
                 onMoveSegment={moveSegment}
                 onSegmentReorder={moveSegmentRel}

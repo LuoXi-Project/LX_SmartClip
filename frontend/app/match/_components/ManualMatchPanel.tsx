@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
-import { Loader2, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
+import { Loader2, Mic, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
 import { type BgmTrack, type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
 import { CopyGeneratorPanel } from './CopyGeneratorPanel'
@@ -20,6 +20,8 @@ export type ManualMatchPanelProps = {
   onSplit: () => void
   onMatchAll: () => void
   globalMatching: boolean
+  onSynthesiseAllTts: () => void
+  globalTtsSynthesising: boolean
   onAddSegment: () => void
   /** 拖动段落调整顺序：将 fromId 移到 toId 所在位置 */
   onMoveSegment: (fromId: string, toId: string) => void
@@ -73,6 +75,8 @@ export function ManualMatchPanel({
   onSplit,
   onMatchAll,
   globalMatching,
+  onSynthesiseAllTts,
+  globalTtsSynthesising,
   onAddSegment,
   onMoveSegment,
   onSegmentReorder,
@@ -226,14 +230,25 @@ export function ManualMatchPanel({
             拆分为段落
           </button>
           {segments.length > 0 && (
-            <button
-              onClick={onMatchAll}
-              disabled={globalMatching}
-              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
-            >
-              {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              {globalMatching ? '全部匹配中...' : '全部匹配'}
-            </button>
+            <>
+              <button
+                onClick={onMatchAll}
+                disabled={globalMatching || globalTtsSynthesising}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
+              >
+                {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {globalMatching ? '全部匹配中...' : '全部匹配'}
+              </button>
+              <button
+                type="button"
+                onClick={onSynthesiseAllTts}
+                disabled={globalTtsSynthesising || globalMatching || !segments.some((s) => s.text.trim())}
+                className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
+              >
+                {globalTtsSynthesising ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+                {globalTtsSynthesising ? '配音合成中...' : '全部配音合成'}
+              </button>
+            </>
           )}
           <button
             onClick={onAddSegment}

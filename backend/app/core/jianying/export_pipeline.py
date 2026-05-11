@@ -22,6 +22,73 @@ from app.utils.paths import ensure_storage_subpath, storage_public_url_for_file
 
 logger = logging.getLogger(__name__)
 
+# 与 app.api.subtitle._load_render_opts / _load_export_render_opts 键表一致（用于剪映草稿按成片参数压制）
+_JY_CLIP_RENDER_KEYS = (
+    "clip_vcodec",
+    "clip_acodec",
+    "clip_preset",
+    "clip_crf",
+    "clip_video_bitrate_kbps",
+    "clip_audio_bitrate_kbps",
+    "clip_g",
+    "clip_keyint_min",
+    "clip_sc_threshold",
+    "clip_fps",
+    "clip_scale_width",
+    "clip_scale_height",
+    "clip_pix_fmt",
+    "clip_container",
+)
+_JY_EXPORT_RENDER_KEYS = (
+    "export_vcodec",
+    "export_acodec",
+    "export_preset",
+    "export_crf",
+    "export_video_bitrate_kbps",
+    "export_audio_bitrate_kbps",
+    "export_g",
+    "export_keyint_min",
+    "export_sc_threshold",
+    "export_fps",
+    "export_scale_width",
+    "export_scale_height",
+    "export_pix_fmt",
+    "export_container",
+    "export_gpu",
+)
+
+
+async def load_jianying_export_segment_opts() -> Dict[str, str]:
+    """
+    读取 DB 中与成片导出一致的 clip_* 形编码参数（含 export→clip 合并）。
+
+    剪映草稿导出已不再使用本结果；保留函数供其它需要「成片同款 merged opts」的逻辑复用。
+    """
+    from app.core.subtitle.render_opts import (
+        export_resolution_fully_unspecified,
+        final_render_opts_from_export,
+        sanitize_no_stream_copy,
+    )
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        async def _gv(key: str) -> str:
+            cur = await db.execute("SELECT value FROM config WHERE key = ?", (key,))
+            row = await cur.fetchone()
+            return row["value"] if row and row["value"] is not None else ""
+
+        clip_opts = {k: await _gv(k) for k in _JY_CLIP_RENDER_KEYS}
+        export_opts = {k: await _gv(k) for k in _JY_EXPORT_RENDER_KEYS}
+
+    merged = final_render_opts_from_export(export_opts, clip_opts)
+    # 成片 export_scale 全未指定时，不得沿用 clip_scale（切片预览），否则与「原视频宽高」语义冲突。
+    if export_resolution_fully_unspecified(export_opts):
+        merged["clip_scale_width"] = "0"
+        merged["clip_scale_height"] = "0"
+
+    return sanitize_no_stream_copy(merged)
+
 
 def _collect_clip_ids_from_segments(segments: List) -> List[str]:
     ids: List[str] = []

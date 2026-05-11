@@ -13,7 +13,9 @@ import re
 import shutil
 import tempfile
 import zipfile
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
+from app.utils.ffprobe_utils import probe_duration
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +164,47 @@ def _write_jianying_path_patch_helpers(draft_folder: str) -> None:
         f.write(_PATCH_README)
 
 
+def _jy_resolve_trim_media(
+    info: Dict[str, Any],
+    clip_rel_start_sec: float,
+    clip_rel_span_sec: float,
+) -> Tuple[str, float, float]:
+    """
+    主轨一条 trim 对应的本地文件路径，以及在该文件时间轴上的 [start_sec, span_sec)（与 segment_render 原片映射一致）。
+    优先使用 clip_map 的整片 src_video_path + src_start/src_end；否则使用切片文件 path + 相对入点。
+    """
+    clip_path = str(info.get("path") or "")
+    if not clip_path or not os.path.isfile(clip_path):
+        raise FileNotFoundError("切片素材 path 无效")
+
+    clip_probe_total = float(probe_duration(clip_path, log_on_failure=True) or 0.0)
+    if clip_probe_total <= 0.05:
+        clip_probe_total = float(info.get("dur") or 0.0)
+    if clip_probe_total <= 0.05:
+        clip_probe_total = 0.05
+
+    src_vp = str(info.get("src_video_path") or "").strip()
+    if src_vp and os.path.isfile(src_vp):
+        src_total = float(probe_duration(src_vp, log_on_failure=True) or 0.0)
+        if src_total > 0.05:
+            clip_abs_start = float(info.get("src_start") or 0.0)
+            clip_abs_end = float(info.get("src_end") or 0.0)
+            if clip_abs_end <= clip_abs_start + 0.02:
+                clip_abs_end = clip_abs_start + clip_probe_total
+            abs_start = clip_abs_start + max(0.0, clip_rel_start_sec)
+            abs_start = max(0.0, min(abs_start, src_total - 0.05, clip_abs_end - 0.05))
+            max_span = min(
+                max(0.05, clip_rel_span_sec),
+                max(0.05, clip_abs_end - abs_start),
+                max(0.05, src_total - abs_start),
+            )
+            return src_vp, abs_start, max_span
+
+    rel_cs = max(0.0, min(float(clip_rel_start_sec), clip_probe_total - 0.05))
+    rel_span = min(max(0.05, float(clip_rel_span_sec)), max(0.05, clip_probe_total - rel_cs))
+    return clip_path, rel_cs, rel_span
+
+
 def _canvas_from_first_video(path: str) -> tuple[int, int]:
     try:
         import pymediainfo
@@ -215,6 +258,32 @@ def _seg_trims(seg: Any) -> List[tuple[str, float, float]]:
     return [(cid0, max(0.0, cs), 0.0)]  # 0 表示由 clip_map.dur 填充
 
 
+_VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v")
+
+
+def _jy_first_reference_video_path(segments: list, clip_map: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """画布/首帧参考：优先整片原素材路径，否则切片文件。"""
+    for seg in segments:
+        for cid, _cs, _du in _seg_trims(seg) or []:
+            inf = clip_map.get(cid)
+            if not inf:
+                continue
+            src = str(inf.get("src_video_path") or "").strip()
+            if src and os.path.isfile(src) and src.lower().endswith(_VIDEO_EXTS):
+                return src
+            p = str(inf.get("path") or "")
+            if p and os.path.isfile(p) and p.lower().endswith(_VIDEO_EXTS):
+                return p
+    for _cid, inf in clip_map.items():
+        src = str(inf.get("src_video_path") or "").strip()
+        if src and os.path.isfile(src) and src.lower().endswith(_VIDEO_EXTS):
+            return src
+        p = str(inf.get("path") or "")
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
 def build_jianying_draft_zip(
     *,
     segments: list,
@@ -225,12 +294,15 @@ def build_jianying_draft_zip(
     project_name: str,
     output_zip_path: str,
     fps: int = 30,
+    export_segment_opts: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     生成剪映草稿 ZIP，返回输出 zip 绝对路径。
 
     :param segments: SubtitleSegmentInput 列表，顺序与成片一致。
     :param srt_entries: parse_srt 后的条目 [{"start","end","text"}, ...] 或 SRTEntry 对象列表。
+    :param export_segment_opts: 已废弃，保留仅为兼容旧调用。剪映草稿只引用**原始视频/切片文件**与
+        ``source_timerange`` 裁剪点，由剪映自行解码与预览，不再做 FFmpeg 成片式重编码。
     """
     try:
         import pyJianYingDraft as draft
@@ -239,8 +311,6 @@ def build_jianying_draft_zip(
         from pyJianYingDraft.time_util import Timerange
     except ImportError as e:
         raise RuntimeError("未安装 pyJianYingDraft，无法导出剪映草稿") from e
-
-    from app.utils.ffprobe_utils import probe_duration
 
     def _jy_material_total_us(mat_path: str, fallback_sec: float) -> int:
         """
@@ -263,28 +333,12 @@ def build_jianying_draft_zip(
 
     tmp_parent = tempfile.mkdtemp(prefix="jy_export_")
     try:
-        first_video_path: Optional[str] = None
-        for seg in segments:
-            for cid, _cs, _du in _seg_trims(seg) or []:
-                inf = clip_map.get(cid)
-                if not inf:
-                    continue
-                p = str(inf.get("path") or "")
-                if p and os.path.isfile(p) and p.lower().endswith(
-                    (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v")
-                ):
-                    first_video_path = p
-                    break
-            if first_video_path:
-                break
-        if not first_video_path:
-            for _cid, inf in clip_map.items():
-                p = str(inf.get("path") or "")
-                if p and os.path.isfile(p):
-                    first_video_path = p
-                    break
+        first_video_path = _jy_first_reference_video_path(segments, clip_map)
         if not first_video_path:
             raise ValueError("没有可用的视频素材用于草稿")
+
+        if export_segment_opts:
+            logger.info("剪映草稿：主轨仅引用原素材与裁剪入点，已忽略 export_segment_opts（不再预压制）")
 
         w, h = _canvas_from_first_video(first_video_path)
 
@@ -326,7 +380,7 @@ def build_jianying_draft_zip(
                 raise ValueError(f"第 {seg_idx + 1} 段缺少 clip_trims/clip_id")
 
             cursor_us = seg_start_us
-            for tri, (cid, cs, du) in enumerate(trims):
+            for _tri, (cid, cs, du) in enumerate(trims):
                 if cursor_us >= seg_end_us:
                     break
                 remaining_us = seg_end_us - cursor_us
@@ -336,34 +390,34 @@ def build_jianying_draft_zip(
                 info = clip_map.get(cid)
                 if not info:
                     raise ValueError(f"第 {seg_idx + 1} 段 clip_id 无效: {cid}")
-                src_clip = str(info.get("path") or "")
-                if not os.path.isfile(src_clip):
-                    raise FileNotFoundError(f"素材不存在: {cid}")
 
-                mat_path = _copy_into_materials(src_clip, materials_dir, path_cache)
-
-                duration_sec = du
+                duration_sec = float(du)
                 if duration_sec <= 0:
-                    duration_sec = float(info.get("dur") or probe_duration(src_clip, log_on_failure=True) or 5.0)
-                natural_dur_us = int(round(float(duration_sec) * SEC))
-                src_start_us = int(round(float(cs) * SEC))
+                    clip_p = str(info.get("path") or "")
+                    duration_sec = float(
+                        info.get("dur") or probe_duration(clip_p, log_on_failure=True) or 5.0
+                    )
 
+                src_file, abs_start_sec, span_sec = _jy_resolve_trim_media(info, float(cs), float(duration_sec))
+                mat_path = _copy_into_materials(src_file, materials_dir, path_cache)
+
+                src_start_us = int(round(float(abs_start_sec) * SEC))
+                natural_dur_us = int(round(float(span_sec) * SEC))
                 cap_sec = float(
                     probe_duration(mat_path, log_on_failure=True)
-                    or probe_duration(src_clip, log_on_failure=True)
+                    or probe_duration(src_file, log_on_failure=True)
                     or info.get("dur")
                     or 0.0
                 )
                 if cap_sec <= 0.02:
                     cap_sec = 5.0
+
                 mat_total_us = _jy_material_total_us(mat_path, cap_sec)
                 src_start_us = max(0, min(src_start_us, max(0, mat_total_us - 1)))
                 max_span_us = max(0, mat_total_us - src_start_us)
                 natural_dur_us = min(max(natural_dur_us, 0), max_span_us)
 
-                # 必须落在「本段成片时间窗」内，避免主轨与下一段重叠（与 TTS / resolve_durations 一致）
                 target_dur_us = min(natural_dur_us, remaining_us)
-                # 与主轨等长：源截取时长不得超过 target；否则 pyJianYing 仍按 natural 校验会越界，且变速语义也不应误触发
                 target_dur_us = min(target_dur_us, max_span_us)
                 if target_dur_us < 1000:
                     break

@@ -153,6 +153,40 @@ def sanitize_merged_opts_for_final_burn(
     return opts
 
 
+def _make_even_dim(x: int, *, min_v: int = 2) -> int:
+    x = int(x)
+    if x < min_v:
+        x = min_v
+    return x if (x % 2 == 0) else (x - 1)
+
+
+def canvas_wh_from_clip_scale_opts(
+    clip_opts: Optional[Dict[str, str]],
+    reference_video_path: str,
+) -> Tuple[int, int]:
+    """
+    剪映草稿画布尺寸：与 materialize 中 clip_scale_* 语义一致。
+    未配置缩放时与参考视频一致，避免「素材已按导出分辨率压制，画布仍按原片」导致剪映侧拉伸发糊。
+    """
+    from app.utils.ffprobe_utils import probe_video_dimensions
+
+    rw, rh = probe_video_dimensions(reference_video_path, default=(1920, 1080), logger_=logger)
+    opts = clip_opts or {}
+    sw = _to_int(opts, "clip_scale_width", 0)
+    sh = _to_int(opts, "clip_scale_height", 0)
+    if sw <= 0 and sh <= 0:
+        return int(rw), int(rh)
+    src_w = max(1, int(rw))
+    src_h = max(1, int(rh))
+    if sw > 0 and sh > 0:
+        return _make_even_dim(sw), _make_even_dim(sh)
+    if sw > 0:
+        th = int(round(src_h * sw / src_w))
+        return _make_even_dim(sw), _make_even_dim(th)
+    tw = int(round(src_w * sh / src_h))
+    return _make_even_dim(tw), _make_even_dim(sh)
+
+
 def build_extra_video_filters(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
     """根据配置构建额外视频滤镜（缩放/帧率）。"""
     opts = render_opts or {}
@@ -186,6 +220,29 @@ EXPORT_FLAT_TO_CLIP_SHAPE: List[Tuple[str, str]] = [
     ("export_pix_fmt", "clip_pix_fmt"),
     ("export_container", "clip_container"),
 ]
+
+
+def _export_scale_dim_unspecified(raw: Optional[str]) -> bool:
+    """成片导出单边分辨率：空或 ≤0 视为未指定（跟随素材 / 由另一侧推导）。"""
+    s = (raw or "").strip()
+    if not s:
+        return True
+    try:
+        return int(float(s)) <= 0
+    except Exception:
+        return True
+
+
+def export_resolution_fully_unspecified(export_render_opts: Optional[Dict[str, str]]) -> bool:
+    """
+    成片导出宽高均未指定：语义为「按素材原始分辨率」，不与切片预览 clip_scale_* 共用缩放。
+
+    用于剪映草稿等与成片导出对齐的路径；避免 export_scale 全空时仍回落到 DB 里的预览档宽高。
+    """
+    ex = export_render_opts or {}
+    return _export_scale_dim_unspecified(ex.get("export_scale_width")) and _export_scale_dim_unspecified(
+        ex.get("export_scale_height")
+    )
 
 
 def final_render_opts_from_export(

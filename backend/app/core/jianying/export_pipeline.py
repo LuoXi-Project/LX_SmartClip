@@ -331,6 +331,7 @@ async def export_jianying_draft_zip_async(
         project_name=unique_project_name,
         output_zip_path=jy_zip,
         jianying_draft_parent_dir=jy_parent or None,
+        subtitle_style=style,
     )
 
     if out_mode == "direct":

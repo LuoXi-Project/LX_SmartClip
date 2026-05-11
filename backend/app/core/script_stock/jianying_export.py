@@ -128,4 +128,5 @@ def build_script_stock_jianying_zip_sync(
         project_name=unique_name,
         output_zip_path=output_zip_path,
         jianying_draft_parent_dir=jianying_draft_parent_dir,
+        subtitle_style=style,
     )  # Tuple[str, Literal["zip", "direct"]]

@@ -350,6 +350,7 @@ def build_jianying_draft_zip(
     fps: int = 30,
     export_segment_opts: Optional[Dict[str, str]] = None,
     jianying_draft_parent_dir: Optional[str] = None,
+    subtitle_style: Optional[Any] = None,
 ) -> Tuple[str, Literal["zip", "direct"]]:
     """
     生成剪映草稿：未配置父目录时打包为 ZIP；配置后写入父目录下草稿子文件夹并跳过 ZIP。
@@ -362,6 +363,8 @@ def build_jianying_draft_zip(
         ``source_timerange`` 裁剪点，由剪映自行解码与预览，不再做 FFmpeg 成片式重编码。
     :param jianying_draft_parent_dir: 非空时，将 ``draft_content.json`` 内素材 path 写为该目录下草稿
         子文件夹的绝对路径，整夹复制到该目录且不生成 ZIP/bat；留空则打 ZIP + 相对路径 + bat。
+    :param subtitle_style: 非空时通过 pyJianYingDraft ``import_srt`` 的 ``style_reference`` 同步字体、
+        颜色、描边、背景、位置等与前端 ``SubtitleStyle`` 一致；为空则保留库默认导入样式。
     """
     try:
         import pyJianYingDraft as draft
@@ -531,7 +534,19 @@ def build_jianying_draft_zip(
             with open(srt_path, "w", encoding="utf-8") as f:
                 f.write(srt_body)
             script.add_track(TrackType.text, "subtitle")
-            script.import_srt(srt_path, track_name="subtitle")
+            if subtitle_style is not None:
+                from app.core.jianying.subtitle_style_bridge import (
+                    build_subtitle_style_reference_for_srt,
+                )
+
+                _ref = build_subtitle_style_reference_for_srt(
+                    subtitle_style, canvas_w=w, canvas_h=h
+                )
+                script.import_srt(
+                    srt_path, track_name="subtitle", style_reference=_ref, clip_settings=None
+                )
+            else:
+                script.import_srt(srt_path, track_name="subtitle")
 
         script.save()
         draft_json_path = os.path.join(draft_folder, "draft_content.json")

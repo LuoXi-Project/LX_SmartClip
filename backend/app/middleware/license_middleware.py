@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 PUBLIC_PREFIXES = (
     "/api/license",
     "/api/config",
+    "/library",
 )
 
 

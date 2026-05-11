@@ -17,9 +17,22 @@ interface VideoCardProps {
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => Promise<void>
   onReencode: (video: Video) => void
+  /** 多选模式：显示勾选框，点击缩略图仍可预览 */
+  multiSelectActive?: boolean
+  selected?: boolean
+  onToggleSelect?: (id: string) => void
 }
 
-export function VideoCard({ video, onPreview, onDelete, onRename, onReencode }: VideoCardProps) {
+export function VideoCard({
+  video,
+  onPreview,
+  onDelete,
+  onRename,
+  onReencode,
+  multiSelectActive,
+  selected,
+  onToggleSelect,
+}: VideoCardProps) {
   const status = STATUS_MAP[video.status] ?? STATUS_MAP.error
   const [thumbError, setThumbError] = useState(false)
 
@@ -91,6 +104,26 @@ export function VideoCard({ video, onPreview, onDelete, onRename, onReencode }: 
         className="relative bg-slate-900/80 aspect-video flex items-center justify-center overflow-hidden cursor-pointer"
         onClick={() => onPreview(video)}
       >
+        {multiSelectActive && onToggleSelect && (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={selected}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleSelect(video.id)
+            }}
+            className={`absolute top-2 left-2 z-20 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${
+              selected
+                ? 'bg-cyan-600 border-cyan-400 text-white'
+                : 'bg-black/55 border-slate-400/80 text-transparent hover:border-cyan-400/70'
+            }`}
+            title={selected ? '取消选择' : '选择'}
+          >
+            {selected && <Check className="w-3.5 h-3.5" />}
+          </button>
+        )}
+
         {thumbnailUrl ? (
           <img
             src={thumbnailUrl}
@@ -117,7 +150,11 @@ export function VideoCard({ video, onPreview, onDelete, onRename, onReencode }: 
 
         {/* Duration badge */}
         {video.duration && (
-          <span className="absolute top-2 left-2 text-xs text-white/80 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-md z-10">
+          <span
+            className={`absolute top-2 text-xs text-white/80 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-md z-10 ${
+              multiSelectActive ? 'left-10' : 'left-2'
+            }`}
+          >
             {formatDuration(video.duration)}
           </span>
         )}

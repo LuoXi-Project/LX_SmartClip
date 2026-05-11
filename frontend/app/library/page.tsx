@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
 import { videosApi, type Video, type VideoListParams } from '@/lib/api'
-import { Film } from 'lucide-react'
+import { Film, ListChecks, Trash2 } from 'lucide-react'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 
@@ -61,6 +61,11 @@ export default function LibraryPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
 
+  /** 多选批量删除 */
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const selectAllRef = useRef<HTMLInputElement>(null)
+
   // Debounce search query (300 ms)
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleQueryChange = (v: string) => {
@@ -95,10 +100,34 @@ export default function LibraryPage() {
     })
   }, [debouncedQuery, statusFilter, sort, page, pageSize, fetchVideos])
 
+  // 删除后当前页可能超出总页数，回到最后一页
+  useEffect(() => {
+    if (loading) return
+    if (items.length === 0 && total > 0 && page > totalPages) {
+      setPage(Math.max(1, totalPages))
+    }
+  }, [loading, items.length, total, page, totalPages])
+
   // Reset to page 1 when filters/search/sort change
   useEffect(() => {
     setPage(1)
   }, [debouncedQuery, statusFilter, sort, pageSize])
+
+  // 翻页或筛选变化时清空勾选，避免选中项已不在当前列表
+  useEffect(() => {
+    setSelectedIds(new Set())
+  }, [page, debouncedQuery, statusFilter, sort, pageSize])
+
+  const pageIds = items.map((v) => v.id)
+  const selectedOnPage = pageIds.filter((id) => selectedIds.has(id)).length
+  const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length
+  const someOnPageSelected = selectedOnPage > 0 && !allOnPageSelected
+
+  useEffect(() => {
+    const el = selectAllRef.current
+    if (!el) return
+    el.indeterminate = someOnPageSelected
+  }, [someOnPageSelected, allOnPageSelected, pageIds.length])
 
   // Upload handler
   const handleUpload = async (files: FileList) => {
@@ -209,6 +238,12 @@ export default function LibraryPage() {
     try {
       await videosApi.delete(id)
       removeVideo(id)
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
       if (previewVideo?.id === id) closePreview()
       toast.success('视频已删除')
       // Refresh
@@ -221,6 +256,74 @@ export default function LibraryPage() {
       })
     } catch (error) {
       console.error('Delete failed:', error)
+      toast.error('删除失败，请重试')
+    }
+  }
+
+  const toggleSelectId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllOnPage = () => {
+    setSelectedIds((prev) => {
+      if (pageIds.length === 0) return prev
+      const next = new Set(prev)
+      if (pageIds.every((id) => next.has(id))) {
+        for (const id of pageIds) next.delete(id)
+      } else {
+        for (const id of pageIds) next.add(id)
+      }
+      return next
+    })
+  }
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  const handleBatchDelete = async () => {
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    const ok = await confirm({
+      title: '批量删除',
+      description: `将永久删除已选的 ${ids.length} 个视频及其处理数据，无法恢复。`,
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      variant: 'danger',
+    })
+    if (!ok) return
+    const results = await Promise.allSettled(ids.map((id) => videosApi.delete(id)))
+    let okCount = 0
+    const failed: string[] = []
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        okCount += 1
+        removeVideo(ids[i])
+      } else {
+        failed.push(ids[i])
+      }
+    })
+    if (previewVideo && ids.includes(previewVideo.id)) closePreview()
+    setSelectedIds(new Set(failed))
+    if (failed.length === 0) exitSelectMode()
+    await fetchVideos({
+      q: debouncedQuery || undefined,
+      status: statusFilter !== 'all' ? statusFilter : undefined,
+      sort,
+      page,
+      page_size: pageSize,
+    })
+    if (okCount > 0 && failed.length === 0) {
+      toast.success(`已删除 ${okCount} 个视频`)
+    } else if (okCount > 0 && failed.length > 0) {
+      toast.error(`已删除 ${okCount} 个，${failed.length} 个失败，可重试`)
+    } else {
       toast.error('删除失败，请重试')
     }
   }
@@ -426,6 +529,53 @@ export default function LibraryPage() {
               filtered={total}
             />
 
+            {/* ── 多选批量删除 ── */}
+            {items.length > 0 && (
+              <div className="flex flex-wrap items-center gap-3 mb-5 px-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectMode) exitSelectMode()
+                    else setSelectMode(true)
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    selectMode
+                      ? 'bg-cyan-600/20 border-cyan-500/50 text-cyan-200'
+                      : 'bg-slate-800/50 border-slate-600/60 text-slate-300 hover:border-slate-500'
+                  }`}
+                >
+                  <ListChecks className="w-3.5 h-3.5" />
+                  {selectMode ? '退出多选' : '多选'}
+                </button>
+                {selectMode && (
+                  <>
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        onChange={toggleSelectAllOnPage}
+                        className="rounded border-slate-500 bg-slate-800 text-cyan-600 focus:ring-cyan-500/40"
+                      />
+                      全选本页
+                    </label>
+                    <span className="text-xs text-slate-500 tabular-nums">
+                      已选 <span className="text-slate-300">{selectedIds.size}</span> 项
+                    </span>
+                    <button
+                      type="button"
+                      disabled={selectedIds.size === 0}
+                      onClick={handleBatchDelete}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/35 hover:bg-red-500/25 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      批量删除
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* ── No results after filtering ── */}
             {items.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 gap-3">
@@ -453,6 +603,9 @@ export default function LibraryPage() {
                       onDelete={handleDelete}
                       onRename={handleRename}
                       onReencode={handleOpenReencode}
+                      multiSelectActive={selectMode}
+                      selected={selectedIds.has(video.id)}
+                      onToggleSelect={toggleSelectId}
                     />
                   ))}
                 </div>

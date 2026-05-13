@@ -12,6 +12,7 @@ import {
   type HighlightBrowseAssetResult,
 } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 type ViewMode = 'asset' | 'segment'
 type PlayMode = 'video' | 'clip'
@@ -274,20 +275,28 @@ export default function AssetSearchPage() {
           className="rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-3 flex flex-col gap-3"
         >
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none z-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="例如：人物近景微笑镜头 / 展示产品特写并有字幕的画面 / 显示操作步骤的片段"
-                className="w-full pl-9 pr-28 py-2.5 bg-slate-900/60 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500/70"
+                className="w-full pl-9 pr-[7.5rem] py-2.5 bg-slate-900/60 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500/70"
               />
-              <button
-                type="submit"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg bg-cyan-600 text-xs font-medium text-slate-900 hover:bg-cyan-500 transition-colors"
-              >
-                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '检索'}
-              </button>
+              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1">
+                <VoiceInputControl
+                  intent="这是素材语义检索/高光浏览的查询框：请把用户口述整理成一句适合向量检索与 LLM 精排的中文检索描述，保留镜头/主体/动作/情绪等关键信息，不要输出无关说明。"
+                  value={query}
+                  onTextChange={setQuery}
+                  merge="replace"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-lg bg-cyan-600 text-xs font-medium text-slate-900 hover:bg-cyan-500 transition-colors"
+                >
+                  {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '检索'}
+                </button>
+              </div>
             </div>
           </div>
 

@@ -27,7 +27,7 @@ async def call_llm_for_strategy_dsl(
         api_key=cfg["api_key"],
         model=cfg["model"],
         temperature=min(float(cfg.get("temperature") or 0.7), 0.5),
-        max_tokens=min(int(cfg.get("max_tokens") or 20480), 4096),
+        max_tokens=min(int(cfg.get("max_tokens") or 20480), 65536),
         timeout=3600,
     )
 

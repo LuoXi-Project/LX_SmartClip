@@ -6,6 +6,7 @@ import { ArrowLeft, ChevronDown, Download, Loader2, Play, RefreshCw, Square, Set
 import { ttsApi, apiClient, type TTSResponse, type VoiceInfo } from '@/lib/api'
 import type { ConfigMap } from '@/app/settings/_components/types'
 import { useTtsStore, type TtsHistoryItem } from '@/lib/store'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 function buildAudioUrl(f: string) { return `/api/tts/audio/${f}` }
 
@@ -170,10 +171,21 @@ export default function TTSPage() {
 
         {/* 输入 + 参数 + 合成按钮 */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
-          <textarea value={text} onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSynthesize() }}
-            placeholder="输入要合成的文本（Ctrl+Enter 合成）" rows={5}
-            className="w-full bg-transparent px-5 pt-4 pb-2 text-sm text-slate-200 placeholder-slate-600 outline-none resize-none" />
+          <div className="relative">
+            <textarea value={text} onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSynthesize() }}
+              placeholder="输入要合成的文本（Ctrl+Enter 合成）" rows={5}
+              className="w-full bg-transparent px-5 pt-12 pb-2 pr-14 text-sm text-slate-200 placeholder-slate-600 outline-none resize-none" />
+            <div className="absolute right-3 top-3 z-10">
+              <VoiceInputControl
+                intent="这是 TTS 配音要朗读的正文：把口述整理成适合语音合成的中文书面稿，可分段但不要输出合成指令或引号包裹。"
+                value={text}
+                onTextChange={setText}
+                merge="append"
+                disabled={loading}
+              />
+            </div>
+          </div>
 
           {/* 按引擎显示参数 */}
           {isNoParam ? (

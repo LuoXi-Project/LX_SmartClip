@@ -457,7 +457,7 @@ async def generate_replica_template(
             temperature_key="llm_temperature",
             max_tokens_key="llm_max_tokens",
             default_temperature=0.35,
-            default_max_tokens=40960,
+            default_max_tokens=65536,
         )
     finally:
         await db.close()

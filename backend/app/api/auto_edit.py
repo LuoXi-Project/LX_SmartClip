@@ -144,7 +144,7 @@ async def _expand_timeline_with_llm_copy_if_needed(
         api_key=cfg["api_key"],
         model=cfg["model"],
         temperature=0.45,
-        max_tokens=min(int(cfg.get("max_tokens") or 20480), 4096),
+        max_tokens=min(int(cfg.get("max_tokens") or 20480), 65536),
         timeout=3600,
     )
     base_script = [str(it.subtitle_text or "").strip() for it in timeline.items if str(it.subtitle_text or "").strip()]

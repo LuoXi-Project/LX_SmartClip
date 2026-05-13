@@ -1,4 +1,7 @@
+'use client'
+
 import type { Video } from '@/lib/api'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 type VideoMaterialPanelProps = {
   videos: Video[]
@@ -32,12 +35,24 @@ export function VideoMaterialPanel({
       <div className="mt-3 space-y-3">
         <label className="block">
           <div className="text-xs text-slate-400 mb-1">选择视频</div>
-          <input
-            value={videosQuery}
-            onChange={(e) => onVideosQueryChange(e.target.value)}
-            className="w-full rounded-lg bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-200 mb-2"
-            placeholder="搜索视频名称…"
-          />
+          <div className="relative mb-2">
+            <input
+              value={videosQuery}
+              onChange={(e) => onVideosQueryChange(e.target.value)}
+              className="w-full rounded-lg bg-slate-900 border border-slate-800 pl-3 pr-24 py-2 text-sm text-slate-200"
+              placeholder="搜索视频名称…"
+            />
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+              <VoiceInputControl
+                intent="在视频素材列表中按名称筛选：输出应填入搜索框的简短关键字。"
+                value={videosQuery}
+                onTextChange={onVideosQueryChange}
+                merge="replace"
+                disabled={loadingVideos}
+                className="relative"
+              />
+            </div>
+          </div>
           <select
             value={videoId}
             onChange={(e) => onVideoIdChange(e.target.value)}

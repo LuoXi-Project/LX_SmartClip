@@ -7,6 +7,7 @@ import { type Segment } from './types'
 import { CopyGeneratorPanel } from './CopyGeneratorPanel'
 import { SegmentRow } from './SegmentRow'
 import { BgmCustomConfigPanel } from './BgmCustomConfigPanel'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 export type ManualMatchPanelProps = {
   topK: number
@@ -213,13 +214,24 @@ export function ManualMatchPanel({
           <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />
           批量拆分文案
         </p>
-        <textarea
-          value={globalQuery}
-          onChange={(e) => onGlobalQueryChange(e.target.value)}
-          placeholder="粘贴完整文案，按空行自动拆分为多段分别匹配..."
-          rows={4}
-          className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 text-sm outline-none focus:border-indigo-500 placeholder-slate-600 resize-none"
-        />
+        <div className="relative">
+          <textarea
+            value={globalQuery}
+            onChange={(e) => onGlobalQueryChange(e.target.value)}
+            placeholder="粘贴完整文案，按空行自动拆分为多段分别匹配..."
+            rows={4}
+            className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 pr-14 pt-11 text-sm outline-none focus:border-indigo-500 placeholder-slate-600 resize-none"
+          />
+          <div className="absolute right-2 top-2 z-10">
+            <VoiceInputControl
+              intent="这是「批量拆分文案」的大段输入：用户可口述或朗读要拆成多段的口播/脚本。整理成适合按空行拆分的正文，保留段落感；不要添加「请拆分」等元说明。"
+              value={globalQuery}
+              onTextChange={onGlobalQueryChange}
+              merge="append"
+              disabled={globalMatching || globalTtsSynthesising}
+            />
+          </div>
+        </div>
         <div className="flex items-center gap-3">
           <button
             onClick={onSplit}

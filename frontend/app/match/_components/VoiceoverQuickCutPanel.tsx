@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { MessageSquare, Mic2, Pause, Play, Scissors, Sparkles, Video } from 'lucide-react'
 import type { Video as VideoModel } from '@/lib/api'
 import { Switch } from '@/components/ui/switch'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 import type { TtsVideoAlignConfigApi, TtsVideoAlignPolicyApi } from '@/lib/api'
 import { fmt, videoAudioStreamUrl } from './types'
 
@@ -1011,13 +1012,25 @@ export function VoiceoverQuickCutPanel({
             <p className="text-[10px] text-slate-500 leading-relaxed">
               描述你的剪辑诉求，后端将结合 ASR 句子与约束调用 LLM 筛选/保留片段（非全量重写，仅辅助选段）。
             </p>
-            <textarea
-              value={semanticUserPrompt}
-              onChange={(e) => setSemanticUserPrompt(e.target.value)}
-              placeholder="例如：保留介绍价格和优惠的段落，删掉闲聊和重复口癖；节奏紧凑，总时长控制在 2 分钟内…"
-              rows={4}
-              className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600 resize-y min-h-[88px]"
-            />
+            <div className="relative">
+              <textarea
+                value={semanticUserPrompt}
+                onChange={(e) => setSemanticUserPrompt(e.target.value)}
+                placeholder="例如：保留介绍价格和优惠的段落，删掉闲聊和重复口癖；节奏紧凑，总时长控制在 2 分钟内…"
+                rows={4}
+                disabled={generating}
+                className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2.5 pr-14 pt-11 text-sm text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600 resize-y min-h-[88px] disabled:opacity-50"
+              />
+              <div className="absolute right-2 top-2 z-10">
+                <VoiceInputControl
+                  intent="口播快剪「智能快剪」提示词：说明要保留/删减的内容、节奏与时长偏好；后端会结合 ASR 做选段。整理成一条清晰中文指令，不要 Markdown。"
+                  value={semanticUserPrompt}
+                  onTextChange={setSemanticUserPrompt}
+                  merge="append"
+                  disabled={generating}
+                />
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <label className="text-[10px] text-slate-400 shrink-0">目标成片时长（秒）</label>
               <input

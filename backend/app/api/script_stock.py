@@ -176,13 +176,13 @@ async def generate_script(req: ScriptStockGenerateScriptRequest) -> ScriptStockG
             api_key=cfg["api_key"],
             model=cfg["model"],
             temperature=min(0.9, float(cfg.get("temperature") or 0.7)),
-            max_tokens=min(8192, int(cfg.get("max_tokens") or 4096)),
+            max_tokens=min(8192, int(cfg.get("max_tokens") or 65536)),
             timeout=120.0,
         )
         content = await llm.chat(
             [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
             temperature=0.75,
-            max_tokens=min(8192, int(cfg.get("max_tokens") or 4096)),
+            max_tokens=min(8192, int(cfg.get("max_tokens") or 65536)),
         )
     except Exception as e:
         logger.error("generate-script LLM error: %s", e)
@@ -219,13 +219,13 @@ async def suggest_queries(req: ScriptStockSuggestQueriesRequest) -> ScriptStockS
             api_key=cfg["api_key"],
             model=cfg["model"],
             temperature=0.3,
-            max_tokens=min(4096, int(cfg.get("max_tokens") or 2048)),
+            max_tokens=min(65536, int(cfg.get("max_tokens") or 2048)),
             timeout=90.0,
         )
         content = await llm.chat(
             [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
             temperature=0.2,
-            max_tokens=min(4096, int(cfg.get("max_tokens") or 2048)),
+            max_tokens=min(65536, int(cfg.get("max_tokens") or 2048)),
         )
         arr = _parse_json_array(content)
         if not isinstance(arr, list):

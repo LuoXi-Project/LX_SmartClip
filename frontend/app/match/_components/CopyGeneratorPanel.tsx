@@ -6,6 +6,7 @@ import {
   ClipboardCopy, Loader2, Sparkles, Wand2, RefreshCw, X,
 } from 'lucide-react'
 import { copyGenApi } from '@/lib/api'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 interface CopyTemplate { id: string; label: string; emoji: string; prompt: string; style: string }
 
@@ -43,31 +44,90 @@ function TemplatesGrid({ templates, active, onSelect }: { templates: CopyTemplat
   )
 }
 
-function PromptArea({ prompt, onChange }: { prompt: string; onChange: (v: string) => void }) {
+function PromptArea({
+  prompt,
+  onChange,
+  disabled,
+}: {
+  prompt: string
+  onChange: (v: string) => void
+  disabled?: boolean
+}) {
   return (
     <div className="space-y-1.5">
       <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">创作诉求</label>
-      <textarea value={prompt} onChange={(e) => onChange(e.target.value)}
-        placeholder="描述你想要的文案风格、主题或用途，例如：为这个旅行视频写一段有代入感的旁白..."
-        rows={3} className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-4 py-3 text-sm text-slate-200 outline-none focus:border-indigo-500 placeholder-slate-600 resize-none transition-colors" />
+      <div className="relative">
+        <textarea
+          value={prompt}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="描述你想要的文案风格、主题或用途，例如：为这个旅行视频写一段有代入感的旁白..."
+          rows={3}
+          disabled={disabled}
+          className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-4 py-3 pr-14 pt-11 text-sm text-slate-200 outline-none focus:border-indigo-500 placeholder-slate-600 resize-none transition-colors disabled:opacity-50"
+        />
+        <div className="absolute right-2 top-2 z-10">
+          <VoiceInputControl
+            intent="这是「AI 智能文案生成」的创作诉求输入框：把口述整理成给模型用的中文说明（风格、主题、用途、受众、语气等），不要输出引号或 Markdown。"
+            value={prompt}
+            onTextChange={onChange}
+            merge="append"
+            disabled={disabled}
+          />
+        </div>
+      </div>
     </div>
   )
 }
 
-
-
-function StyleAndSegs({ style, maxSegs, onStyleChange, onMaxSegsChange }: { style: string; maxSegs: number; onStyleChange: (v: string) => void; onMaxSegsChange: (v: number) => void }) {
+function StyleAndSegs({
+  style,
+  maxSegs,
+  onStyleChange,
+  onMaxSegsChange,
+  disabled,
+}: {
+  style: string
+  maxSegs: number
+  onStyleChange: (v: string) => void
+  onMaxSegsChange: (v: number) => void
+  disabled?: boolean
+}) {
   return (
     <div className="flex gap-3">
       <div className="flex-1 space-y-1.5">
         <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">风格</label>
-        <input type="text" value={style} onChange={(e) => onStyleChange(e.target.value)} placeholder="活泼 / 专业 / 温暖..."
-          className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500 placeholder-slate-600 transition-colors" />
+        <div className="relative">
+          <input
+            type="text"
+            value={style}
+            onChange={(e) => onStyleChange(e.target.value)}
+            placeholder="活泼 / 专业 / 温暖..."
+            disabled={disabled}
+            className="w-full rounded-xl bg-slate-900/70 border border-slate-700 pl-3 pr-24 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500 placeholder-slate-600 transition-colors disabled:opacity-50"
+          />
+          <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+            <VoiceInputControl
+              intent="这是文案生成里的「风格」短描述：把口述整理成几个词或短语（如 活泼、专业、温暖），不要长段落。"
+              value={style}
+              onTextChange={onStyleChange}
+              merge="replace"
+              disabled={disabled}
+              className="relative"
+            />
+          </div>
+        </div>
       </div>
       <div className="w-28 space-y-1.5">
         <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">段落数</label>
-        <input type="number" min={1} max={20} value={maxSegs} onChange={(e) => onMaxSegsChange(Math.max(1, Math.min(20, +e.target.value)))}
-          className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500 text-center transition-colors" />
+        <input
+          type="number"
+          min={1}
+          max={20}
+          value={maxSegs}
+          disabled={disabled}
+          onChange={(e) => onMaxSegsChange(Math.max(1, Math.min(20, +e.target.value)))}
+          className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500 text-center transition-colors disabled:opacity-50"
+        />
       </div>
     </div>
   )
@@ -248,8 +308,21 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateG
       {open && (
         <div className="px-5 pb-5 space-y-4 border-t border-slate-800/60">
           <TemplatesGrid templates={TEMPLATES} active={activeTemplate} onSelect={applyTemplate} />
-          <PromptArea prompt={prompt} onChange={(v) => { setPrompt(v); setActiveTemplate(null) }} />
-          <StyleAndSegs style={style} maxSegs={maxSegs} onStyleChange={setStyle} onMaxSegsChange={setMaxSegs} />
+          <PromptArea
+            prompt={prompt}
+            onChange={(v) => {
+              setPrompt(v)
+              setActiveTemplate(null)
+            }}
+            disabled={generating}
+          />
+          <StyleAndSegs
+            style={style}
+            maxSegs={maxSegs}
+            onStyleChange={setStyle}
+            onMaxSegsChange={setMaxSegs}
+            disabled={generating}
+          />
           {noVideos && <NoVideoWarning />}
           <GenerateBar generating={generating} disabled={!prompt.trim() || noVideos} onGenerate={generate} onAbort={abort} />
           {error && <ErrorBar message={error} />}

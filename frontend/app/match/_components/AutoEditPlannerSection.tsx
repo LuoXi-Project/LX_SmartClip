@@ -6,6 +6,7 @@ import type { BgmTrack, AutoEditMode } from '@/lib/api'
 import type { AutoPlanStage } from './autoEditTypes'
 import { AutoEditBgmMixPanel } from './AutoEditBgmMixPanel'
 import { BgmCustomConfigPanel } from './BgmCustomConfigPanel'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 export type AutoEditPlannerSectionProps = {
   hideLlmPlannerUi?: boolean
@@ -482,13 +483,24 @@ export function AutoEditPlannerSection({
 
           <div className="space-y-2">
             <label className="text-xs text-slate-300">创作提示词 / 文案 / 提纲</label>
-            <textarea
-              value={autoPrompt}
-              onChange={(e) => onAutoPromptChange(e.target.value)}
-              placeholder="例如：做一个 60 秒的搞笑职场翻车集锦，节奏轻快，适合短视频平台..."
-              rows={4}
-              className="w-full rounded-xl bg-slate-950/80 border border-slate-700 px-4 py-3 text-sm outline-none focus:border-emerald-400 placeholder-slate-600 resize-none"
-            />
+            <div className="relative">
+              <textarea
+                value={autoPrompt}
+                onChange={(e) => onAutoPromptChange(e.target.value)}
+                placeholder="例如：做一个 60 秒的搞笑职场翻车集锦，节奏轻快，适合短视频平台..."
+                rows={4}
+                className="w-full rounded-xl bg-slate-950/80 border border-slate-700 px-4 py-3 pr-14 pt-11 text-sm outline-none focus:border-emerald-400 placeholder-slate-600 resize-none"
+              />
+              <div className="absolute right-2 top-2 z-10">
+                <VoiceInputControl
+                  intent="这是「自动成片方案」的创作提示词/提纲输入框：把用户口述整理成可直接用于生成多套路成片方案的中文提示，可包含题材、时长、节奏、平台、受众、结构偏好等；不要输出引号或 Markdown。"
+                  value={autoPrompt}
+                  onTextChange={onAutoPromptChange}
+                  merge="append"
+                  disabled={autoLoading}
+                />
+              </div>
+            </div>
           </div>
           {autoError && (
             <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">

@@ -42,6 +42,7 @@ import {
   type ScriptStockVideoExtendPolicy,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { useConfirm } from '@/hooks/use-confirm'
 import { DEFAULT_SUBTITLE_STYLE, type ClipTrimRange, type SubtitleStyle } from './types'
@@ -629,12 +630,24 @@ export function ScriptStockPanel({
       <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 space-y-3">
         <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">AI 写文案（可选）</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <input
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder="主题或关键词"
-            className="sm:col-span-2 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500"
-          />
+          <div className="sm:col-span-2 relative">
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="主题或关键词"
+              className="w-full rounded-lg bg-slate-900 border border-slate-700 pl-3 pr-24 py-2 text-sm text-slate-200 outline-none focus:border-sky-500"
+            />
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+              <VoiceInputControl
+                intent="文案素材成片 · AI 写文案的主题或关键词：把口述整理成简短主题词或检索用语。"
+                value={topic}
+                onTextChange={setTopic}
+                merge="replace"
+                disabled={generatingScript}
+                className="relative"
+              />
+            </div>
+          </div>
           <input
             type="number"
             min={1}
@@ -644,12 +657,24 @@ export function ScriptStockPanel({
             className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500"
           />
         </div>
-        <input
-          value={styleHint}
-          onChange={(e) => setStyleHint(e.target.value)}
-          placeholder="风格补充（可选）：如 轻快短视频旁白、纪录片口吻…"
-          className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500"
-        />
+        <div className="relative">
+          <input
+            value={styleHint}
+            onChange={(e) => setStyleHint(e.target.value)}
+            placeholder="风格补充（可选）：如 轻快短视频旁白、纪录片口吻…"
+            className="w-full rounded-lg bg-slate-900 border border-slate-700 pl-3 pr-24 py-2 text-sm text-slate-200 outline-none focus:border-sky-500"
+          />
+          <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+            <VoiceInputControl
+              intent="文案素材成片 · AI 写文案的风格补充：把口述整理成一句风格/口吻/场景说明（如轻快短视频旁白、纪录片口吻），不要冗长解释。"
+              value={styleHint}
+              onTextChange={setStyleHint}
+              merge="append"
+              disabled={generatingScript}
+              className="relative"
+            />
+          </div>
+        </div>
         <button
           type="button"
           disabled={generatingScript}
@@ -668,13 +693,24 @@ export function ScriptStockPanel({
             拆分后可拖拽段落排序，与手动匹配一致
           </p>
         </div>
-        <textarea
-          value={fullScript}
-          onChange={(e) => setFullScript(e.target.value)}
-          rows={8}
-          placeholder="粘贴完整文案，或先用上方 AI 生成…"
-          className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500 resize-y min-h-[140px]"
-        />
+        <div className="relative">
+          <textarea
+            value={fullScript}
+            onChange={(e) => setFullScript(e.target.value)}
+            rows={8}
+            placeholder="粘贴完整文案，或先用上方 AI 生成…"
+            className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 pr-14 pt-11 text-sm text-slate-200 outline-none focus:border-sky-500 resize-y min-h-[140px]"
+          />
+          <div className="absolute right-2 top-2 z-10">
+            <VoiceInputControl
+              intent="文案素材成片的「文案正文」：把口述整理成可分段配音/匹配画面的完整中文稿；保留标点与换行意图，不要输出操作说明。"
+              value={fullScript}
+              onTextChange={setFullScript}
+              merge="append"
+              disabled={splitting || generatingScript}
+            />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"

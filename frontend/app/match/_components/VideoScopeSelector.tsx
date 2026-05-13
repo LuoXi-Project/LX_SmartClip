@@ -2,6 +2,7 @@
 
 import { ChevronLeft, ChevronRight, Film, Search } from 'lucide-react'
 import { type Video } from '@/lib/api'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 type VideoScopeSelectorProps = {
   scopeVideos: Video[]
@@ -49,23 +50,35 @@ export function VideoScopeSelector({
           {videoSearch ? `${filteredScopeVideos.length} / ${scopeVideos.length}` : scopeVideos.length} 个视频
         </span>
       </div>
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
-        <input
-          type="text"
-          value={videoSearch}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="搜索视频名称..."
-          className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
-        />
-        {videoSearch && (
-          <button
-            onClick={() => onSearchChange('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs"
-          >
-            ✕
-          </button>
-        )}
+      <div className="flex items-stretch rounded-lg border border-slate-700 bg-slate-800/60 focus-within:border-indigo-500 transition-colors overflow-hidden">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+          <input
+            type="text"
+            value={videoSearch}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="搜索视频名称..."
+            className="w-full pl-9 pr-3 py-2 bg-transparent text-sm text-slate-200 placeholder-slate-600 outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-1 pr-2 border-l border-slate-700/50 shrink-0">
+          <VoiceInputControl
+            intent="在「限定视频范围」列表里按名称筛选视频：把口述整理成应填入搜索框的关键字，不要句子说明。"
+            value={videoSearch}
+            onTextChange={onSearchChange}
+            merge="replace"
+            className="relative"
+          />
+          {videoSearch ? (
+            <button
+              type="button"
+              onClick={() => onSearchChange('')}
+              className="text-slate-500 hover:text-slate-300 text-xs px-1"
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
       </div>
       {filteredScopeVideos.length === 0 ? (
         <p className="text-slate-500 text-sm">未找到「{videoSearch}」。</p>

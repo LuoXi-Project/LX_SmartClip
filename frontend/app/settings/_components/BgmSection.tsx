@@ -8,6 +8,7 @@ import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { BgmUploadMetaPanel } from './BgmUploadMetaPanel'
 import { BgmTrackCard } from './BgmTrackCard'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 const BGM_TAG_OPTIONS = [
   '搞笑', '轻快', '欢乐', '活泼', '治愈', '舒缓', '安静', '温柔',
@@ -332,15 +333,27 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
         )}
 
         {!loading && tracks.length > 0 && (
-          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索标题 / 文件名 / 标签 / 情绪"
-                className="md:col-span-2 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
-              />
+              <div className="relative md:col-span-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索标题 / 文件名 / 标签 / 情绪"
+                  className="w-full rounded-lg bg-slate-900 border border-slate-700 pl-3 pr-24 py-2 text-xs outline-none focus:border-indigo-500 transition-colors"
+                />
+                <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                  <VoiceInputControl
+                    intent="在 BGM 曲库中搜索：把口述整理成适合匹配标题/文件名/标签/情绪的关键字，不要完整句子说明。"
+                    value={searchQuery}
+                    onTextChange={setSearchQuery}
+                    merge="replace"
+                    disabled={loading}
+                    className="relative"
+                  />
+                </div>
+              </div>
               <select
                 value={moodFilter}
                 onChange={(e) => setMoodFilter(e.target.value)}

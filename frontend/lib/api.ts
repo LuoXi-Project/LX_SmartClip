@@ -1089,3 +1089,32 @@ export const bgmApi = {
     apiClient.patch<unknown, BgmTrack>(`/api/bgm/tracks/${id}`, payload),
   delete: (id: string) => apiClient.delete(`/api/bgm/tracks/${id}`),
 }
+
+/** 浏览器录音 → 后端 ASR；可选再走 LLM 按「意图」整理 */
+export interface VoiceTranscribeResponse {
+  text: string
+  segments?: Array<{ start: number; end: number; text: string }>
+  slot?: number
+  provider?: string
+}
+
+export interface VoiceRefineBody {
+  transcript: string
+  intent: string
+  current_value?: string
+  mode: 'replace' | 'append'
+}
+
+export const voiceInputApi = {
+  transcribe: (blob: Blob, filename = 'recording.webm') => {
+    const fd = new FormData()
+    fd.append('file', blob, filename)
+    return apiClient.post<unknown, VoiceTranscribeResponse>(
+      '/api/voice/transcribe',
+      fd,
+      formDataPostConfig(),
+    )
+  },
+  refine: (body: VoiceRefineBody) =>
+    apiClient.post<unknown, { text: string }>('/api/voice/refine', body),
+}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import apiClient from '@/lib/api'
 import { ArrowLeft, Loader2, RefreshCw, Search, Copy, Check } from 'lucide-react'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
 
@@ -151,8 +152,18 @@ export default function LogsPage() {
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="输入关键字：错误信息 / 文件名 / logger / 请求路径..."
-                  className="w-full pl-10 pr-3 py-2.5 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full pl-10 pr-24 py-2.5 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
                 />
+                <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                  <VoiceInputControl
+                    intent="这是应用日志关键字检索框：把口述整理成适合 grep/过滤日志的简短关键字或片段（错误信息片段、文件名、logger 名、URL 路径等），不要自然语言长句。"
+                    value={q}
+                    onTextChange={setQ}
+                    merge="replace"
+                    disabled={loading}
+                    className="relative"
+                  />
+                </div>
               </div>
             </div>
 

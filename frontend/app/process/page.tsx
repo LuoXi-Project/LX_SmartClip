@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import apiClient, { connectProcessJobWebSocket, processJobsApi, videosApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 const STEPS = [
   { key: 'split',          label: '视频切分',       desc: '按镜头或固定时长切分视频' },
@@ -410,23 +411,36 @@ export default function ProcessPage() {
           </div>
 
           {!loading && videos.length > 0 && (
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => handleSearch(e.target.value)}
-                placeholder="搜索视频名称..."
-                className="w-full pl-9 pr-9 py-2 rounded-lg bg-slate-800/60 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
-              />
-              {search && (
-                <button
-                  onClick={() => handleSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs"
-                >
-                  ✕
-                </button>
-              )}
+            <div className="flex items-stretch rounded-lg border border-slate-700 bg-slate-800/60 focus-within:border-indigo-500 transition-colors overflow-hidden">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  placeholder="搜索视频名称..."
+                  className="w-full pl-9 pr-3 py-2 bg-transparent text-sm text-slate-200 placeholder-slate-600 outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-1 pr-2 border-l border-slate-700/50 shrink-0">
+                <VoiceInputControl
+                  intent="在素材处理页按名称筛选待处理视频：把口述整理成应填入搜索框的简短关键字。"
+                  value={search}
+                  onTextChange={handleSearch}
+                  merge="replace"
+                  disabled={selectionLocked}
+                  className="relative"
+                />
+                {search ? (
+                  <button
+                    type="button"
+                    onClick={() => handleSearch('')}
+                    className="text-slate-500 hover:text-slate-300 text-xs px-1"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
             </div>
           )}
 

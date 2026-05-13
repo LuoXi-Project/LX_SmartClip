@@ -1,5 +1,8 @@
+'use client'
+
 import type { NoteLayoutOptions } from '../_lib/types'
 import { NOTE_LAYOUT_ROWS } from './constants'
+import { VoiceInputControl } from '@/components/ui/voice-input'
 
 type NoteStylePanelProps = {
   noteOptions: NoteLayoutOptions
@@ -57,12 +60,23 @@ export function NoteStylePanel({
       <div className="mt-4 space-y-3">
         <label className="block">
           <div className="text-xs text-slate-400 mb-1">笔记风格（自定义）</div>
-          <textarea
-            value={styleText}
-            onChange={(e) => onStyleTextChange(e.target.value)}
-            className="w-full min-h-[140px] rounded-lg bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-200"
-            placeholder="例如：结论先行、偏技术细节、按「背景→步骤→坑点」组织；篇幅适中，每条要点带时间锚。"
-          />
+          <div className="relative">
+            <textarea
+              value={styleText}
+              onChange={(e) => onStyleTextChange(e.target.value)}
+              className="w-full min-h-[140px] rounded-lg bg-slate-900 border border-slate-800 px-3 py-2 pr-14 pt-10 text-sm text-slate-200"
+              placeholder="例如：结论先行、偏技术细节、按「背景→步骤→坑点」组织；篇幅适中，每条要点带时间锚。"
+            />
+            <div className="absolute right-2 top-2 z-10">
+              <VoiceInputControl
+                intent="这是「视频总结笔记」的自定义风格说明：把口述整理成写入该框的中文要点（结构、详略、语气、时间锚等），不要输出无关说明。"
+                value={styleText}
+                onTextChange={onStyleTextChange}
+                merge="append"
+                disabled={loading}
+              />
+            </div>
+          </div>
           <div className="text-xs text-slate-500 mt-1">
             直接描述结构、详略、语气与重点方向；会与内置 BASE/MERGE 提示词及上方版式开关一起发给模型。
           </div>

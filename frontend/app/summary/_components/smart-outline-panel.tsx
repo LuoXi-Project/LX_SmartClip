@@ -12,6 +12,7 @@ import {
 import { clipStreamUrl, fmt, videoStreamUrl } from '@/app/match/_components/types'
 import { useToast } from '@/components/ui/toast-provider'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 type PlayMode = 'video' | 'clip'
 
@@ -40,7 +41,7 @@ interface OutlineRangeMatch {
 }
 
 function findBracketTimeRanges(text: string): OutlineRangeMatch[] {
-  const re = /\[(\d+:\d{2}(?:\.\d+)?)\s*[–\-~～—]\s*(\d+:\d{2}(?:\.\d+)?)\]/g
+  const re = /\[\s*(\d+:\d{2}(?:\.\d+)?)\s*[–\-~～—]\s*(\d+:\d{2}(?:\.\d+)?)\s*\]/g
   const out: OutlineRangeMatch[] = []
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
@@ -98,7 +99,7 @@ function OutlineMarkdownWithSeek({
   }, [markdown])
 
   return (
-    <div className="whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/70 p-2.5 text-[11px] text-slate-200 leading-relaxed max-h-[min(42vh,360px)] overflow-auto">
+    <ScrollArea className="whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/70 p-2.5 text-[11px] text-slate-200 leading-relaxed max-h-[min(42vh,360px)]">
       {parts.map((p, i) => {
         if (p.kind === 'text') {
           return (
@@ -144,7 +145,7 @@ function OutlineMarkdownWithSeek({
           </span>
         )
       })}
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -295,7 +296,7 @@ export function SmartOutlinePanel({ videoId, selectedVideo }: SmartOutlinePanelP
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] gap-0 lg:divide-x lg:divide-violet-900/25 flex-1 min-h-0">
-        <div className="p-3 overflow-auto min-h-[200px] min-w-0 lg:max-h-[min(88vh,920px)]">
+        <ScrollArea className="p-3 min-h-[200px] min-w-0 lg:max-h-[min(88vh,920px)]">
           {loading ? (
             <div className="flex items-center justify-center gap-2 text-sm text-slate-400 py-16">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -346,7 +347,7 @@ export function SmartOutlinePanel({ videoId, selectedVideo }: SmartOutlinePanelP
               {outline.clip_scores.length > 0 && (
                 <div>
                   <div className="text-[9px] uppercase tracking-wide text-violet-400/90 mb-1">片段精彩度</div>
-                  <div className="max-h-48 overflow-auto rounded-xl border border-slate-800 divide-y divide-slate-800">
+                  <ScrollArea className="max-h-48 rounded-xl border border-slate-800 divide-y divide-slate-800">
                     {[...outline.clip_scores]
                       .sort((a, b) => b.excitement - a.excitement)
                       .map((row) => (
@@ -383,12 +384,12 @@ export function SmartOutlinePanel({ videoId, selectedVideo }: SmartOutlinePanelP
                           </div>
                         </div>
                       ))}
-                  </div>
+                  </ScrollArea>
                 </div>
               )}
             </div>
           )}
-        </div>
+        </ScrollArea>
 
         <div className="p-3 lg:p-4 bg-slate-950/25 flex flex-col min-h-[260px] lg:min-h-0 lg:h-full min-w-0">
           <div className="flex items-center justify-between gap-2 mb-2 shrink-0">

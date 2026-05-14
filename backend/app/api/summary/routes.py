@@ -8,11 +8,15 @@ import uuid
 from typing import Optional
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.llm import LLMClient, LLMConfig
 from app.db.database import DB_PATH
+from app.models.smart_outline import (
+    SmartOutlineBundle,
+    SmartOutlineGenerateResponse,
+)
 from app.models.summary import (
     SummaryGenerateRequest,
     SummaryTemplate,
@@ -31,6 +35,7 @@ from .pipeline import (
 )
 from .prompts import STAGE_A_SCHEMA_HINT, STAGE_A_SYSTEM, STAGE_B_SYSTEM
 from .screenshots import cleanup_previous_summary_shots_for_video
+from .smart_outline_store import fetch_saved_outline, generate_smart_outline_and_persist
 from .store import parse_video_summary_row, persist_generated_summary
 from .utils import now_iso, strip_markdown_fences
 
@@ -298,3 +303,31 @@ async def update_summary(summary_id: str, req: VideoSummaryUpdateRequest):
         row3 = await cur3.fetchone()
         d = parse_video_summary_row(dict(row3))
         return VideoSummary(**d)
+
+
+@router.get("/videos/{video_id}/smart-outline", response_model=SmartOutlineBundle)
+async def get_smart_outline_bundle(video_id: str):
+    """读取已保存的智能大纲（无记录时 outline 为 null）。"""
+    vid = (video_id or "").strip()
+    if not vid:
+        raise HTTPException(status_code=400, detail="video_id 无效")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        got = await fetch_saved_outline(db, vid)
+    if not got:
+        return SmartOutlineBundle(outline=None, updated_at=None)
+    outline, updated_at = got
+    return SmartOutlineBundle(outline=outline, updated_at=updated_at)
+
+
+@router.post("/videos/{video_id}/smart-outline/generate", response_model=SmartOutlineGenerateResponse)
+async def generate_smart_outline_route(
+    video_id: str,
+    max_clips: int = Query(120, ge=1, le=200),
+):
+    """基于 ASR（主）+ 可选 VLM 生成智能大纲并写入 video_smart_outlines。"""
+    response, updated = await generate_smart_outline_and_persist(
+        (video_id or "").strip(),
+        max_clips,
+    )
+    return SmartOutlineGenerateResponse(**response.model_dump(), updated_at=updated)

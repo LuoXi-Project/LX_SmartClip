@@ -383,4 +383,3 @@ async def browse_highlights(payload: HighlightBrowseRequest):
     from app.core.blocking_pool import run_heavy
 
     return await run_heavy(_browse_highlights_sync, payload)
-

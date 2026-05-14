@@ -553,6 +553,45 @@ export interface VideoSummary {
   updated_at: string
 }
 
+/** 智能视频大纲（视频总结页；结果存库） */
+export interface SmartOutlineTopic {
+  title: string
+  start_sec: number
+  end_sec: number
+  summary?: string | null
+}
+
+export interface SmartOutlineClipScore {
+  clip_id: string
+  start_time: number
+  end_time: number
+  excitement: number
+  reason?: string | null
+}
+
+export interface SmartOutlineMeta {
+  context_clip_count: number
+  clips_with_asr: number
+  clips_with_vlm: number
+  note: string
+}
+
+export interface SmartOutlineResponse {
+  video_id: string
+  video_title: string
+  outline_markdown: string
+  topics: SmartOutlineTopic[]
+  clip_scores: SmartOutlineClipScore[]
+  meta: SmartOutlineMeta
+}
+
+export interface SmartOutlineBundle {
+  outline: SmartOutlineResponse | null
+  updated_at: string | null
+}
+
+export type SmartOutlineGenerateResponse = SmartOutlineResponse & { updated_at: string }
+
 export const summaryApi = {
   templates: () => apiClient.get<unknown, SummaryTemplate[]>('/api/summary/templates'),
   generate: (payload: SummaryGenerateRequest) => apiClient.post<unknown, VideoSummary>('/api/summary/generate', payload),
@@ -566,6 +605,14 @@ export const summaryApi = {
     apiClient.get<unknown, VideoSummary | null>(`/api/summary/videos/${videoId}/latest`, { params }),
   update: (summaryId: string, payload: { summary_json?: any; summary_markdown?: string; source?: 'user' | 'llm' }) =>
     apiClient.patch<unknown, VideoSummary>(`/api/summary/${summaryId}`, payload),
+  smartOutlineGet: (videoId: string) =>
+    apiClient.get<unknown, SmartOutlineBundle>(`/api/summary/videos/${videoId}/smart-outline`),
+  smartOutlineGenerate: (videoId: string, params?: { max_clips?: number }) =>
+    apiClient.post<unknown, SmartOutlineGenerateResponse>(
+      `/api/summary/videos/${videoId}/smart-outline/generate`,
+      {},
+      { params: { max_clips: params?.max_clips ?? 120 } },
+    ),
 }
 
 export interface ReplicaIngestResponse {

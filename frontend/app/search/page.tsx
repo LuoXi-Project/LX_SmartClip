@@ -253,14 +253,14 @@ export default function AssetSearchPage() {
                 素材库
               </Link>
               <span>›</span>
-              <span>语义检索</span>
+              <span>素材检索</span>
             </div>
             <h1 className="text-xl font-semibold flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-indigo-400" />
-              素材语义检索 & 高光浏览
+              素材检索
             </h1>
             <p className="text-xs text-slate-500">
-              输入一句话，跨素材检索相关片段；或在结果中优先浏览高光片段。
+              输入一句话做语义检索，或切换到高光浏览；命中片段可在右侧预览。
             </p>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-500">
@@ -482,7 +482,11 @@ export default function AssetSearchPage() {
           </div>
         </form>
 
-        {/* Main content */}
+        {/* —— 语义检索与高光（独立） —— */}
+        <section aria-labelledby="search-workspace-heading" className="space-y-3">
+          <h2 id="search-workspace-heading" className="text-sm font-medium text-slate-300 px-0.5">
+            语义检索与高光浏览
+          </h2>
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)] gap-4 min-h-[420px] lg:items-stretch">
           {/* Left: list */}
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden flex flex-col min-h-0 h-full">
@@ -630,10 +634,10 @@ export default function AssetSearchPage() {
           <div className="min-h-0 h-full flex flex-col">
             <div className="rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-[260px] w-full sticky top-12 z-10 self-start max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain">
               <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
-                <span>预览 · 自动高光感知</span>
+                <span>检索预览</span>
                 {effectiveAsset && (
-                  <span className="text-[11px] text-slate-400">
-                    当前素材：{effectiveAsset.asset_title || effectiveAsset.asset_id}
+                  <span className="text-[11px] text-slate-400 truncate max-w-[55%] text-right">
+                    {effectiveAsset.asset_title || effectiveAsset.asset_id}
                   </span>
                 )}
               </div>
@@ -654,7 +658,7 @@ export default function AssetSearchPage() {
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-sm text-slate-500">
-                    请选择左侧的片段进行预览
+                    在左侧选择片段以预览检索命中
                   </div>
                 )}
               </div>
@@ -735,6 +739,8 @@ export default function AssetSearchPage() {
             </div>
           </div>
         </div>
+        </section>
+
       </div>
     </main>
   )

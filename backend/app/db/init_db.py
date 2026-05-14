@@ -123,6 +123,20 @@ CREATE TABLE IF NOT EXISTS video_summary_versions (
 );
 """
 
+CREATE_VIDEO_SMART_OUTLINES = """
+CREATE TABLE IF NOT EXISTS video_smart_outlines (
+    video_id TEXT PRIMARY KEY,
+    outline_markdown TEXT NOT NULL DEFAULT '',
+    topics_json TEXT NOT NULL DEFAULT '[]',
+    clip_scores_json TEXT NOT NULL DEFAULT '[]',
+    meta_json TEXT,
+    max_clips INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (video_id) REFERENCES videos(id)
+);
+"""
+
 DEFAULT_CONFIG = [
     ("split_mode", "scene", "select", "分割模式", '["scene","fixed","hybrid"]'),
     ("fixed_duration", "10", "number", "固定分割时长（秒）", None),
@@ -432,6 +446,7 @@ async def init_db():
         await db.execute(CREATE_SUMMARY_TEMPLATES)
         await db.execute(CREATE_VIDEO_SUMMARIES)
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
+        await db.execute(CREATE_VIDEO_SMART_OUTLINES)
         # 旧版分块表已废弃，启动时删除（若存在）
         try:
             await db.execute("DROP TABLE IF EXISTS video_summary_sections")

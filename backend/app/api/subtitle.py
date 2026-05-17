@@ -49,12 +49,18 @@ TTS_AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(DB_PATH), "tts_audi
 _FONTS_DIR = get_fonts_dir()
 
 def _burned_output_dir_for_clip_rows(rows: list) -> str:
-    """由 clips 行得到烧录输出目录 ``storage/<video_id>/burned_videos/``。"""
-    video_ids = {str(r["video_id"]) for r in rows if r["video_id"]}
-    if len(video_ids) != 1:
-        raise HTTPException(400, "segments 中的片段必须属于同一素材视频")
-    material_id = next(iter(video_ids))
-    return ensure_storage_subpath(material_id, "burned_videos")
+    """
+    由 clips 行得到烧录/原声导出输出目录。
+    - 单素材：``storage/<video_id>/burned_videos/``（与手动匹配一致）
+    - 跨素材混剪：``storage/cross_video_exports/burned_videos/``
+    """
+    video_ids = {str(r["video_id"]) for r in rows if r.get("video_id")}
+    if not video_ids:
+        raise HTTPException(400, "segments 缺少有效的 video_id")
+    if len(video_ids) == 1:
+        material_id = next(iter(video_ids))
+        return ensure_storage_subpath(material_id, "burned_videos")
+    return ensure_storage_subpath("cross_video_exports", "burned_videos")
 
 
 async def _load_clip_rows_with_raw_fallback(

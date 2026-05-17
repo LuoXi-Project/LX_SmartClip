@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from app.models.subtitle import (
     ClipTrimPart,
     SubtitleStyle,
@@ -173,6 +173,52 @@ class AutoEditPlanRequest(BaseModel):
         ge=1,
         description="最多处理批次数（任务级覆盖）",
     )
+
+
+class MixEditPlanRequest(BaseModel):
+    """混剪：多素材分级编排 + 原声/全静音模式。"""
+
+    video_ids: List[str] = Field(..., description="选中视频 ID，顺序影响默认编排优先级")
+    mix_audio_mode: Literal["keep_original", "mute_all_original"] = Field(
+        "keep_original",
+        description="模式一：保留素材原声；模式二：关闭全部原声",
+    )
+    voice_merge_strategy: Literal["strict_single", "same_voice_concat"] = Field(
+        "same_voice_concat",
+        description="模式一下的人声策略：严格单路 / 同人声自由拼接（仅 keep_original 生效）",
+    )
+    mute_audio_track: Literal["ai_tts_asr", "ai_tts_llm", "bgm_only", "ai_tts"] = Field(
+        "ai_tts_llm",
+        description=(
+            "模式二音轨：ai_tts_asr=沿用 ASR 原文 TTS；"
+            "ai_tts_llm=AI 生成旁白文案再 TTS；bgm_only=仅 BGM。"
+            "（ai_tts 为旧值，等同 ai_tts_asr）"
+        ),
+    )
+    target_duration_sec: Optional[float] = Field(
+        None,
+        ge=5.0,
+        le=7200.0,
+        description="可选目标成片时长（秒），用于提示超长方案",
+    )
+    user_prompt: Optional[str] = Field(
+        None,
+        description="剪辑诉求；模式二选 ai_tts_llm 时必填，用于 AI 生成旁白",
+    )
+
+    @field_validator("mute_audio_track", mode="before")
+    @classmethod
+    def _normalize_mute_audio_track(cls, v: object) -> object:
+        if v == "ai_tts":
+            return "ai_tts_asr"
+        return v
+
+    @model_validator(mode="after")
+    def _require_prompt_for_llm_tts(self) -> "MixEditPlanRequest":
+        if self.mix_audio_mode == "mute_all_original" and self.mute_audio_track == "ai_tts_llm":
+            if not (self.user_prompt or "").strip():
+                raise ValueError("选择「AI 生成文案配音」时请填写剪辑诉求")
+        return self
 
 
 class VoiceoverQuickCutRequest(BaseModel):

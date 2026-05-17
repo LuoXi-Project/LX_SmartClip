@@ -1,7 +1,7 @@
 import type { AutoEditPlanApi, TtsVideoAlignConfigApi } from '@/lib/api'
 
 export const DEFAULT_VOICEOVER_TTS_ALIGN: TtsVideoAlignConfigApi = {
-  policy: 'freeze_last_frame',
+  policy: 'loop_video_to_cover',
   max_audio_atempo: 2,
   min_audio_atempo: 0.5,
   max_video_pts_factor: 2,

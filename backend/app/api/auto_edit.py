@@ -57,6 +57,7 @@ from app.models.auto_edit import (
     AutoEditPlanSessionResponse,
     AutoEditRealizeRequest,
     AutoEditRealizeResponse,
+    MixEditPlanRequest,
     Plan,
     VoiceoverQuickCutRequest,
 )
@@ -67,6 +68,11 @@ from app.core.auto_edit.voiceover_quick_cut import (
     load_clip_groups_by_videos,
 )
 from app.core.auto_edit.voiceover_semantic import build_semantic_voiceover_plan
+from app.core.auto_edit.mix_edit import (
+    apply_shot_boundary_refine_to_plan,
+    build_mix_edit_plan,
+)
+from app.core.auto_edit.mix_edit_llm_copy import apply_llm_scripts_to_mute_plan
 
 logger = logging.getLogger(__name__)
 
@@ -685,6 +691,107 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
         raise HTTPException(
             status_code=400,
             detail="没有可保留的片段：请确认已对选中视频跑过 ASR，且至少一个 clip 含有识别文本",
+        )
+    return AutoEditPlanResponse(plans=[plan])
+
+
+async def _load_mix_edit_clips(db: aiosqlite.Connection, video_ids: List[str]) -> list[aiosqlite.Row]:
+    """加载混剪所需 clip（含 vlm_description），按视频顺序 + 片内时间排序。"""
+    all_rows: list[aiosqlite.Row] = []
+    for vid in video_ids:
+        async with db.execute(
+            "SELECT id, video_id, clip_path, start_time, duration, asr_text, asr_segments, vlm_description "
+            "FROM clips WHERE video_id = ? ORDER BY start_time ASC, id ASC",
+            (vid,),
+        ) as cur:
+            all_rows.extend(await cur.fetchall())
+    return all_rows
+
+
+@router.post("/mix-edit-plan", response_model=AutoEditPlanResponse)
+async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
+    """
+    混剪方案：两大顶层模式（保留原声 / 关闭全部原声）+ 模式一人声合并策略。
+    素材按 ASR/VLM 四级分级编排，兼容仅有 ASR、仅有 VLM 或全无标注的 clip。
+    """
+    if not req.video_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一个视频")
+    if req.mix_audio_mode == "keep_original":
+        voice_strategy = req.voice_merge_strategy
+    else:
+        voice_strategy = "strict_single"
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            placeholders = ",".join(["?"] * len(req.video_ids))
+            async with db.execute(
+                f"SELECT id FROM videos WHERE id IN ({placeholders})",
+                list(req.video_ids),
+            ) as cur:
+                found_ids = {str(r["id"]) for r in await cur.fetchall()}
+            missing = [vid for vid in req.video_ids if vid not in found_ids]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"以下视频不存在或已删除：{', '.join(missing[:8])}",
+                )
+            clip_rows = await _load_mix_edit_clips(db, list(req.video_ids))
+            video_names = await _load_video_names(db, list(req.video_ids))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("mix_edit_plan 读库失败: %s", e)
+        raise HTTPException(status_code=500, detail="读取视频片段失败")
+
+    if not clip_rows:
+        raise HTTPException(
+            status_code=400,
+            detail="所选视频下没有 clip：请先在素材处理中完成切分/识别",
+        )
+
+    hint = video_names[0] if len(video_names) == 1 else (
+        f"{len(req.video_ids)} 个视频" if req.video_ids else None
+    )
+    try:
+        plan = build_mix_edit_plan(
+            clip_rows=clip_rows,
+            mix_audio_mode=req.mix_audio_mode,
+            voice_merge_strategy=voice_strategy,
+            mute_audio_track=req.mute_audio_track,
+            video_title_hint=hint,
+            target_duration_sec=req.target_duration_sec,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve)) from ve
+
+    if req.mix_audio_mode == "mute_all_original" and req.mute_audio_track == "ai_tts_llm":
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                llm_cfg = await LLMConfig.get_llm_params_with_defaults(db)
+                plan = await apply_llm_scripts_to_mute_plan(
+                    plan=plan,
+                    db=db,
+                    video_ids=list(req.video_ids),
+                    user_prompt=(req.user_prompt or "").strip(),
+                    llm_cfg=llm_cfg,
+                )
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve)) from ve
+        except RuntimeError as re:
+            raise HTTPException(status_code=502, detail=str(re)) from re
+        except Exception as e:
+            logger.error("mix_edit LLM 文案生成失败: %s", e)
+            raise HTTPException(status_code=502, detail=f"AI 生成旁白文案失败: {e}") from e
+
+    if req.mix_audio_mode == "mute_all_original" and req.mute_audio_track == "ai_tts_llm":
+        plan = apply_shot_boundary_refine_to_plan(plan, clip_rows)
+
+    if not plan.segments:
+        raise HTTPException(
+            status_code=400,
+            detail="混剪方案为空：请确认素材已处理，且至少有一段可用画面",
         )
     return AutoEditPlanResponse(plans=[plan])
 

@@ -185,10 +185,6 @@ class MixEditPlanRequest(BaseModel):
         "keep_original",
         description="模式一：保留素材原声；模式二：关闭全部原声",
     )
-    voice_merge_strategy: Literal["strict_single", "same_voice_concat"] = Field(
-        "same_voice_concat",
-        description="模式一下的人声策略：严格单路 / 同人声自由拼接（仅 keep_original 生效）",
-    )
     mute_audio_track: Literal["ai_tts_asr", "ai_tts_llm", "bgm_only", "ai_tts"] = Field(
         "ai_tts_llm",
         description=(

@@ -25,7 +25,6 @@ from app.core.auto_edit.voiceover_quick_cut import (
 
 ClipTier = Literal["asr_vlm", "asr_only", "vlm_only", "none"]
 MixAudioMode = Literal["keep_original", "mute_all_original"]
-VoiceMergeStrategy = Literal["strict_single", "same_voice_concat"]
 MuteAudioTrack = Literal["ai_tts_asr", "ai_tts_llm", "bgm_only"]
 
 _TIER_PRIORITY: dict[ClipTier, int] = {
@@ -436,15 +435,13 @@ def build_mix_edit_plan(
     *,
     clip_rows: Sequence[Any],
     mix_audio_mode: MixAudioMode,
-    voice_merge_strategy: VoiceMergeStrategy = "strict_single",
     mute_audio_track: MuteAudioTrack = "ai_tts",
     video_title_hint: str | None = None,
     target_duration_sec: float | None = None,
 ) -> Plan:
     """
     混剪方案生成：
-    - keep_original + strict_single：人声分段接力、不重叠；无 ASR 静音画面
-    - keep_original + same_voice_concat：带 ASR 素材原声全开；无 ASR 静音
+    - keep_original：带 ASR 素材原声全开；无 ASR 静音画面填充
     - mute_all_original：全静音 + 按素材等级编排；音轨 ai_tts / bgm_only
     """
     rows = list(clip_rows)
@@ -517,7 +514,7 @@ def build_mix_edit_plan(
         )
         bgm = BGMPlan(enabled=(mute_audio_track == "bgm_only"), volume_db=-10.0)
 
-    elif voice_merge_strategy == "same_voice_concat":
+    else:
         for row in arranged:
             tier = classify_clip_tier(
                 asr_text=row["asr_text"],
@@ -558,91 +555,10 @@ def build_mix_edit_plan(
                     order += 1
 
         plan_mode = "original"
-        title = "混剪·保留原声（同人声自由拼接）"
+        title = "混剪·保留原声"
         summary = (
-            f"模式一·策略二：带 ASR 素材原声全开、可穿插拼接；无 ASR 静音画面填充。"
+            f"模式一：带 ASR 素材原声全开、可穿插拼接；无 ASR 静音画面填充。"
             f" 共 {len(segments)} 段。"
-            f" 分级：{_format_tier_counts(tier_counts)}."
-        )
-        bgm = BGMPlan(enabled=False)
-
-    else:
-        # strict_single：仅 ASR 人声段顺序接力；无 ASR 静音填充；成片时间轴不重叠
-        voice_queue: list[tuple[Any, float, float, str]] = []
-        mute_fillers: list[Any] = []
-        for row in arranged:
-            tier = classify_clip_tier(
-                asr_text=row["asr_text"],
-                vlm_description=_row_vlm(row),
-            )
-            if tier in ("asr_vlm", "asr_only"):
-                for st, et, text in _extract_asr_sentence_segments(row):
-                    voice_queue.append((row, st, et, text))
-            else:
-                mute_fillers.append(row)
-
-        # 按源视频顺序 + 源内时间排序，保证「接力」稳定
-        voice_queue.sort(key=lambda x: (str(x[0]["video_id"]), x[1]))
-
-        timeline_cursor = 0.0
-        filler_idx = 0
-        for row, st, et, text in voice_queue:
-            dur = max(0.05, et - st)
-            if filler_idx < len(mute_fillers) and timeline_cursor > 0:
-                filler = mute_fillers[filler_idx]
-                filler_idx += 1
-                fseg = _clip_row_to_segment(
-                    row=filler,
-                    order=order,
-                    audio_mode="mute",
-                    subtitle_strategy="none",
-                    subtitle_text="（静音过渡）",
-                )
-                if fseg:
-                    fdur = min(
-                        float(fseg.override_duration_sec or _MUTE_FILLER_SEC),
-                        _MUTE_FILLER_SEC,
-                    )
-                    fseg = fseg.model_copy(update={"override_duration_sec": fdur})
-                    segments.append(fseg)
-                    order += 1
-                    timeline_cursor += fdur
-
-            segments.append(
-                _build_voice_segment_from_range(
-                    row=row, order=order, st_abs=st, et_abs=et, text=text
-                )
-            )
-            order += 1
-            timeline_cursor += dur
-
-        while filler_idx < len(mute_fillers):
-            filler = mute_fillers[filler_idx]
-            filler_idx += 1
-            fseg = _clip_row_to_segment(
-                row=filler,
-                order=order,
-                audio_mode="mute",
-                subtitle_strategy="none",
-                subtitle_text="（无 ASR·画面填充）",
-            )
-            if fseg:
-                fseg = fseg.model_copy(
-                    update={
-                        "override_duration_sec": min(
-                            float(fseg.override_duration_sec or _MUTE_FILLER_SEC),
-                            _MUTE_FILLER_SEC,
-                        )
-                    }
-                )
-                segments.append(fseg)
-                order += 1
-
-        plan_mode = "original"
-        title = "混剪·保留原声（严格单路人声）"
-        summary = (
-            f"模式一·策略一：时间轴任意时刻仅一段人声、顺序接力；"
-            f"无 ASR 素材静音填充。人声段 {len(voice_queue)}，画面填充 {filler_idx}。"
             f" 分级：{_format_tier_counts(tier_counts)}."
         )
         bgm = BGMPlan(enabled=False)
@@ -671,9 +587,7 @@ def build_mix_edit_plan(
         ),
     )
 
-    if mix_audio_mode == "keep_original" and voice_merge_strategy == "strict_single":
-        plan = apply_voiceover_source_timeline_dedupe(plan, allow_overlaps=False)
-    elif mix_audio_mode == "keep_original" and voice_merge_strategy == "same_voice_concat":
+    if mix_audio_mode == "keep_original":
         plan = apply_voiceover_source_timeline_dedupe(plan, allow_overlaps=True)
 
     if target_duration_sec and plan.estimated_duration_sec:

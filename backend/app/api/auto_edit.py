@@ -712,16 +712,11 @@ async def _load_mix_edit_clips(db: aiosqlite.Connection, video_ids: List[str]) -
 @router.post("/mix-edit-plan", response_model=AutoEditPlanResponse)
 async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
     """
-    混剪方案：两大顶层模式（保留原声 / 关闭全部原声）+ 模式一人声合并策略。
+    混剪方案：两大顶层模式（保留原声 / 关闭全部原声）。
     素材按 ASR/VLM 四级分级编排，兼容仅有 ASR、仅有 VLM 或全无标注的 clip。
     """
     if not req.video_ids:
         raise HTTPException(status_code=400, detail="请至少选择一个视频")
-    if req.mix_audio_mode == "keep_original":
-        voice_strategy = req.voice_merge_strategy
-    else:
-        voice_strategy = "strict_single"
-
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
@@ -758,7 +753,6 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
         plan = build_mix_edit_plan(
             clip_rows=clip_rows,
             mix_audio_mode=req.mix_audio_mode,
-            voice_merge_strategy=voice_strategy,
             mute_audio_track=req.mute_audio_track,
             video_title_hint=hint,
             target_duration_sec=req.target_duration_sec,

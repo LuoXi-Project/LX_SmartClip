@@ -3,13 +3,12 @@
 import { useMemo, useState } from 'react'
 import { Layers, Mic2, VolumeX, Sparkles, Info } from 'lucide-react'
 import type { TtsVideoAlignConfigApi, Video as VideoModel } from '@/lib/api'
-import type { MixAudioMode, MuteAudioTrack, VoiceMergeStrategy } from './mixEditTypes'
+import type { MixAudioMode, MuteAudioTrack } from './mixEditTypes'
 import { TtsAlignPolicySelect } from './TtsAlignPolicySelect'
 
 export type MixEditGeneratePayload = {
   videoIds: string[]
   mixAudioMode: MixAudioMode
-  voiceMergeStrategy: VoiceMergeStrategy
   muteAudioTrack: MuteAudioTrack
   targetDurationSec?: number
   userPrompt?: string
@@ -34,7 +33,7 @@ const MODE_OPTIONS: Array<{
   {
     id: 'keep_original',
     label: '模式一：保留素材原声',
-    desc: '按人声策略编排，带 ASR 的片段可保留原声',
+    desc: '带 ASR 的片段保留原声，可自由穿插拼接',
     icon: Mic2,
   },
   {
@@ -42,36 +41,6 @@ const MODE_OPTIONS: Array<{
     label: '模式二：关闭全部原声',
     desc: '素材全部静音，成片使用 AI 配音或纯 BGM',
     icon: VolumeX,
-  },
-]
-
-const VOICE_STRATEGY_OPTIONS: Array<{
-  id: VoiceMergeStrategy
-  label: string
-  badge?: string
-  desc: string
-  rules: string[]
-}> = [
-  {
-    id: 'strict_single',
-    label: '严格单路人声',
-    desc: '适用：不同人、不同录音环境、音色杂乱的素材',
-    rules: [
-      '时间轴任意时刻只允许一段人声，不叠加、不混音',
-      '多段带 ASR 素材只能顺序接力，中间插静音画面过渡',
-      '所有无 ASR 素材强制静音',
-    ],
-  },
-  {
-    id: 'same_voice_concat',
-    label: '允许同人声自由拼接',
-    badge: '默认推荐',
-    desc: '适用：同一博主、同收音环境、同音色素材（需手动开启）',
-    rules: [
-      '放开单路人声限制，带 ASR 素材原声可自由穿插拼接',
-      '系统不做人声冲突限制，由用户保证素材人声统一',
-      '无 ASR 素材依旧静音，仅作画面填充',
-    ],
   },
 ]
 
@@ -106,7 +75,6 @@ export function MixEditPanel({
   onTtsAlignChange,
 }: MixEditPanelProps) {
   const [mixAudioMode, setMixAudioMode] = useState<MixAudioMode>('keep_original')
-  const [voiceMergeStrategy, setVoiceMergeStrategy] = useState<VoiceMergeStrategy>('same_voice_concat')
   const [muteAudioTrack, setMuteAudioTrack] = useState<MuteAudioTrack>('ai_tts_llm')
   const [targetDuration, setTargetDuration] = useState('')
   const [userPrompt, setUserPrompt] = useState('')
@@ -137,7 +105,6 @@ export function MixEditPanel({
     onGenerate({
       videoIds: selectedVideoIds,
       mixAudioMode,
-      voiceMergeStrategy,
       muteAudioTrack,
       targetDurationSec: td && Number.isFinite(td) && td > 0 ? td : undefined,
       userPrompt: userPrompt.trim() || undefined,
@@ -153,7 +120,7 @@ export function MixEditPanel({
         <div>
           <h2 className="text-lg font-semibold text-slate-100">混剪</h2>
           <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-            多素材智能编排：两大顶层音轨模式 + 原声下可选人声合并策略；自动识别 ASR / VLM 分级。
+            多素材智能编排：两大顶层音轨模式；自动识别 ASR / VLM 分级。
           </p>
         </div>
       </header>
@@ -187,10 +154,13 @@ export function MixEditPanel({
       </section>
 
       {mixAudioMode === 'keep_original' ? (
-        <section className="space-y-3 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
-          <p className="text-xs font-semibold text-violet-200">多人声混合策略</p>
-          <p className="text-[11px] text-slate-500">仅在「保留原声」下生效</p>
-          <VoiceStrategyGrid value={voiceMergeStrategy} onChange={setVoiceMergeStrategy} />
+        <section className="space-y-2 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
+          <p className="text-xs font-semibold text-violet-200">原声编排说明</p>
+          <ul className="text-[11px] text-slate-500 list-disc list-inside space-y-1">
+            <li>带 ASR 素材原声可自由穿插拼接</li>
+            <li>无 ASR 素材静音，仅作画面填充</li>
+            <li>请自行保证素材人声、收音环境一致</li>
+          </ul>
         </section>
       ) : (
         <section className="space-y-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4">
@@ -269,50 +239,6 @@ export function MixEditPanel({
         <Sparkles className="w-4 h-4" />
         {loading ? '生成混剪方案中…' : '生成混剪方案'}
       </button>
-    </div>
-  )
-}
-
-function VoiceStrategyGrid({
-  value,
-  onChange,
-}: {
-  value: VoiceMergeStrategy
-  onChange: (v: VoiceMergeStrategy) => void
-}) {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {VOICE_STRATEGY_OPTIONS.map((opt) => (
-        <button
-          key={opt.id}
-          type="button"
-          onClick={() => onChange(opt.id)}
-          className={`text-left rounded-xl border p-3 transition-colors ${
-            value === opt.id
-              ? 'border-violet-500 bg-violet-500/15 ring-1 ring-violet-500/40'
-              : 'border-slate-700 hover:border-slate-600 bg-slate-900/50'
-          }`}
-        >
-          <div className="flex items-center gap-2 flex-wrap">
-            <span
-              className={`text-sm font-medium ${value === opt.id ? 'text-violet-100' : 'text-slate-200'}`}
-            >
-              {opt.label}
-            </span>
-            {opt.badge ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                {opt.badge}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-1.5 text-[11px] text-slate-400">{opt.desc}</p>
-          <ul className="mt-2 space-y-1 text-[10px] text-slate-500 list-disc list-inside">
-            {opt.rules.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-          </ul>
-        </button>
-      ))}
     </div>
   )
 }

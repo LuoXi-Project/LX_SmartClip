@@ -882,13 +882,11 @@ export interface AutoEditPlanSessionResponseApi {
 }
 
 export type MixAudioModeApi = 'keep_original' | 'mute_all_original'
-export type VoiceMergeStrategyApi = 'strict_single' | 'same_voice_concat'
 export type MuteAudioTrackApi = 'ai_tts_asr' | 'ai_tts_llm' | 'bgm_only' | 'ai_tts'
 
 export interface MixEditPlanRequestApi {
   video_ids: string[]
   mix_audio_mode: MixAudioModeApi
-  voice_merge_strategy?: VoiceMergeStrategyApi
   mute_audio_track?: MuteAudioTrackApi
   target_duration_sec?: number
   user_prompt?: string

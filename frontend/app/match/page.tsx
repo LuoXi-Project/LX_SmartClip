@@ -1176,7 +1176,6 @@ export default function MatchPage() {
       const res = await autoEditApi.mixEditPlan({
         video_ids: payload.videoIds,
         mix_audio_mode: payload.mixAudioMode,
-        voice_merge_strategy: payload.voiceMergeStrategy,
         mute_audio_track: payload.muteAudioTrack,
         target_duration_sec: payload.targetDurationSec,
         user_prompt: payload.userPrompt,

@@ -79,6 +79,8 @@ class SubtitleSegmentInput(BaseModel):
     clip_trims: Optional[List[ClipTrimPart]] = None
     # 成片字幕时间轴用时长（秒）；由 TTS 对齐策略推导后写入，优先于 ffprobe(TTS) 与 duration_sec 的 min 规则
     timeline_duration_sec: Optional[float] = None
+    # 混剪「仅 BGM / 素材全静音」：保留画面，音轨置零
+    mute_audio: bool = False
 
 
 class SubtitleStyle(BaseModel):
@@ -185,6 +187,8 @@ class BurnSubtitleRequest(BaseModel):
     materialize_from_source: bool = True
     # TTS 成片：画面与配音时长对齐策略（默认 None 时保持旧行为：循环拼接素材组）
     tts_align: Optional[TtsVideoAlignConfig] = None
+    # 一键成片 / 口播 TTS 管线：有文案的段必须有可用 TTS 文件，禁止回退素材原声
+    require_tts_audio: bool = False
 
 
 class ExportOriginalRequest(BaseModel):

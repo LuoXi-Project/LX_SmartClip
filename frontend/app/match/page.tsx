@@ -941,6 +941,13 @@ export default function MatchPage() {
       fade_in_sec: pb?.fade_in_sec ?? 0.8,
       fade_out_sec: pb?.fade_out_sec ?? 1.0,
     })
+    // 口播/混剪专用 BGM 已写入 plan 时，勿被「成片混音」总开关关掉
+    if (
+      pb?.enabled &&
+      ((pb.track_ids?.length ?? 0) > 0 || (pb.track_id && String(pb.track_id).trim()))
+    ) {
+      return plan
+    }
     if (!autoBgmMixEnabled) {
       return { ...plan, bgm: { ...baseBgm(), enabled: false } }
     }
@@ -1189,11 +1196,10 @@ export default function MatchPage() {
     setAutoRealizeMsg('')
     setAutoRealizingId(plan.plan_id)
     try {
-      let planForRealize = applyAutoBgmRealizeOptions(plan)
+      let planForRealize = plan
       let forceTtsPipeline = false
       let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
       if (mode === 'voiceover') {
-        const voBgm = showVoiceoverBgmConfig ? buildVoiceoverBgmPlanPayload() : null
         if (voiceoverRedubEnabled) {
           if (!voiceoverPlanSupportsRedub(planForRealize)) {
             const msg =
@@ -1206,6 +1212,7 @@ export default function MatchPage() {
           forceTtsPipeline = true
           ttsAlignPayload = { ...voiceoverTtsAlign }
         }
+        const voBgm = buildVoiceoverBgmPlanPayload()
         if (voBgm) {
           planForRealize = { ...planForRealize, bgm: voBgm }
         }
@@ -1214,6 +1221,13 @@ export default function MatchPage() {
         forceTtsPipeline = true
         ttsAlignPayload = { ...mixEditTtsAlign }
       }
+      if (mode === 'mix_edit' || mode === 'auto') {
+        const customBgm = buildAutoCustomBgmPlanPayload()
+        if (customBgm) {
+          planForRealize = { ...planForRealize, bgm: customBgm }
+        }
+      }
+      planForRealize = applyAutoBgmRealizeOptions(planForRealize)
       const res = await autoEditApi.realize({
         plan: planForRealize,
         project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
@@ -1247,7 +1261,7 @@ export default function MatchPage() {
       let forceTtsPipeline = false
       let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
       if (mode === 'voiceover') {
-        const voBgm = showVoiceoverBgmConfig ? buildVoiceoverBgmPlanPayload() : null
+        const voBgm = buildVoiceoverBgmPlanPayload()
         if (voiceoverRedubEnabled) {
           if (!voiceoverPlanSupportsRedub(planForExport)) {
             const msg =

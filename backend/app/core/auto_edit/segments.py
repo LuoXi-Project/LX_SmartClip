@@ -54,6 +54,8 @@ def merge_contiguous_subtitle_segments(
             return False
         if getattr(a, "tts_filename", None) or getattr(b, "tts_filename", None):
             return False
+        if bool(getattr(a, "mute_audio", False)) != bool(getattr(b, "mute_audio", False)):
+            return False
         da = a.duration_sec
         db = b.duration_sec
         if da is None or db is None or float(da) <= 0 or float(db) <= 0:
@@ -78,6 +80,7 @@ def merge_contiguous_subtitle_segments(
             clip_start_sec=a.clip_start_sec,
             duration_sec=da + db,
             clip_trims=None,
+            mute_audio=bool(getattr(a, "mute_audio", False) or getattr(b, "mute_audio", False)),
         )
 
     out: List[SubtitleSegmentInput] = []
@@ -225,7 +228,13 @@ async def segments_from_plan(
 
     async def _maybe_tts(seg: SegmentPlan) -> Tuple[Optional[str], Optional[str]]:
         """返回 (tts_filename, error_message)。未请求 TTS 时为 (None, None)。"""
-        if seg.audio_mode != "tts" or not seg.subtitle or not (seg.subtitle.text or "").strip():
+        has_text = bool(seg.subtitle and (seg.subtitle.text or "").strip())
+        # 口播 / force_tts 成片：凡有文案的段落一律合成 TTS，避免烧录回退素材原声。
+        want_tts = has_text and (
+            seg.audio_mode == "tts"
+            or (fail_fast_on_tts_error and seg.audio_mode != "mute")
+        )
+        if not want_tts:
             return None, None
         async with sem:
             try:
@@ -243,7 +252,12 @@ async def segments_from_plan(
 
     tts_failures: List[Dict[str, str]] = []
     for seg, (tts_fn, tts_err) in zip(active_segments, tts_rows):
-        if seg.audio_mode != "tts" or not seg.subtitle or not (seg.subtitle.text or "").strip():
+        has_text = bool(seg.subtitle and (seg.subtitle.text or "").strip())
+        want_tts = has_text and (
+            seg.audio_mode == "tts"
+            or (fail_fast_on_tts_error and seg.audio_mode != "mute")
+        )
+        if not want_tts:
             continue
         if not tts_fn:
             tts_failures.append(
@@ -281,6 +295,7 @@ async def segments_from_plan(
                         duration_sec=dur_sum,
                         clip_start_sec=None,
                         clip_trims=plan_trims,
+                        mute_audio=(seg.audio_mode == "mute"),
                     )
                 )
                 continue
@@ -334,6 +349,7 @@ async def segments_from_plan(
                 duration_sec=resolved_duration,
                 clip_start_sec=resolved_clip_start,
                 clip_trims=None,
+                mute_audio=(seg.audio_mode == "mute"),
             )
         )
 

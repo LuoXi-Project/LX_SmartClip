@@ -403,12 +403,13 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         fonts_dir=_FONTS_DIR,
         render_opts=render_opts,
         export_render_opts=export_render_opts,
-        render_mode="tts",
+        render_mode="auto",
         export_backend=(req.export_backend or export_backend_cfg),
         output_dir=burn_output_dir,
         normalize_audio=False,
         materialize_from_source=req.materialize_from_source,
         tts_align=getattr(req, "tts_align", None),
+        require_tts_audio=bool(getattr(req, "require_tts_audio", False)),
     )
 
     if not saved_path or not os.path.exists(saved_path):
@@ -523,6 +524,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
                 clip_start_sec=getattr(seg, "clip_start_sec", None),
                 clip_trims=getattr(seg, "clip_trims", None),
                 tts_filename=None,
+                mute_audio=bool(getattr(seg, "mute_audio", False)),
             )
         )
 

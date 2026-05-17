@@ -13,6 +13,7 @@ _PLAYLIST_MATERIALIZE_SEG = SimpleNamespace(
 )
 
 from app.models.subtitle import TtsVideoAlignConfig
+from app.core.subtitle.timeline import _tts_file_duration
 from app.utils.ffprobe_utils import probe_duration, probe_keyframes_times, probe_video_dimensions
 
 from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
@@ -945,6 +946,65 @@ def render_original_segment(
     return seg_out
 
 
+def render_muted_segment(
+    *,
+    seg,
+    clip_ids,
+    infos,
+    tmp,
+    seg_idx,
+    render_opts,
+    keyframe_cache: Optional[Dict[str, List[float]]] = None,
+    materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
+    from_source_video: bool = True,
+) -> str:
+    """混剪「仅 BGM」：保留画面，将素材原声置零（后续由 BGM 混音提供听感）。"""
+    raw_path = render_original_segment(
+        seg=seg,
+        clip_ids=clip_ids,
+        infos=infos,
+        tmp=tmp,
+        seg_idx=int(seg_idx) + 10000,
+        render_opts=render_opts,
+        keyframe_cache=keyframe_cache,
+        materialize_cache=materialize_cache,
+        from_source_video=from_source_video,
+    )
+    seg_out = os.path.join(tmp, f"seg_{seg_idx:03d}.mp4")
+    dur = float(probe_duration(raw_path, log_on_failure=True) or 0.0)
+    desired = resolve_desired_dur(seg)
+    if desired is not None and float(desired) > 0.05:
+        dur = min(dur, float(desired)) if dur > 0.05 else float(desired)
+    if dur <= 0.05:
+        dur = 5.0
+    codec_args = build_render_codec_args(sanitize_no_stream_copy(dict(render_opts or {})))
+    try:
+        vi = codec_args.index("-c:v")
+        codec_args[vi + 1] = "copy"
+    except ValueError:
+        codec_args = ["-c:v", "copy", *codec_args]
+    run_ffmpeg(
+        [
+            "-i",
+            raw_path,
+            "-af",
+            "volume=0",
+            "-t",
+            f"{dur:.3f}",
+            *codec_args,
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            seg_out,
+        ],
+        desc=f"mute seg {(int(seg_idx) + 1)}",
+    )
+    return seg_out
+
+
 def _expand_paths_playlist_cycle(
     path_durs: List[Tuple[str, float]],
     *,
@@ -1032,9 +1092,9 @@ def render_tts_segment(
     if not paths_group:
         raise HTTPException(400, f"分段 seg_{(int(seg_idx) + 1)} 没有可用视频素材")
 
-    audio_dur = float(probe_duration(tts_path) or 0.0)
+    audio_dur = float(_tts_file_duration(tts_path) or 0.0)
     if audio_dur <= 0:
-        raise HTTPException(400, "TTS 音频无效")
+        raise HTTPException(400, f"TTS 音频无效: seg_{(int(seg_idx) + 1)}")
 
     # 如果视频总时长短于配音时长：重复追加第一个素材直到覆盖，然后再 trim 精准裁剪。
     # 这样实现“复制拼接”，不需要 loop/tpad。

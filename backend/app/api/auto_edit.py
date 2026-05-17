@@ -1112,14 +1112,20 @@ async def _prepare_auto_edit_segments_from_plan(
                 candidates.append(cand)
                 candidates_by_video.setdefault(cand.video_id, []).append(cand)
 
-    use_tts_branch = plan.mode in ("auto", "voiceover") or bool(force_tts_pipeline)
+    active_plan_segments = [s for s in plan.segments if not s.exclude_from_output]
+    plan_has_tts_segments = any(s.audio_mode == "tts" for s in active_plan_segments)
+    use_tts_branch = (
+        bool(force_tts_pipeline)
+        or plan.mode == "voiceover"
+        or plan_has_tts_segments
+    )
 
     seg_inputs = await segments_from_plan(
         plan=plan,
         valid_clip_ids=valid_clip_ids,
         candidates_by_video=candidates_by_video,
         all_candidates=candidates,
-        fail_fast_on_tts_error=use_tts_branch,
+        fail_fast_on_tts_error=use_tts_branch and plan_has_tts_segments,
     )
     if not seg_inputs:
         detail = {
@@ -1189,6 +1195,7 @@ async def realize_auto_edit_plan(
                 style=style,
                 project_name=project_name,
                 tts_align=align_cfg,
+                require_tts_audio=True,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         else:
@@ -1200,6 +1207,7 @@ async def realize_auto_edit_plan(
                 style=style,
                 project_name=project_name,
                 tts_align=align_cfg,
+                require_tts_audio=True,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():

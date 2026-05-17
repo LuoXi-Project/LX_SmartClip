@@ -18,6 +18,7 @@ from .composer import compose_final_video, compose_final_video_moviepy
 from .render_opts import final_render_opts_from_export, sanitize_no_stream_copy, truthy_export_gpu
 from .segment_render import (
     collect_segment_sources,
+    render_muted_segment,
     render_original_segment,
     render_tts_segment,
     segment_has_tts,
@@ -119,6 +120,7 @@ def burn_to_mp4(
     output_dir: str = None,
     materialize_from_source: bool = True,
     tts_align: Optional["TtsVideoAlignConfig"] = None,
+    require_tts_audio: bool = False,
 ) -> tuple:
     from fastapi import HTTPException
 
@@ -160,7 +162,21 @@ def burn_to_mp4(
 
         for i, seg in enumerate(segments):
             clip_ids, infos = collect_segment_sources(seg, clip_map, i)
-            if mode == "tts":
+            mute_audio = bool(getattr(seg, "mute_audio", False))
+            seg_use_tts = mode != "original" and segment_has_tts(seg, tts_audio_dir)
+            if require_tts_audio and mode == "tts" and not seg_use_tts and not mute_audio:
+                copy_text = str(getattr(seg, "copy_text", "") or "").strip()
+                tts_name = str(getattr(seg, "tts_filename", "") or "").strip()
+                if copy_text or tts_name:
+                    detail = (
+                        f"分段 seg_{i + 1} 缺少可用 TTS 音频"
+                        + (f"（已登记文件 {tts_name} 但磁盘不存在）" if tts_name else "（未合成配音）")
+                        + "，请检查 TTS 服务后重试。"
+                    )
+                    raise HTTPException(status_code=400, detail=detail)
+            elif mode == "tts" and not seg_use_tts and not mute_audio:
+                logger.warning("seg_%d 无 TTS，回退原声渲染", i + 1)
+            if seg_use_tts:
                 seg_out = render_tts_segment(
                     seg=seg,
                     clip_ids=clip_ids,
@@ -173,6 +189,17 @@ def burn_to_mp4(
                     from_source_video=materialize_from_source,
                     tts_align=tts_align,
                     clip_map=clip_map,
+                )
+            elif mute_audio:
+                seg_out = render_muted_segment(
+                    seg=seg,
+                    clip_ids=clip_ids,
+                    infos=infos,
+                    tmp=tmp,
+                    seg_idx=i,
+                    render_opts=segment_render_opts,
+                    keyframe_cache=keyframe_cache,
+                    from_source_video=materialize_from_source,
                 )
             else:
                 seg_out = render_original_segment(

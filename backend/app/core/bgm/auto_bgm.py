@@ -51,6 +51,15 @@ def _resolve_bgm_path(track_id: Optional[str]) -> Optional[str]:
     if not raw:
         return None
 
+    # manifest 中的 track id（前端曲库 id）→ path/filename
+    for item in _load_bgm_manifest():
+        if str(item.get("id") or "").strip() == raw:
+            path_val = str(item.get("path") or "").strip()
+            if path_val:
+                nested = _resolve_bgm_path(path_val)
+                if nested:
+                    return nested
+
     candidates: List[str] = []
     # 1) 绝对路径
     if os.path.isabs(raw):
@@ -519,7 +528,14 @@ def apply_bgm_config_postprocess(filename: str, url: str, bgm_cfg: Optional[dict
 def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tuple[str, str]:
     bgm = plan.bgm
     if not bgm or not bgm.enabled:
+        logger.info("BGM 混音跳过：plan.bgm 未启用")
         return filename, url
+    logger.info(
+        "BGM 混音开始：source=%s track_id=%s track_ids=%s",
+        bgm.source,
+        bgm.track_id,
+        getattr(bgm, "track_ids", None),
+    )
     # 与 subtitle 导出流程统一复用，同时兼容单曲旧字段。
     cfg = {
         "enabled": bool(bgm.enabled),

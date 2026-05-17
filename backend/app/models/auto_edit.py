@@ -99,6 +99,8 @@ class Constraints(BaseModel):
     max_clip_per_segment: int = 3
     match_strategy: Literal["asr+vlm", "asr", "vlm"] = "asr+vlm"
     respect_user_video_order: bool = False
+    # 混剪「轮播全部素材」：成片内全部 clip 的播放顺序（与方案分段无关，避免仅轮播 2～3 个）
+    mix_playlist_clip_ids: Optional[List[str]] = None
 
 
 class Plan(BaseModel):

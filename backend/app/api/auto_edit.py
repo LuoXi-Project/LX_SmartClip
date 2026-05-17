@@ -1133,6 +1133,17 @@ async def _prepare_auto_edit_segments_from_plan(
 
     apply_timeline_duration_overrides(seg_inputs, tts_align, TTS_AUDIO_DIR)
 
+    if (
+        tts_align is not None
+        and str(tts_align.policy) == "loop_playlist_to_cover"
+        and plan.constraints
+        and plan.constraints.mix_playlist_clip_ids
+    ):
+        pl = [c for c in plan.constraints.mix_playlist_clip_ids if c in valid_clip_ids]
+        if pl:
+            tts_align = tts_align.model_copy(update={"playlist_clip_ids": pl})
+            logger.info("混剪轮播：注入全量播放列表 %d 条 clip", len(pl))
+
     resolved_name = project_name or f"auto_edit_{plan.plan_id}"
     resolved_style = style or SubtitleStyle()
 

@@ -460,6 +460,7 @@ def build_mix_edit_plan(
         tier_counts[t] = tier_counts.get(t, 0) + 1
 
     arranged = _sort_clips_by_tier(rows, shuffle_none=(mix_audio_mode == "mute_all_original"))
+    mix_playlist_clip_ids = [str(r["id"]) for r in arranged]
     segments: list[SegmentPlan] = []
     order = 0
     arrange_notes: list[str] = []
@@ -663,6 +664,7 @@ def build_mix_edit_plan(
         constraints=Constraints(
             match_strategy="asr+vlm",
             respect_user_video_order=True,
+            mix_playlist_clip_ids=mix_playlist_clip_ids if mix_playlist_clip_ids else None,
         ),
         keep_flags=PlanKeepFlags(
             clips=False, subtitles=False, transitions=False, bgm=False

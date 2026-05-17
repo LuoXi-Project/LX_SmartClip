@@ -85,7 +85,7 @@ def compute_timeline_duration_sec(
         # 成片音轨以 TTS 为准，段落时长与 probe(TTS) 一致（画面变速或裁切对齐）
         return tts_sec
 
-    # freeze_last_frame | loop_video_to_cover：配音更长则成片跟配音；更短则裁掉多余画面
+    # freeze_last_frame | loop_*：配音更长则成片跟配音；更短则裁掉多余画面
     if tts_sec + eps < video_sec:
         return tts_sec
     return tts_sec

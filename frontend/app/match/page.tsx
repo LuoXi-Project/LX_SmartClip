@@ -225,6 +225,7 @@ export default function MatchPage() {
   }))
   const [mixEditTtsAlign, setMixEditTtsAlign] = useState<TtsVideoAlignConfigApi>(() => ({
     ...DEFAULT_VOICEOVER_TTS_ALIGN,
+    policy: 'loop_playlist_to_cover',
   }))
   const [autoCustomBgmEnabled, setAutoCustomBgmEnabled] = useState(false)
   const [autoCustomBgmTrackIds, setAutoCustomBgmTrackIds] = useState<string[]>([])

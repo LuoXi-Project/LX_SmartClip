@@ -9,15 +9,23 @@ export const TTS_ALIGN_BASIC_OPTIONS: {
 }[] = [
   {
     id: 'loop_video_to_cover',
-    label: '循环拼接所选画面',
-    hint: '重复播放本段素材直至盖住整段配音。',
+    label: '循环本段画面',
+    hint: '仅重复播放该段 TTS 对应的素材，直至盖住整段配音。',
+  },
+  {
+    id: 'loop_playlist_to_cover',
+    label: '智能轮播全部素材',
+    hint: '配音长于画面时，按混剪方案中的完整素材列表智能轮播',
   },
   {
     id: 'freeze_last_frame',
-    label: '不循环素材，末尾定格',
-    hint: '画面播完后停在最后一帧，直到配音结束（当前默认）。',
+    label: '不循环，末尾定格',
+    hint: '画面播完后停在最后一帧，直到配音结束。',
   },
 ]
+
+/** 混剪模式二：默认展示「本段循环 / 全列表轮播 / 定格」 */
+export const MIX_EDIT_TTS_ALIGN_OPTIONS = TTS_ALIGN_BASIC_OPTIONS
 
 export const TTS_ALIGN_ALL_OPTIONS: {
   id: TtsVideoAlignPolicyApi
@@ -37,11 +45,15 @@ export const TTS_ALIGN_ALL_OPTIONS: {
   },
 ]
 
+type AlignOption = { id: TtsVideoAlignPolicyApi; label: string; hint: string }
+
 type TtsAlignPolicySelectProps = {
   value: TtsVideoAlignConfigApi
   onChange: (patch: Partial<TtsVideoAlignConfigApi>) => void
-  /** 仅展示「定格 / 循环」两项，适合混剪 AI 配音 */
+  /** 仅展示基础三项（本段循环 / 全列表轮播 / 定格），不传 options 时生效 */
   basicOnly?: boolean
+  /** 自定义选项列表（混剪可传 MIX_EDIT_TTS_ALIGN_OPTIONS） */
+  options?: AlignOption[]
   disabled?: boolean
   className?: string
 }
@@ -50,10 +62,11 @@ export function TtsAlignPolicySelect({
   value,
   onChange,
   basicOnly = false,
+  options: optionsProp,
   disabled = false,
   className = '',
 }: TtsAlignPolicySelectProps) {
-  const options = basicOnly ? TTS_ALIGN_BASIC_OPTIONS : TTS_ALIGN_ALL_OPTIONS
+  const options = optionsProp ?? (basicOnly ? TTS_ALIGN_BASIC_OPTIONS : TTS_ALIGN_ALL_OPTIONS)
   const active = options.find((o) => o.id === value.policy) ?? options[0]
 
   return (

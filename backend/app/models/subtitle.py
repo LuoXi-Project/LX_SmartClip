@@ -13,11 +13,22 @@ class TtsVideoAlignConfig(BaseModel):
     policy: Literal[
         "freeze_last_frame",
         "loop_video_to_cover",
+        "loop_playlist_to_cover",
         "stretch_audio",
         "stretch_video",
     ] = Field(
         "freeze_last_frame",
-        description="freeze_last_frame=不加速画面，末尾定格直至配音结束；loop_video_to_cover=重复拼接所选素材直至盖住配音；stretch_audio=变速压缩/拉伸配音以贴合画面时长；stretch_video=变速拉伸/压缩画面以贴合配音时长",
+        description=(
+            "freeze_last_frame=不加速画面，末尾定格直至配音结束；"
+            "loop_video_to_cover=仅重复本段所选素材直至盖住配音；"
+            "loop_playlist_to_cover=按成片顺序轮播全部素材直至盖住配音（混剪推荐）；"
+            "stretch_audio=变速压缩/拉伸配音以贴合画面时长；"
+            "stretch_video=变速拉伸/压缩画面以贴合配音时长"
+        ),
+    )
+    playlist_clip_ids: Optional[List[str]] = Field(
+        None,
+        description="loop_playlist_to_cover 时使用的素材顺序（成片 clip_id 列表）；为空则由烧录管线按 segments 顺序自动收集",
     )
     max_audio_atempo: float = Field(
         2.0,

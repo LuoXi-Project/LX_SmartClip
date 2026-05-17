@@ -356,7 +356,6 @@ def rebalance_mix_tts_voiceover_plan(
 
     expanded: list[SegmentPlan] = []
     split_count = 0
-    multi_clip_count = 0
     order = 0
     pool_idx = 0
 
@@ -402,32 +401,6 @@ def rebalance_mix_tts_voiceover_plan(
             continue
 
         chunks = split_narration_to_fit_video(text, vid_sec)
-        if len(chunks) <= 1:
-            # 尝试拼接下一个素材（不拆文案）
-            extra_rows: list[Any] = [row0]
-            acc_sec = vid_sec
-            j = pool_idx + 1
-            while j < len(arranged) and _needs_tts_rebalance(text, acc_sec):
-                nxt = arranged[j]
-                extra_rows.append(nxt)
-                acc_sec += max(_MIN_CLIP_USABLE_SEC, float(nxt["duration"] or 0.0))
-                j += 1
-                if len(extra_rows) >= 3:
-                    break
-            if len(extra_rows) > 1 and not _needs_tts_rebalance(text, acc_sec):
-                mseg = _segment_with_clip_trims(
-                    rows=extra_rows,
-                    order=order,
-                    text=text,
-                    subtitle_strategy=sub_strategy,
-                    subtitle_source=sub_source,
-                )
-                if mseg:
-                    expanded.append(mseg)
-                    multi_clip_count += 1
-                    order += 1
-                    pool_idx = j
-                    continue
 
         available = max(1, len(arranged) - pool_idx)
         if len(chunks) > available:
@@ -457,7 +430,7 @@ def rebalance_mix_tts_voiceover_plan(
                 order += 1
         pool_idx = pool_idx + len(chunks)
 
-    if split_count == 0 and multi_clip_count == 0:
+    if split_count == 0:
         return plan
 
     orig_n = sum(
@@ -469,8 +442,6 @@ def rebalance_mix_tts_voiceover_plan(
     note = [f"配音段 {orig_n}→{new_n}"]
     if split_count:
         note.append(f"拆句 {split_count} 次")
-    if multi_clip_count:
-        note.append(f"多素材拼接 {multi_clip_count} 段")
     summary = (plan.summary or "") + " TTS 平衡：" + "，".join(note) + "。"
     return plan.model_copy(
         update={

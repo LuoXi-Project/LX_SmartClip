@@ -29,6 +29,80 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def build_playlist_clip_ids_from_segments(
+    segments,
+    clip_map: dict,
+    *,
+    preferred_order: list[str] | None = None,
+) -> list[str]:
+    """
+    收集 loop_playlist_to_cover 用的素材顺序。
+
+    优先使用混剪方案 constraints.mix_playlist_clip_ids（全量素材库顺序）；
+    否则按 segments 出现顺序展开（含 clip_trims 内每条 clip）。
+    """
+    if preferred_order:
+        return [str(c) for c in preferred_order if str(c) in clip_map]
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(cid: str | None) -> None:
+        if not cid:
+            return
+        c = str(cid).strip()
+        if c and c in clip_map and c not in seen:
+            seen.add(c)
+            out.append(c)
+
+    for seg in segments:
+        trims = getattr(seg, "clip_trims", None) or []
+        if trims:
+            for t in trims:
+                _add(getattr(t, "clip_id", None))
+            continue
+        raw = list(getattr(seg, "clip_ids", None) or [])
+        if not raw and getattr(seg, "clip_id", None):
+            raw = [seg.clip_id]
+        for cid in raw:
+            _add(str(cid) if cid else None)
+
+    # 兜底：clip_map 中其余素材按源片时间排序接上
+    rest = sorted(
+        [cid for cid in clip_map if cid not in seen],
+        key=lambda cid: (float(clip_map[cid].get("src_start") or 0.0), cid),
+    )
+    for cid in rest:
+        _add(cid)
+    return out
+
+
+def enrich_tts_align_for_burn(
+    segments,
+    clip_map: dict,
+    tts_align: Optional["TtsVideoAlignConfig"],
+    *,
+    preferred_playlist_clip_ids: list[str] | None = None,
+) -> Optional["TtsVideoAlignConfig"]:
+    if tts_align is None or str(tts_align.policy) != "loop_playlist_to_cover":
+        return tts_align
+    existing = list(tts_align.playlist_clip_ids or [])
+    if existing:
+        filtered = [c for c in existing if c in clip_map]
+        if filtered:
+            logger.info("loop_playlist: 使用已注入播放列表 %d 条素材", len(filtered))
+            return tts_align.model_copy(update={"playlist_clip_ids": filtered})
+    playlist = build_playlist_clip_ids_from_segments(
+        segments,
+        clip_map,
+        preferred_order=preferred_playlist_clip_ids,
+    )
+    if not playlist:
+        return tts_align
+    logger.info("loop_playlist: 播放列表共 %d 条素材", len(playlist))
+    return tts_align.model_copy(update={"playlist_clip_ids": playlist})
+
+
 def burn_to_mp4(
     segments,
     srt_entries: list,
@@ -74,6 +148,9 @@ def burn_to_mp4(
         len(srt_entries),
     )
 
+    if mode == "tts" and tts_align is not None:
+        tts_align = enrich_tts_align_for_burn(segments, clip_map, tts_align)
+
     tmp_base_dir = get_render_tmp_base_dir()
     with tempfile.TemporaryDirectory(dir=tmp_base_dir, prefix="burn_") as tmp:
         logger.info("临时渲染目录: %s", tmp)
@@ -95,6 +172,7 @@ def burn_to_mp4(
                     keyframe_cache=keyframe_cache,
                     from_source_video=materialize_from_source,
                     tts_align=tts_align,
+                    clip_map=clip_map,
                 )
             else:
                 seg_out = render_original_segment(

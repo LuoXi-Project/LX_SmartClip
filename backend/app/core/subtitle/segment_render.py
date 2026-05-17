@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
+
+# 轮播全列表时：每条素材按整段 clip 展开，不受当前 TTS 段的 clip_trims / duration 影响
+_PLAYLIST_MATERIALIZE_SEG = SimpleNamespace(
+    clip_trims=None,
+    clip_start_sec=None,
+    duration_sec=None,
+)
 
 from app.models.subtitle import TtsVideoAlignConfig
 from app.utils.ffprobe_utils import probe_duration, probe_keyframes_times, probe_video_dimensions
@@ -937,6 +945,29 @@ def render_original_segment(
     return seg_out
 
 
+def _expand_paths_playlist_cycle(
+    path_durs: List[Tuple[str, float]],
+    *,
+    audio_dur: float,
+    max_pieces: int = 800,
+) -> Tuple[List[str], float]:
+    """按完整播放列表顺序轮播：每一轮播完列表中全部素材后，再进入下一轮。"""
+    if not path_durs:
+        return [], 0.0
+    out: List[str] = []
+    acc = 0.0
+    eps = 0.02
+    rounds = 0
+    while acc < audio_dur - eps and len(out) < max_pieces and rounds < 120:
+        for p, d in path_durs:
+            out.append(p)
+            acc += max(float(d), 0.05)
+            if acc >= audio_dur - eps or len(out) >= max_pieces:
+                break
+        rounds += 1
+    return out, acc
+
+
 def render_tts_segment(
     *,
     seg,
@@ -950,6 +981,7 @@ def render_tts_segment(
     materialize_cache: Optional[Dict[str, Tuple[str, float]]] = None,
     from_source_video: bool = True,
     tts_align: Optional[TtsVideoAlignConfig] = None,
+    clip_map: Optional[dict] = None,
 ) -> str:
     from fastapi import HTTPException
 
@@ -1037,6 +1069,60 @@ def render_tts_segment(
         rep = max(1, min(200, rep))
         paths_group = [*paths_group, *([*paths_group] * rep)]
         need_pad_sec = max(0.0, audio_dur - (base_video_dur * (rep + 1)))
+    elif video_shorter and policy == "loop_playlist_to_cover":
+        playlist_ids: List[str] = []
+        if tts_align is not None:
+            playlist_ids = list(getattr(tts_align, "playlist_clip_ids", None) or [])
+        if not playlist_ids:
+            playlist_ids = list(clip_ids)
+
+        pl_ids: List[str] = []
+        pl_infos: List[dict] = []
+        if clip_map:
+            for cid in playlist_ids:
+                info = clip_map.get(cid)
+                if info and os.path.isfile(info.get("path") or ""):
+                    pl_ids.append(cid)
+                    pl_infos.append(info)
+        else:
+            by_cid = {clip_ids[i]: infos[i] for i in range(min(len(clip_ids), len(infos)))}
+            for cid in playlist_ids:
+                if cid in by_cid:
+                    pl_ids.append(cid)
+                    pl_infos.append(by_cid[cid])
+
+        if not pl_infos:
+            pl_ids = list(clip_ids)
+            pl_infos = list(infos)
+
+        pl_paths, _pl_total = materialize_clip_paths_for_group(
+            seg=_PLAYLIST_MATERIALIZE_SEG,
+            clip_ids=pl_ids,
+            infos=pl_infos,
+            tmp=tmp,
+            seg_idx=int(seg_idx) + 50000,
+            render_opts=render_opts,
+            keyframe_cache=keyframe_cache,
+            materialize_cache=materialize_cache,
+            force_materialize=True,
+            from_source_video=from_source_video,
+        )
+        path_durs: List[Tuple[str, float]] = []
+        for p in pl_paths:
+            d = float(probe_duration(p, log_on_failure=True) or 0.0)
+            path_durs.append((p, d if d > 0.05 else 0.5))
+        if not path_durs:
+            path_durs = [(p, float(probe_duration(p) or 0.5)) for p in paths_group]
+        paths_group, covered = _expand_paths_playlist_cycle(path_durs, audio_dur=audio_dur)
+        need_pad_sec = max(0.0, audio_dur - covered)
+        logger.info(
+            "seg_%d loop_playlist: playlist=%d clips, pieces=%d, covered=%.2fs audio=%.2fs",
+            int(seg_idx) + 1,
+            len(path_durs),
+            len(paths_group),
+            covered,
+            audio_dur,
+        )
     elif video_shorter and policy == "freeze_last_frame":
         need_pad_sec = max(0.0, audio_dur - base_video_dur)
     elif not video_shorter:

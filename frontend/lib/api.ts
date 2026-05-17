@@ -908,6 +908,7 @@ export interface VoiceoverAudioActivityConfigApi {
 export type TtsVideoAlignPolicyApi =
   | 'freeze_last_frame'
   | 'loop_video_to_cover'
+  | 'loop_playlist_to_cover'
   | 'stretch_audio'
   | 'stretch_video'
 

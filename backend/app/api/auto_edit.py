@@ -57,10 +57,12 @@ from app.models.auto_edit import (
     AutoEditPlanSessionResponse,
     AutoEditRealizeRequest,
     AutoEditRealizeResponse,
+    Constraints,
     MixEditPlanRequest,
     Plan,
     VoiceoverQuickCutRequest,
 )
+
 from app.models.auto_edit_timeline import FinalTimeline, StrategyDSL, TimelineItem
 from app.core.auto_edit.voiceover_quick_cut import (
     apply_voiceover_source_timeline_dedupe,
@@ -84,6 +86,24 @@ _PLAN_STREAM_SESSIONS: Dict[str, AutoEditPlanRequest] = {}
 _PLAN_STREAM_CREATED_AT: Dict[str, float] = {}
 _PLAN_STREAM_EXPIRE_SEC = 10 * 60
 
+
+
+def _resolve_fine_grain_split(
+    *,
+    tts_align: Optional[TtsVideoAlignConfig],
+    plan: Optional[Plan] = None,
+) -> bool:
+    """True=按逗号/短句拆条；False=仅句号/换行。优先请求里的 tts_align，其次方案 constraints。"""
+    if tts_align is not None:
+        return bool(tts_align.split_narration_by_sentence)
+    if (
+        plan is not None
+        and plan.constraints is not None
+        and plan.constraints.split_narration_by_sentence is not None
+    ):
+        return bool(plan.constraints.split_narration_by_sentence)
+    return False
+    
 # TODO：后续可将这组任务参数抽成独立结构，避免散落在 request/cfg
 def _load_timeline_long_video_cfg(req: AutoEditPlanRequest, cfg: dict) -> None:
     """
@@ -786,13 +806,29 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
         "ai_tts_asr",
         "ai_tts",
     ):
+        split_narration = False
+        if req.tts_align is not None:
+            split_narration = bool(req.tts_align.split_narration_by_sentence)
         plan = rebalance_mix_tts_voiceover_plan(
             plan,
             clip_rows,
             mute_audio_track=req.mute_audio_track,
+            split_narration=split_narration,
         )
         if req.mute_audio_track == "ai_tts_llm":
             plan = apply_shot_boundary_refine_to_plan(plan, clip_rows)
+
+    split_flag = False
+    if req.tts_align is not None:
+        split_flag = bool(req.tts_align.split_narration_by_sentence)
+    base_c = plan.constraints or Constraints()
+    plan = plan.model_copy(
+        update={
+            "constraints": base_c.model_copy(
+                update={"split_narration_by_sentence": split_flag}
+            )
+        }
+    )
 
     if not plan.segments:
         raise HTTPException(
@@ -1178,10 +1214,17 @@ async def realize_auto_edit_plan(
     if use_tts_branch:
         from app.api.subtitle import generate_srt as generate_srt_route
 
+        fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
+
         if req.include_subtitle:
             if await request.is_disconnected():
                 raise HTTPException(status_code=400, detail="客户端已断开连接")
-            srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True)
+            srt_req = GenerateSRTRequest(
+                segments=seg_inputs,
+                style=style,
+                use_tts_timing=True,
+                split_narration_by_sentence=fine_grain,
+            )
             srt_res = await generate_srt_route(srt_req)
             burn_req = BurnSubtitleRequest(
                 segments=seg_inputs,
@@ -1262,10 +1305,18 @@ async def export_jianying_draft_from_plan(
     if use_tts_branch:
         from app.api.subtitle import generate_srt as generate_srt_route
 
+        align_cfg = req.tts_align
+        fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
+
         if req.include_subtitle:
             if await request.is_disconnected():
                 raise HTTPException(status_code=400, detail="客户端已断开连接")
-            srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True)
+            srt_req = GenerateSRTRequest(
+                segments=seg_inputs,
+                style=style,
+                use_tts_timing=True,
+                split_narration_by_sentence=fine_grain,
+            )
             srt_res = await generate_srt_route(srt_req)
             srt_content = srt_res.srt_content
         else:

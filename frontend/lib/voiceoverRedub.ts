@@ -6,6 +6,7 @@ export const DEFAULT_VOICEOVER_TTS_ALIGN: TtsVideoAlignConfigApi = {
   min_audio_atempo: 0.5,
   max_video_pts_factor: 2,
   min_video_pts_factor: 0.5,
+  split_narration_by_sentence: false,
 }
 
 const PLACEHOLDER_ASR_TEXT = /^（/

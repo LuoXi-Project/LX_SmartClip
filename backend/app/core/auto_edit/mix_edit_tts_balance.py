@@ -12,6 +12,7 @@ from app.core.auto_edit.mix_edit import (
 from app.core.subtitle.timeline import (
     split_long_text_at_punctuation,
     split_text_units_by_sentence_and_newline,
+    split_units_at_intra_clause_punctuation,
 )
 from app.models.auto_edit import ClipRef, Plan, SegmentPlan, SubtitlePlan, TimingHint
 from app.models.subtitle import ClipTrimPart
@@ -167,6 +168,21 @@ def clamp_script_texts_to_budgets(
         out[idx] = (shorter[0] if shorter else t[: max(4, len(t) - 2)]).strip()
 
     return out
+
+
+def split_narration_by_comma(text: str) -> list[str]:
+    """按句号/换行后再按逗号、顿号等拆成短条（不依赖画面时长）。"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    units = split_text_units_by_sentence_and_newline(raw)
+    if not units:
+        units = [raw]
+    chunks: list[str] = []
+    for u in units:
+        chunks.extend(split_units_at_intra_clause_punctuation(u))
+    out = [c.strip() for c in chunks if c.strip()]
+    return out if out else [raw]
 
 
 def split_narration_to_fit_video(text: str, video_sec: float) -> list[str]:
@@ -329,6 +345,7 @@ def rebalance_mix_tts_voiceover_plan(
     clip_rows: Sequence[Any],
     *,
     mute_audio_track: Literal["ai_tts_asr", "ai_tts_llm", "ai_tts", "bgm_only"],
+    split_narration: bool = True,
 ) -> Plan:
     """
     将「过长 TTS 文案 + 过短画面」拆成多段，并串联后续素材，降低成片时画面循环次数。
@@ -336,6 +353,8 @@ def rebalance_mix_tts_voiceover_plan(
     - 优先：拆文案 + 每段匹配一个 clip（按分级编排顺序取后续素材）
     - 次选：单条文案仍偏长时，用 clip_trims 顺序拼接 2~3 个素材
     """
+    if not split_narration:
+        return plan
     if mute_audio_track not in ("ai_tts_asr", "ai_tts_llm", "ai_tts"):
         return plan
 
@@ -394,13 +413,10 @@ def rebalance_mix_tts_voiceover_plan(
         row0 = row_by_id[cid]
         vid_sec = segment_video_duration_sec(seg)
 
-        if not _needs_tts_rebalance(text, vid_sec):
-            expanded.append(seg.model_copy(update={"order": order}))
-            order += 1
-            pool_idx = max(pool_idx, id_order.index(cid)) + 1
-            continue
-
-        chunks = split_narration_to_fit_video(text, vid_sec)
+        if _needs_tts_rebalance(text, vid_sec):
+            chunks = split_narration_to_fit_video(text, vid_sec)
+        else:
+            chunks = split_narration_by_comma(text)
 
         available = max(1, len(arranged) - pool_idx)
         if len(chunks) > available:

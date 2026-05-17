@@ -178,6 +178,7 @@ export function MixEditPanel({
             <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-3">
               <TtsAlignPolicySelect
                 basicOnly
+                showNarrationSplitOption
                 value={ttsAlign}
                 onChange={onTtsAlignChange}
                 disabled={loading}

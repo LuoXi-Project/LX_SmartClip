@@ -225,7 +225,7 @@ export default function MatchPage() {
   }))
   const [mixEditTtsAlign, setMixEditTtsAlign] = useState<TtsVideoAlignConfigApi>(() => ({
     ...DEFAULT_VOICEOVER_TTS_ALIGN,
-    policy: 'loop_playlist_to_cover',
+    policy: 'loop_video_to_cover',
   }))
   const [autoCustomBgmEnabled, setAutoCustomBgmEnabled] = useState(false)
   const [autoCustomBgmTrackIds, setAutoCustomBgmTrackIds] = useState<string[]>([])
@@ -1173,12 +1173,23 @@ export default function MatchPage() {
     setAutoError('')
     setAutoLoading(true)
     try {
+      const useTtsTrack =
+        payload.mixAudioMode === 'mute_all_original' &&
+        (payload.muteAudioTrack === 'ai_tts_llm' || payload.muteAudioTrack === 'ai_tts_asr')
       const res = await autoEditApi.mixEditPlan({
         video_ids: payload.videoIds,
         mix_audio_mode: payload.mixAudioMode,
         mute_audio_track: payload.muteAudioTrack,
         target_duration_sec: payload.targetDurationSec,
         user_prompt: payload.userPrompt,
+        ...(useTtsTrack
+          ? {
+              tts_align: {
+                ...mixEditTtsAlign,
+                split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
+              },
+            }
+          : {}),
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
@@ -1218,7 +1229,10 @@ export default function MatchPage() {
       }
       if (mode === 'mix_edit' && planForRealize.mode === 'voiceover') {
         forceTtsPipeline = true
-        ttsAlignPayload = { ...mixEditTtsAlign }
+        ttsAlignPayload = {
+          ...mixEditTtsAlign,
+          split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
+        }
       }
       if (mode === 'mix_edit' || mode === 'auto') {
         const customBgm = buildAutoCustomBgmPlanPayload()
@@ -1280,7 +1294,10 @@ export default function MatchPage() {
       }
       if (mode === 'mix_edit' && planForExport.mode === 'voiceover') {
         forceTtsPipeline = true
-        ttsAlignPayload = { ...mixEditTtsAlign }
+        ttsAlignPayload = {
+          ...mixEditTtsAlign,
+          split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
+        }
       }
       const res = await autoEditApi.exportJianyingDraft({
         plan: planForExport,

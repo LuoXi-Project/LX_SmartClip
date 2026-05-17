@@ -101,6 +101,8 @@ class Constraints(BaseModel):
     respect_user_video_order: bool = False
     # 混剪「轮播全部素材」：成片内全部 clip 的播放顺序（与方案分段无关，避免仅轮播 2～3 个）
     mix_playlist_clip_ids: Optional[List[str]] = None
+    # 生成方案时是否按逗号/短句拆段配音（与 TtsVideoAlignConfig.split_narration_by_sentence 一致）
+    split_narration_by_sentence: Optional[bool] = None
 
 
 class Plan(BaseModel):
@@ -202,6 +204,10 @@ class MixEditPlanRequest(BaseModel):
     user_prompt: Optional[str] = Field(
         None,
         description="剪辑诉求；模式二选 ai_tts_llm 时必填，用于 AI 生成旁白",
+    )
+    tts_align: Optional[TtsVideoAlignConfig] = Field(
+        None,
+        description="模式二 TTS 配音：含画面对齐策略与是否按句拆段（split_narration_by_sentence）",
     )
 
     @field_validator("mute_audio_track", mode="before")

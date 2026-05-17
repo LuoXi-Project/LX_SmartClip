@@ -250,10 +250,14 @@ async def generate_srt(req: GenerateSRTRequest):
 
     # 一键成片默认走规则法，确保字幕与配音时长完全可控，避免 LLM 对齐偏差。
     # 启用 TTS timing 时：段内按字数权重分配时长，更贴近匀速配音。
+    # True=按逗号/短句拆条；False=仅句号/换行（默认）
+    fine_grain = bool(req.split_narration_by_sentence)
     if req.use_tts_timing:
-        raw_entries = rule_timeline_weighted_chars(req.segments, durs, max_chars)
+        raw_entries = rule_timeline_weighted_chars(
+            req.segments, durs, max_chars, fine_grain_split=fine_grain
+        )
     else:
-        raw_entries = rule_timeline(req.segments, durs, max_chars)
+        raw_entries = rule_timeline(req.segments, durs, max_chars, fine_grain_split=fine_grain)
 
     logger.warning(f"raw_entries: {raw_entries}")
 
@@ -368,7 +372,10 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
 
         if _needs_rebuild(srt_entries, expected_total_sec=expected_total):
             max_chars = req.style.max_chars_per_line if req.style else 20
-            rebuilt_entries = rule_timeline_weighted_chars(req.segments, tts_durs, max_chars)
+            fine_grain = bool(req.tts_align.split_narration_by_sentence) if req.tts_align else False
+            rebuilt_entries = rule_timeline_weighted_chars(
+                req.segments, tts_durs, max_chars, fine_grain_split=fine_grain
+            )
             rebuilt_srt = build_srt(
                 [{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries]
             )

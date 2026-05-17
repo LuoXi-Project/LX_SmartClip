@@ -180,9 +180,55 @@ def _allocate_durations_by_weight(
     return out
 
 
-def rule_timeline(segments, durations: list[float], max_chars: int = 20) -> list:
+def _text_to_subtitle_chunks(
+    text: str,
+    max_chars: int,
+    *,
+    fine_grain_split: bool = False,
+) -> list[str]:
     """
-    基于规则将文案拆分到时间轴：优先整句/换行，过长再在句内标点处断行，无标点则按字数强切；时长按条数均分。
+    将段落文案转为字幕条。
+
+    - fine_grain_split=False（默认）：仅按句号/换行/!? 分条，不应用每行字数上限（避免在逗号处被硬切）。
+    - fine_grain_split=True：在句号基础上再按逗号、顿号等句内标点与 max_chars 拆成短条。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    mc = int(max_chars or 0)
+    units = split_text_units_by_sentence_and_newline(raw)
+    if not units:
+        units = [raw]
+
+    if fine_grain_split:
+        clause_units: list[str] = []
+        for u in units:
+            clause_units.extend(split_units_at_intra_clause_punctuation(u))
+        if mc > 0:
+            chunks: list[str] = []
+            for u in clause_units:
+                u = (u or "").strip()
+                if not u:
+                    continue
+                if len(u) <= mc:
+                    chunks.append(u)
+                else:
+                    chunks.extend(split_long_text_at_punctuation(u, mc))
+            return [c.strip() for c in chunks if c.strip()]
+        return [u.strip() for u in clause_units if u.strip()]
+
+    return [u.strip() for u in units if u.strip()]
+
+
+def rule_timeline(
+    segments,
+    durations: list[float],
+    max_chars: int = 20,
+    *,
+    fine_grain_split: bool = False,
+) -> list:
+    """
+    基于规则将文案拆分到时间轴：默认仅句号/换行分条；fine_grain_split 时再按逗号等句内标点拆短条。
     返回 [{clip_id, start, end, text}, ...]
     """
     entries = []
@@ -193,8 +239,7 @@ def rule_timeline(segments, durations: list[float], max_chars: int = 20) -> list
         if not text:
             t += dur
             continue
-        units = split_text_units_by_sentence_and_newline(text)
-        chunks = _expand_units_with_char_limit(units, mc) if mc > 0 else [u.strip() for u in units if u.strip()]
+        chunks = _text_to_subtitle_chunks(text, mc, fine_grain_split=fine_grain_split)
         if not chunks:
             t += dur
             continue
@@ -218,6 +263,7 @@ def rule_timeline_weighted_chars(
     max_chars: int = 20,
     *,
     min_unit_dur: float = 0.18,
+    fine_grain_split: bool = False,
 ) -> list:
     """
     规则法时间轴（按字数权重分配时长）：
@@ -236,8 +282,7 @@ def rule_timeline_weighted_chars(
             t += seg_dur
             continue
 
-        units = split_text_units_by_sentence_and_newline(text)
-        chunks = _expand_units_with_char_limit(units, mc) if mc > 0 else [u.strip() for u in units if u.strip()]
+        chunks = _text_to_subtitle_chunks(text, mc, fine_grain_split=fine_grain_split)
         if not chunks:
             t += seg_dur
             continue
@@ -315,7 +360,26 @@ def split_text_units_by_sentence_and_newline(text: str) -> list[str]:
 
 
 # 句内可读断点：逗号、顿号、分号、冒号等（句末。！？已在上面拆过）
-_INTRA_CLAUSE_BREAK_CHARS = frozenset("，、；;：")
+_INTRA_CLAUSE_BREAK_CHARS = frozenset("，、；;：,")
+
+
+def split_units_at_intra_clause_punctuation(text: str) -> list[str]:
+    """在逗号、顿号、分号、冒号处拆条，标点保留在前一条末尾。"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    out: list[str] = []
+    buf = ""
+    for ch in raw:
+        buf += ch
+        if ch in _INTRA_CLAUSE_BREAK_CHARS:
+            piece = buf.strip()
+            if piece:
+                out.append(piece)
+            buf = ""
+    if buf.strip():
+        out.append(buf.strip())
+    return out if out else [raw]
 
 
 def _is_dot_clause_break(s: str, i: int) -> bool:

@@ -890,6 +890,7 @@ export interface MixEditPlanRequestApi {
   mute_audio_track?: MuteAudioTrackApi
   target_duration_sec?: number
   user_prompt?: string
+  tts_align?: TtsVideoAlignConfigApi
 }
 
 export type VoiceoverQuickCutStrategyApi = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'
@@ -916,6 +917,8 @@ export interface TtsVideoAlignConfigApi {
   min_audio_atempo?: number
   max_video_pts_factor?: number
   min_video_pts_factor?: number
+  /** false=仅句号/换行分条；true=再按逗号/顿号拆短条 */
+  split_narration_by_sentence?: boolean
 }
 
 export interface VoiceoverQuickCutRequestApi {

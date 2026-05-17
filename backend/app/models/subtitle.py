@@ -54,6 +54,13 @@ class TtsVideoAlignConfig(BaseModel):
         le=1.0,
         description="stretch_video：画面「变快」时 setpts 倍数下限（约为快放倍率上限）",
     )
+    split_narration_by_sentence: bool = Field(
+        False,
+        description=(
+            "True=按逗号/顿号等拆成短条配音，并拆段匹配画面；"
+            "False=仅按句号/换行分条，整段连贯配音（画面偏短时用上方对齐策略补偿）"
+        ),
+    )
 
 
 class ClipTrimPart(BaseModel):
@@ -107,6 +114,10 @@ class GenerateSRTRequest(BaseModel):
     segments: List[SubtitleSegmentInput]
     style: Optional[SubtitleStyle] = None
     use_tts_timing: bool = True
+    split_narration_by_sentence: bool = Field(
+        False,
+        description="True=字幕按逗号/顿号等拆短条；False=仅按句号/换行分条（默认）",
+    )
 
 
 class SRTEntry(BaseModel):

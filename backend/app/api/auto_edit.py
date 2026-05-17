@@ -72,6 +72,7 @@ from app.core.auto_edit.mix_edit import (
     apply_shot_boundary_refine_to_plan,
     build_mix_edit_plan,
 )
+from app.core.auto_edit.mix_edit_tts_balance import rebalance_mix_tts_voiceover_plan
 from app.core.auto_edit.mix_edit_llm_copy import apply_llm_scripts_to_mute_plan
 
 logger = logging.getLogger(__name__)
@@ -776,6 +777,7 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
                     video_ids=list(req.video_ids),
                     user_prompt=(req.user_prompt or "").strip(),
                     llm_cfg=llm_cfg,
+                    target_duration_sec=req.target_duration_sec,
                 )
         except ValueError as ve:
             raise HTTPException(status_code=400, detail=str(ve)) from ve
@@ -785,8 +787,18 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
             logger.error("mix_edit LLM 文案生成失败: %s", e)
             raise HTTPException(status_code=502, detail=f"AI 生成旁白文案失败: {e}") from e
 
-    if req.mix_audio_mode == "mute_all_original" and req.mute_audio_track == "ai_tts_llm":
-        plan = apply_shot_boundary_refine_to_plan(plan, clip_rows)
+    if req.mix_audio_mode == "mute_all_original" and req.mute_audio_track in (
+        "ai_tts_llm",
+        "ai_tts_asr",
+        "ai_tts",
+    ):
+        plan = rebalance_mix_tts_voiceover_plan(
+            plan,
+            clip_rows,
+            mute_audio_track=req.mute_audio_track,
+        )
+        if req.mute_audio_track == "ai_tts_llm":
+            plan = apply_shot_boundary_refine_to_plan(plan, clip_rows)
 
     if not plan.segments:
         raise HTTPException(

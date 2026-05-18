@@ -100,7 +100,7 @@ export function AutoEditPlanCard({
           className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
           title="查看本方案的字幕、音频模式、片段选择等详情"
         >
-          字幕详情 / 可编辑
+          打开剪辑台
         </button>
         {p.segments?.some((s) => s.subtitle?.text?.trim()) && (
           <span className="text-[11px] text-emerald-300/80">含字幕</span>

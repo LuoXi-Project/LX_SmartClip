@@ -216,7 +216,7 @@ export function AutoEditPanel({
     const pid = detailPlan.plan.plan_id
     const base = customPlanById[pid] ?? detailPlan.plan
     setDetailDraft(base)
-    setDetailEditMode(false)
+    setDetailEditMode(true)
   }, [customPlanById, detailPlan])
 
   return (

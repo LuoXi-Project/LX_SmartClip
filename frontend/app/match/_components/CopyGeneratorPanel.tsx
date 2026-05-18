@@ -122,10 +122,10 @@ function StyleAndSegs({
         <input
           type="number"
           min={1}
-          max={20}
+          max={1000}
           value={maxSegs}
           disabled={disabled}
-          onChange={(e) => onMaxSegsChange(Math.max(1, Math.min(20, +e.target.value)))}
+          onChange={(e) => onMaxSegsChange(Math.max(1, Math.min(1000, +e.target.value)))}
           className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500 text-center transition-colors disabled:opacity-50"
         />
       </div>

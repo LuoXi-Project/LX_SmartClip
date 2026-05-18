@@ -8,6 +8,11 @@ export const TTS_ALIGN_BASIC_OPTIONS: {
   hint: string
 }[] = [
   {
+    id: 'preserve_video_duration',
+    label: '保留画面时长（推荐）',
+    hint: '配音短于画面时不裁画面，尾部补静音；配音长于画面时末尾定格。',
+  },
+  {
     id: 'loop_video_to_cover',
     label: '循环本段画面',
     hint: '仅重复播放该段 TTS 对应的素材，直至盖住整段配音。',
@@ -25,7 +30,9 @@ export const TTS_ALIGN_BASIC_OPTIONS: {
 ]
 
 /** 混剪模式二：默认展示「本段循环 / 全列表轮播 / 定格」 */
-export const MIX_EDIT_TTS_ALIGN_OPTIONS = TTS_ALIGN_BASIC_OPTIONS
+export const MIX_EDIT_TTS_ALIGN_OPTIONS = TTS_ALIGN_BASIC_OPTIONS.filter(
+  (o) => o.id !== 'preserve_video_duration',
+)
 
 export const TTS_ALIGN_ALL_OPTIONS: {
   id: TtsVideoAlignPolicyApi

@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Sparkles, ListVideo, Mic2, Link2, Clapperboard, Layers } from 'lucide-react'
+import { ArrowLeft, Sparkles, ListVideo, Mic2, Link2, Clapperboard, Layers, Volume2 } from 'lucide-react'
 import type { MatchWorkspaceMode } from './matchModeTypes'
 
 type MatchPageHeaderProps = {
@@ -72,6 +72,12 @@ export function MatchPageHeader({ mode, onModeChange, onOpenVideoResult }: Match
               '混剪',
               <Layers className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
               'bg-indigo-600 text-white'
+            )}
+            {tab(
+              'video_dub',
+              '视频配音',
+              <Volume2 className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
+              'bg-teal-600 text-white'
             )}
           </div>
         </div>

@@ -906,6 +906,7 @@ export interface VoiceoverAudioActivityConfigApi {
 
 export type TtsVideoAlignPolicyApi =
   | 'freeze_last_frame'
+  | 'preserve_video_duration'
   | 'loop_video_to_cover'
   | 'loop_playlist_to_cover'
   | 'stretch_audio'
@@ -919,6 +920,16 @@ export interface TtsVideoAlignConfigApi {
   min_video_pts_factor?: number
   /** false=仅句号/换行分条；true=再按逗号/顿号拆短条 */
   split_narration_by_sentence?: boolean
+}
+
+export type VideoDubContentSourceApi = 'asr_rewrite' | 'asr_literal' | 'vlm_narrate' | 'auto'
+
+export interface VideoDubPlanRequestApi {
+  video_ids: string[]
+  content_source: VideoDubContentSourceApi
+  user_prompt?: string
+  preserve_gaps?: boolean
+  tts_align?: TtsVideoAlignConfigApi
 }
 
 export interface VoiceoverQuickCutRequestApi {
@@ -951,6 +962,8 @@ export const autoEditApi = {
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/voiceover-quick-cut', payload),
   mixEditPlan: (payload: MixEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/mix-edit-plan', payload),
+  videoDubPlan: (payload: VideoDubPlanRequestApi) =>
+    apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/video-dub-plan', payload),
   realize: (payload: {
     plan: AutoEditPlanApi
     project_name?: string

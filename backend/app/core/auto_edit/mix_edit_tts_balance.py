@@ -45,6 +45,15 @@ def max_chars_for_video_duration(video_sec: float) -> int:
     return max(8, int(sec * _CHARS_PER_SEC_TTS * _TTS_VIDEO_FILL_RATIO))
 
 
+# 视频配音：略放宽字数上限，便于写满画面时段落
+_VIDEO_DUB_FILL_RATIO = 1.08
+
+
+def max_chars_for_video_dub_duration(video_sec: float) -> int:
+    sec = max(_MIN_CLIP_USABLE_SEC, float(video_sec or 0.0))
+    return max(10, int(sec * _CHARS_PER_SEC_TTS * _VIDEO_DUB_FILL_RATIO))
+
+
 def max_chars_for_target_tts_duration(tts_sec: float) -> int:
     """按目标 TTS 秒数反推字数上限。"""
     sec = max(0.5, float(tts_sec or 0.0))

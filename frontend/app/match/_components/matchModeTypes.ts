@@ -7,6 +7,7 @@ export type MatchWorkspaceMode =
   | 'replica'
   | 'script_stock'
   | 'mix_edit'
+  | 'video_dub'
 
 /** 仅「手动匹配」：依赖段落文案 + 检索 clip，侧栏为 ZIP/成片导出 */
 export function isManualLikeMode(m: MatchWorkspaceMode): boolean {
@@ -21,7 +22,8 @@ export function isAutoLikeMode(m: MatchWorkspaceMode): boolean {
     m === 'voiceover' ||
     m === 'replica' ||
     m === 'script_stock' ||
-    m === 'mix_edit'
+    m === 'mix_edit' ||
+    m === 'video_dub'
   )
 }
 
@@ -33,7 +35,8 @@ export function normalizeMatchWorkspaceMode(raw: unknown): MatchWorkspaceMode {
     raw === 'template' ||
     raw === 'replica' ||
     raw === 'script_stock' ||
-    raw === 'mix_edit'
+    raw === 'mix_edit' ||
+    raw === 'video_dub'
   )
     return raw
   return 'manual'

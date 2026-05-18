@@ -160,7 +160,7 @@ def build_v0_timeline_from_context(
     clip_ids = list(dict.fromkeys([c.strip() for c in clip_ids if c and c.strip()]))
     if not clip_ids:
         # 兜底：没有 clip_id 时返回空 timeline（上游应当回退旧逻辑或报错）
-        return FinalTimeline(items=[], total_duration_sec_est=0.0)
+        return FinalTimeline(items=[], total_duration_sec_est=None)
 
     target = float(dsl.target_duration_sec or 0) if dsl.target_duration_sec else None
     n = len(clip_ids)
@@ -204,7 +204,7 @@ def build_v0_timelines_from_context(
     clip_ids = re.findall(r"\[clip_id=([^\]]+)\]", context or "")
     clip_ids = list(dict.fromkeys([c.strip() for c in clip_ids if c and c.strip()]))
     if not clip_ids:
-        return [FinalTimeline(items=[], total_duration_sec_est=0.0)]
+        return [FinalTimeline(items=[], total_duration_sec_est=None)]
 
     target = float(dsl.target_duration_sec or 0) if dsl.target_duration_sec else 0.0
     per = None

@@ -140,6 +140,16 @@ async def call_llm_for_events_all(
         overlap_clips=max(0, cfg_overlap),
     )
     logger.info("auto_edit 启用新引擎：分割上下文为批次完成，批次数量：%d", len(batches))
+    if not batches:
+        ctx = (context or "").strip()
+        if ctx and "未找到有效" not in ctx:
+            logger.warning(
+                "auto_edit 上下文未解析到 [clip_id=...] 行，整段作为单批次处理（长度=%d）",
+                len(ctx),
+            )
+            batches = [ctx]
+        elif ctx:
+            logger.warning("auto_edit 素材上下文为空或无可用 clip，跳过事件池分批")
     if cfg_max_batches and len(batches) > cfg_max_batches:
         batches = batches[:cfg_max_batches]
 

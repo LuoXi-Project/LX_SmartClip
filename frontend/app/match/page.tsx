@@ -32,6 +32,7 @@ import { ManualMatchPanel } from './_components/ManualMatchPanel'
 import { AutoEditPanel } from './_components/AutoEditPanel'
 import { VoiceoverQuickCutPanel, type VoiceoverQuickCutStrategy } from './_components/VoiceoverQuickCutPanel'
 import { MixEditPanel, type MixEditGeneratePayload } from './_components/MixEditPanel'
+import { VideoDubPanel, type VideoDubGeneratePayload } from './_components/VideoDubPanel'
 import { TemplateClipPanel } from './_components/TemplateClipPanel'
 import { MatchSubtitleWorkspace } from './_components/MatchSubtitleWorkspace'
 import { isAutoLikeMode } from './_components/matchModeTypes'
@@ -227,6 +228,10 @@ export default function MatchPage() {
     ...DEFAULT_VOICEOVER_TTS_ALIGN,
     policy: 'loop_video_to_cover',
   }))
+  const [videoDubTtsAlign, setVideoDubTtsAlign] = useState<TtsVideoAlignConfigApi>(() => ({
+    ...DEFAULT_VOICEOVER_TTS_ALIGN,
+    policy: 'preserve_video_duration',
+  }))
   const [autoCustomBgmEnabled, setAutoCustomBgmEnabled] = useState(false)
   const [autoCustomBgmTrackIds, setAutoCustomBgmTrackIds] = useState<string[]>([])
   const [autoCustomBgmVolumeByTrackId, setAutoCustomBgmVolumeByTrackId] = useState<Record<string, number>>({})
@@ -384,7 +389,7 @@ export default function MatchPage() {
     [videos]
   )
   const scopeVideos =
-    mode === 'voiceover' || mode === 'script_stock' || mode === 'mix_edit'
+    mode === 'voiceover' || mode === 'script_stock' || mode === 'mix_edit' || mode === 'video_dub'
       ? voiceoverScopeVideos
       : doneVideos
   const selectedOrAllDoneVideos = useMemo(
@@ -1169,6 +1174,28 @@ export default function MatchPage() {
     }
   }
 
+  async function handleVideoDubPlan(payload: VideoDubGeneratePayload) {
+    setAutoError('')
+    setAutoLoading(true)
+    try {
+      const res = await autoEditApi.videoDubPlan({
+        video_ids: payload.videoIds,
+        content_source: payload.contentSource,
+        user_prompt: payload.userPrompt,
+        preserve_gaps: payload.preserveGaps,
+        tts_align: { ...videoDubTtsAlign },
+      })
+      const plans = res.plans || []
+      setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
+      toast.success(plans.length ? `配音方案已生成（${plans.length} 个）` : '配音方案已生成')
+    } catch (e: unknown) {
+      const msg = formatFastApiDetail(e) || (e as Error)?.message || '配音方案生成失败'
+      setAutoError(msg)
+    } finally {
+      setAutoLoading(false)
+    }
+  }
+
   async function handleMixEditPlan(payload: MixEditGeneratePayload) {
     setAutoError('')
     setAutoLoading(true)
@@ -1234,6 +1261,10 @@ export default function MatchPage() {
           split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
         }
       }
+      if (mode === 'video_dub') {
+        forceTtsPipeline = true
+        ttsAlignPayload = { ...videoDubTtsAlign }
+      }
       if (mode === 'mix_edit' || mode === 'auto') {
         const customBgm = buildAutoCustomBgmPlanPayload()
         if (customBgm) {
@@ -1298,6 +1329,10 @@ export default function MatchPage() {
           ...mixEditTtsAlign,
           split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
         }
+      }
+      if (mode === 'video_dub') {
+        forceTtsPipeline = true
+        ttsAlignPayload = { ...videoDubTtsAlign }
       }
       const res = await autoEditApi.exportJianyingDraft({
         plan: planForExport,
@@ -1528,6 +1563,82 @@ export default function MatchPage() {
               autoJianyingDraftDownloads={autoJianyingDraftDownloads}
               onExportJianyingDraft={handleAutoExportJianyingDraft}
             />
+            </>
+          ) : mode === 'video_dub' ? (
+            <>
+              <VideoDubPanel
+                selectedVideoIds={selectedVideoIds}
+                doneVideos={scopeVideos}
+                loading={autoLoading}
+                onGenerate={handleVideoDubPlan}
+                ttsAlign={videoDubTtsAlign}
+                onTtsAlignChange={(patch) =>
+                  setVideoDubTtsAlign((prev) => ({ ...prev, ...patch }))
+                }
+              />
+              <AutoEditPanel
+                hideLlmPlannerUi
+                autoPrompt={autoPrompt}
+                onAutoPromptChange={setAutoPrompt}
+                autoMode={autoMode}
+                onAutoModeChange={setAutoMode}
+                autoTargetDuration={autoTargetDuration}
+                onAutoTargetDurationChange={setAutoTargetDuration}
+                autoNumPlans={autoNumPlans}
+                onAutoNumPlansChange={setAutoNumPlans}
+                autoBgmMixEnabled={autoBgmMixEnabled}
+                onAutoBgmMixEnabledChange={setAutoBgmMixEnabled}
+                autoBgmPlanPolicy={autoBgmPlanPolicy}
+                onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
+                autoBgmTrackFilename={autoBgmTrackFilename}
+                onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+                autoUseTimelineEngine={autoUseTimelineEngine}
+                onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+                processingProfileLocked={false}
+                autoContentStyle={autoContentStyle}
+                onAutoContentStyleChange={setAutoContentStyle}
+                autoEventsAdvancedEnabled={autoEventsAdvancedEnabled}
+                onAutoEventsAdvancedEnabledChange={setAutoEventsAdvancedEnabled}
+                autoEventsMaxClipsPerBatch={autoEventsMaxClipsPerBatch}
+                onAutoEventsMaxClipsPerBatchChange={setAutoEventsMaxClipsPerBatch}
+                autoEventsMaxCharsPerBatch={autoEventsMaxCharsPerBatch}
+                onAutoEventsMaxCharsPerBatchChange={setAutoEventsMaxCharsPerBatch}
+                autoEventsBatchOverlapClips={autoEventsBatchOverlapClips}
+                onAutoEventsBatchOverlapClipsChange={setAutoEventsBatchOverlapClips}
+                autoEventsMaxBatches={autoEventsMaxBatches}
+                onAutoEventsMaxBatchesChange={setAutoEventsMaxBatches}
+                recommendedProfile={recommendedProfile}
+                estimatedBatches={estimatedBatches}
+                estimatedSeconds={estimatedSeconds}
+                estimatedTotalClips={estimatedTotalClips}
+                onResetAdvancedToRecommended={() => {
+                  setAutoEventsAdvancedEnabled(true)
+                  setAutoEventsMaxClipsPerBatch(recommendedProfile.clips)
+                  setAutoEventsMaxCharsPerBatch(recommendedProfile.chars)
+                  setAutoEventsBatchOverlapClips(recommendedProfile.overlap)
+                  setAutoEventsMaxBatches(recommendedProfile.batches)
+                }}
+                autoExplain={autoExplain}
+                onAutoExplainChange={setAutoExplain}
+                autoLoading={autoLoading}
+                autoError={autoError}
+                autoPlans={autoPlans}
+                autoExpandedPlanIds={autoExpandedPlanIds}
+                onTogglePlanExpand={toggleAutoExpandedPlan}
+                autoRealizingId={autoRealizingId}
+                autoRealizeMsg={autoRealizeMsg}
+                autoRealizeDownloads={autoRealizeDownloads}
+                autoPlanLogs={autoPlanLogs}
+                autoPlanElapsedSec={autoPlanElapsedSec}
+                autoPlanStage={autoPlanStage}
+                autoPlanStagePercent={autoPlanStagePercent}
+                subtitleEnabled={subtitleEnabled}
+                onGeneratePlans={() => {}}
+                onRealizePlan={handleAutoRealizePlan}
+                autoJianyingDraftExportingId={autoJianyingDraftExportingId}
+                autoJianyingDraftDownloads={autoJianyingDraftDownloads}
+                onExportJianyingDraft={handleAutoExportJianyingDraft}
+              />
             </>
           ) : mode === 'mix_edit' ? (
             <>

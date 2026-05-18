@@ -1183,9 +1183,9 @@ def render_tts_segment(
             covered,
             audio_dur,
         )
-    elif video_shorter and policy == "freeze_last_frame":
+    elif video_shorter and policy in ("freeze_last_frame", "preserve_video_duration"):
         need_pad_sec = max(0.0, audio_dur - base_video_dur)
-    elif not video_shorter:
+    elif not video_shorter and policy != "preserve_video_duration":
         need_pad_sec = max(0.0, audio_dur - base_video_dur)
 
     # concat 要求所有输入视频参数一致（分辨率/SAR 等），否则会报
@@ -1267,7 +1267,46 @@ def render_tts_segment(
                 v_body += ",setsar=1"
                 a_body = "asetpts=PTS-STARTPTS"
                 _run_stretch_fc(output_dur=audio_dur, v_filters=v_body, a_filters=a_body)
+        elif policy == "preserve_video_duration" and audio_dur + eps < base_video_dur:
+            pad_sec = max(0.0, base_video_dur - audio_dur)
+            logger.info(
+                "FFmpeg tts(seg preserve_video) 段#%s 画面=%.2fs 配音=%.2fs 补静音=%.2fs",
+                int(seg_idx) + 1,
+                base_video_dur,
+                audio_dur,
+                pad_sec,
+            )
+            run_ffmpeg(
+                [
+                    "-fflags",
+                    "+genpts",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    concat_list,
+                    "-i",
+                    tts_path,
+                    "-filter_complex",
+                    f"[0:v]setpts=PTS-STARTPTS,setsar=1[v];[1:a]apad=pad_dur={pad_sec:.3f}[a]",
+                    "-map",
+                    "[v]",
+                    "-map",
+                    "[a]",
+                    "-t",
+                    f"{base_video_dur:.3f}",
+                    *seg_codec_args,
+                    "-movflags",
+                    "+faststart",
+                    seg_out,
+                ],
+                desc=f"tts seg {(int(seg_idx) + 1)} (preserve_video_duration)",
+            )
         else:
+            out_dur = audio_dur
+            if policy == "preserve_video_duration":
+                out_dur = max(audio_dur, base_video_dur)
             logger.info(f"FFmpeg tts(seg concat demuxer) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
             vf_pad = []
             if need_pad_sec > 0.02:
@@ -1290,7 +1329,7 @@ def render_tts_segment(
                     "1:a:0",
                     *vf_pad,
                     "-t",
-                    f"{audio_dur:.3f}",
+                    f"{out_dur:.3f}",
                     *seg_codec_args,
                     "-movflags",
                     "+faststart",

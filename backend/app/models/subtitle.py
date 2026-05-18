@@ -12,6 +12,7 @@ class TtsVideoAlignConfig(BaseModel):
 
     policy: Literal[
         "freeze_last_frame",
+        "preserve_video_duration",
         "loop_video_to_cover",
         "loop_playlist_to_cover",
         "stretch_audio",
@@ -19,7 +20,9 @@ class TtsVideoAlignConfig(BaseModel):
     ] = Field(
         "freeze_last_frame",
         description=(
-            "freeze_last_frame=不加速画面，末尾定格直至配音结束；"
+            "freeze_last_frame=不加速画面，末尾定格直至配音结束；配音短于画面时裁切画面；"
+            "preserve_video_duration=视频配音推荐：配音短于画面时保留完整画面并补静音，"
+            "配音长于画面时末尾定格；"
             "loop_video_to_cover=仅重复本段所选素材直至盖住配音；"
             "loop_playlist_to_cover=按成片顺序轮播全部素材直至盖住配音（混剪推荐）；"
             "stretch_audio=变速压缩/拉伸配音以贴合画面时长；"

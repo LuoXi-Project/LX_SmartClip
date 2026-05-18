@@ -286,6 +286,37 @@ class VoiceoverQuickCutRequest(BaseModel):
     )
 
 
+class VideoDubPlanRequest(BaseModel):
+    """视频配音：保留原片时间轴，替换/生成 TTS 旁白。"""
+
+    video_ids: List[str] = Field(..., description="参与配音的视频 ID（建议单选）")
+    content_source: Literal["asr_rewrite", "asr_literal", "vlm_narrate", "auto"] = Field(
+        "auto",
+        description=(
+            "asr_rewrite=按 ASR 洗稿后配音；asr_literal=沿用 ASR 原文；"
+            "vlm_narrate=按画面描述生成旁白；auto=有 ASR 用 ASR，否则 VLM"
+        ),
+    )
+    user_prompt: Optional[str] = Field(
+        None,
+        description="配音诉求；洗稿/画面解说模式建议填写",
+    )
+    preserve_gaps: bool = Field(
+        True,
+        description="是否在句间/无标注区间保留原画面（静音轨），以维持总时长",
+    )
+    tts_align: Optional[TtsVideoAlignConfig] = Field(
+        None,
+        description="TTS 与画面时长不一致时的对齐策略（定格/循环/变速等）",
+    )
+
+    @model_validator(mode="after")
+    def _require_prompt_for_rewrite(self) -> "VideoDubPlanRequest":
+        if self.content_source == "asr_rewrite" and not (self.user_prompt or "").strip():
+            raise ValueError("「ASR 洗稿配音」请填写配音诉求")
+        return self
+
+
 class AutoEditPlanResponse(BaseModel):
     plans: List[Plan]
 

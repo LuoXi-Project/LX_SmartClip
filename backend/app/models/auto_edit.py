@@ -6,6 +6,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.models.subtitle import (
     ClipTrimPart,
+    SegmentVisualEffect,
     SubtitleStyle,
     TtsVideoAlignConfig,
 )
@@ -54,6 +55,48 @@ class TransitionPlan(BaseModel):
     duration_sec: float = 0.3
 
 
+class MixVisualRandomConfig(BaseModel):
+    """视觉随机变换总开关与参数（与混剪面板一致）。"""
+
+    enable_zoom: bool = True
+    zoom_probability: float = Field(0.40, ge=0.0, le=1.0)
+    zoom_ratio_min: float = Field(1.10, ge=1.0, le=3.0)
+    zoom_ratio_max: float = Field(1.20, ge=1.0, le=3.0)
+    zoom_min_interval_segments: int = Field(1, ge=0, le=100)
+
+    enable_mirror: bool = True
+    mirror_probability: float = Field(0.30, ge=0.0, le=1.0)
+
+    enable_rotation: bool = True
+    rotation_probability: float = Field(0.30, ge=0.0, le=1.0)
+    rotation_deg_min: float = Field(-1.5, ge=-45.0, le=45.0)
+    rotation_deg_max: float = Field(1.5, ge=-45.0, le=45.0)
+
+    enable_color: bool = True
+    color_probability: float = Field(0.50, ge=0.0, le=1.0)
+    color_intensity_min: float = Field(-0.15, ge=-1.0, le=1.0)
+    color_intensity_max: float = Field(0.15, ge=-1.0, le=1.0)
+
+
+class MixOverlayVideoConfig(BaseModel):
+    enabled: bool = False
+    path: Optional[str] = Field(None, description="覆盖视频本地路径或 storage/mix_assets 相对路径")
+    opacity: float = Field(0.15, ge=0.0, le=1.0)
+    volume: float = Field(0.10, ge=0.0, le=1.0)
+
+
+class MixUserBgmConfig(BaseModel):
+    enabled: bool = False
+    path: Optional[str] = Field(None, description="BGM 本地路径或 storage/mix_assets 相对路径")
+    volume: float = Field(0.30, ge=0.0, le=1.0)
+
+
+class MixPostprocessConfig(BaseModel):
+    visual_random: Optional[MixVisualRandomConfig] = None
+    overlay_video: Optional[MixOverlayVideoConfig] = None
+    user_bgm: Optional[MixUserBgmConfig] = None
+
+
 class ClipRef(BaseModel):
     clip_id: str
     video_id: str
@@ -80,6 +123,7 @@ class SegmentPlan(BaseModel):
     audio_mode: Literal["original", "tts", "mute"] = "original"
     subtitle: SubtitlePlan
     transition: Optional[TransitionPlan] = None
+    visual_effect: Optional[SegmentVisualEffect] = None
 
 
 class BGMPlan(BaseModel):
@@ -118,6 +162,7 @@ class Plan(BaseModel):
     chapters: Optional[List[dict]] = None
     segments: List[SegmentPlan]
     bgm: Optional[BGMPlan] = None
+    postprocess: Optional[MixPostprocessConfig] = None
     constraints: Optional[Constraints] = None
     keep_flags: Optional[PlanKeepFlags] = None
 
@@ -208,6 +253,10 @@ class MixEditPlanRequest(BaseModel):
     tts_align: Optional[TtsVideoAlignConfig] = Field(
         None,
         description="模式二 TTS 配音：含画面对齐策略与是否按句拆段（split_narration_by_sentence）",
+    )
+    postprocess: Optional[MixPostprocessConfig] = Field(
+        None,
+        description="混剪后处理：视觉随机变换、覆盖视频、用户 BGM",
     )
 
     @field_validator("mute_audio_track", mode="before")

@@ -22,6 +22,8 @@ from app.core.subtitle.tts_align import (
     resolve_stretch_audio_atempo,
     resolve_stretch_video_pts_factor,
 )
+from app.core.auto_edit.mix_visual import build_segment_visual_filters
+
 from .render_opts import (
     build_extra_video_filters,
     build_render_codec_args,
@@ -484,7 +486,8 @@ def materialize_clip_paths_for_group(
         norm_vf = (
             [f"scale={tw}:{th}:flags=lanczos", "setsar=1"] if need_norm else []
         )
-        seg_filter_parts = [*norm_vf, *extra_filters]
+        visual_vf = build_segment_visual_filters(getattr(seg, "visual_effect", None))
+        seg_filter_parts = [*norm_vf, *extra_filters, *visual_vf]
         seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []
 
         if (not force_materialize) and (not need_trim) and (not need_norm):

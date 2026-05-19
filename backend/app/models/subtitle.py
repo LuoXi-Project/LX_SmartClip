@@ -7,6 +7,17 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class SegmentVisualEffect(BaseModel):
+    """混剪段落级视觉随机变换（成片 materialize 时应用）。"""
+
+    zoom: Optional[float] = Field(None, description="放大倍率，如 1.15")
+    mirror: bool = False
+    rotation_deg: Optional[float] = Field(None, description="旋转角度（度）")
+    color_intensity: Optional[float] = Field(
+        None, description="调色强度 -0.15~0.15，影响饱和度/对比/色相"
+    )
+
+
 class TtsVideoAlignConfig(BaseModel):
     """成片段落：画面时长与系统 TTS 配音不一致时的对齐策略（主要针对「配音长于所选画面」）。"""
 
@@ -91,6 +102,8 @@ class SubtitleSegmentInput(BaseModel):
     timeline_duration_sec: Optional[float] = None
     # 混剪「仅 BGM / 素材全静音」：保留画面，音轨置零
     mute_audio: bool = False
+    # 混剪视觉随机变换（段落级 materialize 滤镜）
+    visual_effect: Optional[SegmentVisualEffect] = None
 
 
 class SubtitleStyle(BaseModel):

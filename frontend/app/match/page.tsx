@@ -1209,6 +1209,7 @@ export default function MatchPage() {
         mute_audio_track: payload.muteAudioTrack,
         target_duration_sec: payload.targetDurationSec,
         user_prompt: payload.userPrompt,
+        postprocess: payload.postprocess,
         ...(useTtsTrack
           ? {
               tts_align: {

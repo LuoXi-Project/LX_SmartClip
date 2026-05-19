@@ -7,12 +7,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Dict, List, Optional, Set
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.core.blocking_pool import run_heavy
@@ -38,6 +39,7 @@ from app.core.auto_edit_v2.events_generation import call_llm_for_events_all
 from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batches
 from app.core.auto_edit_v2.arrange import arrange_timeline_variants
 from app.core.bgm.auto_bgm import apply_bgm_postprocess_if_needed
+from app.core.auto_edit.mix_postprocess import apply_mix_overlay_if_needed
 from app.api.copy_gen import _build_video_context_with_recall
 from app.models.subtitle import (
     BurnSubtitleRequest,
@@ -783,6 +785,7 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
             mute_audio_track=req.mute_audio_track,
             video_title_hint=hint,
             target_duration_sec=req.target_duration_sec,
+            postprocess=req.postprocess,
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve)) from ve
@@ -843,6 +846,50 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
             detail="混剪方案为空：请确认素材已处理，且至少有一段可用画面",
         )
     return AutoEditPlanResponse(plans=[plan])
+
+
+_MIX_ASSET_VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".avi")
+_MIX_ASSET_AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
+
+
+@router.post("/mix-upload-asset")
+async def mix_upload_asset(
+    file: UploadFile = File(...),
+    kind: str = "auto",
+) -> dict:
+    """
+    混剪覆盖视频 / 用户 BGM 上传，保存至 storage/mix_assets，返回可用于 plan 的路径。
+    kind: overlay | bgm | auto（按扩展名推断）
+    """
+    from app.utils.paths import ensure_storage_subpath
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    name = file.filename
+    lower = name.lower()
+    k = (kind or "auto").strip().lower()
+    if k == "auto":
+        if lower.endswith(_MIX_ASSET_VIDEO_EXT):
+            k = "overlay"
+        elif lower.endswith(_MIX_ASSET_AUDIO_EXT):
+            k = "bgm"
+        else:
+            raise HTTPException(status_code=400, detail="无法识别文件类型，请传 mp4/mov 或 mp3/wav 等")
+    if k == "overlay" and not lower.endswith(_MIX_ASSET_VIDEO_EXT):
+        raise HTTPException(status_code=400, detail="覆盖视频请上传 mp4/mov 等视频文件")
+    if k == "bgm" and not lower.endswith(_MIX_ASSET_AUDIO_EXT):
+        raise HTTPException(status_code=400, detail="BGM 请上传 mp3/wav/m4a 等音频文件")
+
+    dest_dir = ensure_storage_subpath("mix_assets")
+    safe_name = f"{uuid.uuid4().hex[:8]}_{name}"
+    dest_path = os.path.join(dest_dir, safe_name)
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空")
+    with open(dest_path, "wb") as f:
+        f.write(content)
+    rel = os.path.join("storage", "mix_assets", safe_name).replace("\\", "/")
+    return {"path": dest_path, "stored_path": rel, "filename": safe_name, "kind": k}
 
 
 @router.post("/video-dub-plan", response_model=AutoEditPlanResponse)
@@ -1382,11 +1429,18 @@ async def realize_auto_edit_plan(
             burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():
             raise HTTPException(status_code=400, detail="客户端已断开连接")
+        final_filename, final_url = burn_res["filename"], burn_res["url"]
+        final_filename, final_url = await run_heavy(
+            apply_mix_overlay_if_needed,
+            plan,
+            final_filename,
+            final_url,
+        )
         final_filename, final_url = await run_heavy(
             apply_bgm_postprocess_if_needed,
             plan,
-            burn_res["filename"],
-            burn_res["url"],
+            final_filename,
+            final_url,
         )
         return AutoEditRealizeResponse(
             mode="voiceover",
@@ -1406,11 +1460,18 @@ async def realize_auto_edit_plan(
     res = await execute_export_original(export_req)
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
+    final_filename, final_url = res.get("filename") or "", res.get("url") or ""
+    final_filename, final_url = await run_heavy(
+        apply_mix_overlay_if_needed,
+        plan,
+        final_filename,
+        final_url,
+    )
     final_filename, final_url = await run_heavy(
         apply_bgm_postprocess_if_needed,
         plan,
-        res.get("filename") or "",
-        res.get("url") or "",
+        final_filename,
+        final_url,
     )
     return AutoEditRealizeResponse(
         mode="original",

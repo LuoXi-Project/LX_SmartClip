@@ -9,12 +9,15 @@ from app.models.auto_edit import (
     BGMPlan,
     ClipRef,
     Constraints,
+    MixPostprocessConfig,
+    MixUserBgmConfig,
     Plan,
     PlanKeepFlags,
     SegmentPlan,
     SubtitlePlan,
     TimingHint,
 )
+from app.core.auto_edit.mix_visual import assign_visual_effects_to_segments, linear_volume_to_db
 from app.core.auto_edit.voiceover_quick_cut import (
     _clip_has_asr,
     _is_meaningful_text,
@@ -431,6 +434,23 @@ def _sort_clips_by_tier(rows: Sequence[Any], *, shuffle_none: bool) -> list[Any]
     return ordered
 
 
+def _bgm_from_user_config(user_bgm: MixUserBgmConfig | None) -> BGMPlan | None:
+    if not user_bgm or not user_bgm.enabled:
+        return None
+    path = (user_bgm.path or "").strip()
+    if not path:
+        return None
+    return BGMPlan(
+        enabled=True,
+        source="user",
+        track_id=path,
+        volume_db=linear_volume_to_db(user_bgm.volume),
+        loop=True,
+        fade_in_sec=0.5,
+        fade_out_sec=0.8,
+    )
+
+
 def build_mix_edit_plan(
     *,
     clip_rows: Sequence[Any],
@@ -438,6 +458,7 @@ def build_mix_edit_plan(
     mute_audio_track: MuteAudioTrack = "ai_tts",
     video_title_hint: str | None = None,
     target_duration_sec: float | None = None,
+    postprocess: MixPostprocessConfig | None = None,
 ) -> Plan:
     """
     混剪方案生成：
@@ -513,6 +534,11 @@ def build_mix_edit_plan(
             f" 分级统计：{_format_tier_counts(tier_counts)}."
         )
         bgm = BGMPlan(enabled=(mute_audio_track == "bgm_only"), volume_db=-10.0)
+        user_bgm = _bgm_from_user_config(
+            postprocess.user_bgm if postprocess else None
+        )
+        if user_bgm:
+            bgm = user_bgm
 
     else:
         for row in arranged:
@@ -562,6 +588,18 @@ def build_mix_edit_plan(
             f" 分级：{_format_tier_counts(tier_counts)}."
         )
         bgm = BGMPlan(enabled=False)
+        user_bgm = _bgm_from_user_config(
+            postprocess.user_bgm if postprocess else None
+        )
+        if user_bgm:
+            bgm = user_bgm
+
+    if postprocess and postprocess.visual_random:
+        segments = assign_visual_effects_to_segments(
+            segments,
+            postprocess.visual_random,
+            seed=uuid.uuid4().hex[:8],
+        )
 
     total = sum(
         float(s.override_duration_sec or max(0.0, s.end_time_sec - s.start_time_sec))
@@ -577,6 +615,7 @@ def build_mix_edit_plan(
         estimated_duration_sec=round(total, 2) if total > 0 else None,
         segments=segments,
         bgm=bgm,
+        postprocess=postprocess,
         constraints=Constraints(
             match_strategy="asr+vlm",
             respect_user_video_order=True,

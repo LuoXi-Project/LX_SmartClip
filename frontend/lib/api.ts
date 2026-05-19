@@ -870,6 +870,7 @@ export interface AutoEditPlanApi {
   estimated_duration_sec?: number | null
   segments: AutoEditSegmentPlanApi[]
   bgm?: AutoEditBgmPlanApi | null
+  postprocess?: MixPostprocessConfigApi | null
 }
 
 export interface AutoEditPlanResponseApi {
@@ -884,6 +885,43 @@ export interface AutoEditPlanSessionResponseApi {
 export type MixAudioModeApi = 'keep_original' | 'mute_all_original'
 export type MuteAudioTrackApi = 'ai_tts_asr' | 'ai_tts_llm' | 'bgm_only' | 'ai_tts'
 
+export interface MixVisualRandomConfigApi {
+  enable_zoom: boolean
+  zoom_probability: number
+  zoom_ratio_min: number
+  zoom_ratio_max: number
+  zoom_min_interval_segments: number
+  enable_mirror: boolean
+  mirror_probability: number
+  enable_rotation: boolean
+  rotation_probability: number
+  rotation_deg_min: number
+  rotation_deg_max: number
+  enable_color: boolean
+  color_probability: number
+  color_intensity_min: number
+  color_intensity_max: number
+}
+
+export interface MixOverlayVideoConfigApi {
+  enabled: boolean
+  path?: string | null
+  opacity: number
+  volume: number
+}
+
+export interface MixUserBgmConfigApi {
+  enabled: boolean
+  path?: string | null
+  volume: number
+}
+
+export interface MixPostprocessConfigApi {
+  visual_random?: MixVisualRandomConfigApi | null
+  overlay_video?: MixOverlayVideoConfigApi | null
+  user_bgm?: MixUserBgmConfigApi | null
+}
+
 export interface MixEditPlanRequestApi {
   video_ids: string[]
   mix_audio_mode: MixAudioModeApi
@@ -891,6 +929,7 @@ export interface MixEditPlanRequestApi {
   target_duration_sec?: number
   user_prompt?: string
   tts_align?: TtsVideoAlignConfigApi
+  postprocess?: MixPostprocessConfigApi
 }
 
 export type VoiceoverQuickCutStrategyApi = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'
@@ -962,6 +1001,15 @@ export const autoEditApi = {
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/voiceover-quick-cut', payload),
   mixEditPlan: (payload: MixEditPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/mix-edit-plan', payload),
+  mixUploadAsset: (file: File, kind: 'overlay' | 'bgm' | 'auto' = 'auto') => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.post<unknown, { path: string; stored_path: string; filename: string; kind: string }>(
+      `/api/auto-edit/mix-upload-asset?kind=${encodeURIComponent(kind)}`,
+      formData,
+      formDataPostConfig(),
+    )
+  },
   videoDubPlan: (payload: VideoDubPlanRequestApi) =>
     apiClient.post<unknown, AutoEditPlanResponseApi>('/api/auto-edit/video-dub-plan', payload),
   realize: (payload: {

@@ -296,6 +296,7 @@ async def segments_from_plan(
                         clip_start_sec=None,
                         clip_trims=plan_trims,
                         mute_audio=(seg.audio_mode == "mute"),
+                        visual_effect=getattr(seg, "visual_effect", None),
                     )
                 )
                 continue
@@ -350,6 +351,7 @@ async def segments_from_plan(
                 clip_start_sec=resolved_clip_start,
                 clip_trims=None,
                 mute_audio=(seg.audio_mode == "mute"),
+                visual_effect=getattr(seg, "visual_effect", None),
             )
         )
 

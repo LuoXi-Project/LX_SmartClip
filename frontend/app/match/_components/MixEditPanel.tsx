@@ -4,6 +4,12 @@ import { useMemo, useState } from 'react'
 import { Layers, Mic2, VolumeX, Sparkles, Info } from 'lucide-react'
 import type { TtsVideoAlignConfigApi, Video as VideoModel } from '@/lib/api'
 import type { MixAudioMode, MuteAudioTrack } from './mixEditTypes'
+import {
+  DEFAULT_MIX_POSTPROCESS,
+  buildMixPostprocessPayload,
+  type MixPostprocessConfigApi,
+} from './mixEditPostprocessTypes'
+import { MixEditPostprocessSection } from './MixEditPostprocessSection'
 import { TtsAlignPolicySelect } from './TtsAlignPolicySelect'
 
 export type MixEditGeneratePayload = {
@@ -12,6 +18,7 @@ export type MixEditGeneratePayload = {
   muteAudioTrack: MuteAudioTrack
   targetDurationSec?: number
   userPrompt?: string
+  postprocess?: MixPostprocessConfigApi
 }
 
 type MixEditPanelProps = {
@@ -78,6 +85,11 @@ export function MixEditPanel({
   const [muteAudioTrack, setMuteAudioTrack] = useState<MuteAudioTrack>('ai_tts_llm')
   const [targetDuration, setTargetDuration] = useState('')
   const [userPrompt, setUserPrompt] = useState('')
+  const [postprocess, setPostprocess] = useState<MixPostprocessConfigApi>(() => ({
+    ...DEFAULT_MIX_POSTPROCESS,
+    visual_random: { ...DEFAULT_MIX_POSTPROCESS.visual_random! },
+    overlay_video: { ...DEFAULT_MIX_POSTPROCESS.overlay_video! },
+  }))
 
   const selectedCount = selectedVideoIds.length
   const canGenerate = selectedCount > 0 && !loading
@@ -108,6 +120,7 @@ export function MixEditPanel({
       muteAudioTrack,
       targetDurationSec: td && Number.isFinite(td) && td > 0 ? td : undefined,
       userPrompt: userPrompt.trim() || undefined,
+      postprocess: buildMixPostprocessPayload(postprocess),
     })
   }
 
@@ -195,6 +208,12 @@ export function MixEditPanel({
         </div>
         <TierLegendGrid />
       </section>
+
+      <MixEditPostprocessSection
+        value={postprocess}
+        onChange={setPostprocess}
+        disabled={loading}
+      />
 
       <section className="grid gap-3 sm:grid-cols-2">
         <label className="block space-y-1">

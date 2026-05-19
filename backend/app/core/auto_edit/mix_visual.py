@@ -26,7 +26,7 @@ def build_segment_visual_filters(effect: SegmentVisualEffect | None) -> List[str
         parts.append("hflip")
     if effect.rotation_deg is not None and abs(float(effect.rotation_deg)) > 0.001:
         rad = float(effect.rotation_deg) * math.pi / 180.0
-        parts.append(f"rotate={rad:.6f}:ow=iw:oh=ih:c=none")
+        parts.append(f"rotate={rad:.6f}:ow=iw:oh=ih:c=black")
     if effect.color_intensity is not None:
         i = float(effect.color_intensity)
         parts.append(f"eq=saturation={1.0 + i:.4f}:contrast={1.0 + i * 0.35:.4f}")

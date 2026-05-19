@@ -29,6 +29,10 @@ import {
   type PlanSegmentLayout,
 } from './planTimelineAdapter'
 import { clipStreamUrl, fmt, videoStreamUrl } from './types'
+import {
+  hasVisualEffectPreview,
+  visualEffectToPreviewStyle,
+} from './visualEffectPreview'
 
 const SEG_END_EPS = 0.04
 
@@ -61,6 +65,7 @@ export function PlanEditWorkspace({
   const [selection, setSelection] = useState<TimelineSelection>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playWholeTimeline, setPlayWholeTimeline] = useState(true)
+  const [cssVisualPreview, setCssVisualPreview] = useState(true)
   const [previewSource, setPreviewSource] = useState<'video' | 'clip'>('video')
   const [trackStates, setTrackStates] = useState<Record<string, TimelineTrackState>>({
     video: { visible: true },
@@ -336,6 +341,13 @@ export function PlanEditWorkspace({
     return getSubtitleAtPlayhead(layouts, playheadSec)
   }, [subtitlePreviewVisible, layouts, playheadSec])
 
+  const previewVisualStyle = useMemo(
+    () => visualEffectToPreviewStyle(selectedLayout?.visualEffect),
+    [selectedLayout?.visualEffect],
+  )
+  const previewVisualActive = hasVisualEffectPreview(selectedLayout?.visualEffect)
+  const applyCssVisual = previewVisualActive && cssVisualPreview
+
   useEffect(() => {
     const v = videoRef.current
     if (v) v.muted = audioMuted
@@ -392,6 +404,17 @@ export function PlanEditWorkspace({
                 />
                 连续播放
               </label>
+              {previewVisualActive ? (
+                <label className="inline-flex items-center gap-1 text-[10px] text-violet-300/90 cursor-pointer ml-1">
+                  <input
+                    type="checkbox"
+                    checked={cssVisualPreview}
+                    onChange={(e) => setCssVisualPreview(e.target.checked)}
+                    className="rounded border-violet-600"
+                  />
+                  CSS 视觉预览
+                </label>
+              ) : null}
               <button
                 type="button"
                 disabled={!resolvedVideoId}
@@ -417,18 +440,26 @@ export function PlanEditWorkspace({
               </button>
             </div>
           </div>
-          <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black flex-1 min-h-[200px]">
+          <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black flex-1 min-h-[200px] flex flex-col">
             {previewSrc ? (
               <>
+              <div className="w-full flex-1 min-h-0 max-h-[38vh] flex items-center justify-center overflow-hidden">
+              <div
+                className="max-w-full max-h-full flex items-center justify-center origin-center"
+                style={applyCssVisual ? previewVisualStyle : undefined}
+              >
               <video
                 ref={videoRef}
                 key={previewSrc}
                 src={previewSrc}
-                className={`w-full h-full max-h-[38vh] object-contain transition-opacity ${
+                className={`max-w-full max-h-[38vh] w-full h-full object-contain transition-opacity ${
                   videoTrackVisible ? 'opacity-100' : 'opacity-0'
                 }`}
-                controls
+                controls={!applyCssVisual}
                 playsInline
+                onClick={() => {
+                  if (applyCssVisual) void togglePlay()
+                }}
                 onPlay={() => {
                   setIsPlaying(true)
                   startRaf()
@@ -460,6 +491,13 @@ export function PlanEditWorkspace({
                   if (videoRef.current) videoRef.current.muted = audioMuted
                 }}
               />
+              </div>
+              </div>
+              {applyCssVisual ? (
+                <span className="absolute top-2 left-2 z-10 rounded-md border border-violet-500/40 bg-violet-950/80 px-1.5 py-0.5 text-[10px] text-violet-200 pointer-events-none">
+                  视觉变换预览 · 请用上方播放/时间轴
+                </span>
+              ) : null}
               {!videoTrackVisible && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 text-slate-500 pointer-events-none">
                   <EyeOff className="w-8 h-8 mb-2 opacity-40" />
@@ -550,6 +588,21 @@ export function PlanEditWorkspace({
                 <span className="text-slate-500">成片 {fmt(selectedLayout.timelineStart)}</span>
                 <span className="text-slate-500">时长 {selectedLayout.duration.toFixed(2)}s</span>
               </div>
+              {previewVisualActive && selectedSeg.visual_effect ? (
+                <p className="text-[10px] text-violet-300/90 leading-relaxed">
+                  视觉变换：{cssVisualPreview ? 'CSS 近似预览已开' : '已关闭 CSS，原片预览'}
+                  {selectedSeg.visual_effect.zoom != null && selectedSeg.visual_effect.zoom > 1
+                    ? ` · 放大×${selectedSeg.visual_effect.zoom.toFixed(2)}`
+                    : ''}
+                  {selectedSeg.visual_effect.mirror ? ' · 镜像' : ''}
+                  {selectedSeg.visual_effect.rotation_deg != null
+                    ? ` · 旋转${selectedSeg.visual_effect.rotation_deg.toFixed(1)}°`
+                    : ''}
+                  {selectedSeg.visual_effect.color_intensity != null
+                    ? ` · 调色${selectedSeg.visual_effect.color_intensity.toFixed(3)}`
+                    : ''}
+                </p>
+              ) : null}
               {onExternalPreview && selectedLayout.clipId && (
                 <button
                   type="button"

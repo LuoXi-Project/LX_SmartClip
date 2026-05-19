@@ -817,6 +817,14 @@ export interface AutoEditPlanRequestApi {
   events_max_batches?: number
 }
 
+/** 混剪段落视觉随机变换（成片 FFmpeg / 剪映 ClipSettings / 剪辑台 CSS 预览共用） */
+export interface SegmentVisualEffectApi {
+  zoom?: number | null
+  mirror?: boolean
+  rotation_deg?: number | null
+  color_intensity?: number | null
+}
+
 export interface AutoEditSegmentPlanApi {
   id: string
   chapter_id?: string | null
@@ -843,6 +851,7 @@ export interface AutoEditSegmentPlanApi {
     source: 'asr' | 'llm' | 'user'
     timing_hint?: { start: number; end: number }
   }
+  visual_effect?: SegmentVisualEffectApi | null
 }
 
 export interface AutoEditBgmPlanApi {

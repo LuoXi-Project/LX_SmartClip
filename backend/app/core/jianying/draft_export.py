@@ -431,7 +431,12 @@ def build_jianying_draft_zip(
         # 主轨视频实际结束微秒；与 resolve_durations 计划起点若有漂移则后移起点，避免 SegmentOverlap
         main_video_tail_us = 0
 
+        from app.core.jianying.visual_effect_bridge import visual_effect_to_clip_settings
+
         for seg_idx, seg in enumerate(segments):
+            seg_clip_settings = visual_effect_to_clip_settings(
+                getattr(seg, "visual_effect", None)
+            )
             seg_dur_sec = float(seg_durs[seg_idx] or 0.0)
             seg_window_us = max(0, int(round(seg_dur_sec * SEC)))
             seg_start_planned_us = int(round(starts_sec[seg_idx] * SEC))
@@ -485,11 +490,16 @@ def build_jianying_draft_zip(
                     break
 
                 vol = 0.0 if mode == "tts" else 1.0
+                vs_kw: dict = {
+                    "volume": vol,
+                }
+                if seg_clip_settings is not None:
+                    vs_kw["clip_settings"] = seg_clip_settings
                 vs = VideoSegment(
                     mat_path,
                     Timerange(cursor_us, target_dur_us),
                     source_timerange=Timerange(src_start_us, target_dur_us),
-                    volume=vol,
+                    **vs_kw,
                 )
                 script.add_segment(vs)
                 cursor_us += target_dur_us

@@ -1,4 +1,4 @@
-import type { AutoEditPlanApi, AutoEditSegmentPlanApi } from '@/lib/api'
+import type { AutoEditPlanApi, AutoEditSegmentPlanApi, SegmentVisualEffectApi } from '@/lib/api'
 import type { TimelineClipBlock, TimelineTrack } from '@/components/timeline-editor'
 import { clipColorByIndex } from '@/components/timeline-editor'
 import type { ClipMeta } from './autoEditTypes'
@@ -19,6 +19,7 @@ export type PlanSegmentLayout = {
   label: string
   subtitleText: string
   excluded: boolean
+  visualEffect?: SegmentVisualEffectApi | null
 }
 
 export function segmentOutputDuration(
@@ -60,6 +61,7 @@ export function buildPlanSegmentLayouts(
       label: `#${s.order}`,
       subtitleText: s.subtitle?.text?.trim() || '',
       excluded,
+      visualEffect: s.visual_effect ?? null,
     }
 
     if (!excluded) cursor += dur

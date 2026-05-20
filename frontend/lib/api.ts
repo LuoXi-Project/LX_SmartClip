@@ -1062,6 +1062,14 @@ export interface ScriptStockPexelsVideoApi {
   video_files: ScriptStockPexelsVideoFileApi[]
 }
 
+export interface ScriptStockPexelsImageApi {
+  id: number
+  width: number
+  height: number
+  image: string
+  user_name?: string
+}
+
 export type ScriptStockAudioMode = 'tts_only' | 'original_only' | 'mix'
 
 export type ScriptStockTimelineMode = 'follow_narration' | 'follow_material'
@@ -1074,6 +1082,7 @@ export type ScriptStockMaterialTtsLonger = 'trim_tts' | 'stretch_audio'
 
 export interface ScriptStockPexelsCacheItemApi {
   pexels_video_id: number
+  media_type?: 'image' | 'video'
   stored_rel_path: string
   filename: string
   size_bytes: number
@@ -1086,14 +1095,72 @@ export interface ScriptStockPexelsCacheItemApi {
   duration_sec?: number
 }
 
+export interface ScriptStockPixabayVideoApi {
+  id: number
+  width: number
+  height: number
+  duration: number
+  image: string
+  user_name?: string
+  tags?: string
+  videos: Record<string, { url: string; width: number; height: number; size?: number; thumbnail?: string }>
+}
+
+export interface ScriptStockPixabayImageApi {
+  id: number
+  width: number
+  height: number
+  image: string
+  user_name?: string
+  tags?: string
+}
+
+export interface ScriptStockPixabayCacheItemApi {
+  pixabay_video_id: number
+  media_type?: 'image' | 'video'
+  stored_rel_path: string
+  filename: string
+  size_bytes: number
+  mtime: number
+  search_query?: string
+  preview_image?: string
+  duration_sec?: number
+}
+
+export interface ScriptStockUnsplashPhotoApi {
+  id: string
+  width: number
+  height: number
+  description?: string
+  image: string
+  user_name?: string
+  color?: string
+}
+
+export interface ScriptStockUnsplashCacheItemApi {
+  unsplash_photo_id: string
+  media_type?: 'image' | 'video'
+  stored_rel_path: string
+  filename: string
+  size_bytes: number
+  mtime: number
+  search_query?: string
+  preview_image?: string
+  duration_sec?: number
+}
+
+export type ScriptStockOnlineProvider = 'pexels' | 'pixabay' | 'unsplash'
+
 export interface ScriptStockComposeSegmentApi {
-  kind: 'library' | 'pexels'
+  kind: 'library' | 'pexels' | 'pixabay' | 'unsplash'
   video_id?: string | null
   /** 本地多段按顺序拼接（仅「仅 TTS」）；非空时优先于 video_id */
   library_video_ids?: string[] | null
   stored_rel_path?: string | null
   /** Pexels 多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path */
   pexels_stored_rel_paths?: string[] | null
+  pixabay_stored_rel_paths?: string[] | null
+  unsplash_stored_rel_paths?: string[] | null
   /** 与 library_video_ids 同序；本地素材选用区间（秒），不传则服务端按整文件探测 */
   library_trims?: Array<{ in_sec: number; out_sec: number }> | null
   /** 该段配音文案；tts_only / mix 时使用 */
@@ -1113,9 +1180,11 @@ export const scriptStockApi = {
       per_page: number
       total_results: number
       videos: ScriptStockPexelsVideoApi[]
+      images: ScriptStockPexelsImageApi[]
     }>('/api/script-stock/pexels/search', { params }),
   pexelsDownload: (body: {
-    pexels_video_id: number
+    pexels_media_id: number
+    media_type?: 'video' | 'image'
     preferred_quality?: 'medium' | 'hd' | 'sd' | 'hls'
     /** 当前段搜索使用的关键词，便于缓存列表展示 */
     search_query?: string
@@ -1130,6 +1199,51 @@ export const scriptStockApi = {
     apiClient.post<unknown, { ok: boolean }>('/api/script-stock/pexels/delete-file', body),
   pexelsClearCache: () =>
     apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/pexels/clear-cache'),
+  pixabaySearch: (params: { query: string; page?: number; per_page?: number }) =>
+    apiClient.get<unknown, {
+      page: number
+      per_page: number
+      total_results: number
+      videos: ScriptStockPixabayVideoApi[]
+      images: ScriptStockPixabayImageApi[]
+    }>('/api/script-stock/pixabay/search', { params }),
+  pixabayDownload: (body: {
+    pixabay_media_id: number
+    media_type?: 'video' | 'image'
+    preferred_quality?: 'large' | 'medium' | 'small' | 'tiny'
+    search_query?: string
+  }) =>
+    apiClient.post<unknown, { stored_rel_path: string; public_url: string; filename: string }>(
+      '/api/script-stock/pixabay/download',
+      body,
+    ),
+  pixabayListCache: () =>
+    apiClient.get<unknown, { items: ScriptStockPixabayCacheItemApi[] }>('/api/script-stock/pixabay/cache'),
+  pixabayDeleteFile: (body: { stored_rel_path: string }) =>
+    apiClient.post<unknown, { ok: boolean }>('/api/script-stock/pixabay/delete-file', body),
+  pixabayClearCache: () =>
+    apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/pixabay/clear-cache'),
+  unsplashSearch: (params: { query: string; page?: number; per_page?: number }) =>
+    apiClient.get<unknown, {
+      page: number
+      per_page: number
+      total_results: number
+      photos: ScriptStockUnsplashPhotoApi[]
+    }>('/api/script-stock/unsplash/search', { params }),
+  unsplashDownload: (body: {
+    unsplash_photo_id: string
+    search_query?: string
+  }) =>
+    apiClient.post<unknown, { stored_rel_path: string; public_url: string; filename: string }>(
+      '/api/script-stock/unsplash/download',
+      body,
+    ),
+  unsplashListCache: () =>
+    apiClient.get<unknown, { items: ScriptStockUnsplashCacheItemApi[] }>('/api/script-stock/unsplash/cache'),
+  unsplashDeleteFile: (body: { stored_rel_path: string }) =>
+    apiClient.post<unknown, { ok: boolean }>('/api/script-stock/unsplash/delete-file', body),
+  unsplashClearCache: () =>
+    apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/unsplash/clear-cache'),
   compose: (body: {
     segments: ScriptStockComposeSegmentApi[]
     project_name?: string

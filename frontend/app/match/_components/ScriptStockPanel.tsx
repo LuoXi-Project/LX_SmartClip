@@ -11,14 +11,12 @@ import {
   Clapperboard,
   Copy,
   Download,
-  Eraser,
   ExternalLink,
   Film,
   GripVertical,
   Layers,
   Loader2,
   Mic,
-  Play,
   Plus,
   Scissors,
   Search,
@@ -35,8 +33,10 @@ import {
   type ScriptStockAudioMode,
   type ScriptStockMaterialTtsFill,
   type ScriptStockMaterialTtsLonger,
+  type ScriptStockOnlineProvider,
   type ScriptStockPexelsCacheItemApi,
-  type ScriptStockPexelsVideoApi,
+  type ScriptStockPixabayCacheItemApi,
+  type ScriptStockUnsplashCacheItemApi,
   type ScriptStockTimelineMode,
   type ScriptStockComposeSegmentApi,
   type ScriptStockVideoExtendPolicy,
@@ -59,49 +59,30 @@ import {
   defaultLibraryTrimForVideo,
   libraryTrimSlotIsCustom,
 } from './clipTrim'
+import { StockOnlineCachePanel } from './StockOnlineCachePanel'
+import {
+  downloadKey,
+  newStockSeg,
+  onlineProviderLabel,
+  storedRelPathsForProvider,
+  type StockSegState,
+} from './stockOnlineTypes'
 
-type SourceTab = 'local' | 'pexels'
-
-type StockSegState = {
-  id: string
-  text: string
-  sourceTab: SourceTab
-  searchQuery: string
-  /** 本地素材库多选，顺序即成片拼接顺序（仅「仅 TTS」允许多条） */
-  localVideoIds: string[]
-  /** 与 localVideoIds 同序的选用区间（秒） */
-  libraryTrimSlots?: ClipTrimRange[]
-  pexelsResults: ScriptStockPexelsVideoApi[]
-  searching: boolean
-  downloadingId: number | null
-  /** 已下载的 Pexels 文件（storage 相对路径），勾选顺序即成片顺序 */
-  pexelsStoredRelPaths: string[]
-}
-
-function newSeg(text: string): StockSegState {
-  return {
-    id: `ss_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-    text,
-    sourceTab: 'pexels',
-    searchQuery: '',
-    localVideoIds: [],
-    libraryTrimSlots: undefined,
-    pexelsResults: [],
-    searching: false,
-    downloadingId: null,
-    pexelsStoredRelPaths: [],
-  }
-}
-
-function fmtBytes(n: number) {
-  const x = Number(n) || 0
-  if (x < 1024) return `${x} B`
-  if (x < 1048576) return `${(x / 1024).toFixed(1)} KB`
-  return `${(x / 1048576).toFixed(1)} MB`
-}
-
-function bestCachedRelForPexelsId(items: ScriptStockPexelsCacheItemApi[], videoId: number): string | undefined {
-  const hits = items.filter((it) => it.pexels_video_id === videoId)
+function bestCachedRelForId(
+  provider: ScriptStockOnlineProvider,
+  items: ScriptStockPexelsCacheItemApi[] | ScriptStockPixabayCacheItemApi[] | ScriptStockUnsplashCacheItemApi[],
+  mediaId: string | number,
+  mediaType: 'image' | 'video',
+): string | undefined {
+  const hits = items.filter((it) => {
+    const mt =
+      (it as { media_type?: string }).media_type ||
+      (/\.(jpe?g|png|webp|gif|bmp)$/i.test(it.filename) ? 'image' : 'video')
+    if (mt !== mediaType) return false
+    if (provider === 'pexels') return (it as ScriptStockPexelsCacheItemApi).pexels_video_id === mediaId
+    if (provider === 'pixabay') return (it as ScriptStockPixabayCacheItemApi).pixabay_video_id === mediaId
+    return String((it as ScriptStockUnsplashCacheItemApi).unsplash_photo_id) === String(mediaId)
+  })
   if (!hits.length) return undefined
   hits.sort((a, b) => b.mtime - a.mtime)
   return hits[0].stored_rel_path
@@ -149,8 +130,18 @@ export function ScriptStockPanel({
   const [materialTtsFill, setMaterialTtsFill] = useState<ScriptStockMaterialTtsFill>('pad_silence')
   const [materialTtsLonger, setMaterialTtsLonger] = useState<ScriptStockMaterialTtsLonger>('stretch_audio')
   const [pexelsCacheItems, setPexelsCacheItems] = useState<ScriptStockPexelsCacheItemApi[]>([])
-  const [pexelsCacheLoading, setPexelsCacheLoading] = useState(false)
-  const [pexelsCacheClearing, setPexelsCacheClearing] = useState(false)
+  const [pixabayCacheItems, setPixabayCacheItems] = useState<ScriptStockPixabayCacheItemApi[]>([])
+  const [unsplashCacheItems, setUnsplashCacheItems] = useState<ScriptStockUnsplashCacheItemApi[]>([])
+  const [cacheLoading, setCacheLoading] = useState<Record<ScriptStockOnlineProvider, boolean>>({
+    pexels: false,
+    pixabay: false,
+    unsplash: false,
+  })
+  const [cacheClearing, setCacheClearing] = useState<Record<ScriptStockOnlineProvider, boolean>>({
+    pexels: false,
+    pixabay: false,
+    unsplash: false,
+  })
   const [pexelsPreviewUrl, setPexelsPreviewUrl] = useState<string | null>(null)
   const pexelsPreviewVideoRef = useRef<HTMLVideoElement>(null)
 
@@ -218,7 +209,7 @@ export function ScriptStockPanel({
   }, [trimDialogSeg, libraryVideos])
 
   const addSegment = () => {
-    setSegments((prev) => [...prev, newSeg('')])
+    setSegments((prev) => [...prev, newStockSeg('')])
   }
 
   const removeSegment = (segId: string) => {
@@ -259,21 +250,39 @@ export function ScriptStockPanel({
     flashRow(segId)
   }
 
-  const loadPexelsCache = useCallback(async () => {
-    setPexelsCacheLoading(true)
+  const loadOnlineCache = useCallback(async (provider: ScriptStockOnlineProvider) => {
+    setCacheLoading((p) => ({ ...p, [provider]: true }))
     try {
-      const res = await scriptStockApi.pexelsListCache()
-      setPexelsCacheItems(res.items || [])
+      if (provider === 'pexels') {
+        const res = await scriptStockApi.pexelsListCache()
+        setPexelsCacheItems(res.items || [])
+      } else if (provider === 'pixabay') {
+        const res = await scriptStockApi.pixabayListCache()
+        setPixabayCacheItems(res.items || [])
+      } else {
+        const res = await scriptStockApi.unsplashListCache()
+        setUnsplashCacheItems(res.items || [])
+      }
     } catch {
-      setPexelsCacheItems([])
+      if (provider === 'pexels') setPexelsCacheItems([])
+      else if (provider === 'pixabay') setPixabayCacheItems([])
+      else setUnsplashCacheItems([])
     } finally {
-      setPexelsCacheLoading(false)
+      setCacheLoading((p) => ({ ...p, [provider]: false }))
     }
   }, [])
 
+  const loadAllOnlineCaches = useCallback(async () => {
+    await Promise.all([
+      loadOnlineCache('pexels'),
+      loadOnlineCache('pixabay'),
+      loadOnlineCache('unsplash'),
+    ])
+  }, [loadOnlineCache])
+
   useEffect(() => {
-    void loadPexelsCache()
-  }, [loadPexelsCache])
+    void loadAllOnlineCaches()
+  }, [loadAllOnlineCaches])
 
   const closePexelsPreview = useCallback(() => {
     setPexelsPreviewUrl(null)
@@ -293,42 +302,76 @@ export function ScriptStockPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [pexelsPreviewUrl, closePexelsPreview])
 
-  const handleClearPexelsCacheAll = async () => {
+  const clearSegPathsForProvider = (provider: ScriptStockOnlineProvider) => {
+    setSegments((prev) =>
+      prev.map((s) => {
+        if (provider === 'pexels') return { ...s, pexelsStoredRelPaths: [] }
+        if (provider === 'pixabay') return { ...s, pixabayStoredRelPaths: [] }
+        return { ...s, unsplashStoredRelPaths: [] }
+      }),
+    )
+  }
+
+  const removeSegPath = (provider: ScriptStockOnlineProvider, storedRelPath: string) => {
+    setSegments((prev) =>
+      prev.map((s) => {
+        if (provider === 'pexels') {
+          return { ...s, pexelsStoredRelPaths: s.pexelsStoredRelPaths.filter((p) => p !== storedRelPath) }
+        }
+        if (provider === 'pixabay') {
+          return { ...s, pixabayStoredRelPaths: s.pixabayStoredRelPaths.filter((p) => p !== storedRelPath) }
+        }
+        return { ...s, unsplashStoredRelPaths: s.unsplashStoredRelPaths.filter((p) => p !== storedRelPath) }
+      }),
+    )
+  }
+
+  const handleClearOnlineCache = async (provider: ScriptStockOnlineProvider) => {
+    const label = onlineProviderLabel(provider)
     const ok = await confirm({
-      title: '清空全部 Pexels 本地下载？',
-      description:
-        '将删除缓存目录内所有已下载视频及搜索记录，操作不可恢复。各段落里已勾选的 Pexels 文件也会被取消勾选。',
+      title: `清空全部 ${label} 本地下载？`,
+      description: `将删除 stock_media/${provider} 内所有已下载文件，不可恢复；各段落已勾选的 ${label} 素材也会被取消。`,
       variant: 'danger',
       confirmLabel: '确定清空',
       cancelLabel: '取消',
     })
     if (!ok) return
-    setPexelsCacheClearing(true)
+    setCacheClearing((p) => ({ ...p, [provider]: true }))
     try {
-      const res = await scriptStockApi.pexelsClearCache()
+      const res =
+        provider === 'pexels'
+          ? await scriptStockApi.pexelsClearCache()
+          : provider === 'pixabay'
+            ? await scriptStockApi.pixabayClearCache()
+            : await scriptStockApi.unsplashClearCache()
       const n = Number(res.deleted_files) || 0
-      toast.success(n > 0 ? `已清空 ${n} 个缓存文件` : '缓存目录已为空')
-      setPexelsCacheItems([])
-      setSegments((prev) => prev.map((s) => ({ ...s, pexelsStoredRelPaths: [] })))
-      await loadPexelsCache()
+      toast.success(n > 0 ? `已清空 ${n} 个 ${label} 缓存文件` : '缓存目录已为空')
+      if (provider === 'pexels') setPexelsCacheItems([])
+      else if (provider === 'pixabay') setPixabayCacheItems([])
+      else setUnsplashCacheItems([])
+      clearSegPathsForProvider(provider)
+      await loadOnlineCache(provider)
     } catch (e) {
       toast.error(formatFastApiDetail(e))
     } finally {
-      setPexelsCacheClearing(false)
+      setCacheClearing((p) => ({ ...p, [provider]: false }))
     }
   }
 
-  const handleDeletePexelsCache = async (storedRelPath: string) => {
+  const handleDeleteOnlineCache = async (provider: ScriptStockOnlineProvider, storedRelPath: string) => {
     try {
-      await scriptStockApi.pexelsDeleteFile({ stored_rel_path: storedRelPath })
+      if (provider === 'pexels') await scriptStockApi.pexelsDeleteFile({ stored_rel_path: storedRelPath })
+      else if (provider === 'pixabay') await scriptStockApi.pixabayDeleteFile({ stored_rel_path: storedRelPath })
+      else await scriptStockApi.unsplashDeleteFile({ stored_rel_path: storedRelPath })
       toast.success('已从本机删除该文件')
-      setPexelsCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
-      setSegments((prev) =>
-        prev.map((s) => ({
-          ...s,
-          pexelsStoredRelPaths: s.pexelsStoredRelPaths.filter((p) => p !== storedRelPath),
-        })),
-      )
+      if (provider === 'pexels') {
+        setPexelsCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
+      } else if (provider === 'pixabay') {
+        setPixabayCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
+      } else {
+        setUnsplashCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
+      }
+      removeSegPath(provider, storedRelPath)
     } catch (e) {
       toast.error(formatFastApiDetail(e))
     }
@@ -348,16 +391,21 @@ export function ScriptStockPanel({
     )
   }
 
-  const togglePexelsRel = (segId: string, rel: string, e: MouseEvent) => {
+  const toggleOnlineRel = (
+    segId: string,
+    provider: ScriptStockOnlineProvider,
+    rel: string,
+    e: MouseEvent,
+  ) => {
     if (!rel) return
     setSegments((prev) =>
       prev.map((s) => {
         if (s.id !== segId) return s
-        const cur = s.pexelsStoredRelPaths
-        const next = e.shiftKey
-          ? appendIdToOrderedList(cur, rel)
-          : toggleIdInOrderedList(cur, rel)
-        return { ...s, pexelsStoredRelPaths: next }
+        const cur = storedRelPathsForProvider(s, provider)
+        const next = e.shiftKey ? appendIdToOrderedList(cur, rel) : toggleIdInOrderedList(cur, rel)
+        if (provider === 'pexels') return { ...s, pexelsStoredRelPaths: next, sourceTab: provider }
+        if (provider === 'pixabay') return { ...s, pixabayStoredRelPaths: next, sourceTab: provider }
+        return { ...s, unsplashStoredRelPaths: next, sourceTab: provider }
       }),
     )
   }
@@ -371,7 +419,7 @@ export function ScriptStockPanel({
     setSplitting(true)
     try {
       const res = await scriptStockApi.split({ script, mode })
-      const segs = (res.segments || []).map((t) => newSeg(t))
+      const segs = (res.segments || []).map((t) => newStockSeg(t))
       if (!segs.length) {
         toast.error('未能分出有效段落')
         return
@@ -430,7 +478,7 @@ export function ScriptStockPanel({
     }
   }
 
-  const searchPexelsForSeg = async (segId: string) => {
+  const searchOnlineForSeg = async (segId: string, provider: ScriptStockOnlineProvider) => {
     const seg = segments.find((s) => s.id === segId)
     if (!seg) return
     const q = (seg.searchQuery || seg.text).trim()
@@ -438,45 +486,104 @@ export function ScriptStockPanel({
       toast.error('请填写搜索词')
       return
     }
-    setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, searching: true } : s)))
+    setSegments((prev) =>
+      prev.map((s) => (s.id === segId ? { ...s, searching: true, sourceTab: provider } : s)),
+    )
     try {
-      const res = await scriptStockApi.pexelsSearch({ query: q, per_page: 12 })
-      setSegments((prev) =>
-        prev.map((s) => (s.id === segId ? { ...s, searching: false, pexelsResults: res.videos || [] } : s)),
-      )
+      if (provider === 'pexels') {
+        const res = await scriptStockApi.pexelsSearch({ query: q, per_page: 12 })
+        setSegments((prev) =>
+          prev.map((s) =>
+            s.id === segId
+              ? {
+                  ...s,
+                  searching: false,
+                  pexelsResults: res.videos || [],
+                  pexelsImageResults: res.images || [],
+                }
+              : s,
+          ),
+        )
+      } else if (provider === 'pixabay') {
+        const res = await scriptStockApi.pixabaySearch({ query: q, per_page: 12 })
+        setSegments((prev) =>
+          prev.map((s) =>
+            s.id === segId
+              ? {
+                  ...s,
+                  searching: false,
+                  pixabayResults: res.videos || [],
+                  pixabayImageResults: res.images || [],
+                }
+              : s,
+          ),
+        )
+      } else {
+        const res = await scriptStockApi.unsplashSearch({ query: q, per_page: 12 })
+        setSegments((prev) =>
+          prev.map((s) =>
+            s.id === segId ? { ...s, searching: false, unsplashResults: res.photos || [] } : s,
+          ),
+        )
+      }
     } catch (e) {
       setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, searching: false } : s)))
       toast.error(formatFastApiDetail(e))
     }
   }
 
-  const downloadPexels = async (segId: string, videoId: number) => {
+  const downloadOnline = async (
+    segId: string,
+    provider: ScriptStockOnlineProvider,
+    mediaType: 'image' | 'video',
+    mediaId: string | number,
+  ) => {
     const seg = segments.find((s) => s.id === segId)
     const search_query = ((seg?.searchQuery || seg?.text) || '').trim()
-    setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, downloadingId: videoId } : s)))
+    const dkey = downloadKey(provider, mediaType, mediaId)
+    setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, downloadingKey: dkey } : s)))
     try {
-      const res = await scriptStockApi.pexelsDownload({
-        pexels_video_id: videoId,
-        preferred_quality: 'hd',
-        search_query: search_query || undefined,
-      })
-      const rel = res.stored_rel_path
-      await loadPexelsCache()
+      let rel = ''
+      if (provider === 'pexels') {
+        const res = await scriptStockApi.pexelsDownload({
+          pexels_media_id: Number(mediaId),
+          media_type: mediaType,
+          preferred_quality: 'hd',
+          search_query: search_query || undefined,
+        })
+        rel = res.stored_rel_path
+      } else if (provider === 'pixabay') {
+        const res = await scriptStockApi.pixabayDownload({
+          pixabay_media_id: Number(mediaId),
+          media_type: mediaType,
+          preferred_quality: mediaType === 'image' ? 'large' : 'medium',
+          search_query: search_query || undefined,
+        })
+        rel = res.stored_rel_path
+      } else {
+        const res = await scriptStockApi.unsplashDownload({
+          unsplash_photo_id: String(mediaId),
+          search_query: search_query || undefined,
+        })
+        rel = res.stored_rel_path
+      }
+      await loadOnlineCache(provider)
       setSegments((prev) =>
-        prev.map((s) =>
-          s.id === segId
-            ? {
-                ...s,
-                downloadingId: null,
-                sourceTab: 'pexels',
-                pexelsStoredRelPaths: appendIdToOrderedList(s.pexelsStoredRelPaths, rel),
-              }
-            : s,
-        ),
+        prev.map((s) => {
+          if (s.id !== segId) return s
+          const base = { ...s, downloadingKey: null, sourceTab: provider }
+          if (provider === 'pexels') {
+            return { ...base, pexelsStoredRelPaths: appendIdToOrderedList(s.pexelsStoredRelPaths, rel) }
+          }
+          if (provider === 'pixabay') {
+            return { ...base, pixabayStoredRelPaths: appendIdToOrderedList(s.pixabayStoredRelPaths, rel) }
+          }
+          return { ...base, unsplashStoredRelPaths: appendIdToOrderedList(s.unsplashStoredRelPaths, rel) }
+        }),
       )
       toast.success('已下载并追加到本段顺序（Shift+点击可再叠同一条）')
     } catch (e) {
-      setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, downloadingId: null } : s)))
+      setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, downloadingKey: null } : s)))
       toast.error(formatFastApiDetail(e))
     }
   }
@@ -506,15 +613,22 @@ export function ScriptStockPanel({
           text: (s.text || '').trim(),
         })
       } else {
-        if (!s.pexelsStoredRelPaths.length) {
-          toast.error('存在未选用 Pexels 素材的段落（请先下载并在卡片上勾选，顺序为成片拼接顺序）')
+        const provider = s.sourceTab as ScriptStockOnlineProvider
+        const rels = storedRelPathsForProvider(s, provider)
+        if (!rels.length) {
+          toast.error(
+            `存在未选用 ${onlineProviderLabel(provider)} 素材的段落（请先下载并在卡片上勾选）`,
+          )
           return null
         }
-        payload.push({
-          kind: 'pexels',
-          pexels_stored_rel_paths: s.pexelsStoredRelPaths,
+        const row: ScriptStockComposeSegmentApi = {
+          kind: provider,
           text: (s.text || '').trim(),
-        })
+        }
+        if (provider === 'pexels') row.pexels_stored_rel_paths = rels
+        else if (provider === 'pixabay') row.pixabay_stored_rel_paths = rels
+        else row.unsplash_stored_rel_paths = rels
+        payload.push(row)
       }
     }
     if ((audioMode === 'tts_only' || audioMode === 'mix') && payload.every((p) => !p.text)) {
@@ -611,15 +725,14 @@ export function ScriptStockPanel({
           <p className="text-[11px] text-slate-500 leading-relaxed max-w-xl">
             为每一段匹配画面并合成<strong className="text-slate-300"> TTS 配音</strong>
             （下方可选仅配音 / 仅原声 / 混合及分贝调节）。可与「合成配音成片」分开使用<strong className="text-slate-300"> 导出剪映草稿</strong>
-            （仅 ZIP，不渲染 MP4；配音轨模式下每段须填文案）。本地与 <strong className="text-slate-300">Pexels</strong>{' '}
+            （仅 ZIP，不渲染 MP4；配音轨模式下每段须填文案）。本地与 <strong className="text-slate-300">Pexels / Pixabay / Unsplash</strong>{' '}
             均为卡片多选、角标为拼接顺序（与手动匹配一致）；<strong className="text-slate-300">Shift+点击</strong>
-            可在同组内再叠一段相同素材。成片画面时长由下方「以配音为准 / 以素材为准」及延伸策略决定，始终使用所选素材的完整画面（无额外截取秒数）。
-            Pexels 已下载会显示「已缓存」，可在上方缓存区管理删除。
+            可再叠同素材。图片仅存本地，成片时按配音时长做静帧；多图默认均分时长，不足时与视频一样循环/定格。请勿同段混用图片与视频。
           </p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0 text-[11px]">
-          <Link href="/settings" className="text-sky-400 hover:underline">
-            Pexels API Key →
+          <Link href="/settings#stock-media" className="text-sky-400 hover:underline">
+            在线素材 API Key →
           </Link>
           <Link href="/settings" className="text-emerald-400/90 hover:underline">
             TTS 配音引擎 →
@@ -780,93 +893,23 @@ export function ScriptStockPanel({
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-slate-400">Pexels 本地下载缓存</p>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={pexelsCacheLoading || pexelsCacheClearing || pexelsCacheItems.length === 0}
-                  onClick={() => void handleClearPexelsCacheAll()}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10 disabled:opacity-40 inline-flex items-center gap-1"
-                >
-                  {pexelsCacheClearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eraser className="w-3.5 h-3.5" />}
-                  清空缓存
-                </button>
-                <button
-                  type="button"
-                  disabled={pexelsCacheLoading}
-                  onClick={() => void loadPexelsCache()}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-                >
-                  {pexelsCacheLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" /> : null}
-                  刷新列表
-                </button>
-              </div>
-            </div>
-            {pexelsCacheItems.length === 0 ? (
-              <p className="text-[11px] text-slate-500">暂无已下载文件。搜索并下载后此处会列出搜索词与预览；可单条删除或一键清空（需确认）。</p>
-            ) : (
-              <ul className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                {pexelsCacheItems.map((it) => {
-                  const thumb = (it.pexels_image || '').trim()
-                  const q = (it.search_query || '').trim()
-                  const dur = Number(it.duration_sec) > 0 ? `${it.duration_sec}s` : '—'
-                  const playUrl = storageBrowserVideoUrl(it.stored_rel_path)
-                  return (
-                    <li
-                      key={it.stored_rel_path}
-                      className="flex items-stretch gap-2 rounded-lg bg-slate-900/80 border border-slate-700/80 p-2 text-[11px]"
-                    >
-                      <div className="relative w-[88px] h-[52px] shrink-0 rounded-md overflow-hidden bg-slate-800 border border-slate-700/80">
-                        {thumb ? (
-                          <img src={thumb} alt="" className="w-full h-full object-cover pointer-events-none" loading="lazy" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-slate-600">
-                            <Film className="w-6 h-6" />
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            setPexelsPreviewUrl(playUrl)
-                          }}
-                          className="absolute bottom-0.5 left-0.5 z-[1] flex items-center justify-center rounded-full bg-black/75 text-white p-1 ring-1 ring-white/25 hover:bg-black/90"
-                          title="预览本地文件"
-                          aria-label="预览"
-                        >
-                          <Play className="w-3 h-3 fill-current shrink-0" />
-                        </button>
-                      </div>
-                      <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
-                        <p className="text-[10px] text-sky-300/95 truncate" title={q || undefined}>
-                          <span className="text-slate-500">搜索：</span>
-                          {q || '（旧文件无记录，可再下载一次以保存关键词）'}
-                        </p>
-                        <p className="text-slate-400 truncate" title={it.stored_rel_path}>
-                          ID {it.pexels_video_id || '?'} · {dur} · {fmtBytes(it.size_bytes)}
-                        </p>
-                        <p className="text-[10px] text-slate-600 truncate">{it.filename}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeletePexelsCache(it.stored_rel_path)}
-                        className="shrink-0 self-center p-1.5 rounded text-rose-400 hover:bg-rose-500/15 hover:text-rose-300"
-                        title="从本机删除"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-            <p className="text-[10px] text-slate-500 leading-relaxed">
-              已缓存的在下方结果卡片显示「已缓存」。列表展示下载时的搜索词；缩略图左下角可预览本地文件。删除或清空后各段已勾选路径会自动取消。
-            </p>
-          </div>
+          <StockOnlineCachePanel
+            providers={['pexels', 'pixabay', 'unsplash']}
+            itemsByProvider={{
+              pexels: pexelsCacheItems,
+              pixabay: pixabayCacheItems,
+              unsplash: unsplashCacheItems,
+            }}
+            loadingByProvider={cacheLoading}
+            clearingByProvider={cacheClearing}
+            onRefresh={(p) => void loadOnlineCache(p)}
+            onClear={(p) => void handleClearOnlineCache(p)}
+            onDelete={(p, rel) => void handleDeleteOnlineCache(p, rel)}
+            onPreview={(url) => setPexelsPreviewUrl(url)}
+          />
+          <p className="text-[10px] text-slate-500 leading-relaxed -mt-2">
+            已缓存的在下方结果卡片可勾选；删除或清空后各段已勾选路径会自动取消。
+          </p>
 
           <div className="space-y-4">
             {segments.map((seg, idx) => {
@@ -999,29 +1042,30 @@ export function ScriptStockPanel({
                   />
                 </div>
 
-                <div className="flex rounded-lg border border-slate-700 overflow-hidden w-fit">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSegments((prev) => prev.map((s) => (s.id === seg.id ? { ...s, sourceTab: 'local' } : s)))
-                    }
-                    className={`px-3 py-1.5 text-xs font-medium ${
-                      seg.sourceTab === 'local' ? 'bg-violet-600 text-white' : 'bg-slate-900 text-slate-400'
-                    }`}
-                  >
-                    本地素材库
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSegments((prev) => prev.map((s) => (s.id === seg.id ? { ...s, sourceTab: 'pexels' } : s)))
-                    }
-                    className={`px-3 py-1.5 text-xs font-medium ${
-                      seg.sourceTab === 'pexels' ? 'bg-sky-600 text-white' : 'bg-slate-900 text-slate-400'
-                    }`}
-                  >
-                    Pexels
-                  </button>
+                <div className="flex flex-wrap rounded-lg border border-slate-700 overflow-hidden w-fit">
+                  {(
+                    [
+                      { id: 'local' as const, label: '本地素材库', active: 'bg-violet-600 text-white' },
+                      { id: 'pexels' as const, label: 'Pexels', active: 'bg-sky-600 text-white' },
+                      { id: 'pixabay' as const, label: 'Pixabay', active: 'bg-emerald-600 text-white' },
+                      { id: 'unsplash' as const, label: 'Unsplash', active: 'bg-amber-600 text-white' },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() =>
+                        setSegments((prev) =>
+                          prev.map((s) => (s.id === seg.id ? { ...s, sourceTab: tab.id } : s)),
+                        )
+                      }
+                      className={`px-3 py-1.5 text-xs font-medium ${
+                        seg.sourceTab === tab.id ? tab.active : 'bg-slate-900 text-slate-400'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
                 {seg.sourceTab === 'local' ? (
@@ -1059,101 +1103,181 @@ export function ScriptStockPanel({
                       </div>
                     ) : null}
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
-                      <input
-                        value={seg.searchQuery}
-                        onChange={(e) =>
-                          setSegments((prev) =>
-                            prev.map((s) => (s.id === seg.id ? { ...s, searchQuery: e.target.value } : s)),
+                ) : (() => {
+                  const provider = seg.sourceTab as ScriptStockOnlineProvider
+                  const selectedPaths = storedRelPathsForProvider(seg, provider)
+                  const cacheItems =
+                    provider === 'pexels'
+                      ? pexelsCacheItems
+                      : provider === 'pixabay'
+                        ? pixabayCacheItems
+                        : unsplashCacheItems
+                  const dlBtnClass =
+                    provider === 'pexels'
+                      ? 'bg-sky-700 hover:bg-sky-600'
+                      : provider === 'pixabay'
+                        ? 'bg-emerald-700 hover:bg-emerald-600'
+                        : 'bg-amber-700 hover:bg-amber-600'
+
+                  type HitCard = {
+                    key: string
+                    mediaId: string | number
+                    mediaType: 'image' | 'video'
+                    image: string
+                    title: string
+                  }
+                  const hits: HitCard[] =
+                    provider === 'pexels'
+                      ? [
+                          ...seg.pexelsResults.map((pv) => ({
+                            key: `v-${pv.id}`,
+                            mediaId: pv.id,
+                            mediaType: 'video' as const,
+                            image: pv.image,
+                            title: `${pv.duration}s · 视频`,
+                          })),
+                          ...seg.pexelsImageResults.map((pi) => ({
+                            key: `i-${pi.id}`,
+                            mediaId: pi.id,
+                            mediaType: 'image' as const,
+                            image: pi.image,
+                            title: '图片',
+                          })),
+                        ]
+                      : provider === 'pixabay'
+                        ? [
+                            ...seg.pixabayResults.map((pv) => ({
+                              key: `v-${pv.id}`,
+                              mediaId: pv.id,
+                              mediaType: 'video' as const,
+                              image: pv.image,
+                              title: `${pv.duration}s · 视频`,
+                            })),
+                            ...seg.pixabayImageResults.map((pi) => ({
+                              key: `i-${pi.id}`,
+                              mediaId: pi.id,
+                              mediaType: 'image' as const,
+                              image: pi.image,
+                              title: '图片',
+                            })),
+                          ]
+                        : seg.unsplashResults.map((ph) => ({
+                            key: ph.id,
+                            mediaId: ph.id,
+                            mediaType: 'image' as const,
+                            image: ph.image,
+                            title: ph.description?.slice(0, 24) || '图片',
+                          }))
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <input
+                          value={seg.searchQuery}
+                          onChange={(e) =>
+                            setSegments((prev) =>
+                              prev.map((s) =>
+                                s.id === seg.id ? { ...s, searchQuery: e.target.value } : s,
+                              ),
+                            )
+                          }
+                          placeholder="英文搜索词，如 ocean sunset"
+                          className="flex-1 min-w-[160px] rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+                        />
+                        <button
+                          type="button"
+                          disabled={seg.searching}
+                          onClick={() => void searchOnlineForSeg(seg.id, provider)}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 hover:border-sky-500 text-sm"
+                        >
+                          {seg.searching ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Search className="w-4 h-4" />
+                          )}
+                          搜索 {onlineProviderLabel(provider)}
+                        </button>
+                      </div>
+                      {selectedPaths.length > 0 ? (
+                        <p className="text-[11px] text-emerald-400 flex flex-wrap items-center gap-1">
+                          <Film className="w-3.5 h-3.5 shrink-0" />
+                          本段已选 {selectedPaths.length} 个文件（顺序已标号）
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-slate-500">
+                          已缓存可勾选（<strong className="text-slate-400">Shift+点击</strong>
+                          再叠同文件）；未缓存请先「下载」。
+                        </p>
+                      )}
+                      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+                        {hits.map((hit) => {
+                          const cachedRel = bestCachedRelForId(
+                            provider,
+                            cacheItems,
+                            hit.mediaId,
+                            hit.mediaType,
                           )
-                        }
-                        placeholder="英文搜索词，如 ocean sunset"
-                        className="flex-1 min-w-[160px] rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200"
-                      />
-                      <button
-                        type="button"
-                        disabled={seg.searching}
-                        onClick={() => void searchPexelsForSeg(seg.id)}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 hover:border-sky-500 text-sm"
-                      >
-                        {seg.searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                        搜索
-                      </button>
-                    </div>
-                    {seg.pexelsStoredRelPaths.length > 0 ? (
-                      <p className="text-[11px] text-emerald-400 flex flex-wrap items-center gap-1">
-                        <Film className="w-3.5 h-3.5 shrink-0" />
-                        本段已选 {seg.pexelsStoredRelPaths.length} 个文件（顺序已标号）
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-slate-500">
-                        已缓存：左下角<strong className="text-slate-400">播放</strong>
-                        预览；缩略图其余区域或<strong className="text-slate-400">下方标题区</strong>
-                        均可勾选（<strong className="text-slate-400">Shift+点击</strong>
-                        再叠同文件）。未缓存的先「下载」。
-                      </p>
-                    )}
-                    <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-                      {seg.pexelsResults.map((pv) => {
-                        const cachedRel = bestCachedRelForPexelsId(pexelsCacheItems, pv.id)
-                        const cached = Boolean(cachedRel)
-                        const positions =
-                          cachedRel != null && cached
-                            ? orderPositionsForKey(seg.pexelsStoredRelPaths, cachedRel)
-                            : []
-                        if (!cached) {
+                          const cached = Boolean(cachedRel)
+                          const positions =
+                            cachedRel != null && cached
+                              ? orderPositionsForKey(selectedPaths, cachedRel)
+                              : []
+                          const isDl =
+                            seg.downloadingKey === downloadKey(provider, hit.mediaType, hit.mediaId)
+                          if (!cached) {
+                            return (
+                              <OrderedPickCard
+                                key={hit.key}
+                                imageUrl={hit.image}
+                                title={hit.title}
+                                subtitle="未下载"
+                                orderPositions={[]}
+                                selected={false}
+                                disabled
+                                onClick={() => {}}
+                                footer={
+                                  <div className="px-2 pb-2">
+                                    <button
+                                      type="button"
+                                      disabled={isDl}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        void downloadOnline(seg.id, provider, hit.mediaType, hit.mediaId)
+                                      }}
+                                      className={`w-full flex items-center justify-center gap-1 py-1.5 rounded text-[11px] text-white disabled:opacity-50 ${dlBtnClass}`}
+                                    >
+                                      {isDl ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Download className="w-3 h-3" />
+                                      )}
+                                      下载
+                                    </button>
+                                  </div>
+                                }
+                              />
+                            )
+                          }
+                          const rel = cachedRel as string
                           return (
                             <OrderedPickCard
-                              key={pv.id}
-                              imageUrl={pv.image}
-                              title={`${pv.duration}s`}
-                              subtitle="未下载"
-                              orderPositions={[]}
-                              selected={false}
-                              disabled
-                              onClick={() => {}}
-                              footer={
-                                <div className="px-2 pb-2">
-                                  <button
-                                    type="button"
-                                    disabled={seg.downloadingId === pv.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      void downloadPexels(seg.id, pv.id)
-                                    }}
-                                    className="w-full flex items-center justify-center gap-1 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-[11px] text-white disabled:opacity-50"
-                                  >
-                                    {seg.downloadingId === pv.id ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Download className="w-3 h-3" />
-                                    )}
-                                    下载
-                                  </button>
-                                </div>
+                              key={hit.key}
+                              imageUrl={hit.image}
+                              title={hit.title}
+                              subtitle="已缓存 · 点缩略图勾选（Shift+再叠）"
+                              orderPositions={positions}
+                              selected={positions.length > 0}
+                              previewVideoUrl={
+                                hit.mediaType === 'video' ? storageBrowserVideoUrl(rel) : undefined
                               }
+                              onClick={(e) => toggleOnlineRel(seg.id, provider, rel, e)}
                             />
                           )
-                        }
-                        const rel = cachedRel as string
-                        return (
-                          <OrderedPickCard
-                            key={pv.id}
-                            imageUrl={pv.image}
-                            title={`${pv.duration}s`}
-                            subtitle="已缓存 · 点缩略图（除播放钮）或下方文字勾选（Shift+再叠）"
-                            orderPositions={positions}
-                            selected={positions.length > 0}
-                            previewVideoUrl={storageBrowserVideoUrl(rel)}
-                            onClick={(e) => togglePexelsRel(seg.id, rel, e)}
-                          />
-                        )
-                      })}
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
                 </div>
               </div>
               </div>
@@ -1170,7 +1294,7 @@ export function ScriptStockPanel({
                   <strong className="text-slate-400">仅 TTS</strong>：画面素材静音，只保留配音（默认）。
                   <strong className="text-slate-400"> 仅原声</strong>：保留素材里的录音，不做 TTS。
                   <strong className="text-slate-400"> 混合</strong>：TTS 与素材原声叠加，可用下方两个音量分别精细调节。
-                  Pexels 素材多为环境声或无对白，混合时建议压低「原声」。
+                  在线素材多为环境声或无对白，混合时建议压低「原声」。
                 </p>
                 <p className="text-[10px] text-slate-500 leading-relaxed border-t border-slate-700/50 pt-2 mt-2">
                   <strong className="text-slate-400">字幕</strong>：

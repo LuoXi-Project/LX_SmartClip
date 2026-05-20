@@ -99,8 +99,15 @@ export const VIDEO_KEYS = [
   'export_scale_width',
   'export_scale_height',
   'export_pix_fmt',
-  'pexels_api_key',
   'jianying_draft_parent_dir',
+]
+
+/** 文案素材成片：Pexels / Pixabay / Unsplash */
+export const STOCK_MEDIA_KEYS = [
+  'pexels_api_key',
+  'pixabay_api_key',
+  'unsplash_access_key',
+  'stock_media_http_proxy',
 ]
 export const ASR_LANGUAGE_PRESETS: { value: string; label: string }[] = [
   { value: '', label: '自动检测（留空）' },

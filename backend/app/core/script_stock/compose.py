@@ -15,6 +15,10 @@ from app.core.subtitle.render_opts import final_render_opts_from_export, sanitiz
 from app.core.subtitle.tts_align import build_atempo_filter_chain, resolve_stretch_audio_atempo
 from app.models.subtitle import SubtitleStyle, TtsVideoAlignConfig
 from app.utils.bin_paths import ffprobe_bin
+from app.core.script_stock.stock_media import (
+    default_image_hold_sec,
+    is_stock_image_path,
+)
 from app.utils.ffprobe_utils import probe_duration
 from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
 from app.utils.paths import ensure_storage_subpath, get_fonts_dir
@@ -191,10 +195,45 @@ def _normalize_segment_video_only(
     in_sec: float = 0.0,
     out_sec: Optional[float] = None,
 ) -> None:
-    """无声画面规范化；in_sec/out_sec 为源素材上的绝对时刻（秒），out_sec None 表示直至文件末尾。"""
+    """无声画面规范化；图片在成片时按 out_sec-in_sec 做静帧；视频按源时间轴截取。"""
     os.makedirs(os.path.dirname(dst_mp4), exist_ok=True)
     ins = max(0.0, float(in_sec or 0.0))
     vf = _build_normalize_vf(target_w, target_h)
+
+    if is_stock_image_path(src_abs):
+        oe = float(out_sec) if out_sec is not None else ins + default_image_hold_sec()
+        span = max(0.05, oe - ins)
+        run_ffmpeg(
+            [
+                "-loop",
+                "1",
+                "-framerate",
+                "30",
+                "-i",
+                src_abs,
+                "-t",
+                f"{span:.6f}",
+                "-vf",
+                vf,
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                "-movflags",
+                "+faststart",
+                dst_mp4,
+            ],
+            desc="stock-img-freeze",
+        )
+        return
+
     ss_args: List[str] = []
     if ins >= 0.001:
         ss_args = ["-ss", f"{ins:.6f}"]
@@ -226,6 +265,69 @@ def _normalize_segment_video_only(
         ],
         desc="stock-vid-only",
     )
+
+
+def _segment_video_duration_estimate(
+    src_list: List[str],
+    trim_pairs: List[Tuple[float, float]],
+) -> float:
+    total = 0.0
+    for path, (ins, outs) in zip(src_list, trim_pairs):
+        if is_stock_image_path(path):
+            continue
+        d = float(probe_duration(path) or 0.0)
+        if outs > ins + 0.02:
+            total += max(0.05, outs - ins)
+        elif d > 0.02:
+            total += d
+        else:
+            total += 5.0
+    return total
+
+
+def _resolve_segment_out_dur_and_trims(
+    *,
+    src_list: List[str],
+    trim_pairs: List[Tuple[float, float]],
+    timeline_mode: StockTimelineMode,
+    audio_mode: StockAudioMode,
+    tts_p: Optional[str],
+) -> Tuple[float, List[Tuple[float, float]]]:
+    """
+    计算本段成片时长与每条素材的 (in,out)。
+    多图时默认将 out_dur 均分到各图；配音更长时仍由后续 _adjust_video_to_duration 循环整段画面。
+    """
+    n = len(src_list)
+    if n == 0:
+        raise ValueError("素材列表为空")
+    image_flags = [is_stock_image_path(p) for p in src_list]
+    if any(image_flags) and not all(image_flags):
+        raise ValueError("同一段落请勿混用图片与视频，请只选图片或只选视频")
+
+    use_tts = audio_mode in ("tts_only", "mix") and bool(tts_p and os.path.isfile(tts_p))
+    T = float(probe_duration(tts_p) or 0.0) if use_tts else 0.0
+
+    if all(image_flags):
+        hold = default_image_hold_sec()
+        if audio_mode == "original_only":
+            out_dur = hold * n
+        elif timeline_mode == "follow_material":
+            out_dur = hold * n
+        else:
+            out_dur = T if (use_tts and T > 0.05) else hold * n
+        per = max(0.05, float(out_dur) / n)
+        return float(out_dur), [(0.0, per) for _ in range(n)]
+
+    V = _segment_video_duration_estimate(src_list, trim_pairs)
+    if V <= 0.02:
+        V = 5.0
+    if audio_mode == "original_only":
+        out_dur = V
+    elif timeline_mode == "follow_material":
+        out_dur = V
+    else:
+        out_dur = T if (use_tts and T > 0.05) else V
+    return float(out_dur), list(trim_pairs)
 
 
 def _ensure_audio_duration_and_vol(in_audio: str, out_wav: str, target_dur: float, vol_db: float) -> None:
@@ -597,7 +699,17 @@ def compose_stock_video_sync(
             if len(trim_pairs) != len(src_list):
                 raise ValueError("trim_pairs 与素材路径数量不一致")
             audio_src = src_list[0]
-            first_in, first_out = trim_pairs[0]
+            tts_p: Optional[str] = tts_paths[i] if i < len(tts_paths) else None
+            use_tts = audio_mode in ("tts_only", "mix") and bool(tts_p and os.path.isfile(tts_p))
+
+            out_dur, trim_pairs_eff = _resolve_segment_out_dur_and_trims(
+                src_list=src_list,
+                trim_pairs=trim_pairs,
+                timeline_mode=timeline_mode,
+                audio_mode=audio_mode,
+                tts_p=tts_p,
+            )
+            first_in, first_out = trim_pairs_eff[0]
 
             vid_base = os.path.join(tmp, f"v_base_{i:03d}.mp4")
             if len(src_list) == 1:
@@ -606,13 +718,13 @@ def compose_stock_video_sync(
                     dst_mp4=vid_base,
                     target_w=tw,
                     target_h=th,
-                    in_sec=trim_pairs[0][0],
-                    out_sec=trim_pairs[0][1],
+                    in_sec=trim_pairs_eff[0][0],
+                    out_sec=trim_pairs_eff[0][1],
                 )
             else:
                 parts_norm = _normalize_multi_source_parts(
                     src_list=src_list,
-                    trim_pairs=trim_pairs,
+                    trim_pairs=trim_pairs_eff,
                     tmp=tmp,
                     seg_idx=i,
                     target_w=tw,
@@ -629,25 +741,6 @@ def compose_stock_video_sync(
                     out_sec=None,
                 )
 
-            V = float(probe_duration(vid_base) or 0.0)
-            if V <= 0:
-                V = 5.0
-
-            tts_p: Optional[str] = tts_paths[i] if i < len(tts_paths) else None
-            T = (
-                float(probe_duration(tts_p) or 0.0)
-                if (tts_p and os.path.isfile(tts_p))
-                else 0.0
-            )
-            use_tts = audio_mode in ("tts_only", "mix") and bool(tts_p and os.path.isfile(tts_p))
-
-            if audio_mode == "original_only":
-                out_dur = V
-            elif timeline_mode == "follow_material":
-                out_dur = V
-            else:
-                out_dur = T if (use_tts and T > 0.05) else V
-
             vid_fit = os.path.join(tmp, f"v_fit_{i:03d}.mp4")
             _adjust_video_to_duration(
                 in_mp4=vid_base,
@@ -661,14 +754,17 @@ def compose_stock_video_sync(
             longer_m = "stretch" if material_tts_longer == "stretch_audio" else "trim"
 
             if audio_mode == "original_only":
-                _extract_original_voice_track(
-                    src_video=audio_src,
-                    target_dur=out_dur,
-                    vol_db=original_volume_db,
-                    out_wav=aud_final,
-                    in_sec=first_in,
-                    out_sec=first_out,
-                )
+                if is_stock_image_path(audio_src):
+                    _silence_wav(aud_final, out_dur)
+                else:
+                    _extract_original_voice_track(
+                        src_video=audio_src,
+                        target_dur=out_dur,
+                        vol_db=original_volume_db,
+                        out_wav=aud_final,
+                        in_sec=first_in,
+                        out_sec=first_out,
+                    )
             elif audio_mode == "tts_only":
                 if use_tts:
                     if timeline_mode == "follow_narration":
@@ -703,14 +799,17 @@ def compose_stock_video_sync(
                         )
                 else:
                     _silence_wav(tts_fit, out_dur)
-                _extract_original_voice_track(
-                    src_video=audio_src,
-                    target_dur=out_dur,
-                    vol_db=original_volume_db,
-                    out_wav=orig_fit,
-                    in_sec=first_in,
-                    out_sec=first_out,
-                )
+                if is_stock_image_path(audio_src):
+                    _silence_wav(orig_fit, out_dur)
+                else:
+                    _extract_original_voice_track(
+                        src_video=audio_src,
+                        target_dur=out_dur,
+                        vol_db=original_volume_db,
+                        out_wav=orig_fit,
+                        in_sec=first_in,
+                        out_sec=first_out,
+                    )
                 _mix_two_wavs(tts_fit, orig_fit, aud_final, out_dur)
 
             seg_out = os.path.join(tmp, f"seg_final_{i:03d}.mp4")
@@ -781,6 +880,6 @@ def compose_stock_video_sync(
 
 
 def is_under_pexels_download_dir(abs_path: str) -> bool:
-    root = os.path.normpath(ensure_storage_subpath("stock_media", "pexels"))
-    ap = os.path.normpath(os.path.abspath(abs_path))
-    return ap.startswith(root + os.sep) or ap == root
+    from app.core.script_stock.stock_media import is_under_pexels_download_dir as _check
+
+    return _check(abs_path)

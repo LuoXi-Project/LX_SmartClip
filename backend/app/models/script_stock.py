@@ -23,7 +23,7 @@ class ScriptStockSplitResponse(BaseModel):
 class ScriptStockGenerateScriptRequest(BaseModel):
     topic: str = Field(..., description="主题或关键词")
     style_hint: str = Field("", description="风格补充")
-    num_paragraphs: int = Field(5, ge=1, le=20, description="期望段落数")
+    num_paragraphs: int = Field(5, ge=1, le=1000, description="期望段落数")
 
 
 class ScriptStockGenerateScriptResponse(BaseModel):
@@ -55,18 +55,28 @@ class PexelsVideoSummary(BaseModel):
     video_files: List[PexelsVideoFile] = Field(default_factory=list)
 
 
+class PexelsImageSummary(BaseModel):
+    id: int
+    width: int = 0
+    height: int = 0
+    image: str = Field("", description="预览图 URL")
+    user_name: str = ""
+
+
 class ScriptStockPexelsSearchResponse(BaseModel):
     page: int
     per_page: int
     total_results: int
-    videos: List[PexelsVideoSummary]
+    videos: List[PexelsVideoSummary] = Field(default_factory=list)
+    images: List[PexelsImageSummary] = Field(default_factory=list)
 
 
 class ScriptStockPexelsDownloadRequest(BaseModel):
-    pexels_video_id: int = Field(..., description="Pexels 视频 id")
+    pexels_media_id: int = Field(..., description="Pexels 视频或图片 id")
+    media_type: Literal["video", "image"] = Field("video", description="下载视频或静态图片（图片在成片时做静帧）")
     preferred_quality: Literal["medium", "hd", "sd", "hls"] = Field(
         "hd",
-        description="优先选取的 video_files.quality",
+        description="video 时优先选取的 video_files.quality",
     )
     search_query: str = Field(
         "",
@@ -94,7 +104,10 @@ class ScriptStockLibraryTrimPart(BaseModel):
 
 
 class ScriptStockComposeSegment(BaseModel):
-    kind: Literal["library", "pexels"] = Field(..., description="library=素材库整段视频；pexels=已下载到隔离目录的文件")
+    kind: Literal["library", "pexels", "pixabay", "unsplash"] = Field(
+        ...,
+        description="library=素材库；pexels/pixabay/unsplash=已下载到 stock_media 对应子目录的文件",
+    )
     video_id: Optional[str] = Field(None, description="kind=library 时与 library_video_ids 二选一（单段）")
     library_video_ids: Optional[List[str]] = Field(
         None,
@@ -111,6 +124,14 @@ class ScriptStockComposeSegment(BaseModel):
     pexels_stored_rel_paths: Optional[List[str]] = Field(
         None,
         description="kind=pexels 时可选：多文件按顺序拼接（仅「仅 TTS」）；非空时优先于 stored_rel_path",
+    )
+    pixabay_stored_rel_paths: Optional[List[str]] = Field(
+        None,
+        description="kind=pixabay 时多文件路径；规则同 pexels_stored_rel_paths",
+    )
+    unsplash_stored_rel_paths: Optional[List[str]] = Field(
+        None,
+        description="kind=unsplash 时多文件路径（静态图，成片时静帧）；规则同 pexels",
     )
     text: Optional[str] = Field(
         None,
@@ -169,13 +190,14 @@ class ScriptStockComposeResponse(BaseModel):
 
 class ScriptStockPexelsCacheItem(BaseModel):
     pexels_video_id: int = Field(0, description="从文件名解析；无法解析时为 0")
+    media_type: Literal["image", "video"] = Field("video", description="缓存文件类型")
     stored_rel_path: str
     filename: str
     size_bytes: int = 0
     mtime: float = Field(0, description="修改时间 Unix 秒，用于同 id 多文件时选最新")
     search_query: str = Field("", description="下载时记录的搜索词（来自 pexels/download）")
     pexels_image: str = Field("", description="Pexels 缩略图 URL，下载时写入")
-    duration_sec: int = Field(0, description="Pexels 标注时长（秒）")
+    duration_sec: int = Field(0, description="视频标注时长（秒）；图片为 0")
 
 
 class ScriptStockPexelsCacheResponse(BaseModel):
@@ -193,3 +215,147 @@ class ScriptStockPexelsDeleteResponse(BaseModel):
 class ScriptStockPexelsClearCacheResponse(BaseModel):
     ok: bool = True
     deleted_files: int = Field(0, description="已删除的视频文件数")
+
+
+# --- Pixabay ---
+
+
+class PixabayVideoRendition(BaseModel):
+    url: str
+    width: int = 0
+    height: int = 0
+    size: int = 0
+    thumbnail: str = ""
+
+
+class PixabayVideoSummary(BaseModel):
+    id: int
+    width: int = 0
+    height: int = 0
+    duration: int = 0
+    image: str = Field("", description="预览图 URL")
+    user_name: str = ""
+    tags: str = ""
+    videos: dict[str, PixabayVideoRendition] = Field(default_factory=dict)
+
+
+class PixabayImageSummary(BaseModel):
+    id: int
+    width: int = 0
+    height: int = 0
+    image: str = ""
+    user_name: str = ""
+    tags: str = ""
+
+
+class ScriptStockPixabaySearchResponse(BaseModel):
+    page: int
+    per_page: int
+    total_results: int
+    videos: List[PixabayVideoSummary] = Field(default_factory=list)
+    images: List[PixabayImageSummary] = Field(default_factory=list)
+
+
+class ScriptStockPixabayDownloadRequest(BaseModel):
+    pixabay_media_id: int = Field(..., description="Pixabay 视频或图片 id")
+    media_type: Literal["video", "image"] = Field("video", description="下载视频或静态图片")
+    preferred_quality: Literal["large", "medium", "small", "tiny"] = Field(
+        "medium",
+        description="video 时 videos 清晰度键；image 时为 largeImageURL 等等级",
+    )
+    search_query: str = Field("", description="下载时搜索关键词，写入缓存元数据")
+
+
+class ScriptStockPixabayDownloadResponse(BaseModel):
+    stored_rel_path: str
+    public_url: str
+    filename: str
+
+
+class ScriptStockPixabayCacheItem(BaseModel):
+    pixabay_video_id: int = 0
+    media_type: Literal["image", "video"] = "video"
+    stored_rel_path: str
+    filename: str
+    size_bytes: int = 0
+    mtime: float = 0
+    search_query: str = ""
+    preview_image: str = ""
+    duration_sec: int = 0
+
+
+class ScriptStockPixabayCacheResponse(BaseModel):
+    items: List[ScriptStockPixabayCacheItem]
+
+
+class ScriptStockPixabayDeleteRequest(BaseModel):
+    stored_rel_path: str
+
+
+class ScriptStockPixabayDeleteResponse(BaseModel):
+    ok: bool = True
+
+
+class ScriptStockPixabayClearCacheResponse(BaseModel):
+    ok: bool = True
+    deleted_files: int = 0
+
+
+# --- Unsplash（下载时转为静音短视频） ---
+
+
+class UnsplashPhotoSummary(BaseModel):
+    id: str
+    width: int = 0
+    height: int = 0
+    description: str = ""
+    image: str = Field("", description="缩略图 URLs.small 或 regular")
+    user_name: str = ""
+    color: str = ""
+
+
+class ScriptStockUnsplashSearchResponse(BaseModel):
+    page: int
+    per_page: int
+    total_results: int
+    photos: List[UnsplashPhotoSummary]
+
+
+class ScriptStockUnsplashDownloadRequest(BaseModel):
+    unsplash_photo_id: str = Field(..., description="Unsplash photo id")
+    search_query: str = Field("", description="下载时搜索关键词")
+
+
+class ScriptStockUnsplashDownloadResponse(BaseModel):
+    stored_rel_path: str
+    public_url: str
+    filename: str
+
+
+class ScriptStockUnsplashCacheItem(BaseModel):
+    unsplash_photo_id: str = ""
+    media_type: Literal["image", "video"] = "image"
+    stored_rel_path: str
+    filename: str
+    size_bytes: int = 0
+    mtime: float = 0
+    search_query: str = ""
+    preview_image: str = ""
+    duration_sec: int = 0
+
+
+class ScriptStockUnsplashCacheResponse(BaseModel):
+    items: List[ScriptStockUnsplashCacheItem]
+
+
+class ScriptStockUnsplashDeleteRequest(BaseModel):
+    stored_rel_path: str
+
+
+class ScriptStockUnsplashDeleteResponse(BaseModel):
+    ok: bool = True
+
+
+class ScriptStockUnsplashClearCacheResponse(BaseModel):
+    ok: bool = True
+    deleted_files: int = 0

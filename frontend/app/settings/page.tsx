@@ -10,6 +10,7 @@ import { VlmSection } from './_components/VlmSection'
 import { LlmSection } from './_components/LlmSection'
 import { EmbeddingSection } from './_components/EmbeddingSection'
 import { VideoSection } from './_components/VideoSection'
+import { StockMediaSection } from './_components/StockMediaSection'
 import { TtsSection } from './_components/TtsSection'
 import { AsrSection } from './_components/AsrSection'
 export default function SettingsPage() {
@@ -75,6 +76,7 @@ export default function SettingsPage() {
     { id: 'embedding', label: '向量检索' },
     { id: 'asr', label: '语音识别' },
     { id: 'video', label: '视频处理' },
+    { id: 'stock-media', label: '在线素材' },
     { id: 'tts', label: 'TTS 配音' },
   ]), [])
 
@@ -295,6 +297,7 @@ export default function SettingsPage() {
                 <div id="video" className="scroll-mt-28">
                   <VideoSection {...sharedProps} />
                 </div>
+                <StockMediaSection {...sharedProps} />
                 <div id="tts" className="scroll-mt-28">
                   <TtsSection {...sharedProps} ttsProvider={ttsProvider} onApplyProvider={applyTtsProvider} />
                 </div>

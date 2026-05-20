@@ -1,6 +1,7 @@
 """文案驱动的素材匹配：Pexels 搜索/下载（隔离目录）与素材库视频拼接成片。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -15,16 +16,30 @@ from fastapi import APIRouter, HTTPException
 from app.api.tts import TTS_AUDIO_DIR, synthesize
 from app.core.blocking_pool import run_heavy
 from app.core.llm import LLMClient, LLMConfig
-from app.core.script_stock.compose import compose_stock_video_sync, is_under_pexels_download_dir
+from app.core.script_stock.compose import compose_stock_video_sync
+from app.core.script_stock.stock_media import (
+    default_image_hold_sec,
+    ext_from_url,
+    is_stock_image_path,
+    is_under_pexels_download_dir,
+    is_under_stock_download_dir,
+    media_type_from_path,
+    normalize_stock_http_proxy,
+    stock_async_client,
+)
+from app.core.script_stock import providers_pixabay as pixabay_prov
+from app.core.script_stock import providers_unsplash as unsplash_prov
 from app.core.script_stock.jianying_export import build_script_stock_jianying_zip_sync
 from app.db.database import DB_PATH
 from app.models.tts import SynthesizeRequest
 from app.models.subtitle import JianYingDraftExportResponse, SubtitleStyle
 from app.models.script_stock import (
+    PexelsImageSummary,
     PexelsVideoFile,
     PexelsVideoSummary,
     ScriptStockComposeRequest,
     ScriptStockComposeResponse,
+    ScriptStockComposeSegment,
     ScriptStockGenerateScriptRequest,
     ScriptStockGenerateScriptResponse,
     ScriptStockPexelsCacheItem,
@@ -35,6 +50,20 @@ from app.models.script_stock import (
     ScriptStockPexelsDownloadRequest,
     ScriptStockPexelsDownloadResponse,
     ScriptStockPexelsSearchResponse,
+    ScriptStockPixabayCacheResponse,
+    ScriptStockPixabayClearCacheResponse,
+    ScriptStockPixabayDeleteRequest,
+    ScriptStockPixabayDeleteResponse,
+    ScriptStockPixabayDownloadRequest,
+    ScriptStockPixabayDownloadResponse,
+    ScriptStockPixabaySearchResponse,
+    ScriptStockUnsplashCacheResponse,
+    ScriptStockUnsplashClearCacheResponse,
+    ScriptStockUnsplashDeleteRequest,
+    ScriptStockUnsplashDeleteResponse,
+    ScriptStockUnsplashDownloadRequest,
+    ScriptStockUnsplashDownloadResponse,
+    ScriptStockUnsplashSearchResponse,
     ScriptStockSplitRequest,
     ScriptStockSplitResponse,
     ScriptStockSuggestQueriesRequest,
@@ -53,8 +82,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/script-stock", tags=["script-stock"])
 
-PEXELS_SEARCH_URL = "https://api.pexels.com/v1/videos/search"
-_PEXELS_FN_ID = re.compile(r"^pexels_(\d+)_", re.IGNORECASE)
+PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/v1/videos/search"
+PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
+_PEXELS_FN_ID = re.compile(r"^pexels_(?:img_)?(\d+)_", re.IGNORECASE)
 _PEXELS_META_FILENAME = "pexels_cache_meta.json"
 
 
@@ -88,6 +118,10 @@ async def _cfg(db: aiosqlite.Connection, key: str, default: str = "") -> str:
     if row and row[0] is not None:
         return str(row[0])
     return default
+
+
+async def _stock_http_proxy(db: aiosqlite.Connection) -> str | None:
+    return normalize_stock_http_proxy(await _cfg(db, "stock_media_http_proxy"))
 
 
 async def _load_export_render_opts(db: aiosqlite.Connection) -> dict:
@@ -272,6 +306,19 @@ def _map_pexels_video(v: dict) -> PexelsVideoSummary:
     )
 
 
+def _map_pexels_image(p: dict) -> PexelsImageSummary:
+    user = p.get("user") if isinstance(p.get("user"), dict) else {}
+    src = p.get("src") if isinstance(p.get("src"), dict) else {}
+    thumb = str(src.get("medium") or src.get("large") or src.get("large2x") or p.get("url") or "")
+    return PexelsImageSummary(
+        id=int(p.get("id") or 0),
+        width=int(p.get("width") or 0),
+        height=int(p.get("height") or 0),
+        image=thumb,
+        user_name=str((user or {}).get("name") or ""),
+    )
+
+
 @router.get("/pexels/search", response_model=ScriptStockPexelsSearchResponse)
 async def pexels_search(query: str, page: int = 1, per_page: int = 12) -> ScriptStockPexelsSearchResponse:
     q = (query or "").strip()
@@ -282,30 +329,42 @@ async def pexels_search(query: str, page: int = 1, per_page: int = 12) -> Script
 
     async with aiosqlite.connect(DB_PATH) as db:
         api_key = (await _cfg(db, "pexels_api_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
     if not api_key:
         raise HTTPException(
             400,
-            "未配置 Pexels API Key，请在「设置 → 视频处理」中填写 pexels_api_key（详见 www.pexels.com/api）",
+            "未配置 Pexels API Key，请在「设置 → 在线素材（文案成片）」中填写（详见 www.pexels.com/api）",
         )
 
     headers = {"Authorization": api_key}
-    params = {"query": q, "page": page, "per_page": per_page}
+    half = max(1, per_page // 2)
+    vparams = {"query": q, "page": page, "per_page": half}
+    iparams = {"query": q, "page": page, "per_page": per_page - half}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(PEXELS_SEARCH_URL, headers=headers, params=params)
+        async with stock_async_client(timeout=30.0, headers=headers, proxy=http_proxy) as client:
+            vresp, iresp = await asyncio.gather(
+                client.get(PEXELS_VIDEO_SEARCH_URL, headers=headers, params=vparams),
+                client.get(PEXELS_PHOTO_SEARCH_URL, headers=headers, params=iparams),
+            )
     except httpx.RequestError as e:
         raise HTTPException(502, detail=f"Pexels 请求失败: {e}")
 
-    if resp.status_code != 200:
-        raise HTTPException(resp.status_code, detail=resp.text[:500])
+    if vresp.status_code != 200:
+        raise HTTPException(vresp.status_code, detail=vresp.text[:500])
+    if iresp.status_code != 200:
+        raise HTTPException(iresp.status_code, detail=iresp.text[:500])
 
-    data = resp.json()
-    videos = [_map_pexels_video(v) for v in (data.get("videos") or []) if isinstance(v, dict)]
+    vdata = vresp.json()
+    idata = iresp.json()
+    videos = [_map_pexels_video(v) for v in (vdata.get("videos") or []) if isinstance(v, dict)]
+    images = [_map_pexels_image(p) for p in (idata.get("photos") or []) if isinstance(p, dict)]
+    total = int(vdata.get("total_results") or 0) + int(idata.get("total_results") or 0)
     return ScriptStockPexelsSearchResponse(
-        page=int(data.get("page") or page),
-        per_page=int(data.get("per_page") or per_page),
-        total_results=int(data.get("total_results") or 0),
+        page=page,
+        per_page=per_page,
+        total_results=total,
         videos=videos,
+        images=images,
     )
 
 
@@ -325,45 +384,68 @@ def _pick_pexels_file(files: List[PexelsVideoFile], preferred: str) -> PexelsVid
 
 @router.post("/pexels/download", response_model=ScriptStockPexelsDownloadResponse)
 async def pexels_download(req: ScriptStockPexelsDownloadRequest) -> ScriptStockPexelsDownloadResponse:
-    vid = int(req.pexels_video_id)
-    if vid <= 0:
-        raise HTTPException(400, "pexels_video_id 无效")
+    mid = int(req.pexels_media_id)
+    if mid <= 0:
+        raise HTTPException(400, "pexels_media_id 无效")
+    media_type = (req.media_type or "video").lower()
 
     async with aiosqlite.connect(DB_PATH) as db:
         api_key = (await _cfg(db, "pexels_api_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
     if not api_key:
         raise HTTPException(400, "未配置 Pexels API Key")
 
     headers = {"Authorization": api_key}
-    url = f"https://api.pexels.com/v1/videos/videos/{vid}"
-    try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            resp = await client.get(url, headers=headers)
-    except httpx.RequestError as e:
-        raise HTTPException(502, detail=f"Pexels 请求失败: {e}")
-
-    if resp.status_code != 200:
-        raise HTTPException(resp.status_code, detail=resp.text[:500])
-
-    data = resp.json()
-    summary = _map_pexels_video(data if isinstance(data, dict) else {})
-    picked = _pick_pexels_file(summary.video_files, req.preferred_quality)
-    if not picked:
-        raise HTTPException(404, "未找到可下载的视频文件")
-
     dest_dir = ensure_storage_subpath("stock_media", "pexels")
-    fname = f"pexels_{vid}_{picked.quality}_{picked.width}x{picked.height}.mp4"
-    dest_abs = os.path.join(dest_dir, fname)
+    preview = ""
+    duration_sec = 0
 
     try:
-        async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
-            media = await client.get(picked.link)
-        if media.status_code != 200:
-            raise HTTPException(502, detail="下载视频失败")
-        with open(dest_abs, "wb") as f:
-            f.write(media.content)
+        async with stock_async_client(
+            timeout=600.0, follow_redirects=True, headers=headers, proxy=http_proxy
+        ) as client:
+            if media_type == "image":
+                url = f"https://api.pexels.com/v1/photos/{mid}"
+                resp = await client.get(url, headers=headers, timeout=45.0)
+                if resp.status_code != 200:
+                    raise HTTPException(resp.status_code, detail=resp.text[:500])
+                raw = resp.json()
+                data = raw if isinstance(raw, dict) else {}
+                summary = _map_pexels_image(data)
+                src = data.get("src") if isinstance(data.get("src"), dict) else {}
+                dl = str(src.get("large2x") or src.get("large") or src.get("original") or "").strip()
+                if not dl:
+                    raise HTTPException(404, "未找到可下载的图片")
+                preview = summary.image
+                ext = ext_from_url(dl, ".jpg")
+                fname = f"pexels_img_{mid}{ext}"
+                dest_abs = os.path.join(dest_dir, fname)
+                media = await client.get(dl)
+                if media.status_code != 200:
+                    raise HTTPException(502, detail="下载图片失败")
+                with open(dest_abs, "wb") as f:
+                    f.write(media.content)
+            else:
+                url = f"https://api.pexels.com/v1/videos/videos/{mid}"
+                resp = await client.get(url, headers=headers, timeout=45.0)
+                if resp.status_code != 200:
+                    raise HTTPException(resp.status_code, detail=resp.text[:500])
+                data = resp.json()
+                summary = _map_pexels_video(data if isinstance(data, dict) else {})
+                picked = _pick_pexels_file(summary.video_files, req.preferred_quality)
+                if not picked:
+                    raise HTTPException(404, "未找到可下载的视频文件")
+                preview = summary.image
+                duration_sec = int(summary.duration or 0)
+                fname = f"pexels_{mid}_{picked.quality}_{picked.width}x{picked.height}.mp4"
+                dest_abs = os.path.join(dest_dir, fname)
+                media = await client.get(picked.link)
+                if media.status_code != 200:
+                    raise HTTPException(502, detail="下载视频失败")
+                with open(dest_abs, "wb") as f:
+                    f.write(media.content)
     except httpx.RequestError as e:
-        raise HTTPException(502, detail=f"下载失败: {e}")
+        raise HTTPException(502, detail=f"Pexels 请求失败: {e}") from e
 
     rel = to_stored_path(dest_abs)
     try:
@@ -371,8 +453,9 @@ async def pexels_download(req: ScriptStockPexelsDownloadRequest) -> ScriptStockP
         sq = (req.search_query or "").strip()[:500]
         meta[rel] = {
             "search_query": sq,
-            "pexels_image": (summary.image or "").strip()[:2000],
-            "duration_sec": int(summary.duration or 0),
+            "pexels_image": (preview or "").strip()[:2000],
+            "duration_sec": duration_sec,
+            "media_type": media_type,
         }
         _write_pexels_meta(dest_dir, meta)
     except Exception as e:
@@ -401,7 +484,9 @@ async def pexels_cache_list() -> ScriptStockPexelsCacheResponse:
         if name == _PEXELS_META_FILENAME or name.endswith(".tmp"):
             continue
         low = name.lower()
-        if not low.endswith((".mp4", ".mov", ".webm", ".mkv")):
+        if not low.endswith(
+            (".mp4", ".mov", ".webm", ".mkv", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+        ):
             continue
         full = os.path.join(root, name)
         if not os.path.isfile(full):
@@ -424,9 +509,13 @@ async def pexels_cache_list() -> ScriptStockPexelsCacheResponse:
             dsec = int(row.get("duration_sec") or row.get("duration") or 0)
         except (TypeError, ValueError):
             dsec = 0
+        mt_row = str(row.get("media_type") or "").lower()
+        if mt_row not in ("image", "video"):
+            mt_row = media_type_from_path(full)
         items.append(
             ScriptStockPexelsCacheItem(
                 pexels_video_id=vid,
+                media_type=mt_row,  # type: ignore[arg-type]
                 stored_rel_path=rel,
                 filename=name,
                 size_bytes=sz,
@@ -481,7 +570,9 @@ async def pexels_clear_cache() -> ScriptStockPexelsClearCacheResponse:
         if name == _PEXELS_META_FILENAME or name.endswith(".tmp"):
             continue
         low = name.lower()
-        if not low.endswith((".mp4", ".mov", ".webm", ".mkv")):
+        if not low.endswith(
+            (".mp4", ".mov", ".webm", ".mkv", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+        ):
             continue
         full = os.path.join(root, name)
         if not os.path.isfile(full):
@@ -502,7 +593,175 @@ async def pexels_clear_cache() -> ScriptStockPexelsClearCacheResponse:
     return ScriptStockPexelsClearCacheResponse(ok=True, deleted_files=deleted)
 
 
+def _online_rels_from_segment(seg: ScriptStockComposeSegment, provider: str) -> List[str]:
+    if provider == "pexels":
+        raw = seg.pexels_stored_rel_paths
+        one = seg.stored_rel_path
+    elif provider == "pixabay":
+        raw = seg.pixabay_stored_rel_paths
+        one = None
+    elif provider == "unsplash":
+        raw = seg.unsplash_stored_rel_paths
+        one = None
+    else:
+        return []
+    rels: List[str] = []
+    if raw:
+        rels = [str(x).strip().replace("\\", "/") for x in raw if str(x).strip()]
+    if not rels and one:
+        o = str(one).strip().replace("\\", "/")
+        if o:
+            rels = [o]
+    return rels
+
+
+@router.get("/pixabay/search", response_model=ScriptStockPixabaySearchResponse)
+async def pixabay_search(query: str, page: int = 1, per_page: int = 12) -> ScriptStockPixabaySearchResponse:
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "query 不能为空")
+    per_page = max(3, min(24, int(per_page)))
+    page = max(1, int(page))
+    async with aiosqlite.connect(DB_PATH) as db:
+        api_key = (await _cfg(db, "pixabay_api_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
+    if not api_key:
+        raise HTTPException(
+            400,
+            "未配置 Pixabay API Key，请在「设置 → 在线素材（文案成片）」中填写（详见 pixabay.com/api/docs/）",
+        )
+    try:
+        return await pixabay_prov.search_pixabay(api_key, q, page, per_page, http_proxy=http_proxy)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, detail=e.response.text[:500]) from e
+    except httpx.RequestError as e:
+        raise HTTPException(502, detail=f"Pixabay 请求失败: {e}") from e
+
+
+@router.post("/pixabay/download", response_model=ScriptStockPixabayDownloadResponse)
+async def pixabay_download(req: ScriptStockPixabayDownloadRequest) -> ScriptStockPixabayDownloadResponse:
+    async with aiosqlite.connect(DB_PATH) as db:
+        api_key = (await _cfg(db, "pixabay_api_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
+    if not api_key:
+        raise HTTPException(400, "未配置 Pixabay API Key")
+    try:
+        return await pixabay_prov.download_pixabay(api_key, req, http_proxy=http_proxy)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, detail=e.response.text[:500]) from e
+    except httpx.RequestError as e:
+        raise HTTPException(502, detail=f"Pixabay 请求失败: {e}") from e
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+
+
+@router.get("/pixabay/cache", response_model=ScriptStockPixabayCacheResponse)
+async def pixabay_cache_list() -> ScriptStockPixabayCacheResponse:
+    return pixabay_prov.list_pixabay_cache()
+
+
+@router.post("/pixabay/delete-file", response_model=ScriptStockPixabayDeleteResponse)
+async def pixabay_delete_file(req: ScriptStockPixabayDeleteRequest) -> ScriptStockPixabayDeleteResponse:
+    rel = (req.stored_rel_path or "").strip().replace("\\", "/")
+    if not rel:
+        raise HTTPException(400, "stored_rel_path 不能为空")
+    abs_path = resolve_stored_path(rel)
+    if not abs_path or not os.path.isfile(abs_path):
+        raise HTTPException(404, "文件不存在或已删除")
+    if not is_under_stock_download_dir(abs_path, "pixabay"):
+        raise HTTPException(403, "非法路径：仅允许删除 stock_media/pixabay 下的文件")
+    try:
+        os.unlink(abs_path)
+    except OSError as e:
+        raise HTTPException(500, detail=str(e)) from e
+    try:
+        pixabay_prov.delete_pixabay_meta_entry(rel)
+    except Exception as e:
+        logger.warning("pixabay meta delete skipped: %s", e)
+    return ScriptStockPixabayDeleteResponse(ok=True)
+
+
+@router.post("/pixabay/clear-cache", response_model=ScriptStockPixabayClearCacheResponse)
+async def pixabay_clear_cache() -> ScriptStockPixabayClearCacheResponse:
+    return pixabay_prov.clear_pixabay_cache()
+
+
+@router.get("/unsplash/search", response_model=ScriptStockUnsplashSearchResponse)
+async def unsplash_search(query: str, page: int = 1, per_page: int = 12) -> ScriptStockUnsplashSearchResponse:
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "query 不能为空")
+    per_page = max(1, min(30, int(per_page)))
+    page = max(1, int(page))
+    async with aiosqlite.connect(DB_PATH) as db:
+        access_key = (await _cfg(db, "unsplash_access_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
+    if not access_key:
+        raise HTTPException(
+            400,
+            "未配置 Unsplash Access Key，请在「设置 → 在线素材（文案成片）」中填写（详见 unsplash.com/developers）",
+        )
+    try:
+        return await unsplash_prov.search_unsplash(access_key, q, page, per_page, http_proxy=http_proxy)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, detail=e.response.text[:500]) from e
+    except httpx.RequestError as e:
+        raise HTTPException(502, detail=f"Unsplash 请求失败: {e}") from e
+
+
+@router.post("/unsplash/download", response_model=ScriptStockUnsplashDownloadResponse)
+async def unsplash_download(req: ScriptStockUnsplashDownloadRequest) -> ScriptStockUnsplashDownloadResponse:
+    async with aiosqlite.connect(DB_PATH) as db:
+        access_key = (await _cfg(db, "unsplash_access_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
+    if not access_key:
+        raise HTTPException(400, "未配置 Unsplash Access Key")
+    try:
+        return await unsplash_prov.download_unsplash(access_key, req, http_proxy=http_proxy)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, detail=e.response.text[:500]) from e
+    except httpx.RequestError as e:
+        raise HTTPException(502, detail=f"Unsplash 请求失败: {e}") from e
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(500, detail=str(e)) from e
+
+
+@router.get("/unsplash/cache", response_model=ScriptStockUnsplashCacheResponse)
+async def unsplash_cache_list() -> ScriptStockUnsplashCacheResponse:
+    return unsplash_prov.list_unsplash_cache()
+
+
+@router.post("/unsplash/delete-file", response_model=ScriptStockUnsplashDeleteResponse)
+async def unsplash_delete_file(req: ScriptStockUnsplashDeleteRequest) -> ScriptStockUnsplashDeleteResponse:
+    rel = (req.stored_rel_path or "").strip().replace("\\", "/")
+    if not rel:
+        raise HTTPException(400, "stored_rel_path 不能为空")
+    abs_path = resolve_stored_path(rel)
+    if not abs_path or not os.path.isfile(abs_path):
+        raise HTTPException(404, "文件不存在或已删除")
+    if not is_under_stock_download_dir(abs_path, "unsplash"):
+        raise HTTPException(403, "非法路径：仅允许删除 stock_media/unsplash 下的文件")
+    try:
+        os.unlink(abs_path)
+    except OSError as e:
+        raise HTTPException(500, detail=str(e)) from e
+    try:
+        unsplash_prov.delete_unsplash_meta_entry(rel)
+    except Exception as e:
+        logger.warning("unsplash meta delete skipped: %s", e)
+    return ScriptStockUnsplashDeleteResponse(ok=True)
+
+
+@router.post("/unsplash/clear-cache", response_model=ScriptStockUnsplashClearCacheResponse)
+async def unsplash_clear_cache() -> ScriptStockUnsplashClearCacheResponse:
+    return unsplash_prov.clear_unsplash_cache()
+
+
 def _default_pair_for_path(abs_path: str) -> Tuple[float, float]:
+    if is_stock_image_path(abs_path):
+        return (0.0, default_image_hold_sec())
     d = float(probe_duration(abs_path) or 0.0)
     if d <= 0.02:
         d = 60.0
@@ -553,28 +812,26 @@ async def _resolve_compose_rows(
                 else:
                     trim_pairs.append(_default_pair_for_path(p))
             out.append((paths, "library", trim_pairs))
-        elif seg.kind == "pexels":
-            rels: List[str] = []
-            if seg.pexels_stored_rel_paths:
-                rels = [str(x).strip().replace("\\", "/") for x in seg.pexels_stored_rel_paths if str(x).strip()]
+        elif seg.kind in ("pexels", "pixabay", "unsplash"):
+            provider = seg.kind
+            rels = _online_rels_from_segment(seg, provider)
             if not rels:
-                one = (seg.stored_rel_path or "").strip().replace("\\", "/")
-                if one:
-                    rels = [one]
-            if not rels:
-                raise HTTPException(400, "pexels 分段缺少 stored_rel_path 或 pexels_stored_rel_paths")
+                raise HTTPException(400, f"{provider} 分段缺少已下载文件路径")
             if len(rels) > 12:
-                raise HTTPException(400, "单段最多拼接 12 条 Pexels 文件")
+                raise HTTPException(400, f"单段最多拼接 12 条 {provider} 文件")
             paths: List[str] = []
             for rel in rels:
                 abs_path = resolve_stored_path(rel)
                 if not abs_path or not os.path.isfile(abs_path):
-                    raise HTTPException(400, f"Pexels 本地文件不存在: {rel}")
-                if not is_under_pexels_download_dir(abs_path):
-                    raise HTTPException(403, "非法素材路径：仅允许使用 stock_media/pexels 下的下载文件")
+                    raise HTTPException(400, f"{provider} 本地文件不存在: {rel}")
+                if not is_under_stock_download_dir(abs_path, provider):
+                    raise HTTPException(
+                        403,
+                        f"非法素材路径：仅允许使用 stock_media/{provider} 下的下载文件",
+                    )
                 paths.append(abs_path)
             trim_pairs_px: List[Tuple[float, float]] = [_default_pair_for_path(p) for p in paths]
-            out.append((paths, "pexels", trim_pairs_px))
+            out.append((paths, provider, trim_pairs_px))
         else:
             raise HTTPException(400, "未知分段类型")
     return out
@@ -594,13 +851,12 @@ async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeRes
                         400,
                         "多段本地素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条素材。",
                     )
-            elif seg.kind == "pexels":
-                rels = [str(x).strip() for x in (seg.pexels_stored_rel_paths or []) if str(x).strip()]
-                n = len(rels) if rels else (1 if (seg.stored_rel_path or "").strip() else 0)
-                if n > 1:
+            elif seg.kind in ("pexels", "pixabay", "unsplash"):
+                rels = _online_rels_from_segment(seg, seg.kind)
+                if len(rels) > 1:
                     raise HTTPException(
                         400,
-                        "多段 Pexels 素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条文件。",
+                        f"多段 {seg.kind} 素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条文件。",
                     )
 
     tts_paths: List[Optional[str]] = []
@@ -656,6 +912,8 @@ async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeRes
 
     try:
         final_abs = await run_heavy(_sync)
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
     except Exception as e:
         logger.exception("compose_stock failed")
         raise HTTPException(500, detail=f"成片失败: {e}") from e
@@ -695,13 +953,11 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
                         400,
                         "多段本地素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
                     )
-            elif seg.kind == "pexels":
-                rels = [str(x).strip() for x in (seg.pexels_stored_rel_paths or []) if str(x).strip()]
-                n = len(rels) if rels else (1 if (seg.stored_rel_path or "").strip() else 0)
-                if n > 1:
+            elif seg.kind in ("pexels", "pixabay", "unsplash"):
+                if len(_online_rels_from_segment(seg, seg.kind)) > 1:
                     raise HTTPException(
                         400,
-                        "多段 Pexels 素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
+                        f"多段 {seg.kind} 素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
                     )
 
     tts_paths: List[Optional[str]] = []

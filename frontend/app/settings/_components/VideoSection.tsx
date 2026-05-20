@@ -100,8 +100,6 @@ const PARAM_HINTS: Record<string, string> = {
   export_scale_width: '成片输出宽度（0=不限制）',
   export_scale_height: '成片输出高度（0=不限制）',
   export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
-  pexels_api_key:
-    '在 Pexels 官网申请免费 API Key；用于「智能剪辑 → 文案素材成片」搜索并下载无版权短视频（下载文件单独存放在 stock_media/pexels）',
   jianying_draft_parent_dir:
     '填写或浏览本机文件夹路径（支持 / 与 \\\\）。导出时将在此目录下直接生成剪映草稿文件夹（无需 ZIP）；JSON 内为完整素材绝对路径。留空则仍导出 ZIP，并附带 patch_paths.bat',
 }
@@ -306,7 +304,6 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
   const EXPORT_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('export_'))
-  const STOCK_KEYS = ['pexels_api_key']
   const JIANYING_EXPORT_KEYS = ['jianying_draft_parent_dir']
   const presetDirty = (values: Record<string, string>) =>
     Object.entries(values).some(([key, val]) => hasConfig(key) && v(key) !== val)
@@ -579,18 +576,6 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
           >
             {renderFields(EXPORT_KEYS)}
           </SettingsDetails>
-        )}
-
-        {STOCK_KEYS.some((k) => config[k]) && (
-          <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3">
-            <div>
-              <p className="text-sm font-medium text-slate-200">在线素材（文案成片）</p>
-              <p className="text-xs text-slate-500 mt-1">
-                与切片参数无关；仅用于智能剪辑页的「文案素材成片」从 Pexels 拉取视频到本地隔离目录。
-              </p>
-            </div>
-            {renderFields(STOCK_KEYS)}
-          </div>
         )}
 
         {JIANYING_EXPORT_KEYS.some((k) => config[k]) && (

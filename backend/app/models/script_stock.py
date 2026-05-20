@@ -5,7 +5,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.models.subtitle import SubtitleStyle
+from app.models.subtitle import BgmMixConfig, SubtitleStyle
 
 
 class ScriptStockSplitRequest(BaseModel):
@@ -179,6 +179,10 @@ class ScriptStockComposeRequest(BaseModel):
     subtitle_style: Optional[SubtitleStyle] = Field(
         None,
         description="字幕样式；为空则使用默认 SubtitleStyle",
+    )
+    bgm: Optional[BgmMixConfig] = Field(
+        None,
+        description="成片导出后叠加背景音乐（FFmpeg 混音）；与手动匹配/字幕导出一致",
     )
 
 

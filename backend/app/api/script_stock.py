@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from app.api.tts import TTS_AUDIO_DIR, synthesize
 from app.core.blocking_pool import run_heavy
 from app.core.llm import LLMClient, LLMConfig
+from app.core.bgm.auto_bgm import apply_bgm_config_postprocess
 from app.core.script_stock.compose import compose_stock_video_sync
 from app.core.script_stock.stock_media import (
     default_image_hold_sec,
@@ -918,10 +919,27 @@ async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeRes
         logger.exception("compose_stock failed")
         raise HTTPException(500, detail=f"成片失败: {e}") from e
 
-    rel = to_stored_path(final_abs)
+    filename = os.path.basename(final_abs)
+    public_url = storage_public_url_for_file(final_abs)
+    if req.bgm and req.bgm.enabled:
+        try:
+            mixed_filename, mixed_url = await run_heavy(
+                apply_bgm_config_postprocess,
+                filename,
+                public_url,
+                req.bgm.model_dump(),
+            )
+            filename = mixed_filename
+            public_url = mixed_url
+        except Exception as e:
+            logger.warning("script-stock BGM mix failed, using video without BGM: %s", e)
+
+    rel = (public_url or "").lstrip("/")
+    if not rel.startswith("storage/"):
+        rel = to_stored_path(final_abs)
     return ScriptStockComposeResponse(
-        filename=os.path.basename(final_abs),
-        public_url=storage_public_url_for_file(final_abs),
+        filename=filename,
+        public_url=public_url,
         stored_rel_path=rel,
     )
 

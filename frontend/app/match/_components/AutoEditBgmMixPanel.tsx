@@ -28,6 +28,10 @@ export type AutoEditBgmMixPanelProps = {
   strategyLabel?: string
   emptyBgmHintPrefix: string
   hideTrackSelector?: boolean
+  /** 文案素材成片等无 LLM 规划场景：隐藏「规划阶段 BGM 策略」 */
+  hideStrategy?: boolean
+  /** 曲目下拉 value：曲库 id（推荐）或文件名 */
+  trackValueField?: 'id' | 'filename'
 }
 
 export function AutoEditBgmMixPanel({
@@ -45,6 +49,8 @@ export function AutoEditBgmMixPanel({
   strategyLabel = '规划阶段 BGM 策略（写给模型）',
   emptyBgmHintPrefix,
   hideTrackSelector = false,
+  hideStrategy = false,
+  trackValueField = 'filename',
 }: AutoEditBgmMixPanelProps) {
   return (
     <div className={wrapperClassName}>
@@ -63,21 +69,23 @@ export function AutoEditBgmMixPanel({
           <span className="text-sm text-slate-200">导出成片时叠加背景音乐（FFmpeg 混音）</span>
         </label>
         <p className="text-[11px] text-slate-500 leading-relaxed">{helperText}</p>
-            <div className="grid sm:grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <span className="text-[11px] text-slate-400">{strategyLabel}</span>
-            <select
-              value={autoBgmPlanPolicy}
-              onChange={(e) => onAutoBgmPlanPolicyChange(e.target.value as 'auto' | 'none' | 'user' | 'ai')}
-              disabled={policySelectDisabled}
-              className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
-            >
-              <option value="auto">自动（由模型与曲库配合）</option>
-              <option value="none">不要 BGM</option>
-              <option value="user">用户指定取向</option>
-              <option value="ai">AI 推荐曲目</option>
-            </select>
-          </div>
+            <div className={hideStrategy ? 'space-y-3' : 'grid sm:grid-cols-2 gap-3'}>
+          {!hideStrategy && (
+            <div className="space-y-1.5">
+              <span className="text-[11px] text-slate-400">{strategyLabel}</span>
+              <select
+                value={autoBgmPlanPolicy}
+                onChange={(e) => onAutoBgmPlanPolicyChange(e.target.value as 'auto' | 'none' | 'user' | 'ai')}
+                disabled={policySelectDisabled}
+                className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-emerald-400 disabled:opacity-50"
+              >
+                <option value="auto">自动（由模型与曲库配合）</option>
+                <option value="none">不要 BGM</option>
+                <option value="user">用户指定取向</option>
+                <option value="ai">AI 推荐曲目</option>
+              </select>
+            </div>
+          )}
           {!hideTrackSelector && (
             <div className="space-y-1.5">
               <span className="text-[11px] text-slate-400">成片使用的曲目</span>
@@ -89,7 +97,7 @@ export function AutoEditBgmMixPanel({
               >
                 <option value="">自动（方案推荐 / 曲库匹配）</option>
                 {bgmTracks.map((t) => (
-                  <option key={t.id} value={t.filename}>
+                  <option key={t.id} value={trackValueField === 'id' ? t.id : t.filename}>
                     {t.title || t.filename}
                   </option>
                 ))}

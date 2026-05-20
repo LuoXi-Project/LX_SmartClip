@@ -38,6 +38,7 @@ import {
   type ScriptStockPixabayCacheItemApi,
   type ScriptStockUnsplashCacheItemApi,
   type ScriptStockTimelineMode,
+  type BgmMixConfigApi,
   type ScriptStockComposeSegmentApi,
   type ScriptStockVideoExtendPolicy,
 } from '@/lib/api'
@@ -60,6 +61,8 @@ import {
   libraryTrimSlotIsCustom,
 } from './clipTrim'
 import { StockOnlineCachePanel } from './StockOnlineCachePanel'
+import { AutoEditBgmMixPanel } from './AutoEditBgmMixPanel'
+import { useAutoEditBgmTracks } from './autoEditPanelHooks'
 import {
   downloadKey,
   newStockSeg,
@@ -108,6 +111,9 @@ export function ScriptStockPanel({
 }) {
   const toast = useToast()
   const confirm = useConfirm()
+  const { bgmTracks, bgmListError } = useAutoEditBgmTracks()
+  const [stockBgmEnabled, setStockBgmEnabled] = useState(false)
+  const [stockBgmTrackId, setStockBgmTrackId] = useState('')
   const [fullScript, setFullScript] = useState('')
   const [topic, setTopic] = useState('')
   const [styleHint, setStyleHint] = useState('')
@@ -638,9 +644,27 @@ export function ScriptStockPanel({
     return payload
   }
 
+  const buildStockBgmPayload = (): BgmMixConfigApi | undefined => {
+    const tid = stockBgmTrackId.trim()
+    if (!stockBgmEnabled || !tid) return undefined
+    return {
+      enabled: true,
+      track_id: tid,
+      track_ids: [tid],
+      volume_db: -12,
+      loop: true,
+      fade_in_sec: 0.8,
+      fade_out_sec: 1.0,
+    }
+  }
+
   const handleCompose = async () => {
     const payload = buildComposePayload()
     if (!payload) return
+    if (stockBgmEnabled && !stockBgmTrackId.trim()) {
+      toast.error('已开启 BGM 混音，请选择一首背景音乐')
+      return
+    }
     setComposing(true)
     try {
       const res = await scriptStockApi.compose({
@@ -655,6 +679,7 @@ export function ScriptStockPanel({
         material_tts_longer: materialTtsLonger,
         include_subtitle: subtitleEnabled,
         subtitle_style: subtitleEnabled ? (subtitleStyle ?? DEFAULT_SUBTITLE_STYLE) : undefined,
+        bgm: buildStockBgmPayload(),
       })
       const base = API_BASE_URL.replace(/\/$/, '')
       const path = (res.public_url || '').startsWith('/') ? res.public_url : `/${res.public_url || ''}`
@@ -1482,6 +1507,37 @@ export function ScriptStockPanel({
               </div>
             )}
           </div>
+
+          <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 space-y-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-emerald-100/95">成片导出 · 背景音乐</p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                与口播快剪、手动匹配一致：在「合成配音成片」完成后叠加 BGM（FFmpeg 混音）。请先在
+                <Link href="/settings" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2 mx-0.5">
+                  设置 → BGM
+                </Link>
+                或
+                <Link href="/bgm" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2 mx-0.5">
+                  BGM 页
+                </Link>
+                上传曲目；开启混音后须选择一首，否则不会叠加。
+              </p>
+            </div>
+            <AutoEditBgmMixPanel
+              hideStrategy
+              trackValueField="id"
+              bgmTracks={bgmTracks}
+              bgmListError={bgmListError}
+              autoBgmMixEnabled={stockBgmEnabled}
+              onAutoBgmMixEnabledChange={setStockBgmEnabled}
+              autoBgmPlanPolicy="user"
+              onAutoBgmPlanPolicyChange={() => {}}
+              autoBgmTrackFilename={stockBgmTrackId}
+              onAutoBgmTrackFilenameChange={setStockBgmTrackId}
+              helperText="开关与曲目仅作用于「合成配音成片」；导出剪映草稿不含 BGM 混音。"
+              emptyBgmHintPrefix="暂无曲目，请前往"
+            />
+          </section>
 
           <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 flex flex-col gap-3">
             <div className="flex flex-col sm:flex-row gap-3 sm:items-end">

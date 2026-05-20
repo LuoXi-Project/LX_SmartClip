@@ -205,9 +205,12 @@ def material_storage_root(material_id: str) -> str:
 
 def resolve_burned_videos_dir_from_public_url(url: str) -> str:
     """
-    从静态资源 URL（如 ``/storage/<material_id>/burned_videos/xxx.mp4``）解析烧录成片所在目录。
+    从静态资源 URL 解析成片视频所在目录（用于 BGM 混音等后处理）。
 
-    兼容旧版扁平路径 ``/storage/burned_videos/xxx.mp4``。
+    支持：
+    - ``/storage/<material_id>/burned_videos/xxx.mp4``
+    - ``/storage/burned_videos/xxx.mp4``（旧版扁平）
+    - ``/storage/stock_media/exports/xxx.mp4`` 等任意 ``/storage/.../file`` 路径
     """
     u = (url or "").strip()
     if "://" in u:
@@ -224,6 +227,11 @@ def resolve_burned_videos_dir_from_public_url(url: str) -> str:
             return ensure_storage_subpath("burned_videos")
         if len(parts) >= 3 and parts[2] == "burned_videos":
             return ensure_storage_subpath(parts[1], "burned_videos")
+        tail = parts[1:]
+        if tail and "." in (tail[-1] or ""):
+            tail = tail[:-1]
+        if tail:
+            return ensure_storage_subpath(*tail)
     return ensure_storage_subpath("burned_videos")
 
 

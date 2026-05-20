@@ -1260,6 +1260,7 @@ export const scriptStockApi = {
     include_subtitle?: boolean
     /** 与侧栏字幕样式一致；include_subtitle 为 true 时建议传入 */
     subtitle_style?: SubtitleStyle
+    bgm?: BgmMixConfigApi
   }) =>
     apiClient.post<unknown, { filename: string; public_url: string; stored_rel_path: string }>(
       '/api/script-stock/compose',
@@ -1281,6 +1282,7 @@ export const scriptStockApi = {
     material_tts_longer?: ScriptStockMaterialTtsLonger
     include_subtitle?: boolean
     subtitle_style?: SubtitleStyle
+    bgm?: BgmMixConfigApi
   }) =>
     apiClient.post<unknown, JianYingDraftExportResponseApi>('/api/script-stock/export-jianying-draft', body),
 }

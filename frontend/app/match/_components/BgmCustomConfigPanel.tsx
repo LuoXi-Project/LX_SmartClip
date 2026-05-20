@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
 import type { BgmTrack } from '@/lib/api'
+import { filterBgmTracks } from '@/lib/bgmUtils'
 
 type TimelineSeg = { id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }
 
@@ -55,16 +56,10 @@ export function BgmCustomConfigPanel(props: {
   const [previewCurrentTime, setPreviewCurrentTime] = useState(0)
   const [previewDuration, setPreviewDuration] = useState(0)
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
-  const filtered = useMemo(() => {
-    const q = keyword.trim().toLowerCase()
-    if (!q) return bgmTracks
-    return bgmTracks.filter((track) =>
-      [track.title, track.filename, track.mood ?? '', String(track.bpm ?? ''), ...(track.tags ?? [])]
-        .join(' ')
-        .toLowerCase()
-        .includes(q)
-    )
-  }, [bgmTracks, keyword])
+  const filtered = useMemo(
+    () => filterBgmTracks(bgmTracks, { query: keyword }),
+    [bgmTracks, keyword]
+  )
 
   useEffect(() => () => {
     Object.values(audioRefs.current).forEach((a) => a?.pause())

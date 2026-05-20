@@ -16,6 +16,8 @@ type VideoScopeSelectorProps = {
   onSearchChange: (value: string) => void
   onPrevPage: () => void
   onNextPage: () => void
+  /** 影视解说等场景：单选原片，标题与提示文案不同 */
+  singleSelect?: boolean
 }
 
 export function VideoScopeSelector({
@@ -30,6 +32,7 @@ export function VideoScopeSelector({
   onSearchChange,
   onPrevPage,
   onNextPage,
+  singleSelect = false,
 }: VideoScopeSelectorProps) {
   if (scopeVideos.length === 0) return null
   const statusLabel = (s: Video['status']) => {
@@ -43,8 +46,10 @@ export function VideoScopeSelector({
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-          限定视频范围
-          <span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
+          {singleSelect ? '选择原片' : '限定视频范围'}
+          {!singleSelect && (
+            <span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
+          )}
         </p>
         <span className="text-xs text-slate-600">
           {videoSearch ? `${filteredScopeVideos.length} / ${scopeVideos.length}` : scopeVideos.length} 个视频

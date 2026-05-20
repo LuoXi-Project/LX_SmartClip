@@ -101,6 +101,8 @@ export type AutoEditPanelProps = {
   onExportJianyingDraft: (plan: AutoEditPlanApi, index: number) => void
   /** 口播快剪：隐藏 LLM 规划区，仅保留 BGM 与方案卡片（方案由上方快剪面板生成） */
   hideLlmPlannerUi?: boolean
+  plannerVariant?: 'default' | 'film'
+  candidatesSectionTitle?: string
 }
 
 export function AutoEditPanel({
@@ -184,6 +186,8 @@ export function AutoEditPanel({
   autoJianyingDraftDownloads,
   onExportJianyingDraft,
   hideLlmPlannerUi = false,
+  plannerVariant = 'default',
+  candidatesSectionTitle,
 }: AutoEditPanelProps) {
   const [detailPlan, setDetailPlan] = useState<{
     plan: AutoEditPlanApi
@@ -223,6 +227,7 @@ export function AutoEditPanel({
     <>
       <AutoEditPlannerSection
         hideLlmPlannerUi={hideLlmPlannerUi}
+        plannerVariant={plannerVariant}
         bgmTracks={bgmTracks}
         bgmListError={bgmListError}
         autoError={autoError}
@@ -297,7 +302,13 @@ export function AutoEditPanel({
       />
 
       {autoPlans.length > 0 && (
-        <AutoEditCandidatesSection
+        <>
+          {candidatesSectionTitle ? (
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+              {candidatesSectionTitle}
+            </p>
+          ) : null}
+          <AutoEditCandidatesSection
           autoPlans={autoPlans}
           subtitleEnabled={subtitleEnabled}
           autoExpandedPlanIds={autoExpandedPlanIds}
@@ -315,6 +326,7 @@ export function AutoEditPanel({
           autoJianyingDraftDownloads={autoJianyingDraftDownloads}
           onExportJianyingDraft={onExportJianyingDraft}
         />
+        </>
       )}
 
       <AutoEditDetailModal

@@ -44,6 +44,7 @@ import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
 import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
 import { ScriptStockPanel } from './_components/ScriptStockPanel'
+import { FilmCommentaryPanel } from './_components/FilmCommentaryPanel'
 import {
   buildVoiceoverRedubPlan,
   DEFAULT_VOICEOVER_TTS_ALIGN,
@@ -389,7 +390,11 @@ export default function MatchPage() {
     [videos]
   )
   const scopeVideos =
-    mode === 'voiceover' || mode === 'script_stock' || mode === 'mix_edit' || mode === 'video_dub'
+    mode === 'voiceover' ||
+    mode === 'script_stock' ||
+    mode === 'mix_edit' ||
+    mode === 'video_dub' ||
+    mode === 'film_commentary'
       ? voiceoverScopeVideos
       : doneVideos
   const selectedOrAllDoneVideos = useMemo(
@@ -839,6 +844,16 @@ export default function MatchPage() {
   const toggleVideo = (id: string) =>
     setSelectedVideoIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
 
+  const toggleScopeVideo = (id: string) => {
+    if (mode === 'film_commentary') {
+      setSelectedVideoIds([id])
+      return
+    }
+    toggleVideo(id)
+  }
+
+  const isFilmMode = mode === 'film_commentary'
+
   const buildManualBgmPayload = () => {
     if (!manualBgmEnabled || manualBgmTrackIds.length === 0) return undefined
     const timeline_segments = manualBgmTimelineSegments
@@ -1237,7 +1252,13 @@ export default function MatchPage() {
       let planForRealize = plan
       let forceTtsPipeline = false
       let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
-      if (mode === 'voiceover') {
+      if (mode === 'film_commentary') {
+        forceTtsPipeline = true
+        const voBgm = buildVoiceoverBgmPlanPayload()
+        if (voBgm) {
+          planForRealize = { ...planForRealize, bgm: voBgm }
+        }
+      } else if (mode === 'voiceover') {
         if (voiceoverRedubEnabled) {
           if (!voiceoverPlanSupportsRedub(planForRealize)) {
             const msg =
@@ -1305,7 +1326,13 @@ export default function MatchPage() {
       let planForExport = applyAutoBgmRealizeOptions(plan)
       let forceTtsPipeline = false
       let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
-      if (mode === 'voiceover') {
+      if (mode === 'film_commentary') {
+        forceTtsPipeline = true
+        const voBgm = buildVoiceoverBgmPlanPayload()
+        if (voBgm) {
+          planForExport = { ...planForExport, bgm: voBgm }
+        }
+      } else if (mode === 'voiceover') {
         const voBgm = buildVoiceoverBgmPlanPayload()
         if (voiceoverRedubEnabled) {
           if (!voiceoverPlanSupportsRedub(planForExport)) {
@@ -1370,17 +1397,19 @@ export default function MatchPage() {
   // PLACEHOLDER_JSX
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
-      <ExportSidebar
-        segments={segments} exportMode={exportMode} setExportMode={setExportMode}
-        exporting={exporting} exportError={exportError} onExport={handleExport}
-        subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
-        srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
-        matchMode={mode}
-      />
-      <div className="pr-64">
+      {!isFilmMode && (
+        <ExportSidebar
+          segments={segments} exportMode={exportMode} setExportMode={setExportMode}
+          exporting={exporting} exportError={exportError} onExport={handleExport}
+          subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
+          srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
+          matchMode={mode}
+        />
+      )}
+      <div className={isFilmMode ? '' : 'pr-64'}>
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
           <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
-          {doneVideos.length === 0 && mode !== 'script_stock' && (
+          {doneVideos.length === 0 && mode !== 'script_stock' && mode !== 'film_commentary' && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />
               <p className="text-sm text-slate-300">暂无可匹配素材，请先在<Link href="/process" className="mx-1 text-indigo-400 hover:underline">素材处理</Link>完成。</p>
@@ -1394,10 +1423,11 @@ export default function MatchPage() {
             videoPage={videoPage}
             videoTotalPages={videoTotalPages}
             selectedVideoIds={selectedVideoIds}
-            onToggleVideo={toggleVideo}
+            onToggleVideo={toggleScopeVideo}
             onSearchChange={handleVideoSearch}
             onPrevPage={() => setVideoPage((p) => Math.max(1, p - 1))}
             onNextPage={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
+            singleSelect={isFilmMode}
           />
 
           {mode === 'replica' ? (
@@ -1452,6 +1482,107 @@ export default function MatchPage() {
             </div>
           ) : mode === 'script_stock' ? (
             <ScriptStockPanel subtitleEnabled={subtitleEnabled} subtitleStyle={subtitleStyle} />
+          ) : mode === 'film_commentary' ? (
+            <>
+              <FilmCommentaryPanel
+                selectedVideoIds={selectedVideoIds}
+                doneVideos={scopeVideos}
+                subtitleEnabled={subtitleEnabled}
+                onPlanReady={(plan) => {
+                  setAutoPlans([plan])
+                  setAutoExpandedPlanIds([plan.plan_id])
+                }}
+              />
+              <AutoEditPanel
+                hideLlmPlannerUi
+                plannerVariant="film"
+                candidatesSectionTitle="方案预览 · 成片导出"
+                autoPrompt={autoPrompt}
+                onAutoPromptChange={setAutoPrompt}
+                autoMode="voiceover"
+                onAutoModeChange={setAutoMode}
+                autoTargetDuration={autoTargetDuration}
+                onAutoTargetDurationChange={setAutoTargetDuration}
+                autoNumPlans={1}
+                onAutoNumPlansChange={setAutoNumPlans}
+                autoBgmMixEnabled={autoBgmMixEnabled}
+                onAutoBgmMixEnabledChange={setAutoBgmMixEnabled}
+                autoBgmPlanPolicy={autoBgmPlanPolicy}
+                onAutoBgmPlanPolicyChange={setAutoBgmPlanPolicy}
+                autoBgmTrackFilename={autoBgmTrackFilename}
+                onAutoBgmTrackFilenameChange={setAutoBgmTrackFilename}
+                showVoiceoverBgmConfig={showVoiceoverBgmConfig}
+                voiceoverBgmEnabled={voiceoverBgmEnabled}
+                onVoiceoverBgmEnabledChange={setVoiceoverBgmEnabled}
+                bgmTracksForVoiceover={bgmTracks}
+                bgmListErrorForVoiceover={bgmListError}
+                selectedVoiceoverBgmTrackIds={voiceoverBgmTrackIds}
+                onToggleVoiceoverBgmTrack={(trackId) => {
+                  setVoiceoverBgmTrackIds((prev) =>
+                    prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId],
+                  )
+                }}
+                voiceoverBgmVolumeByTrackId={voiceoverBgmVolumeByTrackId}
+                onVoiceoverBgmTrackVolumeChange={(trackId, volumeDb) => {
+                  setVoiceoverBgmVolumeByTrackId((prev) => ({ ...prev, [trackId]: volumeDb }))
+                }}
+                voiceoverBgmTimelineSegments={voiceoverBgmTimelineSegments}
+                onAddVoiceoverBgmTimelineSegment={() => {
+                  setVoiceoverBgmTimelineSegments((prev) => [
+                    ...prev,
+                    { id: `fbgm_${Date.now()}`, startSec: 0, endSec: 10 },
+                  ])
+                }}
+                onRemoveVoiceoverBgmTimelineSegment={(id) => {
+                  setVoiceoverBgmTimelineSegments((prev) => prev.filter((seg) => seg.id !== id))
+                }}
+                onUpdateVoiceoverBgmTimelineSegment={(id, patch) => {
+                  setVoiceoverBgmTimelineSegments((prev) =>
+                    prev.map((seg) => (seg.id === id ? { ...seg, ...patch } : seg)),
+                  )
+                }}
+                autoUseTimelineEngine={false}
+                onAutoUseTimelineEngineChange={setAutoUseTimelineEngine}
+                processingProfileLocked={false}
+                autoContentStyle="commentary"
+                onAutoContentStyleChange={setAutoContentStyle}
+                autoEventsAdvancedEnabled={false}
+                onAutoEventsAdvancedEnabledChange={setAutoEventsAdvancedEnabled}
+                autoEventsMaxClipsPerBatch={autoEventsMaxClipsPerBatch}
+                onAutoEventsMaxClipsPerBatchChange={setAutoEventsMaxClipsPerBatch}
+                autoEventsMaxCharsPerBatch={autoEventsMaxCharsPerBatch}
+                onAutoEventsMaxCharsPerBatchChange={setAutoEventsMaxCharsPerBatch}
+                autoEventsBatchOverlapClips={autoEventsBatchOverlapClips}
+                onAutoEventsBatchOverlapClipsChange={setAutoEventsBatchOverlapClips}
+                autoEventsMaxBatches={autoEventsMaxBatches}
+                onAutoEventsMaxBatchesChange={setAutoEventsMaxBatches}
+                recommendedProfile={recommendedProfile}
+                estimatedBatches={estimatedBatches}
+                estimatedSeconds={estimatedSeconds}
+                estimatedTotalClips={estimatedTotalClips}
+                onResetAdvancedToRecommended={() => {}}
+                autoExplain={false}
+                onAutoExplainChange={setAutoExplain}
+                autoLoading={autoLoading}
+                autoError={autoError}
+                autoPlans={autoPlans}
+                autoExpandedPlanIds={autoExpandedPlanIds}
+                onTogglePlanExpand={toggleAutoExpandedPlan}
+                autoRealizingId={autoRealizingId}
+                autoRealizeMsg={autoRealizeMsg}
+                autoRealizeDownloads={autoRealizeDownloads}
+                autoPlanLogs={[]}
+                autoPlanElapsedSec={0}
+                autoPlanStage="idle"
+                autoPlanStagePercent={autoPlanStagePercent}
+                subtitleEnabled={subtitleEnabled}
+                onGeneratePlans={() => {}}
+                onRealizePlan={handleAutoRealizePlan}
+                autoJianyingDraftExportingId={autoJianyingDraftExportingId}
+                autoJianyingDraftDownloads={autoJianyingDraftDownloads}
+                onExportJianyingDraft={handleAutoExportJianyingDraft}
+              />
+            </>
           ) : mode === 'auto' || mode === 'template' ? (
             <>
               {autoPrompt.trim().startsWith('【复刻模板约束】') ? (
@@ -1952,7 +2083,6 @@ export default function MatchPage() {
               />
             </>
           )}
-          {/* 各模式共用：字幕样式手调 + 时间轴预览（条目由导出/成片流程生成） */}
           <MatchSubtitleWorkspace
             style={subtitleStyle}
             onStyleChange={setSubtitleStyle}
@@ -1975,6 +2105,14 @@ export default function MatchPage() {
             srtError={srtError}
             footer={
               <>
+                {isFilmMode && (
+                  <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3 text-xs text-violet-200/90 space-y-1">
+                    <p className="font-semibold text-violet-200">影视解说 · 字幕成片</p>
+                    <p className="text-[11px] text-violet-200/70 leading-relaxed">
+                      展开上方「字幕设置」可调整字体、位置与描边等；关闭「添加字幕」后，方案卡片中的手动合成与剪映导出将不烧录字幕。
+                    </p>
+                  </div>
+                )}
                 {exportMode === 'subtitle' && readySegs.length > 0 && (
                   <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-400 space-y-1">
                     <p className="font-semibold">💬 一键成片流程</p>

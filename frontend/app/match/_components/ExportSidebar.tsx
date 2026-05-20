@@ -151,7 +151,9 @@ export function ExportSidebar({
       <div className="px-5 py-5 space-y-3">
         {isAutoLikeMode(matchMode) ? (
           <p className="text-[11px] text-slate-500 leading-snug text-center">
-            {matchMode === 'script_stock'
+            {matchMode === 'film_commentary'
+              ? '影视解说：主区启动一键成片任务；方案生成后可「载入方案卡片」在下方一键成片或导出剪映草稿。'
+              : matchMode === 'script_stock'
               ? '文案素材成片：主区「合成配音成片」导出 MP4；「导出剪映草稿」单独生成 ZIP（与成片互斥）。自动 / 模板 / 口播快剪 / 混剪：方案卡片上同样分「一键成片」与「仅导出剪映草稿」。'
               : matchMode === 'mix_edit'
                 ? '混剪：生成方案后在下方卡片「一键成片」；模式二选 AI 配音时将走 TTS 管线。'

@@ -123,6 +123,33 @@ CREATE TABLE IF NOT EXISTS video_summary_versions (
 );
 """
 
+CREATE_FILM_COMMENTARY_JOBS = """
+CREATE TABLE IF NOT EXISTS film_commentary_jobs (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    current_step TEXT,
+    mode TEXT NOT NULL DEFAULT 'precise',
+    style TEXT NOT NULL DEFAULT 'suspense',
+    target_duration_sec INTEGER NOT NULL DEFAULT 300,
+    auto_render INTEGER NOT NULL DEFAULT 1,
+    include_subtitle INTEGER NOT NULL DEFAULT 1,
+    progress_json TEXT,
+    error_message TEXT,
+    clip_summaries_json TEXT,
+    storyline_json TEXT,
+    sentences_json TEXT,
+    alignments_json TEXT,
+    plan_json TEXT,
+    output_path TEXT,
+    output_url TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT,
+    FOREIGN KEY (video_id) REFERENCES videos(id)
+);
+"""
+
 CREATE_VIDEO_SMART_OUTLINES = """
 CREATE TABLE IF NOT EXISTS video_smart_outlines (
     video_id TEXT PRIMARY KEY,
@@ -468,6 +495,7 @@ async def init_db():
         await db.execute(CREATE_VIDEO_SUMMARIES)
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
         await db.execute(CREATE_VIDEO_SMART_OUTLINES)
+        await db.execute(CREATE_FILM_COMMENTARY_JOBS)
         # 旧版分块表已废弃，启动时删除（若存在）
         try:
             await db.execute("DROP TABLE IF EXISTS video_summary_sections")

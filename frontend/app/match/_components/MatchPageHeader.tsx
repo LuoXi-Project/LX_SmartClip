@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Sparkles, ListVideo, Mic2, Link2, Clapperboard, Layers, Volume2 } from 'lucide-react'
+import { ArrowLeft, Sparkles, ListVideo, Mic2, Link2, Clapperboard, Layers, Volume2, Film } from 'lucide-react'
 import type { MatchWorkspaceMode } from './matchModeTypes'
 
 type MatchPageHeaderProps = {
@@ -54,6 +54,12 @@ export function MatchPageHeader({ mode, onModeChange, onOpenVideoResult }: Match
               '文案素材成片',
               <Clapperboard className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
               'bg-sky-600 text-white'
+            )}
+            {tab(
+              'film_commentary',
+              '影视解说',
+              <Film className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
+              'bg-violet-600 text-white'
             )}
             {tab(
               'auto',

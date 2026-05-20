@@ -10,6 +10,8 @@ import { VoiceInputControl } from '@/components/ui/voice-input'
 
 export type AutoEditPlannerSectionProps = {
   hideLlmPlannerUi?: boolean
+  /** 影视解说：仅展示成片 BGM + 说明，不展示 LLM 规划表单 */
+  plannerVariant?: 'default' | 'film'
 
   bgmTracks: BgmTrack[]
   bgmListError: string
@@ -104,6 +106,7 @@ export type AutoEditPlannerSectionProps = {
 
 export function AutoEditPlannerSection({
   hideLlmPlannerUi = false,
+  plannerVariant = 'default',
 
   bgmTracks,
   bgmListError,
@@ -190,6 +193,55 @@ export function AutoEditPlannerSection({
   autoPlanStagePercent,
 }: AutoEditPlannerSectionProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const isFilmPlanner = plannerVariant === 'film'
+
+  if (isFilmPlanner) {
+    return (
+      <section className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-5 space-y-4">
+        <p className="text-xs font-semibold text-violet-300 uppercase tracking-widest flex items-center gap-2">
+          <Sparkles className="w-4 h-4" />
+          影视解说 · 成片设置
+        </p>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          剪辑方案由上方流水线生成。请在此选择背景音乐，在下方<strong className="text-slate-400">方案预览</strong>
+          中检查分镜与文案，再手动「合成配音成片」或「导出剪映草稿」。
+        </p>
+        <AutoEditBgmMixPanel
+          wrapperClassName="space-y-2"
+          bgmTracks={bgmTracks}
+          bgmListError={bgmListError}
+          autoBgmMixEnabled={autoBgmMixEnabled}
+          onAutoBgmMixEnabledChange={onAutoBgmMixEnabledChange}
+          autoBgmPlanPolicy={autoBgmPlanPolicy}
+          onAutoBgmPlanPolicyChange={onAutoBgmPlanPolicyChange}
+          autoBgmTrackFilename={autoBgmTrackFilename}
+          onAutoBgmTrackFilenameChange={onAutoBgmTrackFilenameChange}
+          helperText="BGM 在点击「合成配音成片」时混入最终 MP4。"
+          strategyLabel="成片 BGM 策略"
+          emptyBgmHintPrefix="曲库暂无曲目时可到"
+          hideTrackSelector={showVoiceoverBgmConfig}
+        />
+        <BgmCustomConfigPanel
+          title="影视解说 BGM（成片混音）"
+          enabled={voiceoverBgmEnabled}
+          onEnabledChange={(v) => onVoiceoverBgmEnabledChange?.(v)}
+          showConfig={showVoiceoverBgmConfig}
+          hiddenHint="请先在上方启用 BGM 并选择「用户指定」或具体曲目，再配置分段音量与时间轴。"
+          bgmTracks={bgmTracksForVoiceover}
+          bgmListError={bgmListErrorForVoiceover}
+          selectedTrackIds={selectedVoiceoverBgmTrackIds}
+          onToggleTrack={(id) => onToggleVoiceoverBgmTrack?.(id)}
+          volumeByTrackId={voiceoverBgmVolumeByTrackId}
+          onTrackVolumeChange={(id, db) => onVoiceoverBgmTrackVolumeChange?.(id, db)}
+          timelineSegments={voiceoverBgmTimelineSegments}
+          onAddTimelineSegment={() => onAddVoiceoverBgmTimelineSegment?.()}
+          onRemoveTimelineSegment={(id) => onRemoveVoiceoverBgmTimelineSegment?.(id)}
+          onUpdateTimelineSegment={(id, patch) => onUpdateVoiceoverBgmTimelineSegment?.(id, patch)}
+        />
+      </section>
+    )
+  }
+
   return (
     <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 space-y-4">
       <p className="text-xs font-semibold text-emerald-300 uppercase tracking-widest flex items-center gap-2">

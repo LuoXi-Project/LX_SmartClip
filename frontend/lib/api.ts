@@ -1368,3 +1368,81 @@ export const voiceInputApi = {
   refine: (body: VoiceRefineBody) =>
     apiClient.post<unknown, { text: string }>('/api/voice/refine', body),
 }
+
+/** 影视解说专区 */
+export type FilmMode = 'precise' | 'lightweight'
+export type FilmStyle = 'suspense' | 'humor' | 'deep' | 'fast'
+export type FilmJobStatus =
+  | 'pending'
+  | 'parsing'
+  | 'scripting'
+  | 'aligning'
+  | 'planning'
+  | 'rendering'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+
+export interface FilmSentence {
+  index: number
+  text: string
+  tag?: string | null
+}
+
+export interface FilmAlignment {
+  sentence_index: number
+  clip_id: string
+  video_id: string
+  start_time: number
+  end_time: number
+  score: number
+  reason: string
+}
+
+export interface FilmCommentaryJob {
+  id: string
+  video_id: string
+  video_name?: string | null
+  status: FilmJobStatus
+  current_step?: string | null
+  mode: FilmMode
+  style: FilmStyle
+  target_duration_sec: number
+  auto_render: boolean
+  include_subtitle: boolean
+  progress: Record<string, { status: string; message: string; detail?: Record<string, unknown> }>
+  error_message?: string | null
+  storyline?: Record<string, string> | null
+  sentences: FilmSentence[]
+  alignments: FilmAlignment[]
+  plan?: Record<string, unknown> | null
+  output_url?: string | null
+  output_filename?: string | null
+  created_at: string
+  updated_at: string
+  finished_at?: string | null
+}
+
+export interface FilmCommentaryCreateBody {
+  video_id: string
+  mode?: FilmMode
+  style?: FilmStyle
+  target_duration_sec?: number
+  auto_render?: boolean
+  include_subtitle?: boolean
+}
+
+export const filmCommentaryApi = {
+  list: (limit = 30) =>
+    apiClient.get<unknown, { items: FilmCommentaryJob[]; total: number }>('/api/film/jobs', {
+      params: { limit },
+    }),
+  get: (jobId: string) =>
+    apiClient.get<unknown, FilmCommentaryJob>(`/api/film/jobs/${jobId}`),
+  create: (body: FilmCommentaryCreateBody) =>
+    apiClient.post<unknown, FilmCommentaryJob>('/api/film/jobs', body),
+  cancel: (jobId: string) =>
+    apiClient.post<unknown, { ok: boolean; job_id: string }>(`/api/film/jobs/${jobId}/cancel`),
+  retry: (jobId: string) =>
+    apiClient.post<unknown, FilmCommentaryJob>(`/api/film/jobs/${jobId}/retry`),
+}

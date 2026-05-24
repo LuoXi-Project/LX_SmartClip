@@ -32,6 +32,15 @@ def _loads(raw: str | None, default: Any) -> Any:
         return default
 
 
+def _prompt_overrides_to_json(overrides: dict | None) -> str | None:
+    if not overrides:
+        return None
+    cleaned = {k: v for k, v in overrides.items() if v and str(v).strip()}
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
 async def create_job(
     *,
     video_id: str,
@@ -40,6 +49,7 @@ async def create_job(
     target_duration_sec: int,
     auto_render: bool,
     include_subtitle: bool,
+    prompt_overrides: dict | None = None,
 ) -> str:
     job_id = str(uuid.uuid4())
     now = _now()
@@ -50,8 +60,8 @@ async def create_job(
             INSERT INTO film_commentary_jobs (
                 id, video_id, status, current_step, mode, style,
                 target_duration_sec, auto_render, include_subtitle,
-                progress_json, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                prompt_overrides_json, progress_json, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 job_id,
@@ -63,6 +73,7 @@ async def create_job(
                 target_duration_sec,
                 1 if auto_render else 0,
                 1 if include_subtitle else 0,
+                _prompt_overrides_to_json(prompt_overrides),
                 "{}",
                 now,
                 now,

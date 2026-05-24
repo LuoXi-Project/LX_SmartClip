@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Film, Info, Loader2, RefreshCw, Sparkles, XCircle } from 'lucide-react'
+import { ChevronDown, ChevronUp, Film, Info, Loader2, RefreshCw, RotateCcw, Sparkles, XCircle } from 'lucide-react'
 import {
   filmCommentaryApi,
   formatFastApiDetail,
@@ -32,6 +32,7 @@ const STYLE_OPTIONS: { id: FilmStyle; label: string }[] = [
   { id: 'humor', label: '吐槽幽默' },
   { id: 'deep', label: '深度解析' },
   { id: 'fast', label: '快节奏' },
+  { id: 'wilderness', label: '荒野作死' },
 ]
 
 const ACTIVE: FilmJobStatus[] = [
@@ -42,6 +43,9 @@ const ACTIVE: FilmJobStatus[] = [
   'planning',
   'rendering',
 ]
+
+/** 模板默认成片时长（秒）；用户可在「解说编剧 · System」中自行修改时长与分句数 */
+const DEFAULT_TARGET_DURATION_SEC = 300
 
 function isActive(status: FilmJobStatus) {
   return ACTIVE.includes(status)
@@ -65,10 +69,45 @@ export function FilmCommentaryPanel({
   const primaryVideoId = selectedVideoIds[0] ?? ''
   const [parseMode, setParseMode] = useState<FilmMode>('precise')
   const [style, setStyle] = useState<FilmStyle>('suspense')
-  const [targetMin, setTargetMin] = useState(5)
+  const [promptsOpen, setPromptsOpen] = useState(false)
+  const [promptsLoading, setPromptsLoading] = useState(false)
+  const [styleHint, setStyleHint] = useState('')
+  const [screenplaySystem, setScreenplaySystem] = useState('')
+  const [promptsDirty, setPromptsDirty] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [jobs, setJobs] = useState<FilmCommentaryJob[]>([])
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
+
+  const loadPromptTemplates = useCallback(async () => {
+    setPromptsLoading(true)
+    try {
+      const tpl = await filmCommentaryApi.promptTemplates({
+        style,
+        mode: parseMode,
+        target_duration_sec: DEFAULT_TARGET_DURATION_SEC,
+      })
+      setStyleHint(tpl.style_hint)
+      setScreenplaySystem(tpl.screenplay_system_prompt)
+    } catch (e) {
+      toast.error(formatFastApiDetail(e))
+    } finally {
+      setPromptsLoading(false)
+    }
+  }, [parseMode, style, toast])
+
+  useEffect(() => {
+    if (promptsDirty) return
+    loadPromptTemplates()
+  }, [loadPromptTemplates, promptsDirty])
+
+  const resetPromptTemplates = () => {
+    setPromptsDirty(false)
+    loadPromptTemplates()
+  }
+
+  const markPromptsDirty = () => {
+    setPromptsDirty(true)
+  }
 
   const primaryVideo = useMemo(
     () => doneVideos.find((x) => x.id === primaryVideoId),
@@ -129,9 +168,13 @@ export function FilmCommentaryPanel({
         video_id: primaryVideoId,
         mode: parseMode,
         style,
-        target_duration_sec: Math.max(60, Math.min(1800, targetMin * 60)),
+        target_duration_sec: DEFAULT_TARGET_DURATION_SEC,
         auto_render: false,
         include_subtitle: subtitleEnabled,
+        prompt_overrides:
+          promptsDirty && screenplaySystem.trim()
+            ? { screenplay_system_prompt: screenplaySystem.trim() }
+            : undefined,
       })
       toast.success('流水线已启动，完成后请在下方预览并手动成片')
       setSelectedJobId(job.id)
@@ -217,16 +260,61 @@ export function FilmCommentaryPanel({
         </div>
       </div>
 
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">目标成片：约 {targetMin} 分钟</label>
-        <input
-          type="range"
-          min={2}
-          max={30}
-          value={targetMin}
-          onChange={(e) => setTargetMin(Number(e.target.value))}
-          className="w-full"
-        />
+      <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setPromptsOpen((v) => !v)}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-900/50"
+        >
+          <span>编剧提示词微调（可选）</span>
+          <span className="flex items-center gap-2 text-[10px] text-slate-600">
+            {promptsDirty ? '已自定义' : '使用模板默认'}
+            {promptsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </span>
+        </button>
+        {promptsOpen && (
+          <div className="border-t border-slate-800 px-3 py-3 space-y-3">
+            {styleHint && (
+              <p className="text-[10px] text-violet-400/80 leading-relaxed">风格说明：{styleHint}</p>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={resetPromptTemplates}
+                disabled={promptsLoading}
+                className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-violet-300 disabled:opacity-50"
+              >
+                <RotateCcw className="w-3 h-3" />
+                恢复模板默认
+              </button>
+            </div>
+            {promptsLoading ? (
+              <p className="text-[11px] text-slate-500 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                加载模板…
+              </p>
+            ) : (
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-1">
+                  解说编剧 · System（切换风格会刷新，已编辑则保留）
+                </label>
+                <p className="text-[10px] text-slate-600 mb-2 leading-relaxed">
+                  剧情摘要与输出格式由系统固定；成片时长与分句数量可在本提示中修改（如「目标成片约
+                  …秒，解说分句约 …句」），亦可调整人设、语气与叙事要求。
+                </p>
+                <textarea
+                  value={screenplaySystem}
+                  onChange={(e) => {
+                    markPromptsDirty()
+                    setScreenplaySystem(e.target.value)
+                  }}
+                  rows={10}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-[11px] text-slate-300 font-mono leading-relaxed resize-y min-h-[160px]"
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <button

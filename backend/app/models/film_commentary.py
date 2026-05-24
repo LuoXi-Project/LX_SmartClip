@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from app.models.auto_edit import Plan
 
 FilmMode = Literal["precise", "lightweight"]
-FilmStyle = Literal["suspense", "humor", "deep", "fast"]
+FilmStyle = Literal["suspense", "humor", "deep", "fast", "wilderness"]
 FilmJobStatus = Literal[
     "pending",
     "parsing",
@@ -22,6 +22,33 @@ FilmJobStatus = Literal[
 ]
 
 
+class FilmPromptOverrides(BaseModel):
+    """可选：覆盖默认 LLM 提示词；留空则使用风格模板默认值。"""
+
+    summarize_system_prompt: Optional[str] = Field(
+        None,
+        description="L2 剧情摘要 system 提示词",
+    )
+    screenplay_system_prompt: Optional[str] = Field(
+        None,
+        description="L3 编剧 system 提示词",
+    )
+    screenplay_user_prompt_template: Optional[str] = Field(
+        None,
+        description="L3 编剧 user 模板，占位符 {video_name}、{summaries_text}",
+    )
+
+
+class FilmPromptTemplatesResponse(BaseModel):
+    style: FilmStyle
+    style_hint: str
+    target_duration_sec: int
+    mode: FilmMode
+    summarize_system_prompt: str
+    screenplay_system_prompt: str
+    screenplay_user_prompt_template: str
+
+
 class FilmCommentaryCreateRequest(BaseModel):
     video_id: str = Field(..., description="素材库视频 ID")
     mode: FilmMode = Field("precise", description="precise=VLM+ASR；lightweight=仅 ASR+通识")
@@ -29,6 +56,10 @@ class FilmCommentaryCreateRequest(BaseModel):
     target_duration_sec: int = Field(300, ge=60, le=1800, description="目标成片时长（秒）")
     auto_render: bool = Field(True, description="对齐完成后自动 TTS 配音出片")
     include_subtitle: bool = Field(True, description="出片是否烧录字幕")
+    prompt_overrides: Optional[FilmPromptOverrides] = Field(
+        None,
+        description="自定义提示词；未传字段沿用模板默认",
+    )
 
 
 class FilmSentence(BaseModel):

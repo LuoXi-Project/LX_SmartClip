@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS film_commentary_jobs (
     target_duration_sec INTEGER NOT NULL DEFAULT 300,
     auto_render INTEGER NOT NULL DEFAULT 1,
     include_subtitle INTEGER NOT NULL DEFAULT 1,
+    prompt_overrides_json TEXT,
     progress_json TEXT,
     error_message TEXT,
     clip_summaries_json TEXT,
@@ -496,6 +497,16 @@ async def init_db():
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
         await db.execute(CREATE_VIDEO_SMART_OUTLINES)
         await db.execute(CREATE_FILM_COMMENTARY_JOBS)
+        # 兼容旧库：film_commentary_jobs 补 prompt_overrides_json
+        try:
+            cur = await db.execute("PRAGMA table_info(film_commentary_jobs)")
+            film_cols = [str(r[1]) for r in await cur.fetchall()]
+            if "prompt_overrides_json" not in film_cols:
+                await db.execute(
+                    "ALTER TABLE film_commentary_jobs ADD COLUMN prompt_overrides_json TEXT"
+                )
+        except Exception:
+            pass
         # 旧版分块表已废弃，启动时删除（若存在）
         try:
             await db.execute("DROP TABLE IF EXISTS video_summary_sections")

@@ -60,6 +60,15 @@ async def run_film_commentary_job(job_id: str) -> None:
     job = row_to_job(row)
     video_id = job.video_id
     mode = job.mode
+    prompt_overrides: dict = {}
+    raw_overrides = row.get("prompt_overrides_json")
+    if raw_overrides:
+        try:
+            parsed = json.loads(raw_overrides)
+            if isinstance(parsed, dict):
+                prompt_overrides = parsed
+        except Exception:
+            prompt_overrides = {}
     _cancel_events[job_id] = asyncio.Event()
 
     try:
@@ -96,7 +105,12 @@ async def run_film_commentary_job(job_id: str) -> None:
         # ── L2 摘要 ──
         await update_job_fields(job_id, status="scripting")
         await update_job_progress(job_id, "summarize", "running", "正在精炼剧情摘要…")
-        summaries = await summarize_clips(llm=runtime.llm, clips=clips, mode=mode)
+        summaries = await summarize_clips(
+            llm=runtime.llm,
+            clips=clips,
+            mode=mode,
+            system_prompt=prompt_overrides.get("summarize_system_prompt"),
+        )
         await update_job_fields(
             job_id,
             clip_summaries_json=json.dumps(summaries, ensure_ascii=False),
@@ -112,6 +126,8 @@ async def run_film_commentary_job(job_id: str) -> None:
             video_name=video.get("name") or "",
             style=job.style,
             target_duration_sec=job.target_duration_sec,
+            system_prompt=prompt_overrides.get("screenplay_system_prompt"),
+            user_prompt_template=prompt_overrides.get("screenplay_user_prompt_template"),
         )
         if not sentences:
             raise RuntimeError("解说文案生成为空")

@@ -1371,7 +1371,7 @@ export const voiceInputApi = {
 
 /** 影视解说专区 */
 export type FilmMode = 'precise' | 'lightweight'
-export type FilmStyle = 'suspense' | 'humor' | 'deep' | 'fast'
+export type FilmStyle = 'suspense' | 'humor' | 'deep' | 'fast' | 'wilderness'
 export type FilmJobStatus =
   | 'pending'
   | 'parsing'
@@ -1423,6 +1423,22 @@ export interface FilmCommentaryJob {
   finished_at?: string | null
 }
 
+export interface FilmPromptOverrides {
+  summarize_system_prompt?: string
+  screenplay_system_prompt?: string
+  screenplay_user_prompt_template?: string
+}
+
+export interface FilmPromptTemplates {
+  style: FilmStyle
+  style_hint: string
+  target_duration_sec: number
+  mode: FilmMode
+  summarize_system_prompt: string
+  screenplay_system_prompt: string
+  screenplay_user_prompt_template: string
+}
+
 export interface FilmCommentaryCreateBody {
   video_id: string
   mode?: FilmMode
@@ -1430,9 +1446,16 @@ export interface FilmCommentaryCreateBody {
   target_duration_sec?: number
   auto_render?: boolean
   include_subtitle?: boolean
+  prompt_overrides?: FilmPromptOverrides
 }
 
 export const filmCommentaryApi = {
+  promptTemplates: (params: {
+    style?: FilmStyle
+    mode?: FilmMode
+    target_duration_sec?: number
+  }) =>
+    apiClient.get<unknown, FilmPromptTemplates>('/api/film/prompt-templates', { params }),
   list: (limit = 30) =>
     apiClient.get<unknown, { items: FilmCommentaryJob[]; total: number }>('/api/film/jobs', {
       params: { limit },

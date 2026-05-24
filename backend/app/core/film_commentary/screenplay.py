@@ -28,21 +28,22 @@ async def generate_screenplay(
     video_name: str,
     style: str,
     target_duration_sec: int,
+    system_prompt: str | None = None,
+    user_prompt_template: str | None = None,
 ) -> Tuple[Dict[str, Any], List[FilmSentence]]:
     """L3：六段式故事线 + 分句解说文案。"""
+    sys_content = (system_prompt or "").strip() or screenplay_system_prompt(
+        style=style,
+        target_duration_sec=target_duration_sec,
+    )
     user = screenplay_user_prompt(
         summaries_text=_summaries_to_text(summaries),
         video_name=video_name,
+        template=user_prompt_template,
     )
     raw = await llm.chat(
         [
-            {
-                "role": "system",
-                "content": screenplay_system_prompt(
-                    style=style,
-                    target_duration_sec=target_duration_sec,
-                ),
-            },
+            {"role": "system", "content": sys_content},
             {"role": "user", "content": user},
         ],
         temperature=0.75,

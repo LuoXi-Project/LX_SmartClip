@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.core.llm import LLMClient
-from app.core.llm.response_utils import extract_json_object
+from app.core.llm.response_utils import extract_json_value
 from app.core.film_commentary.prompts import summarize_system_prompt, summarize_user_prompt
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ async def summarize_clips(
     llm: LLMClient,
     clips: List[dict],
     mode: str,
+    system_prompt: str | None = None,
 ) -> List[Dict[str, Any]]:
     """L2：单切片剧情摘要。"""
     out: List[Dict[str, Any]] = []
@@ -36,15 +37,16 @@ async def summarize_clips(
         batch = clips[i : i + _BATCH_SIZE]
         lines = [_clip_payload_line(c, mode=mode) for c in batch]
         user = summarize_user_prompt("\n".join(lines))
+        sys_content = (system_prompt or "").strip() or summarize_system_prompt(mode=mode)
         raw = await llm.chat(
             [
-                {"role": "system", "content": summarize_system_prompt(mode=mode)},
+                {"role": "system", "content": sys_content},
                 {"role": "user", "content": user},
             ],
             temperature=0.4,
         )
         try:
-            data = json.loads(extract_json_object(raw))
+            data = json.loads(extract_json_value(raw))
         except Exception as e:
             logger.warning("摘要批次解析失败，使用兜底: %s", e)
             data = []

@@ -13,15 +13,41 @@ from app.core.film_commentary.db import (
     row_to_job,
 )
 from app.core.film_commentary.pipeline import request_cancel, schedule_job
+from app.core.film_commentary.prompts import get_prompt_templates
 from app.models.film_commentary import (
     FilmCommentaryCreateRequest,
     FilmCommentaryJob,
     FilmCommentaryJobListResponse,
+    FilmMode,
+    FilmPromptTemplatesResponse,
+    FilmStyle,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/film", tags=["film-commentary"])
+
+
+@router.get("/prompt-templates", response_model=FilmPromptTemplatesResponse)
+async def get_film_prompt_templates(
+    style: FilmStyle = Query("suspense"),
+    mode: FilmMode = Query("precise"),
+    target_duration_sec: int = Query(300, ge=60, le=1800),
+):
+    tpl = get_prompt_templates(
+        style=style,
+        target_duration_sec=target_duration_sec,
+        mode=mode,
+    )
+    return FilmPromptTemplatesResponse(
+        style=style,
+        style_hint=tpl["style_hint"],
+        target_duration_sec=target_duration_sec,
+        mode=mode,
+        summarize_system_prompt=tpl["summarize_system_prompt"],
+        screenplay_system_prompt=tpl["screenplay_system_prompt"],
+        screenplay_user_prompt_template=tpl["screenplay_user_prompt_template"],
+    )
 
 
 @router.get("/jobs", response_model=FilmCommentaryJobListResponse)
@@ -45,6 +71,10 @@ async def create_film_job(req: FilmCommentaryCreateRequest):
     if not video:
         raise HTTPException(status_code=404, detail="视频不存在，请先在素材库上传")
 
+    overrides: dict | None = None
+    if req.prompt_overrides:
+        overrides = req.prompt_overrides.model_dump(exclude_none=True)
+
     job_id = await create_job(
         video_id=req.video_id,
         mode=req.mode,
@@ -52,6 +82,7 @@ async def create_film_job(req: FilmCommentaryCreateRequest):
         target_duration_sec=req.target_duration_sec,
         auto_render=req.auto_render,
         include_subtitle=req.include_subtitle,
+        prompt_overrides=overrides,
     )
     schedule_job(job_id)
     row = await get_job_row(job_id)

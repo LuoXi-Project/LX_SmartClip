@@ -13,7 +13,7 @@ class UpdateVideoPayload(BaseModel):
 
 
 class ImportVideoByUrlPayload(BaseModel):
-    url: str = Field(..., min_length=5, description="要下载的视频链接（由 yt-dlp 处理）")
+    url: str = Field(..., min_length=5, description="视频链接（抖音分享链接或其它 yt-dlp 支持的站点）")
     title: Optional[str] = Field(None, description="可选：导入后素材名称")
     resolution: Literal["best", "1080p", "720p", "480p", "360p"] = Field(
         "best",

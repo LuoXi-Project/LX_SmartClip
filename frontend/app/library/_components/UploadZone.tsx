@@ -121,12 +121,14 @@ export function UploadZone({
         </label>
 
         <div className="w-full mt-6 border-t border-slate-700/60 pt-5">
-          <p className="text-xs text-slate-500 mb-3">或使用链接下载导入（yt-dlp）</p>
+          <p className="text-xs text-slate-500 mb-3">
+            或使用链接导入：抖音分享链接（无需登录）· 其它平台由 yt-dlp 处理
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <input
               value={importUrl}
               onChange={(e) => onImportUrlChange(e.target.value)}
-              placeholder="输入视频链接（YouTube/B 站等）"
+              placeholder="抖音分享链接 / YouTube / B 站等"
               disabled={importingUrl}
               className="md:col-span-2 h-10 rounded-lg bg-slate-900/80 border border-slate-700 px-3 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-cyan-500/50"
             />

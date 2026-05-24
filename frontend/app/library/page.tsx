@@ -184,7 +184,7 @@ export default function LibraryPage() {
       setPage(1)
     } catch (error) {
       console.error('Import by URL failed:', error)
-      toast.error('链接导入失败，请检查链接或 yt-dlp 环境')
+      toast.error('链接导入失败，请检查链接格式或网络')
     } finally {
       setImportingUrl(false)
     }

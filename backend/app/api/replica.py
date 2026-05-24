@@ -27,7 +27,7 @@ from app.models.replica import (
 from app.utils.ffprobe_utils import probe_duration
 from app.utils.paths import ensure_storage_subpath, to_stored_path
 from app.utils.video_thumbnail import generate_thumbnail
-from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
+from app.utils.video_link_downloader import VideoLinkDownloadError, download_video_from_link
 
 logger = logging.getLogger(__name__)
 
@@ -173,15 +173,16 @@ def _fmt_time(seconds: float) -> str:
 
 async def _download_reference_video(req: ReplicaIngestRequest, *, video_id: str) -> str:
     """
-    用 yt-dlp 下载参考视频到 ``storage/<video_id>/videos/``，返回最终落盘文件路径。
+    下载参考视频到 ``storage/<video_id>/videos/``（抖音匿名解析，其它站点 yt-dlp）。
     """
     try:
-        return download_video_with_yt_dlp(
+        path, _ = download_video_from_link(
             url=req.url,
             output_dir=ensure_storage_subpath(video_id, "videos"),
             file_stem="source",
         )
-    except YtDlpDownloadError as exc:
+        return path
+    except VideoLinkDownloadError as exc:
         detail = str(exc)
         status = 501 if "未检测到 yt-dlp" in detail else 502
         raise HTTPException(status_code=status, detail=detail) from exc

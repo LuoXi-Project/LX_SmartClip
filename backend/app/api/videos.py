@@ -14,7 +14,7 @@ from app.utils.bin_paths import ffmpeg_bin
 from app.utils.material_media_names import REENCODED_VIDEO_NAME, source_video_basename
 from app.utils.paths import ensure_storage_subpath, resolve_stored_path, to_stored_path
 from app.utils.video_thumbnail import generate_thumbnail
-from app.utils.yt_dlp_downloader import YtDlpDownloadError, download_video_with_yt_dlp
+from app.utils.video_link_downloader import VideoLinkDownloadError, download_video_from_link
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +146,8 @@ async def upload_video(file: UploadFile = File(...)):
 @router.post("/import-url")
 async def import_video_by_url(payload: ImportVideoByUrlPayload):
     video_id = str(uuid.uuid4())
-    name = (payload.title or "").strip() or f"yt_import_{video_id[:8]}"
     try:
-        save_path = download_video_with_yt_dlp(
+        save_path, inferred_title = download_video_from_link(
             url=payload.url.strip(),
             output_dir=ensure_storage_subpath(video_id, "videos"),
             file_stem="source",
@@ -156,11 +155,13 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
             fps_limit=payload.fps_limit,
             prefer_mp4=payload.prefer_mp4,
         )
-    except YtDlpDownloadError as exc:
+    except VideoLinkDownloadError as exc:
         detail = str(exc)
         logger.error(f"下载视频失败: {detail}")
         status = 501 if "未检测到 yt-dlp" in detail else 502
         raise HTTPException(status_code=status, detail=detail) from exc
+
+    name = (payload.title or "").strip() or inferred_title or f"link_import_{video_id[:8]}"
 
     upload_at = datetime.utcnow().isoformat()
     thumbnail_path = generate_thumbnail(save_path, video_id)

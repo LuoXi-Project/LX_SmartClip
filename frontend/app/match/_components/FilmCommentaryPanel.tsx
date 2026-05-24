@@ -150,7 +150,7 @@ export function FilmCommentaryPanel({
   const lastSyncedPlanKey = useRef<string | null>(null)
   useEffect(() => {
     if (!selectedJob?.plan || !onPlanReady) return
-    const plan = selectedJob.plan as AutoEditPlanApi
+    const plan = selectedJob.plan
     const key = `${selectedJob.id}:${plan.plan_id ?? ''}:${selectedJob.updated_at}`
     if (lastSyncedPlanKey.current === key) return
     lastSyncedPlanKey.current = key

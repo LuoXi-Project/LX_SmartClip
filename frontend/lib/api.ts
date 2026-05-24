@@ -1415,7 +1415,7 @@ export interface FilmCommentaryJob {
   storyline?: Record<string, string> | null
   sentences: FilmSentence[]
   alignments: FilmAlignment[]
-  plan?: Record<string, unknown> | null
+  plan?: AutoEditPlanApi | null
   output_url?: string | null
   output_filename?: string | null
   created_at: string

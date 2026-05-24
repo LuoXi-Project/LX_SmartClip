@@ -57,7 +57,7 @@ export function MatchPageHeader({ mode, onModeChange, onOpenVideoResult }: Match
             )}
             {tab(
               'film_commentary',
-              '影视解说',
+              '影视解说（实验）',
               <Film className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
               'bg-violet-600 text-white'
             )}

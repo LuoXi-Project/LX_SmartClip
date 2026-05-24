@@ -35,6 +35,7 @@ from app.core.subtitle.timeline import (
     rule_timeline,
     rule_timeline_equal_units,
     rule_timeline_weighted_chars,
+    srt_entries_exceed_max_chars,
 )
 from app.core.subtitle.burn import burn_to_mp4
 from app.core.subtitle.tts_align import apply_timeline_duration_overrides
@@ -370,20 +371,30 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
                 return True
             return False
 
-        if _needs_rebuild(srt_entries, expected_total_sec=expected_total):
-            max_chars = req.style.max_chars_per_line if req.style else 20
-            fine_grain = bool(req.tts_align.split_narration_by_sentence) if req.tts_align else False
+        max_chars = req.style.max_chars_per_line if req.style else 20
+        fine_grain = bool(req.tts_align.split_narration_by_sentence) if req.tts_align else False
+        timing_rebuild = _needs_rebuild(srt_entries, expected_total_sec=expected_total)
+        chars_rebuild = srt_entries_exceed_max_chars(srt_entries, max_chars)
+        if timing_rebuild or chars_rebuild:
             rebuilt_entries = rule_timeline_weighted_chars(
                 req.segments, tts_durs, max_chars, fine_grain_split=fine_grain
             )
             rebuilt_srt = build_srt(
                 [{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries]
             )
-            logger.warning(
-                "烧录阶段已按 TTS 重建时间轴: srt=%.3fs expected_tts=%.3fs",
-                float(max((e.get("end", 0.0) for e in srt_entries), default=0.0) or 0.0),
-                expected_total,
-            )
+            if timing_rebuild:
+                logger.warning(
+                    "烧录阶段已按 TTS 重建时间轴: srt=%.3fs expected_tts=%.3fs",
+                    float(max((e.get("end", 0.0) for e in srt_entries), default=0.0) or 0.0),
+                    expected_total,
+                )
+            if chars_rebuild:
+                logger.warning(
+                    "烧录阶段已按每行字数(%d)重建字幕切分: %d -> %d 条",
+                    max_chars,
+                    len(srt_entries),
+                    len(rebuilt_entries),
+                )
             srt_entries = parse_srt(rebuilt_srt)
     except Exception as e:
         # strict_use_client_srt 会主动走到这里：属于预期行为，不输出 warning 降噪。

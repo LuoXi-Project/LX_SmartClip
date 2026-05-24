@@ -187,11 +187,11 @@ def _text_to_subtitle_chunks(
     fine_grain_split: bool = False,
 ) -> list[str]:
     """
-    将段落文案转为字幕条。
+    将段落文案转为带独立时间轴的字幕条（每条对应一次显示）。
 
-    - fine_grain_split=False（默认）：仅按句号/换行/!? 分条，不应用每行字数上限（避免在逗号处被硬切）。
-    - fine_grain_split=True：在句号基础上再按逗号、顿号等句内标点与 max_chars 拆成短条。
-    """
+    - 始终按 ``max_chars``（每行字数）上限再拆，超长句标点优先、最后强切。
+    - fine_grain_split=True：在句号基础上再按逗号、顿号等句内标点拆成更短条。
+  """
     raw = (text or "").strip()
     if not raw:
         return []
@@ -204,20 +204,11 @@ def _text_to_subtitle_chunks(
         clause_units: list[str] = []
         for u in units:
             clause_units.extend(split_units_at_intra_clause_punctuation(u))
-        if mc > 0:
-            chunks: list[str] = []
-            for u in clause_units:
-                u = (u or "").strip()
-                if not u:
-                    continue
-                if len(u) <= mc:
-                    chunks.append(u)
-                else:
-                    chunks.extend(split_long_text_at_punctuation(u, mc))
-            return [c.strip() for c in chunks if c.strip()]
-        return [u.strip() for u in clause_units if u.strip()]
+        units = clause_units
 
-    return [u.strip() for u in units if u.strip()]
+    if mc > 0:
+        return _expand_units_with_char_limit(units, mc)
+    return [u.strip() for u in units if (u or "").strip()]
 
 
 def rule_timeline(
@@ -228,7 +219,7 @@ def rule_timeline(
     fine_grain_split: bool = False,
 ) -> list:
     """
-    基于规则将文案拆分到时间轴：默认仅句号/换行分条；fine_grain_split 时再按逗号等句内标点拆短条。
+    基于规则将文案拆分到时间轴：先句号/换行，再按每行字数上限拆条；fine_grain_split 时再按逗号等句内标点拆短条。
     返回 [{clip_id, start, end, text}, ...]
     """
     entries = []
@@ -454,6 +445,18 @@ def _expand_units_with_char_limit(units: list[str], max_chars: int) -> list[str]
             continue
         out.extend(split_long_text_at_punctuation(u, max_chars))
     return out
+
+
+def srt_entries_exceed_max_chars(entries: list, max_chars: int) -> bool:
+    """任一条字幕正文超过「每行字数」时需按 TTS 时长重新切分时间轴。"""
+    mc = int(max_chars or 0)
+    if mc <= 0 or not entries:
+        return False
+    for e in entries:
+        text = str(e.get("text") or "").replace("\\N", "").replace("\n", "").strip()
+        if len(text) > mc:
+            return True
+    return False
 
 
 def rule_timeline_equal_units(segments, durations: list[float], max_chars: int = 20) -> list[dict]:

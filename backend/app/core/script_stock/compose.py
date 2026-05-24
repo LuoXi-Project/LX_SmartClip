@@ -10,6 +10,7 @@ import tempfile
 from tempfile import mkdtemp
 from typing import List, Literal, Optional, Tuple
 
+from app.core.subtitle.ass_builder import wrap_text_for_ass_display
 from app.core.subtitle.composer import compose_final_video
 from app.core.subtitle.render_opts import final_render_opts_from_export, sanitize_no_stream_copy
 from app.core.subtitle.tts_align import build_atempo_filter_chain, resolve_stretch_audio_atempo
@@ -24,24 +25,6 @@ from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
 from app.utils.paths import ensure_storage_subpath, get_fonts_dir
 
 logger = logging.getLogger(__name__)
-
-
-def _wrap_stock_subtitle_text(text: str, max_chars: int) -> str:
-    """按 max_chars 折行，ASS 内用 \\N 换行。"""
-    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not raw:
-        return ""
-    n = max(8, int(max_chars) if max_chars else 20)
-    chunks: List[str] = []
-    for para in raw.split("\n"):
-        p = para.strip()
-        if not p:
-            continue
-        while len(p) > n:
-            chunks.append(p[:n])
-            p = p[n:]
-        chunks.append(p)
-    return "\\N".join(chunks)
 
 
 def _build_script_stock_srt_entries(
@@ -62,7 +45,7 @@ def _build_script_stock_srt_entries(
         if d <= 0.02:
             continue
         raw_txt = segment_texts[i] if i < len(segment_texts) else ""
-        wrapped = _wrap_stock_subtitle_text(raw_txt, mc)
+        wrapped = wrap_text_for_ass_display(raw_txt, mc)
         if not wrapped:
             t_acc += d
             continue

@@ -154,7 +154,11 @@ def _prepare_srt_entries_tts(
 ) -> list:
     """与 execute_burn_subtitle 中字幕时间轴逻辑对齐。"""
     from app.core.subtitle.srt import build_srt, parse_srt
-    from app.core.subtitle.timeline import resolve_durations, rule_timeline_weighted_chars
+    from app.core.subtitle.timeline import (
+        resolve_durations,
+        rule_timeline_weighted_chars,
+        srt_entries_exceed_max_chars,
+    )
 
     srt_entries = parse_srt((client_srt_raw or "").strip())
     subtitle_enabled = bool((client_srt_raw or "").strip())
@@ -193,8 +197,10 @@ def _prepare_srt_entries_tts(
                 return True
             return False
 
-        if _needs_rebuild(srt_entries, expected_total_sec=expected_total):
-            max_chars = style.max_chars_per_line if style else 20
+        max_chars = style.max_chars_per_line if style else 20
+        if _needs_rebuild(srt_entries, expected_total_sec=expected_total) or srt_entries_exceed_max_chars(
+            srt_entries, max_chars
+        ):
             rebuilt_entries = rule_timeline_weighted_chars(segments, tts_durs, max_chars)
             rebuilt_srt = build_srt(
                 [{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries]

@@ -101,16 +101,45 @@ def _ass_time(s: float) -> str:
     return f"{h}:{m:02d}:{sec:02d}.{cs:02d}"
 
 
+def wrap_text_for_ass_display(text: str, max_chars: int) -> str:
+    """
+    按「每行字数」折行，ASS 内用 \\N 换行。
+
+    与 SRT 时间轴切分独立：同一条字幕事件内可显示多行，不改变起止时间。
+    """
+    from app.core.subtitle.timeline import split_long_text_at_punctuation
+
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw:
+        return ""
+    n = max(1, int(max_chars) if max_chars else 20)
+
+    lines_out: list[str] = []
+    for segment in raw.replace("\\N", "\n").split("\n"):
+        part = segment.strip()
+        if not part:
+            continue
+        if len(part) <= n:
+            lines_out.append(part)
+            continue
+        for chunk in split_long_text_at_punctuation(part, n):
+            chunk = chunk.strip()
+            if chunk:
+                lines_out.append(chunk)
+    return "\\N".join(lines_out)
+
+
 def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> str:
     """将 srt_entries 列表转换为完整 ASS 字幕字符串。"""
     lines = [_style_to_ass_header(style, video_size)]
     pos_x, pos_y = _style_to_ass_pos(style, video_size)
     bg_pad_x = max(0.0, float(getattr(style, "background_pad_x", 6.0)))
     bg_pad_y = max(0.0, float(getattr(style, "background_pad_y", 3.0)))
+    max_chars = int(getattr(style, "max_chars_per_line", 20) or 20)
     # 对 BgBox 行单独使用 xbord/ybord，以支持横向与纵向扩展独立控制。
     bg_box_tags = f"{{\\pos({pos_x},{pos_y})\\xbord{bg_pad_x:.1f}\\ybord{bg_pad_y:.1f}}}"
     for entry in srt_entries:
-        raw_text = entry["text"].strip().replace("\n", "\\N")
+        raw_text = wrap_text_for_ass_display(entry.get("text", ""), max_chars)
         if not raw_text or entry["end"] <= entry["start"]:
             continue
         text = raw_text

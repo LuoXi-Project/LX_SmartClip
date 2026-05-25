@@ -9,6 +9,7 @@ from app.models.auto_edit import (
     BGMPlan,
     ClipRef,
     Constraints,
+    MixClipFilterConfig,
     MixPostprocessConfig,
     MixUserBgmConfig,
     Plan,
@@ -415,6 +416,115 @@ def apply_shot_boundary_refine_to_plan(plan: Plan, clip_rows: Sequence[Any]) -> 
     return plan.model_copy(update={"segments": new_segments})
 
 
+def _row_as_mutable_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return dict(row)
+    try:
+        return dict(row)
+    except TypeError:
+        return {k: row[k] for k in row.keys()}
+
+
+def preprocess_mix_clip_rows(
+    clip_rows: Sequence[Any],
+    *,
+    min_duration_sec: float | None = None,
+    max_duration_sec: float | None = None,
+    trim_head_sec: float = 0.0,
+    trim_tail_sec: float = 0.0,
+) -> tuple[list[Any], str]:
+    """
+    按时长筛选 clip，并可选分别裁掉开头 / 结尾固定秒数。
+    返回 (处理后 rows, 筛选说明)。
+    """
+    head_trim = max(0.0, float(trim_head_sec or 0.0))
+    tail_trim = max(0.0, float(trim_tail_sec or 0.0))
+    total_in = len(clip_rows)
+    skipped_short = 0
+    skipped_long = 0
+    skipped_trim = 0
+    out: list[Any] = []
+
+    for row in clip_rows:
+        d = _row_as_mutable_dict(row)
+        st = float(d.get("start_time") or 0.0)
+        dur = float(d.get("duration") or 0.0)
+        if dur <= 0:
+            skipped_trim += 1
+            continue
+
+        trim_total = head_trim + tail_trim
+        if trim_total > 0:
+            if dur <= trim_total + 0.05:
+                skipped_trim += 1
+                continue
+            st += head_trim
+            dur -= trim_total
+            d["start_time"] = st
+            d["duration"] = dur
+
+        if min_duration_sec is not None and dur < min_duration_sec:
+            skipped_short += 1
+            continue
+        if max_duration_sec is not None and dur > max_duration_sec:
+            skipped_long += 1
+            continue
+
+        out.append(d)
+
+    parts: list[str] = []
+    if head_trim > 0:
+        parts.append(f"开头裁 {head_trim:g}s")
+    if tail_trim > 0:
+        parts.append(f"结尾裁 {tail_trim:g}s")
+    if min_duration_sec is not None:
+        parts.append(f"最短≥{min_duration_sec:g}s")
+    if max_duration_sec is not None:
+        parts.append(f"最长≤{max_duration_sec:g}s")
+
+    note = ""
+    if parts:
+        note = f"素材筛选（{'，'.join(parts)}）：原 {total_in} 段 → 保留 {len(out)} 段"
+        detail: list[str] = []
+        if skipped_short:
+            detail.append(f"过短 {skipped_short}")
+        if skipped_long:
+            detail.append(f"过长 {skipped_long}")
+        if skipped_trim:
+            detail.append(f"裁剪后不可用 {skipped_trim}")
+        if detail:
+            note += f"（剔除 {' / '.join(detail)}）"
+        note += "。"
+
+    return out, note
+
+
+def resolve_mix_clip_rows(
+    clip_rows: Sequence[Any],
+    clip_filter: MixClipFilterConfig | None,
+) -> tuple[list[Any], str]:
+    """应用混剪素材筛选；无规则时原样返回。"""
+    rows = list(clip_rows)
+    if clip_filter is None:
+        return rows, ""
+    min_d = clip_filter.min_duration_sec
+    max_d = clip_filter.max_duration_sec
+    head_trim = clip_filter.trim_head_sec or 0.0
+    tail_trim = clip_filter.trim_tail_sec or 0.0
+    if min_d is None and max_d is None and head_trim <= 0 and tail_trim <= 0:
+        return rows, ""
+    filtered, note = preprocess_mix_clip_rows(
+        rows,
+        min_duration_sec=min_d,
+        max_duration_sec=max_d,
+        trim_head_sec=head_trim,
+        trim_tail_sec=tail_trim,
+    )
+    if not filtered:
+        raise ValueError("素材筛选后没有可用 clip：请放宽时长限制或减少头尾裁剪")
+    return filtered, note
+
+
 def _sort_clips_by_tier(rows: Sequence[Any], *, shuffle_none: bool) -> list[Any]:
     tiered: dict[ClipTier, list[Any]] = {t: [] for t in _TIER_PRIORITY}
     for row in rows:
@@ -459,6 +569,7 @@ def build_mix_edit_plan(
     video_title_hint: str | None = None,
     target_duration_sec: float | None = None,
     postprocess: MixPostprocessConfig | None = None,
+    filter_note: str = "",
 ) -> Plan:
     """
     混剪方案生成：
@@ -533,6 +644,8 @@ def build_mix_edit_plan(
             f"共 {len(segments)} 段，音轨：{audio_desc}。"
             f" 分级统计：{_format_tier_counts(tier_counts)}."
         )
+        if filter_note:
+            summary = f"{filter_note} {summary}"
         bgm = BGMPlan(enabled=(mute_audio_track == "bgm_only"), volume_db=-10.0)
         user_bgm = _bgm_from_user_config(
             postprocess.user_bgm if postprocess else None
@@ -587,6 +700,8 @@ def build_mix_edit_plan(
             f" 共 {len(segments)} 段。"
             f" 分级：{_format_tier_counts(tier_counts)}."
         )
+        if filter_note:
+            summary = f"{filter_note} {summary}"
         bgm = BGMPlan(enabled=False)
         user_bgm = _bgm_from_user_config(
             postprocess.user_bgm if postprocess else None

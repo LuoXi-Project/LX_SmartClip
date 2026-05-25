@@ -931,6 +931,13 @@ export interface MixPostprocessConfigApi {
   user_bgm?: MixUserBgmConfigApi | null
 }
 
+export interface MixClipFilterConfigApi {
+  min_duration_sec?: number
+  max_duration_sec?: number
+  trim_head_sec?: number
+  trim_tail_sec?: number
+}
+
 export interface MixEditPlanRequestApi {
   video_ids: string[]
   mix_audio_mode: MixAudioModeApi
@@ -939,6 +946,7 @@ export interface MixEditPlanRequestApi {
   user_prompt?: string
   tts_align?: TtsVideoAlignConfigApi
   postprocess?: MixPostprocessConfigApi
+  clip_filter?: MixClipFilterConfigApi
 }
 
 export type VoiceoverQuickCutStrategyApi = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'

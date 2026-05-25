@@ -76,6 +76,7 @@ from app.core.auto_edit.voiceover_semantic import build_semantic_voiceover_plan
 from app.core.auto_edit.mix_edit import (
     apply_shot_boundary_refine_to_plan,
     build_mix_edit_plan,
+    resolve_mix_clip_rows,
 )
 from app.core.auto_edit.mix_edit_tts_balance import rebalance_mix_tts_voiceover_plan
 from app.core.auto_edit.mix_edit_llm_copy import apply_llm_scripts_to_mute_plan
@@ -779,6 +780,7 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
         f"{len(req.video_ids)} 个视频" if req.video_ids else None
     )
     try:
+        clip_rows, filter_note = resolve_mix_clip_rows(clip_rows, req.clip_filter)
         plan = build_mix_edit_plan(
             clip_rows=clip_rows,
             mix_audio_mode=req.mix_audio_mode,
@@ -786,6 +788,7 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
             video_title_hint=hint,
             target_duration_sec=req.target_duration_sec,
             postprocess=req.postprocess,
+            filter_note=filter_note,
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve)) from ve

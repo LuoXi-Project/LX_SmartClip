@@ -32,6 +32,7 @@ import { ManualMatchPanel } from './_components/ManualMatchPanel'
 import { AutoEditPanel } from './_components/AutoEditPanel'
 import { VoiceoverQuickCutPanel, type VoiceoverQuickCutStrategy } from './_components/VoiceoverQuickCutPanel'
 import { MixEditPanel, type MixEditGeneratePayload } from './_components/MixEditPanel'
+import { toMixClipFilterApi } from './_components/mixEditTypes'
 import { VideoDubPanel, type VideoDubGeneratePayload } from './_components/VideoDubPanel'
 import { TemplateClipPanel } from './_components/TemplateClipPanel'
 import { MatchSubtitleWorkspace } from './_components/MatchSubtitleWorkspace'
@@ -1218,6 +1219,7 @@ export default function MatchPage() {
       const useTtsTrack =
         payload.mixAudioMode === 'mute_all_original' &&
         (payload.muteAudioTrack === 'ai_tts_llm' || payload.muteAudioTrack === 'ai_tts_asr')
+      const clipFilterApi = toMixClipFilterApi(payload.clipFilter)
       const res = await autoEditApi.mixEditPlan({
         video_ids: payload.videoIds,
         mix_audio_mode: payload.mixAudioMode,
@@ -1225,6 +1227,7 @@ export default function MatchPage() {
         target_duration_sec: payload.targetDurationSec,
         user_prompt: payload.userPrompt,
         postprocess: payload.postprocess,
+        ...(clipFilterApi ? { clip_filter: clipFilterApi } : {}),
         ...(useTtsTrack
           ? {
               tts_align: {

@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react'
 import { Layers, Mic2, VolumeX, Sparkles, Info } from 'lucide-react'
 import type { TtsVideoAlignConfigApi, Video as VideoModel } from '@/lib/api'
-import type { MixAudioMode, MuteAudioTrack } from './mixEditTypes'
+import type { MixAudioMode, MuteAudioTrack, MixClipFilterConfig } from './mixEditTypes'
+import { buildMixClipFilterPayload } from './mixEditTypes'
 import {
   DEFAULT_MIX_POSTPROCESS,
   buildMixPostprocessPayload,
@@ -19,6 +20,7 @@ export type MixEditGeneratePayload = {
   targetDurationSec?: number
   userPrompt?: string
   postprocess?: MixPostprocessConfigApi
+  clipFilter?: MixClipFilterConfig
 }
 
 type MixEditPanelProps = {
@@ -85,6 +87,12 @@ export function MixEditPanel({
   const [muteAudioTrack, setMuteAudioTrack] = useState<MuteAudioTrack>('ai_tts_llm')
   const [targetDuration, setTargetDuration] = useState('')
   const [userPrompt, setUserPrompt] = useState('')
+  const [clipFilter, setClipFilter] = useState<MixClipFilterConfig>({
+    minDurationSec: undefined,
+    maxDurationSec: undefined,
+    trimHeadSec: undefined,
+    trimTailSec: undefined,
+  })
   const [postprocess, setPostprocess] = useState<MixPostprocessConfigApi>(() => ({
     ...DEFAULT_MIX_POSTPROCESS,
     visual_random: { ...DEFAULT_MIX_POSTPROCESS.visual_random! },
@@ -121,6 +129,7 @@ export function MixEditPanel({
       targetDurationSec: td && Number.isFinite(td) && td > 0 ? td : undefined,
       userPrompt: userPrompt.trim() || undefined,
       postprocess: buildMixPostprocessPayload(postprocess),
+      clipFilter: buildMixClipFilterPayload(clipFilter),
     })
   }
 
@@ -209,6 +218,57 @@ export function MixEditPanel({
         <TierLegendGrid />
       </section>
 
+      <section className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+        <div>
+          <p className="text-xs font-semibold text-amber-200">素材筛选</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            生成方案前按 clip 时长过滤，并可分别固定裁掉每个 clip 开头 / 结尾 n 秒（留空表示不启用）
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ClipFilterNumInput
+            label="最短 clip（秒）"
+            placeholder="如 0.5"
+            value={clipFilter.minDurationSec}
+            onChange={(v) => setClipFilter((prev) => ({ ...prev, minDurationSec: v }))}
+            min={0.05}
+            max={600}
+            step={0.1}
+            disabled={loading}
+          />
+          <ClipFilterNumInput
+            label="最长 clip（秒）"
+            placeholder="如 8"
+            value={clipFilter.maxDurationSec}
+            onChange={(v) => setClipFilter((prev) => ({ ...prev, maxDurationSec: v }))}
+            min={0.05}
+            max={600}
+            step={0.1}
+            disabled={loading}
+          />
+          <ClipFilterNumInput
+            label="开头裁剪（秒）"
+            placeholder="如 0.2"
+            value={clipFilter.trimHeadSec}
+            onChange={(v) => setClipFilter((prev) => ({ ...prev, trimHeadSec: v }))}
+            min={0}
+            max={30}
+            step={0.05}
+            disabled={loading}
+          />
+          <ClipFilterNumInput
+            label="结尾裁剪（秒）"
+            placeholder="如 0.3"
+            value={clipFilter.trimTailSec}
+            onChange={(v) => setClipFilter((prev) => ({ ...prev, trimTailSec: v }))}
+            min={0}
+            max={30}
+            step={0.05}
+            disabled={loading}
+          />
+        </div>
+      </section>
+
       <MixEditPostprocessSection
         value={postprocess}
         onChange={setPostprocess}
@@ -260,6 +320,52 @@ export function MixEditPanel({
         {loading ? '生成混剪方案中…' : '生成混剪方案'}
       </button>
     </div>
+  )
+}
+
+function ClipFilterNumInput({
+  label,
+  placeholder,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  disabled,
+}: {
+  label: string
+  placeholder: string
+  value?: number
+  onChange: (v: number | undefined) => void
+  min?: number
+  max?: number
+  step?: number
+  disabled?: boolean
+}) {
+  const display = value != null && Number.isFinite(value) ? String(value) : ''
+  return (
+    <label className="block space-y-1">
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step ?? 0.1}
+        value={display}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => {
+          const raw = e.target.value.trim()
+          if (!raw) {
+            onChange(undefined)
+            return
+          }
+          const n = Number(raw)
+          if (Number.isFinite(n)) onChange(n)
+        }}
+        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-50"
+      />
+    </label>
   )
 }
 

@@ -97,6 +97,45 @@ class MixPostprocessConfig(BaseModel):
     user_bgm: Optional[MixUserBgmConfig] = None
 
 
+class MixClipFilterConfig(BaseModel):
+    """混剪素材 clip 时长筛选与头尾固定裁剪。"""
+
+    min_duration_sec: Optional[float] = Field(
+        None,
+        ge=0.05,
+        le=600.0,
+        description="最短 clip 时长（秒），短于此丢弃",
+    )
+    max_duration_sec: Optional[float] = Field(
+        None,
+        ge=0.05,
+        le=600.0,
+        description="最长 clip 时长（秒），长于此丢弃",
+    )
+    trim_head_sec: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=30.0,
+        description="每个 clip 开头裁掉 n 秒",
+    )
+    trim_tail_sec: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=30.0,
+        description="每个 clip 结尾裁掉 n 秒",
+    )
+
+    @model_validator(mode="after")
+    def _check_min_max(self) -> "MixClipFilterConfig":
+        if (
+            self.min_duration_sec is not None
+            and self.max_duration_sec is not None
+            and self.min_duration_sec > self.max_duration_sec
+        ):
+            raise ValueError("最短 clip 时长不能大于最长 clip 时长")
+        return self
+
+
 class ClipRef(BaseModel):
     clip_id: str
     video_id: str
@@ -257,6 +296,10 @@ class MixEditPlanRequest(BaseModel):
     postprocess: Optional[MixPostprocessConfig] = Field(
         None,
         description="混剪后处理：视觉随机变换、覆盖视频、用户 BGM",
+    )
+    clip_filter: Optional[MixClipFilterConfig] = Field(
+        None,
+        description="素材 clip 时长筛选与头尾固定裁剪",
     )
 
     @field_validator("mute_audio_track", mode="before")

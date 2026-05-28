@@ -369,7 +369,7 @@ def build_jianying_draft_zip(
     try:
         import pyJianYingDraft as draft
         from pyJianYingDraft import TrackType, VideoSegment, AudioSegment
-        from pyJianYingDraft.local_materials import VideoMaterial
+        from pyJianYingDraft.local_materials import AudioMaterial, VideoMaterial
         from pyJianYingDraft.time_util import Timerange
     except ImportError as e:
         raise RuntimeError("未安装 pyJianYingDraft，无法导出剪映草稿") from e
@@ -386,6 +386,20 @@ def build_jianying_draft_zip(
             return max(1, int(vm.duration))
         except Exception as ex:
             logger.warning("VideoMaterial 时长失败，回退 ffprobe: %s", ex)
+            probe_us = int(round(max(fallback_sec, 0.05) * SEC))
+            guard_us = min(120_000, max(40_000, probe_us // 30))
+            return max(probe_us - guard_us, 1)
+
+    def _jy_audio_material_total_us(mat_path: str, fallback_sec: float) -> int:
+        """
+        与 AudioSegment 内部校验使用同一套时长来源（AudioMaterial / pymediainfo）。
+        ffprobe 常会多出几毫秒而触发「截取超出素材时长」。
+        """
+        try:
+            am = AudioMaterial(mat_path)
+            return max(1, int(am.duration))
+        except Exception as ex:
+            logger.warning("AudioMaterial 时长失败，回退 ffprobe: %s", ex)
             probe_us = int(round(max(fallback_sec, 0.05) * SEC))
             guard_us = min(120_000, max(40_000, probe_us // 30))
             return max(probe_us - guard_us, 1)
@@ -515,10 +529,22 @@ def build_jianying_draft_zip(
                     raise FileNotFoundError(f"TTS 音频不存在: {tts_path}")
                 tts_copy = _copy_into_materials(tts_path, materials_dir, path_cache)
                 tts_dur = float(probe_duration(tts_copy, log_on_failure=True) or seg_durs[seg_idx] or 1.0)
-                tts_dur_us = int(round(tts_dur * SEC))
+                mat_total_us = _jy_audio_material_total_us(tts_copy, tts_dur)
+                tts_dur_us = min(int(round(tts_dur * SEC)), mat_total_us)
+                if tts_dur_us < 1000:
+                    tts_dur_us = min(mat_total_us, max(tts_dur_us, 1))
+                planned_us = int(round(tts_dur * SEC))
+                if planned_us > mat_total_us:
+                    logger.info(
+                        "剪映草稿 TTS 时长对齐素材: %s %d -> %d us",
+                        os.path.basename(str(tts_name)),
+                        planned_us,
+                        tts_dur_us,
+                    )
                 au = AudioSegment(
                     tts_copy,
                     Timerange(seg_start_us, tts_dur_us),
+                    source_timerange=Timerange(0, tts_dur_us),
                     volume=1.0,
                 )
                 script.add_segment(au, track_name="tts")

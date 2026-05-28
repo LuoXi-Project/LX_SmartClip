@@ -104,6 +104,35 @@ def enrich_tts_align_for_burn(
     return tts_align.model_copy(update={"playlist_clip_ids": playlist})
 
 
+def prepare_tts_burn_segments(
+    segments: list,
+    tts_audio_dir: str,
+    tts_align: Optional["TtsVideoAlignConfig"],
+) -> tuple[list, Optional["TtsVideoAlignConfig"]]:
+    """
+    有配音/原声切片的段落：以实测音轨时长为成片硬上限（timeline_duration_sec），
+  未指定对齐策略时默认「组内循环素材直至盖住配音」。
+    """
+    from app.models.subtitle import TtsVideoAlignConfig
+
+    prepared: list = []
+    has_tts = False
+    for seg in segments:
+        fn = str(getattr(seg, "tts_filename", "") or "").strip()
+        if fn:
+            has_tts = True
+            p = os.path.join(tts_audio_dir, os.path.basename(fn))
+            td = float(probe_duration(p, log_on_failure=True) or 0.0)
+            if td > 0.05 and hasattr(seg, "model_copy"):
+                seg = seg.model_copy(update={"timeline_duration_sec": td})
+        prepared.append(seg)
+
+    align = tts_align
+    if align is None and has_tts:
+        align = TtsVideoAlignConfig(policy="loop_video_to_cover")
+    return prepared, align
+
+
 def burn_to_mp4(
     segments,
     srt_entries: list,
@@ -175,6 +204,11 @@ def burn_to_mp4(
                     )
                     raise HTTPException(status_code=400, detail=detail)
             elif mode == "tts" and not seg_use_tts and not mute_audio:
+                if require_tts_audio:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"分段 seg_{i + 1} 缺少原声/配音文件，无法按音轨上限成片（请同步原声或合成配音）",
+                    )
                 logger.warning("seg_%d 无 TTS，回退原声渲染", i + 1)
             if seg_use_tts:
                 seg_out = render_tts_segment(

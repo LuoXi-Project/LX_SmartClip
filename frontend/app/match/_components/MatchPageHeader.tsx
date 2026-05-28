@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Sparkles, ListVideo, Mic2, Link2, Clapperboard, Layers, Volume2, Film } from 'lucide-react'
+import { ArrowLeft, Sparkles, ListVideo, Mic2, Link2, Clapperboard, Layers, Volume2, Film, Headphones } from 'lucide-react'
 import type { MatchWorkspaceMode } from './matchModeTypes'
 
 type MatchPageHeaderProps = {
@@ -43,6 +43,12 @@ export function MatchPageHeader({ mode, onModeChange, onOpenVideoResult }: Match
           <p className="px-2 text-[10px] text-slate-500 uppercase tracking-wider">工作区</p>
           <div className="flex flex-wrap gap-1">
             {tab('manual', '手动匹配', null, 'bg-indigo-600 text-white')}
+            {tab(
+              'audio_match',
+              '音频匹配素材',
+              <Headphones className="w-3.5 h-3.5 opacity-90 hidden sm:inline" />,
+              'bg-rose-600 text-white'
+            )}
             {tab(
               'replica',
               '链接复刻',

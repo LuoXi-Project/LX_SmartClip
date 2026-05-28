@@ -11,7 +11,9 @@ import apiClient, {
   exportApi,
   ttsApi,
   subtitleApi,
+  audioMatchApi,
   formatFastApiDetail,
+  type AudioMatchAsrSegment,
   type MatchClip,
   type Video,
   autoEditApi,
@@ -29,6 +31,7 @@ import { ExportSidebar } from './_components/ExportSidebar'
 import { MatchPageHeader } from './_components/MatchPageHeader'
 import { VideoScopeSelector } from './_components/VideoScopeSelector'
 import { ManualMatchPanel } from './_components/ManualMatchPanel'
+import { AudioMatchPanel, type AudioMatchSource } from './_components/AudioMatchPanel'
 import { AutoEditPanel } from './_components/AutoEditPanel'
 import { VoiceoverQuickCutPanel, type VoiceoverQuickCutStrategy } from './_components/VoiceoverQuickCutPanel'
 import { MixEditPanel, type MixEditGeneratePayload } from './_components/MixEditPanel'
@@ -273,6 +276,12 @@ export default function MatchPage() {
   }, [showStrictSrtToggle, strictUseClientSrt])
   const [autoPlanStage, setAutoPlanStage] = useState<AutoPlanStage>('idle')
 
+  const [audioMatchSource, setAudioMatchSource] = useState<AudioMatchSource | null>(null)
+  const [audioMatchAsrSegments, setAudioMatchAsrSegments] = useState<AudioMatchAsrSegment[]>([])
+  const [audioTranscribing, setAudioTranscribing] = useState(false)
+  const [audioTranscribeError, setAudioTranscribeError] = useState('')
+  const [audioSyncing, setAudioSyncing] = useState(false)
+
   const autoPlanStagePercent: Record<AutoPlanStage, number> = {
     idle: 0,
     preparing: 10,
@@ -382,6 +391,12 @@ export default function MatchPage() {
     }
   }, [mode, setAutoTemplateEnabled, setMatchMode])
 
+  useEffect(() => {
+    if (mode === 'audio_match' && exportMode === 'zip') {
+      setMatchExportMode('subtitle')
+    }
+  }, [mode, exportMode, setMatchExportMode])
+
   const doneVideos = useMemo(
     () => videos.filter((v) => v.status === 'done' && v.total_clips > 0),
     [videos]
@@ -448,11 +463,185 @@ export default function MatchPage() {
   const pagedScopeVideos = filteredScopeVideos.slice((videoPage - 1) * VIDEO_PAGE_SIZE, videoPage * VIDEO_PAGE_SIZE)
   const handleVideoSearch = (val: string) => { setVideoSearch(val); setVideoPage(1) }
 
-  function makeSeg(id: string, text = ''): Segment {
+  function makeSeg(
+    id: string,
+    text = '',
+    audio?: { sourceAudioFilename: string; audioStartSec: number; audioEndSec: number },
+  ): Segment {
     return {
       id, text, clips: [], chosenIdx: 0, selectedClipIds: [], clipTrimByClipId: {}, clipTrimSlots: undefined,
       ttsFilename: null, ttsLoading: false, ttsError: '', matchLoading: false, matchError: '', expanded: false,
+      sourceAudioFilename: audio?.sourceAudioFilename ?? null,
+      audioStartSec: audio?.audioStartSec ?? null,
+      audioEndSec: audio?.audioEndSec ?? null,
     }
+  }
+
+  function mergeAsrBySentence(segs: AudioMatchAsrSegment[]): AudioMatchAsrSegment[] {
+    if (!segs.length) return segs
+    const out: AudioMatchAsrSegment[] = []
+    let buf = ''
+    let start = 0
+    let end = 0
+    const flush = () => {
+      const t = buf.trim()
+      if (t) out.push({ start, end, text: t })
+      buf = ''
+    }
+    for (const s of segs) {
+      const t = (s.text || '').trim()
+      if (!t) continue
+      if (!buf) {
+        start = s.start
+        end = s.end
+        buf = t
+      } else {
+        end = s.end
+        buf += t
+      }
+      if (/[。！？!?]$/.test(t)) flush()
+    }
+    flush()
+    return out.length ? out : segs
+  }
+
+  function buildSegmentsFromAsr(
+    list: AudioMatchAsrSegment[],
+    sourceFilename: string,
+  ): Segment[] {
+    const c = useMatchStore.getState().segmentCounter
+    const next = list
+      .map((s, i) => {
+        const text = (s.text || '').trim()
+        if (!text) return null
+        return makeSeg(`seg-${c + i}`, text, {
+          sourceAudioFilename: sourceFilename,
+          audioStartSec: s.start,
+          audioEndSec: s.end,
+        })
+      })
+      .filter(Boolean) as Segment[]
+    setMatchSegmentCounter(c + next.length)
+    return next
+  }
+
+  async function syncAudioSlicesForSegments(segList?: Segment[], sourceFilename?: string) {
+    const source = sourceFilename ?? audioMatchSource?.sourceFilename
+    if (!source) {
+      toast.info('请先上传并完成配音识别')
+      return
+    }
+    const list = segList ?? useMatchStore.getState().segments
+    const sliceable = list.filter(
+      (s) => s.audioStartSec != null && s.audioEndSec != null && s.audioEndSec > s.audioStartSec,
+    )
+    if (!sliceable.length) {
+      toast.info('当前段落缺少时间轴，请使用「按 ASR 句段生成」或重新拆分')
+      return
+    }
+    setAudioSyncing(true)
+    try {
+      const res = await audioMatchApi.slice({
+        source_filename: source,
+        slices: sliceable.map((s) => ({
+          start_sec: s.audioStartSec as number,
+          end_sec: s.audioEndSec as number,
+        })),
+      })
+      const fnById = new Map(sliceable.map((s, i) => [s.id, res.filenames[i]]))
+      setMatchSegments(
+        useMatchStore.getState().segments.map((s) => {
+          const fn = fnById.get(s.id)
+          return fn ? { ...s, ttsFilename: fn, ttsError: '', sourceAudioFilename: source } : s
+        }),
+      )
+      toast.success(`已同步 ${res.filenames.length} 段原声`)
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '原声切片失败'
+      toast.error(msg)
+    } finally {
+      setAudioSyncing(false)
+    }
+  }
+
+  async function handleAudioUploadTranscribe(file: File) {
+    setAudioTranscribing(true)
+    setAudioTranscribeError('')
+    try {
+      const res = await audioMatchApi.transcribe(file)
+      setAudioMatchSource({
+        sourceFilename: res.source_filename,
+        durationSec: res.duration_sec,
+        fullText: res.text,
+      })
+      setAudioMatchAsrSegments(res.segments || [])
+      setGlobalQuery(res.text || '')
+      const built = buildSegmentsFromAsr(res.segments || [], res.source_filename)
+      if (built.length) {
+        setMatchSegments(built)
+        await syncAudioSlicesForSegments(built, res.source_filename)
+      } else {
+        setMatchSegments([])
+        toast.info('未识别到有效句段，请检查音频或重试')
+      }
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '配音识别失败'
+      setAudioTranscribeError(msg)
+      toast.error(msg)
+    } finally {
+      setAudioTranscribing(false)
+    }
+  }
+
+  function applyAsrToSegments(mergeBySentence: boolean) {
+    if (!audioMatchSource) {
+      toast.info('请先上传配音')
+      return
+    }
+    const raw = audioMatchAsrSegments.length
+      ? audioMatchAsrSegments
+      : []
+    if (!raw.length) {
+      toast.info('暂无 ASR 句段，请重新上传识别')
+      return
+    }
+    const list = mergeBySentence ? mergeAsrBySentence(raw) : raw
+    const built = buildSegmentsFromAsr(list, audioMatchSource.sourceFilename)
+    setMatchSegments(built)
+    void syncAudioSlicesForSegments(built, audioMatchSource.sourceFilename)
+  }
+
+  function splitGlobalQueryAudio() {
+    if (!globalQuery.trim()) return
+    if (!audioMatchSource || audioMatchSource.durationSec <= 0) {
+      splitGlobalQuery()
+      return
+    }
+    let parts = globalQuery.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length <= 1) parts = globalQuery.split(/(?<=[。！？!?])\s*/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length <= 1) parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
+    if (!parts.length) return
+    const totalDur = audioMatchSource.durationSec
+    const totalChars = parts.reduce((n, p) => n + p.length, 0) || 1
+    let cursor = 0
+    const c = useMatchStore.getState().segmentCounter
+    const next = parts.map((t, i) => {
+      const ratio = t.length / totalChars
+      const dur = i === parts.length - 1 ? Math.max(0.05, totalDur - cursor) : totalDur * ratio
+      const start = cursor
+      const end = Math.min(totalDur, cursor + dur)
+      cursor = end
+      return makeSeg(`seg-${c + i}`, t, {
+        sourceAudioFilename: audioMatchSource.sourceFilename,
+        audioStartSec: start,
+        audioEndSec: end,
+      })
+    })
+    setMatchSegmentCounter(c + next.length)
+    setMatchSegments(next)
+    void syncAudioSlicesForSegments(next, audioMatchSource.sourceFilename)
   }
   function patchSeg(id: string, p: Partial<Segment>) {
     setMatchSegments(useMatchStore.getState().segments.map((s) => s.id === id ? { ...s, ...p } : s))
@@ -509,14 +698,26 @@ export default function MatchPage() {
     setMatchSegmentCounter(c + parts.length)
   }
 
+  /** 音频匹配须先勾选视频；手动匹配未勾选时传 null 表示全库 */
+  function resolveMatchVideoIds(): string[] | null {
+    const ids = useMatchStore.getState().selectedVideoIds
+    return ids.length > 0 ? ids : null
+  }
+
   async function matchSegment(id: string) {
     const seg = useMatchStore.getState().segments.find((s) => s.id === id)
     if (!seg || !seg.text.trim()) return
+    const videoIds = resolveMatchVideoIds()
+    if (mode === 'audio_match' && !videoIds?.length) {
+      toast.info('请先在上方「限定视频范围」勾选要检索的素材')
+      patchSeg(id, { matchError: '未限定检索范围：请勾选视频后再匹配' })
+      return
+    }
     patchSeg(id, { matchLoading: true, matchError: '' })
     try {
       const data = await apiClient.post<unknown, { recommended: MatchClip[]; candidates: MatchClip[] }>('/api/match', {
         query: seg.text.trim(), top_k: topK, top_n: topN,
-        video_ids: selectedVideoIds.length > 0 ? selectedVideoIds : null,
+        video_ids: videoIds,
       })
       const clips = data.recommended?.length ? data.recommended : data.candidates
       // 匹配后默认把最高分 clip 设为唯一选中（保留用户之前手动勾选的逻辑由 toggleClipSelected 管理）
@@ -532,7 +733,18 @@ export default function MatchPage() {
       patchSeg(id, { matchLoading: false, matchError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '匹配失败' })
     }
   }
-  async function matchAll() { setGlobalMatching(true); await Promise.all(segments.map((s) => matchSegment(s.id))); setGlobalMatching(false) }
+  async function matchAll() {
+    if (mode === 'audio_match' && !resolveMatchVideoIds()?.length) {
+      toast.info('请先在上方「限定视频范围」勾选要检索的素材')
+      return
+    }
+    setGlobalMatching(true)
+    try {
+      await Promise.all(segments.map((s) => matchSegment(s.id)))
+    } finally {
+      setGlobalMatching(false)
+    }
+  }
 
   async function synthesiseTts(id: string) {
     const seg = useMatchStore.getState().segments.find((s) => s.id === id)
@@ -594,6 +806,14 @@ export default function MatchPage() {
   // 现在一键成片/字幕烧录只使用 selectedClipIds（见 handleExport 内 exportMode==='subtitle' 分支）。
 
   const readySegs = segments.filter((s) => s.clips.length > 0)
+  /** 参与成片：已勾选素材；音频匹配还须已同步原声切片 */
+  const exportSegs = useMemo(() => {
+    const withSelection = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+    if (mode === 'audio_match') {
+      return withSelection.filter((s) => !!s.ttsFilename)
+    }
+    return withSelection
+  }, [segments, mode])
 
   const clipInOutSeg = useMemo(() => {
     if (!clipInOutSegId) return undefined
@@ -643,10 +863,10 @@ export default function MatchPage() {
   async function generateSrt(): Promise<string> {
     setGeneratingSrt(true); setSrtError('')
     try {
-      const segsInput = readySegs
+      const segsInput = exportSegs
         .map((s) => {
-          const clip_id = (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? ''
-          const clip_ids = (s.selectedClipIds?.length ? s.selectedClipIds : [clip_id]).filter(Boolean) as string[]
+          const clip_ids = (s.selectedClipIds ?? []).filter(Boolean) as string[]
+          const clip_id = clip_ids[0] ?? ''
           const clip_trims = buildClipTrimsForApi(s, clip_ids)
           return {
             copy_text: s.text,
@@ -672,18 +892,21 @@ export default function MatchPage() {
     try {
       // 一键成片 / 剪映 TTS 草稿：先在前端拦截未完成配音，避免后端因缺音频报错
       if (exportMode === 'subtitle' || exportMode === 'jianying_tts') {
-        const needTtsSegs = readySegs
+        const needTtsSegs = exportSegs
         const missingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename)
         const loadingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && s.ttsLoading)
         const failedTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && !!s.ttsError)
+        const audioLabel = mode === 'audio_match' ? '原声' : '配音'
 
         if (missingTtsSegs.length > 0) {
           const tip =
             loadingTtsSegs.length > 0
-              ? `还有 ${missingTtsSegs.length} 段配音未就绪（${loadingTtsSegs.length} 段合成中），请等待配音完成后再导出。`
+              ? `还有 ${missingTtsSegs.length} 段${audioLabel}未就绪（${loadingTtsSegs.length} 段处理中），请等待完成后再导出。`
               : failedTtsSegs.length > 0
-                ? `还有 ${missingTtsSegs.length} 段配音未就绪（${failedTtsSegs.length} 段合成失败），请先重新合成配音后再导出。`
-                : `还有 ${missingTtsSegs.length} 段未生成配音，请先完成配音合成后再导出。`
+                ? `还有 ${missingTtsSegs.length} 段${audioLabel}未就绪（${failedTtsSegs.length} 段失败），请先同步原声后再导出。`
+                : mode === 'audio_match'
+                  ? `还有 ${missingTtsSegs.length} 段未同步原声，请先点击「同步全部原声」后再导出。`
+                  : `还有 ${missingTtsSegs.length} 段未生成配音，请先完成配音合成后再导出。`
           toast.info(tip)
           return
         }
@@ -697,17 +920,23 @@ export default function MatchPage() {
         const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: readySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
       } else if (exportMode === 'subtitle') {
-        if (readySegs.length === 0) return
+        if (exportSegs.length === 0) {
+          toast.info(
+            mode === 'audio_match'
+              ? '请先为段落勾选素材并同步原声后再导出'
+              : '请先为段落勾选素材后再导出',
+          )
+          return
+        }
         const currentSrt = subtitleEnabled ? await generateSrt() : ''
-        const segsInput = readySegs
+        const segsInput = exportSegs
           .map((s) => {
-            // 一键成片（TTS+字幕）必须严格使用“用户勾选的素材”顺序，不能把候选列表混入导出。
-            const cid = (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? ''
-            const clip_ids = (s.selectedClipIds?.length ? s.selectedClipIds : [cid]).filter(Boolean) as string[]
+            const clip_ids = (s.selectedClipIds ?? []).filter(Boolean) as string[]
+            const clip_id = clip_ids[0] ?? ''
             const clip_trims = buildClipTrimsForApi(s, clip_ids)
             return {
               copy_text: s.text,
-              clip_id: cid,
+              clip_id,
               clip_ids: clip_ids.length > 1 ? clip_ids : undefined,
               tts_filename: s.ttsFilename ?? undefined,
               ...(clip_trims.length ? { clip_trims } : {}),
@@ -722,6 +951,12 @@ export default function MatchPage() {
           export_backend: exportBackend,
           strict_use_client_srt: strictUseClientSrt,
           bgm: buildManualBgmPayload(),
+          ...(mode === 'audio_match'
+            ? {
+                tts_align: { policy: 'loop_video_to_cover' as const },
+                require_tts_audio: true,
+              }
+            : {}),
         })
         const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
         const a = document.createElement('a')
@@ -729,16 +964,23 @@ export default function MatchPage() {
         a.download = res.filename
         a.click()
       } else if (exportMode === 'jianying_tts') {
-        if (readySegs.length === 0) return
+        if (exportSegs.length === 0) {
+          toast.info(
+            mode === 'audio_match'
+              ? '请先为段落勾选素材并同步原声后再导出'
+              : '请先为段落勾选素材后再导出',
+          )
+          return
+        }
         const currentSrt = subtitleEnabled ? await generateSrt() : ''
-        const segsInput = readySegs
+        const segsInput = exportSegs
           .map((s) => {
-            const cid = (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id) ?? ''
-            const clip_ids = (s.selectedClipIds?.length ? s.selectedClipIds : [cid]).filter(Boolean) as string[]
+            const clip_ids = (s.selectedClipIds ?? []).filter(Boolean) as string[]
+            const clip_id = clip_ids[0] ?? ''
             const clip_trims = buildClipTrimsForApi(s, clip_ids)
             return {
               copy_text: s.text,
-              clip_id: cid,
+              clip_id,
               clip_ids: clip_ids.length > 1 ? clip_ids : undefined,
               tts_filename: s.ttsFilename ?? undefined,
               ...(clip_trims.length ? { clip_trims } : {}),
@@ -752,6 +994,9 @@ export default function MatchPage() {
           style: subtitleStyle,
           project_name: projectName,
           strict_use_client_srt: strictUseClientSrt,
+          ...(mode === 'audio_match'
+            ? { tts_align: { policy: 'loop_video_to_cover' as const } }
+            : {}),
         })
         if (res.mode === 'direct' && res.local_path) {
           toast.success(`剪映草稿已写入：${res.local_path}`)
@@ -1431,6 +1676,7 @@ export default function MatchPage() {
             onPrevPage={() => setVideoPage((p) => Math.max(1, p - 1))}
             onNextPage={() => setVideoPage((p) => Math.min(videoTotalPages, p + 1))}
             singleSelect={isFilmMode}
+            requireSelection={mode === 'audio_match'}
           />
 
           {mode === 'replica' ? (
@@ -1989,6 +2235,91 @@ export default function MatchPage() {
                 onExportJianyingDraft={handleAutoExportJianyingDraft}
               />
             </>
+          ) : mode === 'audio_match' ? (
+              <AudioMatchPanel
+                topK={topK}
+                topN={topN}
+                onTopKChange={setTopK}
+                onTopNChange={setTopN}
+                selectedVideoIds={selectedVideoIds}
+                scopeVideoNames={scopeVideos
+                  .filter((v) => selectedVideoIds.includes(v.id))
+                  .map((v) => v.name)}
+                audioSource={audioMatchSource}
+                transcribing={audioTranscribing}
+                transcribeError={audioTranscribeError}
+                onUploadTranscribe={(file) => void handleAudioUploadTranscribe(file)}
+                onApplyAsrSegments={applyAsrToSegments}
+                onSyncAllAudioSlices={() => void syncAudioSlicesForSegments(undefined, audioMatchSource?.sourceFilename)}
+                onSyncSegmentAudio={(segId) => {
+                  const seg = segments.find((s) => s.id === segId)
+                  if (seg) void syncAudioSlicesForSegments([seg], audioMatchSource?.sourceFilename)
+                }}
+                syncingAudio={audioSyncing}
+                globalQuery={globalQuery}
+                onGlobalQueryChange={setGlobalQuery}
+                onSplit={splitGlobalQueryAudio}
+                onMatchAll={matchAll}
+                globalMatching={globalMatching}
+                segments={segments}
+                onClearAll={() => setMatchSegments([])}
+                onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}
+                onMatchSegment={matchSegment}
+                onTimelineSave={async (next) => {
+                  setMatchSegments(next)
+                  await syncAudioSlicesForSegments(next, audioMatchSource?.sourceFilename)
+                }}
+                timelineSaving={audioSyncing}
+                onToggleClipSelected={toggleClipSelected}
+                onPlayAudio={(segId) => {
+                  const seg = segments.find((s) => s.id === segId)
+                  if (seg?.ttsFilename) playAudio(segId, seg.ttsFilename)
+                }}
+                onStopAudio={stopAudio}
+                onSeekAudio={(segId, t) => {
+                  if (playingSegId !== segId) return
+                  seekAudio(t)
+                }}
+                playingSegId={playingSegId}
+                audioCurrentTime={audioCurrentTime}
+                audioDuration={audioDuration}
+                onPreview={setPreviewClip}
+                onToggleExpand={(segId) => {
+                  const seg = segments.find((s) => s.id === segId)
+                  if (!seg) return
+                  patchSeg(seg.id, { expanded: !seg.expanded })
+                }}
+                onOpenClipInOut={setClipInOutSegId}
+                manualBgmEnabled={manualBgmEnabled}
+                onManualBgmEnabledChange={setManualBgmEnabled}
+                bgmTracks={bgmTracks}
+                selectedManualBgmTrackIds={manualBgmTrackIds}
+                onToggleManualBgmTrack={(trackId) => {
+                  setManualBgmTrackIds((prev) => (
+                    prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
+                  ))
+                }}
+                manualBgmVolumeByTrackId={manualBgmVolumeByTrackId}
+                onManualBgmTrackVolumeChange={(trackId, volumeDb) => {
+                  setManualBgmVolumeByTrackId((prev) => ({ ...prev, [trackId]: volumeDb }))
+                }}
+                manualBgmTimelineSegments={manualBgmTimelineSegments}
+                onAddManualBgmTimelineSegment={() => {
+                  setManualBgmTimelineSegments((prev) => [
+                    ...prev,
+                    { id: `bgmseg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, startSec: 0, endSec: 10 },
+                  ])
+                }}
+                onRemoveManualBgmTimelineSegment={(id) => {
+                  setManualBgmTimelineSegments((prev) => prev.filter((seg) => seg.id !== id))
+                }}
+                onUpdateManualBgmTimelineSegment={(id, patch) => {
+                  setManualBgmTimelineSegments((prev) =>
+                    prev.map((seg) => (seg.id === id ? { ...seg, ...patch } : seg))
+                  )
+                }}
+                bgmListError={bgmListError}
+              />
           ) : (
             <>
               {replicaTemplateGuide.trim() ? (

@@ -322,6 +322,14 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         }
     clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
 
+    from app.core.subtitle.burn import prepare_tts_burn_segments
+
+    burn_segments, burn_tts_align = prepare_tts_burn_segments(
+        req.segments,
+        TTS_AUDIO_DIR,
+        getattr(req, "tts_align", None),
+    )
+
     # 兜底一致性：一键成片场景下，字幕默认与 TTS 音频“强绑定”。
     # 若前端传来的 srt_content 与当前 segments 的 TTS 时长/结构不一致（过期/编辑导致），
     # 则在烧录阶段按 TTS 时长重新生成时间轴，确保最终成片字幕对齐配音。
@@ -336,7 +344,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         if not subtitle_enabled:
             raise RuntimeError("由于srt_content为空，字幕已禁用；跳过重建")
 
-        tts_durs, _src = resolve_durations(req.segments, clip_dur, TTS_AUDIO_DIR, use_tts=True)
+        tts_durs, _src = resolve_durations(burn_segments, clip_dur, TTS_AUDIO_DIR, use_tts=True)
         expected_total = float(sum(float(x or 0.0) for x in tts_durs) or 0.0)
 
         def _needs_rebuild(entries: list, *, expected_total_sec: float) -> bool:
@@ -372,12 +380,12 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
             return False
 
         max_chars = req.style.max_chars_per_line if req.style else 20
-        fine_grain = bool(req.tts_align.split_narration_by_sentence) if req.tts_align else False
+        fine_grain = bool(burn_tts_align.split_narration_by_sentence) if burn_tts_align else False
         timing_rebuild = _needs_rebuild(srt_entries, expected_total_sec=expected_total)
         chars_rebuild = srt_entries_exceed_max_chars(srt_entries, max_chars)
         if timing_rebuild or chars_rebuild:
             rebuilt_entries = rule_timeline_weighted_chars(
-                req.segments, tts_durs, max_chars, fine_grain_split=fine_grain
+                burn_segments, tts_durs, max_chars, fine_grain_split=fine_grain
             )
             rebuilt_srt = build_srt(
                 [{"start": e["start"], "end": e["end"], "text": e["text"]} for e in rebuilt_entries]
@@ -405,14 +413,14 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         else:
             logger.warning("烧录阶段校验/重建字幕时间轴失败，继续使用原 srt_content: %s", e)
 
-    logger.info("烧录: %d 段, %d 条字幕", len(req.segments), len(srt_entries))
+    logger.info("烧录: %d 段, %d 条字幕", len(burn_segments), len(srt_entries))
 
     # 生成唯一的项目名，避免文件覆盖
     unique_project_name = f"{req.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
     _, saved_path = await run_heavy(
         burn_to_mp4,
-        segments=req.segments,
+        segments=burn_segments,
         srt_entries=srt_entries,
         clip_map=clip_map,
         style=req.style,
@@ -426,7 +434,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         output_dir=burn_output_dir,
         normalize_audio=False,
         materialize_from_source=req.materialize_from_source,
-        tts_align=getattr(req, "tts_align", None),
+        tts_align=burn_tts_align,
         require_tts_audio=bool(getattr(req, "require_tts_audio", False)),
     )
 

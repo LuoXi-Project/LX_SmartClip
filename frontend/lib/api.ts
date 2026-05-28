@@ -419,6 +419,8 @@ export interface BurnSubtitleRequest {
   bgm?: BgmMixConfigApi
   /** 默认 true：从原始完整视频裁剪；false：用预处理 clip */
   materialize_from_source?: boolean
+  tts_align?: TtsVideoAlignConfigApi | null
+  require_tts_audio?: boolean
 }
 
 export interface BurnSubtitleResponse {
@@ -707,6 +709,35 @@ export const ttsApi = {
   synthesize: (payload: TTSRequest) => apiClient.post<unknown, TTSResponse>('/api/tts/synthesize', payload),
   listVoices: (locale?: string) => apiClient.get<unknown, VoiceInfo[]>(`/api/tts/voices${locale ? `?locale=${locale}` : ''}`),
   audioUrl: (filename: string) => `${API_BASE_URL}/api/tts/audio/${filename}`,
+}
+
+export interface AudioMatchAsrSegment {
+  start: number
+  end: number
+  text: string
+}
+
+export interface AudioMatchTranscribeResponse {
+  source_filename: string
+  wav_filename: string | null
+  text: string
+  segments: AudioMatchAsrSegment[]
+  duration_sec: number
+  provider: string
+}
+
+export const audioMatchApi = {
+  transcribe: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return apiClient.post<unknown, AudioMatchTranscribeResponse>('/api/audio-match/transcribe', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600_000,
+    })
+  },
+  slice: (payload: { source_filename: string; slices: { start_sec: number; end_sec: number }[] }) =>
+    apiClient.post<unknown, { filenames: string[] }>('/api/audio-match/slice', payload),
+  sourceUrl: (filename: string) => `${API_BASE_URL}/api/audio-match/source/${encodeURIComponent(filename)}`,
 }
 
 export interface Video {

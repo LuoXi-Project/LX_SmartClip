@@ -20,6 +20,11 @@ export interface Segment {
   ttsFilename: string | null
   ttsLoading: boolean
   ttsError: string
+  /** 音频匹配：源配音文件名（storage/audio_match） */
+  sourceAudioFilename?: string | null
+  /** 音频匹配：该段在源配音中的起止秒 */
+  audioStartSec?: number | null
+  audioEndSec?: number | null
   matchLoading: boolean
   matchError: string
   expanded: boolean

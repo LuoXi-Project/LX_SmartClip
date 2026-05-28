@@ -1008,6 +1008,52 @@ def render_muted_segment(
     return seg_out
 
 
+def _vf_trim_to_duration(dur: float) -> str:
+    """FFmpeg trim 滤镜须用 start/end，``trim=0:3`` 无效会导致画面全长溢出。"""
+    d = max(0.05, float(dur))
+    return f"trim=start=0:end={d:.3f},setpts=PTS-STARTPTS"
+
+
+def _af_trim_to_duration(dur: float) -> str:
+    d = max(0.05, float(dur))
+    return f"atrim=start=0:end={d:.3f},asetpts=PTS-STARTPTS"
+
+
+def _cap_segment_to_duration(
+    seg_path: str,
+    cap_sec: float,
+    tmp: str,
+    label: str,
+    codec_args: List[str],
+) -> str:
+    """容器时长超出配音上限时二次裁切（兜底，防止视频轨长于音轨）。"""
+    probed = float(probe_duration(seg_path, log_on_failure=True) or 0.0)
+    cap = max(0.05, float(cap_sec))
+    if probed <= cap + 0.08:
+        return seg_path
+    capped = os.path.join(tmp, f"{label}_cap.mp4")
+    logger.warning(
+        "段 %s 容器时长 %.3fs > 配音上限 %.3fs，二次裁切",
+        label,
+        probed,
+        cap,
+    )
+    run_ffmpeg(
+        [
+            "-i",
+            seg_path,
+            "-t",
+            f"{cap:.3f}",
+            *codec_args,
+            "-movflags",
+            "+faststart",
+            capped,
+        ],
+        desc=f"cap segment {label}",
+    )
+    return capped
+
+
 def _expand_paths_playlist_cycle(
     path_durs: List[Tuple[str, float]],
     *,
@@ -1125,13 +1171,20 @@ def render_tts_segment(
     paths_group = list(paths_group)
 
     if video_shorter and policy == "loop_video_to_cover":
-        import math
-
-        need = audio_dur - base_video_dur
-        rep = int(math.ceil(need / base_video_dur)) + 1
-        rep = max(1, min(200, rep))
-        paths_group = [*paths_group, *([*paths_group] * rep)]
-        need_pad_sec = max(0.0, audio_dur - (base_video_dur * (rep + 1)))
+        path_durs: List[Tuple[str, float]] = []
+        for p in paths_group:
+            d = float(probe_duration(p, log_on_failure=True) or 0.0)
+            path_durs.append((p, d if d > 0.05 else 0.5))
+        paths_group, covered = _expand_paths_playlist_cycle(path_durs, audio_dur=audio_dur)
+        need_pad_sec = max(0.0, audio_dur - covered)
+        logger.info(
+            "seg_%d loop_video_to_cover: group=%d clips, pieces=%d, covered=%.2fs audio=%.2fs",
+            int(seg_idx) + 1,
+            len(path_durs),
+            len(paths_group),
+            covered,
+            audio_dur,
+        )
     elif video_shorter and policy == "loop_playlist_to_cover":
         playlist_ids: List[str] = []
         if tts_align is not None:
@@ -1254,7 +1307,7 @@ def render_tts_segment(
                 if base_video_dur + eps < out_audio:
                     v_body += f",tpad=stop_mode=clone:stop_duration={out_audio - base_video_dur:.3f}"
                 elif base_video_dur > out_dur + eps:
-                    v_body += f",trim=0:{out_dur:.3f},setpts=PTS-STARTPTS"
+                    v_body += f",{_vf_trim_to_duration(out_dur)}"
                 v_body += ",setsar=1"
                 a_body = f"{a_chain},asetpts=PTS-STARTPTS"
                 _run_stretch_fc(output_dur=out_dur, v_filters=v_body, a_filters=a_body)
@@ -1264,7 +1317,7 @@ def render_tts_segment(
                 )
                 v_body = f"setpts=PTS-STARTPTS,setpts=PTS*{fac:.6f}"
                 if audio_dur + eps < out_v:
-                    v_body += f",trim=0:{audio_dur:.3f},setpts=PTS-STARTPTS"
+                    v_body += f",{_vf_trim_to_duration(audio_dur)}"
                 elif audio_dur > out_v + eps:
                     v_body += f",tpad=stop_mode=clone:stop_duration={audio_dur - out_v:.3f}"
                 v_body += ",setsar=1"
@@ -1310,10 +1363,29 @@ def render_tts_segment(
             out_dur = audio_dur
             if policy == "preserve_video_duration":
                 out_dur = max(audio_dur, base_video_dur)
-            logger.info(f"FFmpeg tts(seg concat demuxer) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
-            vf_pad = []
+            # 成片以配音（原声切片/TTS）为硬上限：画面只能在 [0, out_dur] 内，禁止溢出段落音轨。
+            v_parts: List[str] = []
             if need_pad_sec > 0.02:
-                vf_pad = ["-vf", f"tpad=stop_mode=clone:stop_duration={need_pad_sec:.3f},setsar=1"]
+                v_parts.append(f"tpad=stop_mode=clone:stop_duration={need_pad_sec:.3f}")
+            if policy != "preserve_video_duration":
+                v_parts.append(_vf_trim_to_duration(out_dur))
+            else:
+                v_parts.append("setpts=PTS-STARTPTS")
+            v_parts.append("setsar=1")
+            v_chain = ",".join(v_parts)
+            if policy == "preserve_video_duration" and out_dur > audio_dur + eps:
+                pad_a = out_dur - audio_dur
+                a_chain = f"apad=pad_dur={pad_a:.3f},{_af_trim_to_duration(out_dur)}"
+            else:
+                a_chain = _af_trim_to_duration(min(audio_dur, out_dur))
+            logger.info(
+                "FFmpeg tts(seg concat+trim) 段#%s out_dur=%.3f audio=%.3f base_video=%.3f policy=%s",
+                int(seg_idx) + 1,
+                out_dur,
+                audio_dur,
+                base_video_dur,
+                policy,
+            )
             run_ffmpeg(
                 [
                     "-fflags",
@@ -1326,11 +1398,13 @@ def render_tts_segment(
                     concat_list,
                     "-i",
                     tts_path,
+                    "-filter_complex",
+                    f"[0:v]{v_chain}[vout];[1:a]{a_chain}[aout]",
                     "-map",
-                    "0:v:0",
+                    "[vout]",
                     "-map",
-                    "1:a:0",
-                    *vf_pad,
+                    "[aout]",
+                    "-shortest",
                     "-t",
                     f"{out_dur:.3f}",
                     *seg_codec_args,
@@ -1338,7 +1412,7 @@ def render_tts_segment(
                     "+faststart",
                     seg_out,
                 ],
-                desc=f"tts seg {(int(seg_idx) + 1)} (concat demuxer)",
+                desc=f"tts seg {(int(seg_idx) + 1)} (concat+trim)",
             )
     except Exception:
         # fallback：仍走 filter_complex concat，但不再做多路 scale/pad（尺寸/SAR 已在 materialize 统一）
@@ -1353,8 +1427,8 @@ def render_tts_segment(
             filter_parts.append(f"[{i}:v]setsar=1,setpts=PTS-STARTPTS[v{i}]")
             concat_inputs.append(f"[v{i}]")
         filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(paths_group)}:v=1:a=0[vcat]")
-        filter_parts.append(f"[vcat]trim=0:{audio_dur},setpts=PTS-STARTPTS[vout]")
-        filter_parts.append(f"[{len(paths_group)}:a]atrim=0:{audio_dur},asetpts=PTS-STARTPTS[aout]")
+        filter_parts.append(f"[vcat]{_vf_trim_to_duration(audio_dur)},setsar=1[vout]")
+        filter_parts.append(f"[{len(paths_group)}:a]{_af_trim_to_duration(audio_dur)}[aout]")
         filter_complex = ";".join(filter_parts)
 
         logger.info(f"FFmpeg tts(seg fallback filter_complex) 段#{(int(seg_idx) + 1)} 参数: {seg_codec_args}")
@@ -1367,6 +1441,9 @@ def render_tts_segment(
                 "[vout]",
                 "-map",
                 "[aout]",
+                "-shortest",
+                "-t",
+                f"{audio_dur:.3f}",
                 *seg_codec_args,
                 "-movflags",
                 "+faststart",
@@ -1377,5 +1454,12 @@ def render_tts_segment(
 
     logger.info(f"FFmpeg tts 剪辑片段 {(int(seg_idx) + 1)} 完成")
 
-    return seg_out
+    cap_dur = audio_dur if policy != "preserve_video_duration" else max(audio_dur, base_video_dur)
+    return _cap_segment_to_duration(
+        seg_out,
+        cap_dur,
+        tmp,
+        f"seg_{int(seg_idx):03d}",
+        seg_codec_args,
+    )
 

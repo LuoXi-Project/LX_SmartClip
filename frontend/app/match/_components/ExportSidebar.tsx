@@ -37,7 +37,9 @@ export function ExportSidebar({
   const totalCount = segments.length
   const audioReadyLabel =
     exportMode === 'subtitle' || exportMode === 'jianying_tts'
-      ? '配音就绪'
+      ? matchMode === 'audio_match'
+        ? '原声就绪'
+        : '配音就绪'
       : exportMode === 'original' || exportMode === 'jianying_original'
         ? '原声就绪'
         : '素材就绪'

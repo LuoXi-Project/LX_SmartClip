@@ -18,6 +18,8 @@ type VideoScopeSelectorProps = {
   onNextPage: () => void
   /** 影视解说等场景：单选原片，标题与提示文案不同 */
   singleSelect?: boolean
+  /** 为 true 时提示必须先勾选，不会「不选=全库」 */
+  requireSelection?: boolean
 }
 
 export function VideoScopeSelector({
@@ -33,6 +35,7 @@ export function VideoScopeSelector({
   onPrevPage,
   onNextPage,
   singleSelect = false,
+  requireSelection = false,
 }: VideoScopeSelectorProps) {
   if (scopeVideos.length === 0) return null
   const statusLabel = (s: Video['status']) => {
@@ -48,7 +51,9 @@ export function VideoScopeSelector({
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
           {singleSelect ? '选择原片' : '限定视频范围'}
           {!singleSelect && (
-            <span className="normal-case font-normal text-slate-600 ml-1">（不选 = 全部）</span>
+            <span className="normal-case font-normal text-slate-600 ml-1">
+              {requireSelection ? '（须先勾选，仅在所选视频内检索）' : '（不选 = 全部）'}
+            </span>
           )}
         </p>
         <span className="text-xs text-slate-600">

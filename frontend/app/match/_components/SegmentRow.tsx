@@ -34,13 +34,18 @@ export function SegmentRow({
   onToggleExpand,
   onOpenClipInOut,
   dragHandleProps,
+  audioMatchMode = false,
+  onSyncAudio,
+  syncingAudio = false,
+  onOpenAudioTimeline,
 }: {
   seg: Segment; index: number
   /** 段落总数，与 onReorder 一起用于禁用边界按钮 */
   segmentCount?: number
   onReorder?: (action: 'up' | 'down' | 'top' | 'bottom') => void
   onTextChange: (t: string) => void
-  onRemove: () => void
+  /** 未提供时不显示删除（如音频匹配：段落与底音频时间轴绑定） */
+  onRemove?: () => void
   onMatch: () => void
   onToggleSelect: (clipId: string, e: MouseEvent) => void
   onTts: () => void
@@ -56,6 +61,12 @@ export function SegmentRow({
   onOpenClipInOut?: () => void
   /** 拖动手柄（仅手动匹配段落排序） */
   dragHandleProps?: HTMLAttributes<HTMLDivElement> & { draggable?: boolean }
+  /** 音频匹配模式：使用上传配音切片，隐藏 TTS */
+  audioMatchMode?: boolean
+  onSyncAudio?: () => void
+  syncingAudio?: boolean
+  /** 音频匹配：打开底音频时间轴剪辑台 */
+  onOpenAudioTimeline?: () => void
 }) {
   const canUp = index > 0
   const canDown = segmentCount > 0 && index < segmentCount - 1
@@ -101,10 +112,46 @@ export function SegmentRow({
           </span>
         )}
         {seg.ttsFilename && (
-          <span className="text-[10px] text-violet-400 bg-violet-500/10 border border-violet-500/20 rounded-full px-2 py-0.5">
-            配音就绪
-          </span>
+          audioMatchMode && onOpenAudioTimeline ? (
+            <button
+              type="button"
+              onClick={onOpenAudioTimeline}
+              title="打开底音频时间轴微调"
+              className="text-[10px] rounded-full px-2 py-0.5 border text-rose-300 bg-rose-500/10 border-rose-500/20 hover:bg-rose-500/20 transition-colors"
+            >
+              原声就绪
+            </button>
+          ) : (
+            <span
+              className={`text-[10px] rounded-full px-2 py-0.5 border ${
+                audioMatchMode
+                  ? 'text-rose-300 bg-rose-500/10 border-rose-500/20'
+                  : 'text-violet-400 bg-violet-500/10 border-violet-500/20'
+              }`}
+            >
+              {audioMatchMode ? '原声就绪' : '配音就绪'}
+            </span>
+          )
         )}
+        {audioMatchMode &&
+          seg.audioStartSec != null &&
+          seg.audioEndSec != null &&
+          !seg.ttsFilename && (
+            onOpenAudioTimeline ? (
+              <button
+                type="button"
+                onClick={onOpenAudioTimeline}
+                title="打开底音频时间轴微调"
+                className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5 tabular-nums hover:bg-amber-500/20 transition-colors"
+              >
+                {fmtTime(seg.audioStartSec)}–{fmtTime(seg.audioEndSec)}
+              </button>
+            ) : (
+              <span className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5 tabular-nums">
+                {fmtTime(seg.audioStartSec)}–{fmtTime(seg.audioEndSec)}
+              </span>
+            )
+          )}
         {onReorder && segmentCount > 1 ? (
           <div className="flex items-center gap-0.5 shrink-0 rounded-lg border border-slate-700/80 bg-slate-900/50 p-0.5">
             <button
@@ -148,9 +195,11 @@ export function SegmentRow({
         <button onClick={onToggleExpand} className="text-slate-600 hover:text-slate-300 transition-colors">
           {seg.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
-        <button onClick={onRemove} className="text-slate-700 hover:text-red-400 transition-colors">
-          <Trash2 className="w-4 h-4" />
-        </button>
+        {onRemove && !audioMatchMode ? (
+          <button onClick={onRemove} className="text-slate-700 hover:text-red-400 transition-colors">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        ) : null}
       </div>
 
       <div className="px-4 py-4 space-y-4">
@@ -223,15 +272,23 @@ export function SegmentRow({
             ) : null}
           </div>
         )}
-        {chosen && (
+        {(chosen || audioMatchMode) && (
           <div className="flex items-center gap-3 rounded-xl bg-slate-900/40 border border-slate-800 px-3 py-2.5">
             <Volume2 className="w-4 h-4 text-slate-500 shrink-0" />
             <div className="flex-1 min-w-0">
               {seg.ttsError && !seg.ttsFilename
                 ? <p className="text-xs text-red-400 truncate">{seg.ttsError}</p>
                 : seg.ttsFilename
-                  ? <p className="text-xs text-emerald-400 font-medium">✓ 配音已合成</p>
-                  : <p className="text-xs text-slate-500">尚未合成配音</p>}
+                  ? (
+                    <p className={`text-xs font-medium ${audioMatchMode ? 'text-rose-300' : 'text-emerald-400'}`}>
+                      {audioMatchMode ? '✓ 原声切片已就绪' : '✓ 配音已合成'}
+                    </p>
+                  )
+                  : (
+                    <p className="text-xs text-slate-500">
+                      {audioMatchMode ? '尚未切片原声（请同步原声）' : '尚未合成配音'}
+                    </p>
+                  )}
             </div>
             {seg.ttsFilename && playingAudio && audioDuration > 0 ? (
               <div className="flex items-center gap-2 shrink-0">
@@ -262,14 +319,41 @@ export function SegmentRow({
                   </button>
                 )
             )}
-            <button
-              onClick={onTts}
-              disabled={seg.ttsLoading || !seg.text.trim()}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-xs text-white font-medium flex items-center gap-1.5 transition-colors"
-            >
-              {seg.ttsLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mic className="w-3.5 h-3.5" />}
-              {seg.ttsLoading ? '合成中' : seg.ttsFilename ? '重新合成' : '合成配音'}
-            </button>
+            {audioMatchMode ? (
+              <>
+                {onOpenAudioTimeline &&
+                seg.audioStartSec != null &&
+                seg.audioEndSec != null ? (
+                  <button
+                    type="button"
+                    onClick={onOpenAudioTimeline}
+                    className="shrink-0 px-3 py-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-200 text-xs font-medium hover:bg-rose-500/20 transition-colors"
+                  >
+                    微调时间
+                  </button>
+                ) : null}
+                {onSyncAudio ? (
+                  <button
+                    type="button"
+                    onClick={onSyncAudio}
+                    disabled={syncingAudio || seg.audioStartSec == null || seg.audioEndSec == null}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-600 text-xs text-white font-medium flex items-center gap-1.5 transition-colors"
+                  >
+                    {syncingAudio ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mic className="w-3.5 h-3.5" />}
+                    {syncingAudio ? '切片中' : '刷新切片'}
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <button
+                onClick={onTts}
+                disabled={seg.ttsLoading || !seg.text.trim()}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-xs text-white font-medium flex items-center gap-1.5 transition-colors"
+              >
+                {seg.ttsLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mic className="w-3.5 h-3.5" />}
+                {seg.ttsLoading ? '合成中' : seg.ttsFilename ? '重新合成' : '合成配音'}
+              </button>
+            )}
           </div>
         )}
 

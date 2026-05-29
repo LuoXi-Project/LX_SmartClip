@@ -152,9 +152,10 @@ function OutlineMarkdownWithSeek({
 interface SmartOutlinePanelProps {
   videoId: string
   selectedVideo: Video | null
+  onOutlineChange?: (hasOutline: boolean) => void
 }
 
-export function SmartOutlinePanel({ videoId, selectedVideo }: SmartOutlinePanelProps) {
+export function SmartOutlinePanel({ videoId, selectedVideo, onOutlineChange }: SmartOutlinePanelProps) {
   const toast = useToast()
   const [bundle, setBundle] = useState<SmartOutlineBundle | null>(null)
   const [loading, setLoading] = useState(false)
@@ -167,6 +168,10 @@ export function SmartOutlinePanel({ videoId, selectedVideo }: SmartOutlinePanelP
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
   const outline = bundle?.outline ?? null
+
+  useEffect(() => {
+    onOutlineChange?.(!!outline)
+  }, [outline, onOutlineChange])
 
   const load = useCallback(async () => {
     if (!videoId) {

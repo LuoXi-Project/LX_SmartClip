@@ -594,6 +594,19 @@ export interface SmartOutlineBundle {
 
 export type SmartOutlineGenerateResponse = SmartOutlineResponse & { updated_at: string }
 
+export type SummaryAskSource = 'note' | 'outline' | 'both'
+
+export interface SummaryAskMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface SummaryAskRequest {
+  question: string
+  source?: SummaryAskSource
+  history?: SummaryAskMessage[]
+}
+
 export const summaryApi = {
   templates: () => apiClient.get<unknown, SummaryTemplate[]>('/api/summary/templates'),
   generate: (payload: SummaryGenerateRequest) => apiClient.post<unknown, VideoSummary>('/api/summary/generate', payload),
@@ -615,6 +628,12 @@ export const summaryApi = {
       {},
       { params: { max_clips: params?.max_clips ?? 120 } },
     ),
+  askStream: (videoId: string, payload: SummaryAskRequest): Promise<Response> =>
+    fetch(`${API_BASE_URL}/api/summary/videos/${videoId}/ask-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
 }
 
 export interface ReplicaIngestResponse {

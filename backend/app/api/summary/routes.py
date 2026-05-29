@@ -18,12 +18,15 @@ from app.models.smart_outline import (
     SmartOutlineGenerateResponse,
 )
 from app.models.summary import (
+    SummaryAskRequest,
     SummaryGenerateRequest,
     SummaryTemplate,
     SummaryTemplateUpsertRequest,
     VideoSummary,
     VideoSummaryUpdateRequest,
 )
+
+from .ask import stream_summary_ask
 
 from .context import load_template
 from .llm import call_llm_json
@@ -303,6 +306,17 @@ async def update_summary(summary_id: str, req: VideoSummaryUpdateRequest):
         row3 = await cur3.fetchone()
         d = parse_video_summary_row(dict(row3))
         return VideoSummary(**d)
+
+
+@router.post("/videos/{video_id}/ask-stream")
+async def ask_summary_stream(video_id: str, req: SummaryAskRequest):
+    """基于视频笔记和/或智能大纲进行内容问答（流式）。"""
+    sse = await stream_summary_ask(video_id, req)
+    return StreamingResponse(
+        sse,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/videos/{video_id}/smart-outline", response_model=SmartOutlineBundle)

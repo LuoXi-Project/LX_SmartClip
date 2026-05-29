@@ -16,6 +16,7 @@ import rehypeSlug from 'rehype-slug'
 import GithubSlugger from 'github-slugger'
 import { Play } from 'lucide-react'
 import { API_BASE_URL } from '@/lib/runtime-config'
+import { baseMarkdownComponents, markdownProseClassName } from '@/components/ui/markdown-content'
 
 /** 将 `mm:ss` 或 `h:mm:ss` 转为从片头起的秒数 */
 export function timeTokenToSec(t: string): number {
@@ -229,8 +230,9 @@ export function preprocessNoteMarkdown(md: string): string {
   return s
 }
 
-const mdContainer =
-  'text-slate-200 text-sm leading-relaxed [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:scroll-mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:scroll-mt-3 [&_h3]:text-base [&_h3]:font-medium [&_h3]:mt-3 [&_h3]:scroll-mt-3 [&_h4]:scroll-mt-3 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_blockquote]:border-l-2 [&_blockquote]:border-slate-600 [&_blockquote]:pl-3 [&_blockquote]:my-3 [&_blockquote]:text-slate-300 [&_code]:text-cyan-200 [&_code]:bg-slate-800/80 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[13px] [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_a]:break-words [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-slate-700'
+const noteMarkdownClassName =
+  `${markdownProseClassName} ` +
+  '[&_h1]:scroll-mt-3 [&_h2]:scroll-mt-3 [&_h3]:scroll-mt-3 [&_h4]:scroll-mt-3'
 
 type Props = {
   markdown: string
@@ -272,6 +274,7 @@ export function SummaryNotePreview({
 
   const components = useMemo(
     () => ({
+      ...baseMarkdownComponents,
       a: ({ href, children, onClick: upstreamOnClick, ...rest }: ComponentPropsWithoutRef<'a'>) => {
         if (href?.startsWith('video-time:')) {
           const raw = href.replace('video-time:', '')
@@ -411,7 +414,7 @@ export function SummaryNotePreview({
           )}
         </div>
       ) : null}
-      <div className={`${embedVideo ? 'pt-1 ' : ''}${mdContainer}`}>
+      <div className={`${embedVideo ? 'pt-1 ' : ''}${noteMarkdownClassName}`}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSlug]}

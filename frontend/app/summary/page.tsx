@@ -1,18 +1,21 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { summaryApi } from '@/lib/api'
 import { SummaryPageHeader } from './_components/summary-page-header'
 import { VideoMaterialPanel } from './_components/video-material-panel'
 import { NoteStylePanel } from './_components/note-style-panel'
 import { CurrentSummaryMeta } from './_components/current-summary-meta'
 import { NoteContentPanel } from './_components/note-content-panel'
 import { SmartOutlinePanel } from './_components/smart-outline-panel'
+import { SummaryAskPanel } from './_components/summary-ask-panel'
 import { useSummaryPage } from './_hooks/use-summary-page'
 
-type RightTab = 'note' | 'outline'
+type RightTab = 'note' | 'outline' | 'ask'
 
 export default function SummaryPage() {
   const [rightTab, setRightTab] = useState<RightTab>('note')
+  const [hasOutline, setHasOutline] = useState(false)
   const {
     videos,
     videosQuery,
@@ -43,6 +46,27 @@ export default function SummaryPage() {
     copyMarkdown,
     exportMarkdown,
   } = useSummaryPage()
+
+  const hasNote = !!markdown.trim()
+
+  useEffect(() => {
+    if (!videoId) {
+      setHasOutline(false)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const bundle = await summaryApi.smartOutlineGet(videoId)
+        if (!cancelled) setHasOutline(!!bundle.outline)
+      } catch {
+        if (!cancelled) setHasOutline(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [videoId])
 
   useEffect(() => {
     setRightTab('note')
@@ -109,6 +133,17 @@ export default function SummaryPage() {
             >
               智能大纲
             </button>
+            <button
+              type="button"
+              onClick={() => setRightTab('ask')}
+              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                rightTab === 'ask'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              内容问答
+            </button>
           </div>
 
           {rightTab === 'note' ? (
@@ -125,9 +160,22 @@ export default function SummaryPage() {
               onCopy={copyMarkdown}
               onExport={exportMarkdown}
             />
+          ) : rightTab === 'outline' ? (
+            <div className="flex-1 min-h-0 flex flex-col">
+              <SmartOutlinePanel
+                videoId={videoId}
+                selectedVideo={selectedVideo}
+                onOutlineChange={setHasOutline}
+              />
+            </div>
           ) : (
             <div className="flex-1 min-h-0 flex flex-col">
-              <SmartOutlinePanel videoId={videoId} selectedVideo={selectedVideo} />
+              <SummaryAskPanel
+                videoId={videoId}
+                selectedVideo={selectedVideo}
+                hasNote={hasNote}
+                hasOutline={hasOutline}
+              />
             </div>
           )}
         </div>

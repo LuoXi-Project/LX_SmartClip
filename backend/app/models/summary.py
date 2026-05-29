@@ -66,3 +66,17 @@ class VideoSummaryUpdateRequest(BaseModel):
     summary_markdown: Optional[str] = None
     source: Literal["user", "llm"] = "user"
 
+
+SummaryAskSource = Literal["note", "outline", "both"]
+
+
+class SummaryAskMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1)
+
+
+class SummaryAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=4000)
+    source: SummaryAskSource = Field("both", description="问答依据：note/outline/both")
+    history: list[SummaryAskMessage] = Field(default_factory=list, max_length=20)
+

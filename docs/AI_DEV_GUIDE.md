@@ -21,7 +21,8 @@
   - `app/library/page.tsx`：素材库（上传、列表、删除等）。
   - `app/process/page.tsx`：素材处理流程可视化（WebSocket / 任务进度）。
   - `app/search/page.tsx`：素材检索（对接 `/api/search`）。
-  - `app/match/page.tsx`：智能剪辑主工作台（手动匹配、自动成片、字幕、导出等）。
+  - `app/studio/page.tsx`：智剪工作台（Agent 对话编排，P0 主入口）。
+  - `app/match/page.tsx`：经典模式智能剪辑（手动匹配、自动成片、字幕、导出等）。
   - `app/tts/page.tsx`：TTS 配音。
   - `app/bgm/page.tsx`：BGM 曲库。
   - `app/settings/page.tsx`：系统配置管理。
@@ -46,7 +47,8 @@
   - `match.py`、`search.py`：匹配与语义检索。
   - `auto_edit.py`：自动成片（plan/session/stream/realize 等）。
   - `subtitle.py`、`tts.py`、`bgm.py`、`export.py`：字幕、TTS、BGM、工程导出。
-  - `chat.py`、`copy_gen.py`：对话与文案生成。
+  - `agent.py`：Agent Studio 会话、SSE 对话、Workspace。
+  - `chat.py`、`copy_gen.py`：对话与文案生成（chat 将逐步由 agent 替代）。
   - `replica.py`、`license.py`、`logs.py`：复刻模板、卡密、日志。
   - `config.py`：配置与 `POST /models` 代理。
 - 核心能力层（`app/core/`）：
@@ -166,4 +168,13 @@
 
 ---
 
-**最后更新：** 2026-04-09
+## 11. Agent Studio（智剪工作台）
+
+- 入口：`/studio`；设计见 `docs/superpowers/specs/2026-05-31-agent-studio-design.md`。
+- API 前缀：`/api/agent`（`sessions`、`chat` SSE、`workspace` PATCH）。
+- 后端实现：`backend/app/agent/`（orchestrator、tool_registry、tools）。
+- P0 工具：`list_videos`、`get_video_status`、`get_workspace_state`、`set_selected_videos`、`start_process_job`、`generate_auto_edit_plan`、`apply_plan_patch`、`realize_plan`。
+
+---
+
+**最后更新：** 2026-05-31

@@ -79,6 +79,39 @@ CREATE TABLE IF NOT EXISTS process_tasks (
 );
 """
 
+CREATE_AGENT_SESSIONS = """
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '未命名项目',
+    workspace_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+CREATE_AGENT_MESSAGES = """
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+"""
+
+CREATE_AGENT_PENDING_CONFIRMS = """
+CREATE TABLE IF NOT EXISTS agent_pending_confirms (
+    call_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+"""
+
 CREATE_SUMMARY_TEMPLATES = """
 CREATE TABLE IF NOT EXISTS summary_templates (
     id TEXT PRIMARY KEY,
@@ -492,6 +525,9 @@ async def init_db():
         await db.execute(CREATE_REPLICA_TEMPLATES)
         await db.execute(CREATE_CONFIG)
         await db.execute(CREATE_PROCESS_TASKS)
+        await db.execute(CREATE_AGENT_SESSIONS)
+        await db.execute(CREATE_AGENT_MESSAGES)
+        await db.execute(CREATE_AGENT_PENDING_CONFIRMS)
         await db.execute(CREATE_SUMMARY_TEMPLATES)
         await db.execute(CREATE_VIDEO_SUMMARIES)
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)

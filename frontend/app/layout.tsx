@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import './globals.css'
-import AIChatPanel from './_components/AIChatPanel'
 import { LicenseGate } from './_components/LicenseGate'
 import { ToastProvider } from '@/components/ui/toast-provider'
 import { ConfirmProvider } from '@/hooks/use-confirm'
@@ -43,7 +42,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </a>
               </div>
             </footer>
-            <AIChatPanel />
           </ConfirmProvider>
         </ToastProvider>
       </body>

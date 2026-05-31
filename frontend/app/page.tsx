@@ -145,12 +145,18 @@ export default function Home() {
         </div>
 
         {/* CTA */}
-        <div className="text-center mt-16">
+        <div className="text-center mt-16 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <a
+            href="/studio"
+            className="inline-block px-8 py-3 bg-gradient-to-r from-violet-600 to-blue-600 text-white font-semibold rounded-lg hover:shadow-lg hover:shadow-violet-500/40 transition-all"
+          >
+            开始智剪
+          </a>
           <a
             href="/library"
-            className="inline-block px-8 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all"
+            className="inline-block px-8 py-3 border border-slate-600 text-slate-200 font-medium rounded-lg hover:border-slate-500 transition-all"
           >
-            开始使用
+            素材库
           </a>
         </div>
       </div>

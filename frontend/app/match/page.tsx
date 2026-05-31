@@ -1657,6 +1657,13 @@ export default function MatchPage() {
       <div className={isFilmMode ? '' : 'pr-64'}>
         <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
           <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
+          <div className="rounded-xl border border-violet-500/25 bg-violet-500/5 px-4 py-3 text-sm text-slate-300 flex flex-wrap items-center gap-2">
+            <span>推荐使用对话式</span>
+            <Link href="/studio" className="text-violet-300 hover:text-violet-200 font-medium">
+              智剪工作台
+            </Link>
+            <span className="text-slate-500">完成全流程；本页为经典 Tab 模式。</span>
+          </div>
           {doneVideos.length === 0 && mode !== 'script_stock' && mode !== 'film_commentary' && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />

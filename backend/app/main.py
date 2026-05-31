@@ -35,6 +35,7 @@ from app.api.replica import router as replica_router
 from app.api.summary import router as summary_router
 from app.api.script_stock import router as script_stock_router
 from app.api.film_commentary import router as film_commentary_router
+from app.api.agent import router as agent_router
 from app.api.license import router as license_router
 from app.api.logs import router as logs_router
 from app.middleware.license_middleware import LicenseMiddleware
@@ -91,6 +92,7 @@ app.include_router(replica_router)
 app.include_router(summary_router)
 app.include_router(script_stock_router)
 app.include_router(film_commentary_router)
+app.include_router(agent_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

@@ -12,11 +12,69 @@ _QUERY_STOP = frozenset(
     "的了个和与及或把将给用选要做一个段条秒分钟口播方案成片剪辑视频素材库列表".split()
 )
 
+# 不宜当作文件名关键词的泛化词（抽象需求 ≠ 素材名）
+_GENERIC_KEYWORDS = frozenset(
+    [
+        "电影",
+        "影视",
+        "影片",
+        "视频",
+        "素材",
+        "剪辑",
+        "口播",
+        "成片",
+        "方案",
+        "推荐",
+        "适合",
+        "查找",
+        "帮我",
+        "找",
+        "有哪些",
+        "什么",
+    ]
+)
+
+# 探索性/推荐类请求：交给 Agent ReAct 推理，不做规则预填
+_EXPLORATORY_PATTERNS = (
+    re.compile(r"(找|搜|推荐|适合|哪些|有没有|帮我).{0,8}(视频|素材|片子)"),
+    re.compile(r"(视频|素材).{0,8}(推荐|适合|哪些|有没有)"),
+    re.compile(r"^帮我.{0,12}(找|选|推荐)"),
+)
+
+
+def _is_exploratory_query(message: str) -> bool:
+    """用户在做探索/推荐，而非指定具体素材名。"""
+    text = (message or "").strip()
+    if not text:
+        return False
+    if any(p.search(text) for p in _EXPLORATORY_PATTERNS):
+        return True
+    # 「适合做 X 剪辑」类：X 多为风格而非文件名
+    if re.search(r"适合.{0,12}剪辑", text):
+        return True
+    return False
+
+
+def _meaningful_remainder(term: str) -> str:
+    t = term.strip()
+    for g in sorted(_GENERIC_KEYWORDS, key=len, reverse=True):
+        t = t.replace(g, "")
+    return re.sub(r"[\s的了一个与及把将给用选要做]", "", t)
+
+
+def _is_usable_keyword(term: str) -> bool:
+    t = term.strip()
+    if len(t) < 2:
+        return False
+    if t in _GENERIC_KEYWORDS:
+        return False
+    return len(_meaningful_remainder(t)) >= 2
+
 
 def _extract_search_terms(message: str) -> list[str]:
     """从用户句子里抽出可能对应视频文件名的检索词。"""
     text = (message or "").strip()
-    if not text:
+    if not text or _is_exploratory_query(text):
         return []
 
     terms: list[str] = []
@@ -47,7 +105,7 @@ def _extract_search_terms(message: str) -> list[str]:
     for t in terms:
         t = t.strip("的 ")
         t = re.sub(r"^(?:选|用|选中|选择)\s*", "", t)
-        if len(t) < 2 or t in seen:
+        if len(t) < 2 or t in seen or not _is_usable_keyword(t):
             continue
         seen.add(t)
         out.append(t)
@@ -121,8 +179,13 @@ async def run_intent_preflight(
     规则层：根据用户话自动搜视频并生成 workspace_patch。
     返回 None 表示无需预填。
     """
+    if _is_exploratory_query(message):
+        return None
+
     patch: dict[str, Any] = {}
     terms = _extract_search_terms(message)
+    if not terms:
+        return None
     limit = _extract_limit(message, default=3)
     duration = _extract_duration_sec(message)
 

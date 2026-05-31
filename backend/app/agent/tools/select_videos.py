@@ -15,9 +15,15 @@ async def _select_videos_by_keyword(ctx: AgentContext, args: dict[str, Any]) -> 
     rows = await search_videos_by_name(keyword, limit=limit)
     if not rows:
         return ToolResult(
-            ok=False,
-            summary="",
-            error=f"素材库中未找到名称包含「{keyword}」的视频，请换关键词或 list_videos",
+            ok=True,
+            summary=(
+                f"名称未匹配到「{keyword}」。"
+                "可尝试 list_videos 浏览全部素材，或换更具体的关键词（品牌名、片名、场景）。"
+            ),
+            next_suggestions=[
+                "list_videos 无 q 参数浏览素材库",
+                "换更短/更具体的关键词重试",
+            ],
         )
     ids = [str(r["id"]) for r in rows]
     names = "\n".join(f"- {r['name']} ({r['id']})" for r in rows)

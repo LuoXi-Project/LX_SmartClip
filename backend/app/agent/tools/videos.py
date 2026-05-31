@@ -36,7 +36,19 @@ async def _list_videos(_ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
                 (limit,),
             )
         rows = await cur.fetchall()
-    items = [dict(r) for r in rows]
+        items = [dict(r) for r in rows]
+        if q and not items:
+            cur_total = await db.execute("SELECT COUNT(*) AS c FROM videos")
+            total_row = await cur_total.fetchone()
+            total = int(total_row["c"]) if total_row else 0
+            return ToolResult(
+                ok=True,
+                summary=(
+                    f"名称含「{args.get('q')}」的视频 0 个（素材库共 {total} 个）。"
+                    "建议去掉 q 浏览全部，或换关键词。"
+                ),
+                next_suggestions=["去掉 q 参数调用 list_videos 浏览全部"],
+            )
     lines = [
         f"- {r['id']}: {r['name']} [{r['status']}] clips={r['total_clips'] or 0}"
         for r in items

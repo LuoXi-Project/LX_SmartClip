@@ -12,7 +12,7 @@ from app.agent import session_store
 from app.agent.context_builder import build_workspace_summary
 from app.agent.planner import build_task_plan
 from app.agent.prompts.executor import EXECUTOR_SYSTEM
-from app.agent.intent_preflight import run_intent_preflight, should_force_execute
+from app.agent.intent_preflight import run_intent_preflight
 from app.agent.router import classify_route
 from app.agent.tool_registry import AgentContext, get_openai_tools, invoke, needs_confirm
 from app.agent.tools import register_all_tools
@@ -23,7 +23,25 @@ from app.models.agent import ChatRequest, ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 8
+MAX_TOOL_ROUNDS = 6
+
+
+def _emit_content_chunks(content: str) -> list[tuple[str, dict[str, Any]]]:
+    """将助手文本拆成 reasoning（思考：）与 message 事件。"""
+    if not content:
+        return []
+    events: list[tuple[str, dict[str, Any]]] = []
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("思考：") or stripped.startswith("思考:"):
+            events.append(("reasoning_delta", {"content": stripped + "\n"}))
+        else:
+            events.append(("message_delta", {"content": line + "\n"}))
+    if events and events[-1][0] == "message_delta":
+        # 去掉最后一行多余换行
+        last = events[-1][1]["content"]
+        events[-1] = ("message_delta", {"content": last.rstrip("\n")})
+    return events
 
 CHECKPOINT_BEFORE = frozenset({
     "set_selected_videos",
@@ -221,21 +239,6 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 f"{s.id}. {s.title} (tool={s.tool})" for s in plan_out.steps
             )
 
-    if route_out.route == "clarify" and not should_force_execute(
-        req.message, selected_count=len(ws.selected_video_ids or [])
-    ):
-        yield _sse(
-            "message_delta",
-            {
-                "content": (
-                    "需要更多信息：请说明素材名称关键词（如「洁柔」）或具体视频 ID；"
-                    "也可说「用名称含XX的3个视频做30秒口播」。"
-                )
-            },
-        )
-        yield _sse("done", {})
-        return
-
     if route_out.route == "clarify":
         route_out.route = "execute"
 
@@ -256,14 +259,15 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 f"【工作区】\n{summary}\n\n"
                 f"【近期对话】\n{history_text or '（无）'}\n\n"
                 f"{planner_note}\n\n"
-                f"【当前用户消息】\n{req.message}"
+                f"【当前用户消息】\n{req.message}\n\n"
+                f"（ReAct 最多 {MAX_TOOL_ROUNDS} 轮工具调用，请合理规划步骤。）"
             ),
         },
     ]
 
     tools = get_openai_tools()
 
-    for _round in range(MAX_TOOL_ROUNDS):
+    for round_idx in range(MAX_TOOL_ROUNDS):
         resp = await client.chat.completions.create(
             model=cfg["model"],
             messages=messages,
@@ -276,7 +280,8 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
         msg = choice.message
 
         if msg.content:
-            yield _sse("message_delta", {"content": msg.content})
+            for evt, payload in _emit_content_chunks(msg.content):
+                yield _sse(evt, payload)
 
         tool_calls = msg.tool_calls or []
         if not tool_calls:
@@ -285,7 +290,7 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 session_id,
                 {"studio_type": "assistant", "text": final_text},
             )
-            yield _sse("done", {})
+            yield _sse("done", {"rounds_used": round_idx})
             return
 
         messages.append(msg.model_dump())
@@ -322,7 +327,7 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 yield _sse("done", {"pending_confirm": call_id})
                 return
 
-            yield _sse("tool_start", {"call_id": call_id, "name": name, "input": args})
+            yield _sse("tool_start", {"call_id": call_id, "name": name, "input": args, "round": round_idx + 1})
             await _maybe_checkpoint(session_id, name)
             result = await invoke(name, args, ctx)
             await _apply_tool_result(session_id, result, ctx)
@@ -363,4 +368,12 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
         if choice.finish_reason == "stop":
             break
 
-    yield _sse("done", {})
+    limit_msg = (
+        f"\n\n（已达 {MAX_TOOL_ROUNDS} 轮工具调用上限；如需继续请补充说明或指定下一步。）"
+    )
+    yield _sse("message_delta", {"content": limit_msg})
+    await session_store.persist_studio_message(
+        session_id,
+        {"studio_type": "assistant", "text": limit_msg.strip()},
+    )
+    yield _sse("done", {"rounds_used": MAX_TOOL_ROUNDS, "limit_reached": True})

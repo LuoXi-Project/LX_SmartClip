@@ -81,6 +81,13 @@ export function StudioThread() {
             asstText += d.content
             updateMessage(asstId, { type: 'assistant', content: asstText })
           }
+          if (event === 'reasoning_delta' && typeof d.content === 'string') {
+            addMessage({
+              id: genId(),
+              type: 'reasoning',
+              content: String(d.content),
+            })
+          }
           if (event === 'confirm_required') {
             setPendingConfirm({
               callId: String(d.call_id),
@@ -226,6 +233,13 @@ function MessageRow({
     return (
       <div className="text-sm text-slate-300 bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 mr-4 whitespace-pre-wrap">
         {msg.content || '…'}
+      </div>
+    )
+  }
+  if (msg.type === 'reasoning') {
+    return (
+      <div className="text-xs text-slate-500 italic border-l-2 border-slate-700 pl-2 mr-6">
+        {msg.content}
       </div>
     )
   }

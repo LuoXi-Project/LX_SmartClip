@@ -38,6 +38,7 @@ export interface ArtifactRef {
 export type StudioMessage =
   | { id: string; type: 'user'; content: string }
   | { id: string; type: 'assistant'; content: string }
+  | { id: string; type: 'reasoning'; content: string }
   | {
       id: string
       type: 'tool'

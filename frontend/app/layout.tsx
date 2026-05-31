@@ -16,11 +16,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN">
       <body className="min-h-screen flex flex-col">
         <nav className="fixed top-0 inset-x-0 z-50 border-b border-slate-800 bg-[#0d0f14]/90 backdrop-blur-md">
-          <div className="max-w-6xl mx-auto px-6 h-12 flex items-center gap-6">
-            <Link href="/" className="text-sm font-bold tracking-tight text-slate-100 hover:text-white transition-colors">
-            洛曦智剪
+          <div className="w-full px-4 sm:px-6 h-12 flex items-center gap-3 sm:gap-4">
+            <Link
+              href="/"
+              className="text-sm font-bold tracking-tight text-slate-100 hover:text-white transition-colors shrink-0"
+            >
+              洛曦智剪
             </Link>
-            <div className="h-4 w-px bg-slate-700" />
+            <div className="h-4 w-px bg-slate-700 shrink-0 hidden md:block" />
             <TopNav />
           </div>
         </nav>

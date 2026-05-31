@@ -18,11 +18,10 @@ import {
   resetAgentSession,
   type SessionListItem,
 } from '@/lib/agent-api'
-import { applyRollbackResult, loadStudioSessionIntoStore } from '@/lib/studio-load-session'
+import { applyRollbackResult } from '@/lib/studio-load-session'
 import { useStudioStore } from '@/lib/studio-store'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
-import { writeLastStudioSessionId } from '@/lib/studio-session-persist'
 
 type StudioSessionDrawerProps = {
   open: boolean

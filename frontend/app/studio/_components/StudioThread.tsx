@@ -61,7 +61,7 @@ export function StudioThread() {
             }
           }
           if (event === 'artifact') {
-            const art = d as ArtifactRef
+            const art = d as unknown as ArtifactRef
             setSelectedArtifact(art)
             if (art.type !== 'video' || art.id !== 'list') {
               addMessage({ id: genId(), type: 'artifact', artifact: art })

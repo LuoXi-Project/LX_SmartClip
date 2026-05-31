@@ -78,7 +78,7 @@ export const useStudioStore = create<StudioStore>((set, get) => ({
     const { workspace, selectedArtifact } = get()
     if (!workspace?.plans?.length) return null
     if (selectedArtifact?.type === 'plan') {
-      return (selectedArtifact.payload as AutoEditPlanApi) || null
+      return (selectedArtifact.payload as unknown as AutoEditPlanApi) || null
     }
     const pid = workspace.active_plan_id
     if (pid) {

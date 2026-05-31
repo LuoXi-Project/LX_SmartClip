@@ -33,6 +33,7 @@ interface StudioStore {
   setError: (e: string | null) => void
   getActivePlan: () => AutoEditPlanApi | null
   checkpointCount: () => number
+  canRollback: () => boolean
 }
 
 export const useStudioStore = create<StudioStore>((set, get) => ({
@@ -68,6 +69,11 @@ export const useStudioStore = create<StudioStore>((set, get) => ({
   setSelectedArtifact: (selectedArtifact) => set({ selectedArtifact }),
   setError: (error) => set({ error }),
   checkpointCount: () => get().workspace?.checkpoints?.length ?? 0,
+  canRollback: () => {
+    const { workspace, messages } = get()
+    if ((workspace?.checkpoints?.length ?? 0) > 0) return true
+    return messages.some((m) => m.type === 'user')
+  },
   getActivePlan: () => {
     const { workspace, selectedArtifact } = get()
     if (!workspace?.plans?.length) return null

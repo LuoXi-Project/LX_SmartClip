@@ -1,15 +1,18 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Send, Loader2, Sparkles } from 'lucide-react'
-import { streamAgentChat, getAgentSession } from '@/lib/agent-api'
+import { Send, Loader2, Sparkles, RotateCcw } from 'lucide-react'
+import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession } from '@/lib/agent-api'
 import { genId, useStudioStore } from '@/lib/studio-store'
 import type { ArtifactRef, StudioMessage } from '@/lib/agent-types'
 import { ExportResultPanel } from './ExportResultPanel'
 import { useConfirm } from '@/hooks/use-confirm'
+import { useToast } from '@/components/ui/toast-provider'
+import { applyRollbackResult, refreshStudioMessagesInStore } from '@/lib/studio-load-session'
 
 export function StudioThread() {
   const confirm = useConfirm()
+  const toast = useToast()
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [input, setInput] = useState('')
@@ -49,6 +52,14 @@ export function StudioThread() {
         onError: (err) => setError(err.message),
         onEvent: (event, data) => {
           const d = data as Record<string, unknown>
+          if (event === 'user_message' && typeof d.id === 'string') {
+            const localId = [...useStudioStore.getState().messages]
+              .reverse()
+              .find((m) => m.type === 'user')?.id
+            if (localId) {
+              updateMessage(localId, { id: d.id } as Partial<StudioMessage>)
+            }
+          }
           if (event === 'artifact') {
             const art = d as ArtifactRef
             setSelectedArtifact(art)
@@ -113,8 +124,11 @@ export function StudioThread() {
       setStreaming(false)
       abortRef.current = null
       try {
-        const res = await getAgentSession(sessionId)
-        setWorkspace(res.workspace)
+        const [sess] = await Promise.all([
+          getAgentSession(sessionId),
+          refreshStudioMessagesInStore(sessionId, useStudioStore.getState()),
+        ])
+        setWorkspace(sess.workspace)
       } catch {
         /* ignore */
       }
@@ -165,6 +179,23 @@ export function StudioThread() {
     })
   }
 
+  const rollbackToMessage = async (messageId: string, preview: string) => {
+    if (!sessionId || streaming) return
+    const ok = await confirm({
+      title: '回退到此',
+      description: `将删除此消息及之后的全部对话，并恢复对应的工作区状态。\n\n「${preview.slice(0, 60)}${preview.length > 60 ? '…' : ''}」`,
+      confirmLabel: '回退',
+    })
+    if (!ok) return
+    try {
+      const res = await rollbackAgentSessionToMessage(sessionId, messageId)
+      const label = await applyRollbackResult(sessionId, res, useStudioStore.getState())
+      toast.success(`已回退：${label}`)
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full border-r border-slate-800 bg-[#0d0f14]">
       <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
@@ -178,7 +209,13 @@ export function StudioThread() {
           </p>
         )}
         {messages.map((m) => (
-          <MessageRow key={m.id} msg={m} onApproveConfirm={approveConfirm} />
+          <MessageRow
+            key={m.id}
+            msg={m}
+            streaming={streaming}
+            onApproveConfirm={approveConfirm}
+            onRollbackToMessage={rollbackToMessage}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -217,15 +254,31 @@ export function StudioThread() {
 
 function MessageRow({
   msg,
+  streaming,
   onApproveConfirm,
+  onRollbackToMessage,
 }: {
   msg: StudioMessage
+  streaming: boolean
   onApproveConfirm: () => void
+  onRollbackToMessage: (messageId: string, preview: string) => void
 }) {
   if (msg.type === 'user') {
     return (
-      <div className="text-sm text-slate-100 bg-blue-600/20 border border-blue-500/30 rounded-lg px-3 py-2 ml-4">
-        {msg.content}
+      <div className="group relative ml-4">
+        <div className="text-sm text-slate-100 bg-blue-600/20 border border-blue-500/30 rounded-lg px-3 py-2 pr-10">
+          {msg.content}
+        </div>
+        <button
+          type="button"
+          title="回退到此"
+          disabled={streaming}
+          onClick={() => void onRollbackToMessage(msg.id, msg.content)}
+          className="absolute top-1.5 right-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] text-slate-400 border border-transparent opacity-0 group-hover:opacity-100 hover:text-slate-100 hover:border-slate-600 hover:bg-slate-800/80 disabled:opacity-30 transition-opacity"
+        >
+          <RotateCcw className="w-3 h-3" />
+          回退
+        </button>
       </div>
     )
   }

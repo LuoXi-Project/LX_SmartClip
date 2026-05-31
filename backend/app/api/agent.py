@@ -90,7 +90,16 @@ async def reset_session(session_id: str):
 @router.post("/sessions/{session_id}/rollback", response_model=RollbackResponse)
 async def rollback_session(session_id: str):
     try:
-        ws, label = await session_store.rollback_checkpoint(session_id)
+        ws, label = await session_store.rollback_one_step(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return RollbackResponse(ok=True, label=label, workspace=ws)
+
+
+@router.post("/sessions/{session_id}/rollback-to/{message_id}", response_model=RollbackResponse)
+async def rollback_session_to_message(session_id: str, message_id: str):
+    try:
+        ws, label = await session_store.rollback_to_message(session_id, message_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return RollbackResponse(ok=True, label=label, workspace=ws)

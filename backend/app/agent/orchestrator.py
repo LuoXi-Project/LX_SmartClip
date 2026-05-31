@@ -174,9 +174,15 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
         yield _sse("done", {})
         return
 
-    await session_store.persist_studio_message(
+    if not req.resume_call_id:
+        preview = req.message.strip().replace("\n", " ")[:40]
+        await session_store.push_checkpoint(session_id, f"对话: {preview}")
+
+    msg_id = await session_store.persist_studio_message(
         session_id, {"studio_type": "user", "text": req.message}
     )
+    if not req.resume_call_id:
+        yield _sse("user_message", {"id": msg_id, "text": req.message})
     await _maybe_autotitle(session_id, req.message, ws)
 
     ctx = AgentContext(session_id=session_id, workspace=ws)

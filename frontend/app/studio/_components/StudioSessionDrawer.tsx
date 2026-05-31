@@ -18,7 +18,7 @@ import {
   resetAgentSession,
   type SessionListItem,
 } from '@/lib/agent-api'
-import { loadStudioSessionIntoStore } from '@/lib/studio-load-session'
+import { applyRollbackResult, loadStudioSessionIntoStore } from '@/lib/studio-load-session'
 import { useStudioStore } from '@/lib/studio-store'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
@@ -170,7 +170,7 @@ export function StudioToolbar({ onOpenHistory, onNewSession }: StudioToolbarProp
     sessionId,
     streaming,
     workspace,
-    checkpointCount,
+    canRollback,
     clearMessagesLocal,
     setWorkspace,
     setMessages,
@@ -216,27 +216,20 @@ export function StudioToolbar({ onOpenHistory, onNewSession }: StudioToolbarProp
 
   const handleRollback = async () => {
     if (!sessionId) return
-    const n = checkpointCount()
-    if (n <= 0) {
-      toast.info('暂无可回退的检查点（在生成方案/成片等操作前会自动创建）')
+    if (!canRollback()) {
+      toast.info('暂无可回退的内容')
       return
     }
     const ok = await confirm({
       title: '回退一步',
-      description: `将恢复到上一个检查点（共 ${n} 个），并删除该点之后的对话记录。`,
+      description: '将撤销最近一轮对话或操作检查点，并删除之后的对话记录。',
       confirmLabel: '回退',
     })
     if (!ok) return
     try {
       const res = await rollbackAgentSession(sessionId)
-      setWorkspace(res.workspace)
-      const msgRes = await import('@/lib/agent-api').then((m) => m.listAgentMessages(sessionId))
-      const { hydrateStudioMessages, pickLatestExportArtifact, pickLatestPlanArtifact } =
-        await import('@/lib/studio-message-hydrate')
-      const messages = hydrateStudioMessages(msgRes.messages || [])
-      setMessages(messages)
-      setSelectedArtifact(pickLatestExportArtifact(messages) || pickLatestPlanArtifact(messages))
-      toast.success(`已回退：${res.label}`)
+      const label = await applyRollbackResult(sessionId, res, useStudioStore.getState())
+      toast.success(`已回退：${label}`)
     } catch (e) {
       toast.error((e as Error).message)
     }
@@ -259,12 +252,9 @@ export function StudioToolbar({ onOpenHistory, onNewSession }: StudioToolbarProp
         <Eraser className="w-3.5 h-3.5" />
         清对话
       </button>
-      <button type="button" className={btn} onClick={() => void handleRollback()} disabled={streaming || !sessionId}>
+      <button type="button" className={btn} onClick={() => void handleRollback()} disabled={streaming || !sessionId || !canRollback()}>
         <RotateCcw className="w-3.5 h-3.5" />
         回退
-        {checkpointCount() > 0 ? (
-          <span className="text-[10px] text-violet-300">({checkpointCount()})</span>
-        ) : null}
       </button>
       <button type="button" className={btn} onClick={() => void handleReset()} disabled={streaming || !sessionId}>
         <Trash2 className="w-3.5 h-3.5" />

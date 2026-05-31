@@ -112,6 +112,18 @@ export async function rollbackAgentSession(sessionId: string) {
   return res.json() as Promise<{ ok: boolean; label: string; workspace: WorkspaceState }>
 }
 
+export async function rollbackAgentSessionToMessage(sessionId: string, messageId: string) {
+  const res = await fetch(
+    `${base()}/api/agent/sessions/${sessionId}/rollback-to/${messageId}`,
+    { method: 'POST' }
+  )
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<{ ok: boolean; label: string; workspace: WorkspaceState }>
+}
+
 export type ChatStreamBody = {
   message: string
   resume_call_id?: string

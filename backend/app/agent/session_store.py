@@ -275,6 +275,71 @@ async def delete_messages_after(session_id: str, created_at: str) -> int:
         return cur.rowcount or 0
 
 
+async def delete_messages_from(session_id: str, created_at: str) -> int:
+    """删除 created_at 及之后的消息（含该条）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            DELETE FROM agent_messages
+            WHERE session_id = ? AND created_at >= ?
+            """,
+            (session_id, created_at),
+        )
+        await db.execute(
+            "UPDATE agent_sessions SET updated_at = ? WHERE id = ?",
+            (_utc_now(), session_id),
+        )
+        await db.commit()
+        return cur.rowcount or 0
+
+
+async def get_message(session_id: str, message_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT id, role, content_json, created_at
+            FROM agent_messages
+            WHERE session_id = ? AND id = ?
+            """,
+            (session_id, message_id),
+        )
+        row = await cur.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "role": row["role"],
+        "content": json.loads(row["content_json"]),
+        "created_at": row["created_at"],
+    }
+
+
+async def get_last_user_message(session_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT id, role, content_json, created_at
+            FROM agent_messages
+            WHERE session_id = ?
+              AND (role = 'user' OR json_extract(content_json, '$.studio_type') = 'user')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        row = await cur.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "role": row["role"],
+        "content": json.loads(row["content_json"]),
+        "created_at": row["created_at"],
+    }
+
+
 async def push_checkpoint(session_id: str, label: str) -> Optional[dict[str, Any]]:
     ws = await get_session(session_id)
     if not ws:
@@ -311,6 +376,59 @@ async def rollback_checkpoint(session_id: str) -> tuple[WorkspaceState, str]:
         await delete_messages_after(session_id, cp_time)
     label = str(cp.get("label") or "检查点")
     return restored, label
+
+
+async def rollback_to_message(session_id: str, message_id: str) -> tuple[WorkspaceState, str]:
+    """回退到指定用户消息：恢复该消息前的检查点，并删除该消息及之后的内容。"""
+    msg = await get_message(session_id, message_id)
+    if not msg:
+        raise ValueError("消息不存在")
+    content = msg.get("content") or {}
+    if content.get("studio_type") != "user" and msg.get("role") != "user":
+        raise ValueError("只能回退到用户消息")
+
+    msg_time = str(msg["created_at"])
+    ws = await get_session(session_id)
+    if not ws:
+        raise ValueError("session not found")
+
+    checkpoints = list(ws.checkpoints or [])
+    best_idx = -1
+    for i, cp in enumerate(checkpoints):
+        cp_time = str(cp.get("created_at") or "")
+        if cp_time and cp_time < msg_time:
+            best_idx = i
+
+    if best_idx >= 0:
+        cp = checkpoints[best_idx]
+        kept = checkpoints[:best_idx]
+        snap = dict(cp.get("workspace") or {})
+        snap["session_id"] = session_id
+        snap["checkpoints"] = kept
+        restored = WorkspaceState(**snap)
+        await replace_workspace(session_id, restored)
+        label = str(cp.get("label") or "检查点")
+    else:
+        restored = ws
+        label = "对话起点"
+
+    deleted = await delete_messages_from(session_id, msg_time)
+    if deleted <= 0:
+        raise ValueError("没有可删除的消息")
+    return restored, label
+
+
+async def rollback_one_step(session_id: str) -> tuple[WorkspaceState, str]:
+    """回退一步：优先弹出最近检查点，否则回退最后一轮用户对话。"""
+    ws = await get_session(session_id)
+    if not ws:
+        raise ValueError("session not found")
+    if ws.checkpoints:
+        return await rollback_checkpoint(session_id)
+    last_user = await get_last_user_message(session_id)
+    if last_user:
+        return await rollback_to_message(session_id, last_user["id"])
+    raise ValueError("没有可回退的内容")
 
 
 async def reset_workspace(session_id: str, *, keep_title: bool = True) -> WorkspaceState:

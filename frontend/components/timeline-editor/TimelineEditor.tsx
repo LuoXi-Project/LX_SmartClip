@@ -38,6 +38,8 @@ export function TimelineEditor({
   selection,
   onSelectionChange,
   editable = false,
+  allowClipTrim: allowClipTrimProp,
+  allowClipReorder: allowClipReorderProp,
   onClipResize,
   onClipMove,
   className = '',
@@ -61,9 +63,17 @@ export function TimelineEditor({
   clipPreviewRef.current = clipPreview
   const [dragHint, setDragHint] = useState<string | null>(null)
 
+  const allowClipTrim = allowClipTrimProp ?? (editable && !!onClipResize)
+  const allowClipReorder = allowClipReorderProp ?? (editable && !!onClipMove)
+
   const duration = Math.max(totalDuration, 0.5)
   const contentWidth = Math.max(duration * pxPerSec + 40, 200)
   const playheadLeft = LABEL_W + playheadSec * pxPerSec
+
+  const clipCanTrim = (clip: TimelineClipBlock) =>
+    allowClipTrim && !clip.excluded && clip.allowTrim !== false
+  const clipCanReorder = (clip: TimelineClipBlock) =>
+    allowClipReorder && !clip.excluded && clip.allowReorder === true
 
   const xToSec = useCallback(
     (clientX: number, el: HTMLElement) => {
@@ -161,6 +171,19 @@ export function TimelineEditor({
     return null
   }
 
+  const computeMovePreview = (dragState: DragState, dx: number): ClipPreview | null => {
+    const outDur = Math.max(MIN_CLIP_SEC, dragState.originTimelineEnd - dragState.originTimelineStart)
+    const maxStart = Math.max(0, duration - outDur)
+    const rawStart = clamp(dragState.originTimelineStart + dx, 0, maxStart)
+    const snapped = snapSec(rawStart, dragState.clipId)
+    return {
+      timelineStart: snapped,
+      timelineEnd: snapped + outDur,
+      sourceStart: dragState.originSourceStart,
+      sourceEnd: dragState.originSourceEnd,
+    }
+  }
+
   useEffect(() => {
     if (!drag) return
 
@@ -175,14 +198,19 @@ export function TimelineEditor({
 
       if (!drag.clipId) return
       const dx = (e.clientX - drag.startX) / pxPerSec
-      const preview = computeResizePreview(drag, dx)
+      const preview =
+        drag.kind === 'move' ? computeMovePreview(drag, dx) : computeResizePreview(drag, dx)
       if (!preview) return
 
       setClipPreview({ [drag.clipId]: preview })
-      const edge = drag.kind === 'resize-start' ? preview.sourceStart : preview.sourceEnd
-      setDragHint(
-        `${drag.kind === 'resize-start' ? '入点' : '出点'} ${fmtTime(edge)} · 时长 ${(preview.timelineEnd - preview.timelineStart).toFixed(2)}s`,
-      )
+      if (drag.kind === 'move') {
+        setDragHint(`换位 → ${fmtTime(preview.timelineStart)}`)
+      } else {
+        const edge = drag.kind === 'resize-start' ? preview.sourceStart : preview.sourceEnd
+        setDragHint(
+          `${drag.kind === 'resize-start' ? '入点' : '出点'} ${fmtTime(edge)} · 时长 ${(preview.timelineEnd - preview.timelineStart).toFixed(2)}s`,
+        )
+      }
     }
 
     const onUp = () => {
@@ -227,7 +255,9 @@ export function TimelineEditor({
     edge: 'start' | 'end' | 'move',
   ) => {
     if (!editable) return
-    if (clip.excluded && edge !== 'move') return
+    if (edge === 'move' && !clipCanReorder(clip)) return
+    if ((edge === 'start' || edge === 'end') && !clipCanTrim(clip)) return
+    if (clip.excluded) return
     e.stopPropagation()
     e.preventDefault()
     // 拖出入点时不要触发选区变更，避免播放头被重置到片段起点
@@ -393,6 +423,8 @@ export function TimelineEditor({
                   const selected = selection?.clipId === clip.id
                   const color = clip.color ?? clipColorByIndex(clip.segmentIndex ?? ci)
                   const isDragging = drag?.clipId === clip.id
+                  const canTrim = clipCanTrim(clip)
+                  const canReorder = clipCanReorder(clip)
 
                   return (
                     <div
@@ -406,7 +438,9 @@ export function TimelineEditor({
                           onSelectionChange({ clipId: clip.id, trackId: track.id })
                         }
                       }}
-                      className={`absolute top-1 bottom-1 rounded-md border text-[10px] overflow-hidden cursor-pointer ${
+                      className={`absolute top-1 bottom-1 rounded-md border text-[10px] overflow-hidden ${
+                        canReorder ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                      } ${
                         clip.excluded
                           ? 'opacity-45 border-amber-700/50 bg-amber-950/40'
                           : color
@@ -414,7 +448,15 @@ export function TimelineEditor({
                       style={{ left, width: w }}
                       title={`${clip.label} · ${fmtTime(c.timelineStart)}–${fmtTime(c.timelineEnd)}`}
                     >
-                      {editable && !clip.excluded && (
+                      {canReorder && (
+                        <div
+                          className="absolute top-0 bottom-0 z-[5]"
+                          style={{ left: canTrim ? HANDLE_W : 0, right: canTrim ? HANDLE_W : 0 }}
+                          onPointerDown={(e) => onPointerDownClip(e, clip, track.id, 'move')}
+                          title="拖动调整段落顺序"
+                        />
+                      )}
+                      {canTrim && (
                         <>
                           <div
                             className="absolute left-0 top-0 bottom-0 cursor-ew-resize z-20 group/handle"

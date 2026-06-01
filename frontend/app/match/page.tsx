@@ -829,6 +829,7 @@ export default function MatchPage() {
         focusedSegId={timelineFocusedSegId}
         onFocusSegment={setTimelineFocusedSegId}
         workspaceTitle={mode === 'audio_match' ? '音频匹配 · 成片时间轴' : '手动匹配 · 成片时间轴'}
+        allowSegmentReorder={mode === 'manual'}
       />
     ) : null
 

@@ -15,6 +15,10 @@ export type TimelineClipBlock = {
   segmentIndex?: number
   subtitleText?: string
   clipId?: string
+  /** 是否允许拖边缘裁剪（默认 true，由轨道块显式关闭） */
+  allowTrim?: boolean
+  /** 是否允许拖块换位（须父级 onClipMove + 工作区开启换序） */
+  allowReorder?: boolean
 }
 
 export type TimelineTrackKind = 'video' | 'audio' | 'subtitle'
@@ -50,6 +54,10 @@ export type TimelineEditorProps = {
   selection: TimelineSelection
   onSelectionChange: (sel: TimelineSelection) => void
   editable?: boolean
+  /** 允许拖边缘裁剪出入点（默认：editable 且提供 onClipResize） */
+  allowClipTrim?: boolean
+  /** 允许拖块换位换序（默认：editable 且提供 onClipMove） */
+  allowClipReorder?: boolean
   /** 拖拽调整出入点/移动块 */
   onClipResize?: (args: {
     clipId: string

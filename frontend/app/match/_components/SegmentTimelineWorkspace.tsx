@@ -18,9 +18,11 @@ import type { Segment } from './types'
 import { clipStreamUrl, fmt, videoStreamUrl } from './types'
 import {
   applySegmentClipResize,
+  applySegmentReorder,
   buildSegmentClipLayouts,
   getNextSegmentLayout,
   getSubtitleAtPlayhead,
+  parseBlockId,
   playheadToSegmentLayout,
   segmentLayoutsToTracks,
   type SegmentClipLayout,
@@ -35,6 +37,8 @@ export type SegmentTimelineWorkspaceProps = {
   onFocusSegment?: (segId: string | null) => void
   workspaceTitle?: string
   editable?: boolean
+  /** 是否允许在时间轴上拖块调整段落顺序（手动匹配开启；音频匹配与底音频对齐，关闭） */
+  allowSegmentReorder?: boolean
   className?: string
 }
 
@@ -45,6 +49,7 @@ export function SegmentTimelineWorkspace({
   onFocusSegment,
   workspaceTitle = '成片时间轴',
   editable = true,
+  allowSegmentReorder = false,
   className = '',
 }: SegmentTimelineWorkspaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -72,7 +77,10 @@ export function SegmentTimelineWorkspace({
   layoutsRef.current = layouts
   playheadRef.current = playheadSec
 
-  const { tracks, totalDuration } = useMemo(() => segmentLayoutsToTracks(layouts), [layouts])
+  const { tracks, totalDuration } = useMemo(
+    () => segmentLayoutsToTracks(layouts, { allowSegmentReorder }),
+    [layouts, allowSegmentReorder],
+  )
 
   const selectedLayout = useMemo(() => {
     if (!selection) return null
@@ -251,6 +259,19 @@ export function SegmentTimelineWorkspace({
       })
     },
     [editable, layouts, onSegmentsChange, segments, seekVideoForLayout, setPlayhead],
+  )
+
+  const onClipMove = useCallback(
+    (args: {
+      clipId: string
+      timelineStart: number
+    }) => {
+      if (!allowSegmentReorder || !editable) return
+      const { segmentId, slotIndex } = parseBlockId(args.clipId)
+      if (slotIndex > 0) return
+      onSegmentsChange(applySegmentReorder(segments, segmentId, args.timelineStart))
+    },
+    [allowSegmentReorder, editable, onSegmentsChange, segments],
   )
 
   const togglePlay = async () => {
@@ -627,7 +648,10 @@ export function SegmentTimelineWorkspace({
         selection={selection}
         onSelectionChange={handleTimelineSelection}
         editable={editable}
+        allowClipTrim={editable}
+        allowClipReorder={editable && allowSegmentReorder}
         onClipResize={onClipResize}
+        onClipMove={allowSegmentReorder ? onClipMove : undefined}
         followPlayhead={isPlaying}
         onTrimDragChange={(active) => {
           lockPlayheadRef.current = active
@@ -639,7 +663,9 @@ export function SegmentTimelineWorkspace({
 
       {!pinTimelineBar && (
       <p className="text-[10px] text-slate-600 leading-relaxed">
-        空格播放/暂停 · I/O 设入出点 · 方向键微调播放头 · 拖边缘裁剪（松手生效）· 勾选「连续播放」可顺序预览全片。
+        空格播放/暂停 · I/O 设入出点 · 方向键微调播放头 · 拖边缘裁剪（松手生效）
+        {allowSegmentReorder ? ' · 拖视频块中部可调整段落顺序' : ''}
+        · 勾选「连续播放」可顺序预览全片。
       </p>
       )}
       </div>

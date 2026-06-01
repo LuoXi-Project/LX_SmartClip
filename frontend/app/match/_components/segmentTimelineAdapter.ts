@@ -118,10 +118,14 @@ function segmentSpanById(layouts: SegmentClipLayout[]): Map<string, { start: num
   return map
 }
 
-export function segmentLayoutsToTracks(layouts: SegmentClipLayout[]): {
+export function segmentLayoutsToTracks(
+  layouts: SegmentClipLayout[],
+  options?: { allowSegmentReorder?: boolean },
+): {
   tracks: TimelineTrack[]
   totalDuration: number
 } {
+  const allowSegmentReorder = options?.allowSegmentReorder === true
   const totalDuration = layouts.length ? layouts[layouts.length - 1].timelineEnd : 0.5
   const spanBySeg = segmentSpanById(layouts)
 
@@ -130,6 +134,7 @@ export function segmentLayoutsToTracks(layouts: SegmentClipLayout[]): {
   const subtitleClips: TimelineClipBlock[] = []
 
   for (const l of layouts) {
+    const isSegmentHead = l.slotIndex <= 0
     const base = {
       id: l.blockId,
       timelineStart: l.timelineStart,
@@ -146,11 +151,15 @@ export function segmentLayoutsToTracks(layouts: SegmentClipLayout[]): {
       color: l.placeholder
         ? 'bg-slate-700/35 border-slate-600/50 border-dashed'
         : clipColorByIndex(l.segIdx),
+      allowTrim: !l.placeholder,
+      allowReorder: allowSegmentReorder && isSegmentHead,
     })
     audioClips.push({
       ...base,
       label: l.placeholder ? '—' : '原声',
       color: 'bg-emerald-600/40 border-emerald-500/50',
+      allowTrim: false,
+      allowReorder: false,
     })
   }
 
@@ -169,6 +178,8 @@ export function segmentLayoutsToTracks(layouts: SegmentClipLayout[]): {
       color: text
         ? 'bg-amber-500/45 border-amber-400/55'
         : 'bg-slate-700/40 border-slate-600/50',
+      allowTrim: false,
+      allowReorder: false,
     })
   }
 
@@ -247,4 +258,37 @@ export function applySegmentClipResize(
 
     return { ...seg, clipTrimSlots: slots }
   })
+}
+
+/** 按落点重排段落顺序（仅手动匹配等允许换序的场景） */
+export function applySegmentReorder(
+  segments: Segment[],
+  segmentId: string,
+  targetTimelineStart: number,
+): Segment[] {
+  const layouts = buildSegmentClipLayouts(segments)
+  const spanMap = segmentSpanById(layouts)
+  const ordered = segments
+    .map((s) => {
+      const span = spanMap.get(s.id)
+      if (!span) return null
+      return { seg: s, span: { start: span.start, end: span.end } }
+    })
+    .filter((x): x is { seg: Segment; span: { start: number; end: number } } => x != null)
+    .sort((a, b) => a.span.start - b.span.start)
+
+  const without = ordered.filter((x) => x.seg.id !== segmentId)
+  const dragged = ordered.find((x) => x.seg.id === segmentId)
+  if (!dragged) return segments
+
+  let insertAt = without.length
+  for (let i = 0; i < without.length; i++) {
+    const mid = (without[i].span.start + without[i].span.end) / 2
+    if (targetTimelineStart < mid) {
+      insertAt = i
+      break
+    }
+  }
+  without.splice(insertAt, 0, dragged)
+  return without.map((x) => x.seg)
 }

@@ -20,6 +20,7 @@ import { clamp } from '@/components/timeline-editor'
 import type { ClipMetaByClip, SelectedPreviewState } from './autoEditTypes'
 import {
   applyPlanClipResize,
+  applyPlanSegmentReorder,
   buildPlanSegmentLayouts,
   getNextActiveLayout,
   getSubtitleAtPlayhead,
@@ -81,7 +82,10 @@ export function PlanEditWorkspace({
   layoutsRef.current = layouts
   playheadRef.current = playheadSec
 
-  const { tracks, totalDuration } = useMemo(() => planLayoutsToTracks(layouts), [layouts])
+  const { tracks, totalDuration } = useMemo(
+    () => planLayoutsToTracks(layouts, { allowSegmentReorder: editable }),
+    [layouts, editable],
+  )
 
   const selectedLayout = useMemo(() => {
     if (!selection) return null
@@ -247,6 +251,17 @@ export function PlanEditWorkspace({
       })
     },
     [setPlan, layouts, seekVideoForLayout, setPlayhead],
+  )
+
+  const onClipMove = useCallback(
+    (args: { clipId: string; timelineStart: number }) => {
+      if (!editable) return
+      setPlan((prev) => {
+        if (!prev) return prev
+        return applyPlanSegmentReorder(prev, args.clipId, args.timelineStart, clipMetaByClip)
+      })
+    },
+    [clipMetaByClip, editable, setPlan],
   )
 
   const togglePlay = async () => {
@@ -678,7 +693,10 @@ export function PlanEditWorkspace({
           }
         }}
         editable={editable}
+        allowClipTrim={editable}
+        allowClipReorder={editable}
         onClipResize={onClipResize}
+        onClipMove={editable ? onClipMove : undefined}
         followPlayhead={isPlaying}
         onTrimDragChange={(active) => {
           lockPlayheadRef.current = active
@@ -689,7 +707,9 @@ export function PlanEditWorkspace({
       />
 
       <p className="text-[10px] text-slate-600 leading-relaxed">
-        空格播放/暂停 · I/O 设入出点 · 方向键微调播放头 · 拖边缘裁剪（松手生效）· 勾选「连续播放」可顺序预览全片。
+        空格播放/暂停 · I/O 设入出点 · 方向键微调播放头 · 拖边缘裁剪（松手生效）
+        {editable ? ' · 拖视频块中部可调整段落顺序' : ''}
+        · 勾选「连续播放」可顺序预览全片。
       </p>
     </div>
   )

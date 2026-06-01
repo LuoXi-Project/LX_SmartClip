@@ -441,6 +441,8 @@ export function AudioMatchTimelineModal({
                 if (seg?.audioStartSec != null) seekAudio(seg.audioStartSec)
               }}
               editable
+              allowClipTrim
+              allowClipReorder={false}
               onClipResize={(args) => {
                 onClipResize({
                   clipId: args.clipId,

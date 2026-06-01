@@ -40,11 +40,19 @@ export function segmentsToSourceTimelineTracks(
       segmentIndex: i,
     }
     const label = `#${i + 1}`
-    segmentClips.push({ ...base, label, color: clipColorByIndex(i) })
+    segmentClips.push({
+      ...base,
+      label,
+      color: clipColorByIndex(i),
+      allowTrim: true,
+      allowReorder: false,
+    })
     audioClips.push({
       ...base,
       label: '原声',
       color: 'bg-rose-600/40 border-rose-500/50',
+      allowTrim: false,
+      allowReorder: false,
     })
     const text = s.text.trim()
     const subLabel = text
@@ -57,6 +65,8 @@ export function segmentsToSourceTimelineTracks(
       color: text
         ? 'bg-amber-500/45 border-amber-400/55'
         : 'bg-slate-700/40 border-slate-600/50',
+      allowTrim: false,
+      allowReorder: false,
     })
   })
 

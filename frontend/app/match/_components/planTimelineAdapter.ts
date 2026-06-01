@@ -1,7 +1,7 @@
 import type { AutoEditPlanApi, AutoEditSegmentPlanApi, SegmentVisualEffectApi } from '@/lib/api'
 import type { TimelineClipBlock, TimelineTrack } from '@/components/timeline-editor'
 import { clipColorByIndex } from '@/components/timeline-editor'
-import type { ClipMeta } from './autoEditTypes'
+import type { ClipMeta, ClipMetaByClip } from './autoEditTypes'
 import { planSegmentPreviewAbsRange } from './planSegmentPreviewRange'
 
 const MIN_SEG = 0.08
@@ -71,10 +71,14 @@ export function buildPlanSegmentLayouts(
   return layouts
 }
 
-export function planLayoutsToTracks(layouts: PlanSegmentLayout[]): {
+export function planLayoutsToTracks(
+  layouts: PlanSegmentLayout[],
+  options?: { allowSegmentReorder?: boolean },
+): {
   tracks: TimelineTrack[]
   totalDuration: number
 } {
+  const allowSegmentReorder = options?.allowSegmentReorder === true
   const active = layouts.filter((l) => !l.excluded)
   const totalDuration = active.length ? active[active.length - 1].timelineEnd : 0.5
 
@@ -94,11 +98,19 @@ export function planLayoutsToTracks(layouts: PlanSegmentLayout[]): {
       clipId: l.clipId,
       excluded: false,
     }
-    videoClips.push({ ...base, label: l.label, color: clipColorByIndex(l.segIdx) })
+    videoClips.push({
+      ...base,
+      label: l.label,
+      color: clipColorByIndex(l.segIdx),
+      allowTrim: true,
+      allowReorder: allowSegmentReorder,
+    })
     audioClips.push({
       ...base,
       label: '原声',
       color: 'bg-emerald-600/40 border-emerald-500/50',
+      allowTrim: false,
+      allowReorder: false,
     })
     const subLabel = l.subtitleText
       ? l.subtitleText.slice(0, 14) + (l.subtitleText.length > 14 ? '…' : '')
@@ -110,6 +122,8 @@ export function planLayoutsToTracks(layouts: PlanSegmentLayout[]): {
       color: l.subtitleText
         ? 'bg-amber-500/45 border-amber-400/55'
         : 'bg-slate-700/40 border-slate-600/50',
+      allowTrim: false,
+      allowReorder: false,
     })
   }
 
@@ -193,4 +207,42 @@ export function applyPlanClipResize(
 
   segs[segIdx] = cur
   return { ...plan, segments: segs }
+}
+
+export function applyPlanSegmentReorder(
+  plan: AutoEditPlanApi,
+  segmentId: string,
+  targetTimelineStart: number,
+  clipMetaByClip: ClipMetaByClip,
+): AutoEditPlanApi {
+  const segs = [...(plan.segments ?? [])]
+  const layouts = buildPlanSegmentLayouts(segs, clipMetaByClip)
+  const activeLayouts = layouts.filter((l) => !l.excluded)
+  const ordered = activeLayouts
+    .map((l) => ({
+      id: l.segmentId,
+      span: { start: l.timelineStart, end: l.timelineEnd },
+      segIdx: l.segIdx,
+    }))
+    .sort((a, b) => a.span.start - b.span.start)
+
+  const without = ordered.filter((x) => x.id !== segmentId)
+  const dragged = ordered.find((x) => x.id === segmentId)
+  if (!dragged) return plan
+
+  let insertAt = without.length
+  for (let i = 0; i < without.length; i++) {
+    const mid = (without[i].span.start + without[i].span.end) / 2
+    if (targetTimelineStart < mid) {
+      insertAt = i
+      break
+    }
+  }
+  without.splice(insertAt, 0, dragged)
+  const idToSeg = new Map(segs.map((s) => [s.id, s]))
+  const reordered = without
+    .map((x) => idToSeg.get(x.id))
+    .filter((s): s is NonNullable<typeof s> => !!s)
+    .map((s, i) => ({ ...s, order: i + 1 }))
+  return { ...plan, segments: reordered }
 }

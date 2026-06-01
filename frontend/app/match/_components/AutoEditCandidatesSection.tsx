@@ -21,7 +21,9 @@ export type AutoEditCandidatesSectionProps = {
 
   customPlanById: Record<string, AutoEditPlanApi>
 
-  onOpenDetailPlan: (plan: AutoEditPlanApi, index: number) => void
+  activePlanId?: string | null
+  onSelectPlan: (plan: AutoEditPlanApi, index: number) => void
+  onOpenFullscreenPlan: (plan: AutoEditPlanApi, index: number) => void
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
   onExportJianyingDraft: (plan: AutoEditPlanApi, index: number) => void
 
@@ -41,7 +43,9 @@ export function AutoEditCandidatesSection({
   selectedPreview,
   setSelectedPreview,
   customPlanById,
-  onOpenDetailPlan,
+  activePlanId,
+  onSelectPlan,
+  onOpenFullscreenPlan,
   onRealizePlan,
   onExportJianyingDraft,
   autoRealizingId,
@@ -64,7 +68,7 @@ export function AutoEditCandidatesSection({
         候选方案 · {autoPlans.length} 个
       </p>
       <p className="text-[10px] text-slate-500 leading-relaxed">
-        「一键成片」仅输出 MP4；「仅导出剪映草稿」单独请求 ZIP。二者互斥，需各点一次；草稿解压后请按包内说明修补路径再导入剪映。
+        生成方案后上方为剪辑时间轴主工作区；下方卡片用于切换方案、一键成片与剪映导出。
       </p>
 
       <AutoEditPreviewPanel
@@ -86,7 +90,9 @@ export function AutoEditCandidatesSection({
             expandedPreviewPlanIds={expandedPreviewPlanIds}
             togglePreviewExpand={togglePreviewExpand}
             clipMetaByClip={clipMetaByClip}
-            onOpenDetailPlan={(plan, index) => onOpenDetailPlan(plan, index)}
+            isActive={activePlanId === p.plan_id}
+            onSelectPlan={(plan, index) => onSelectPlan(plan, index)}
+            onOpenFullscreenPlan={(plan, index) => onOpenFullscreenPlan(plan, index)}
             onSelectPreview={setSelectedPreview}
             onRealizePlan={onRealizePlan}
             onExportJianyingDraft={onExportJianyingDraft}

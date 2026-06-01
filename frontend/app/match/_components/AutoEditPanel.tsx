@@ -8,6 +8,7 @@ import {
 } from '@/lib/api'
 import { useAutoEditBgmTracks, useAutoEditClipMetaByPlans } from './autoEditPanelHooks'
 import type { AutoPlanStage, SelectedPreviewState } from './autoEditTypes'
+import { AutoEditPlanWorkspace } from './AutoEditPlanWorkspace'
 import { AutoEditDetailModal } from './AutoEditDetailModal'
 import { AutoEditPlannerSection } from './AutoEditPlannerSection'
 import { AutoEditCandidatesSection } from './AutoEditCandidatesSection'
@@ -189,7 +190,11 @@ export function AutoEditPanel({
   plannerVariant = 'default',
   candidatesSectionTitle,
 }: AutoEditPanelProps) {
-  const [detailPlan, setDetailPlan] = useState<{
+  const [activePlan, setActivePlan] = useState<{
+    plan: AutoEditPlanApi
+    index: number
+  } | null>(null)
+  const [fullscreenPlan, setFullscreenPlan] = useState<{
     plan: AutoEditPlanApi
     index: number
   } | null>(null)
@@ -203,25 +208,30 @@ export function AutoEditPanel({
   const { bgmTracks, bgmListError } = useAutoEditBgmTracks()
 
   useEffect(() => {
-    if (!detailPlan) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDetailPlan(null)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [detailPlan])
-
-  useEffect(() => {
-    if (!detailPlan) {
-      setDetailEditMode(false)
-      setDetailDraft(null)
+    if (autoPlans.length === 0) {
+      setActivePlan(null)
       return
     }
-    const pid = detailPlan.plan.plan_id
-    const base = customPlanById[pid] ?? detailPlan.plan
+    setActivePlan((prev) => {
+      if (prev && autoPlans.some((p) => p.plan_id === prev.plan.plan_id)) {
+        const idx = autoPlans.findIndex((p) => p.plan_id === prev.plan.plan_id)
+        return idx >= 0 ? { plan: autoPlans[idx], index: idx } : { plan: autoPlans[0], index: 0 }
+      }
+      return { plan: autoPlans[0], index: 0 }
+    })
+  }, [autoPlans])
+
+  useEffect(() => {
+    if (!activePlan) return
+    const pid = activePlan.plan.plan_id
+    const base = customPlanById[pid] ?? activePlan.plan
     setDetailDraft(base)
     setDetailEditMode(true)
-  }, [customPlanById, detailPlan])
+  }, [customPlanById, activePlan])
+
+  const selectPlan = (plan: AutoEditPlanApi, index: number) => {
+    setActivePlan({ plan, index })
+  }
 
   return (
     <>
@@ -301,6 +311,20 @@ export function AutoEditPanel({
         autoPlanStagePercent={autoPlanStagePercent}
       />
 
+      {activePlan && (
+        <AutoEditPlanWorkspace
+          activePlan={activePlan}
+          onDeselect={() => setActivePlan(null)}
+          detailEditMode={detailEditMode}
+          setDetailEditMode={setDetailEditMode}
+          detailDraft={detailDraft}
+          setDetailDraft={setDetailDraft}
+          setCustomPlanById={setCustomPlanById}
+          clipMetaByClip={clipMetaByClip}
+          setSelectedPreview={setSelectedPreview}
+        />
+      )}
+
       {autoPlans.length > 0 && (
         <>
           {candidatesSectionTitle ? (
@@ -317,7 +341,9 @@ export function AutoEditPanel({
           selectedPreview={selectedPreview}
           setSelectedPreview={setSelectedPreview}
           customPlanById={customPlanById}
-          onOpenDetailPlan={(plan, index) => setDetailPlan({ plan, index })}
+          activePlanId={activePlan?.plan.plan_id ?? null}
+          onSelectPlan={selectPlan}
+          onOpenFullscreenPlan={(plan, index) => setFullscreenPlan({ plan, index })}
           onRealizePlan={onRealizePlan}
           autoRealizingId={autoRealizingId}
           autoRealizeMsg={autoRealizeMsg}
@@ -329,17 +355,19 @@ export function AutoEditPanel({
         </>
       )}
 
-      <AutoEditDetailModal
-        detailPlan={detailPlan}
-        onClose={() => setDetailPlan(null)}
-        detailEditMode={detailEditMode}
-        setDetailEditMode={setDetailEditMode}
-        detailDraft={detailDraft}
-        setDetailDraft={setDetailDraft}
-        setCustomPlanById={setCustomPlanById}
-        clipMetaByClip={clipMetaByClip}
-        setSelectedPreview={setSelectedPreview}
-      />
+      {fullscreenPlan ? (
+        <AutoEditDetailModal
+          detailPlan={fullscreenPlan}
+          onClose={() => setFullscreenPlan(null)}
+          detailEditMode={detailEditMode}
+          setDetailEditMode={setDetailEditMode}
+          detailDraft={detailDraft}
+          setDetailDraft={setDetailDraft}
+          setCustomPlanById={setCustomPlanById}
+          clipMetaByClip={clipMetaByClip}
+          setSelectedPreview={setSelectedPreview}
+        />
+      ) : null}
     </>
   )
 }

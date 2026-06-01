@@ -17,7 +17,9 @@ export type AutoEditPlanCardProps = {
   expandedPreviewPlanIds: string[]
   togglePreviewExpand: (planId: string) => void
   clipMetaByClip: ClipMetaByClip
-  onOpenDetailPlan: (plan: AutoEditPlanApi, index: number) => void
+  isActive?: boolean
+  onSelectPlan: (plan: AutoEditPlanApi, index: number) => void
+  onOpenFullscreenPlan: (plan: AutoEditPlanApi, index: number) => void
   onSelectPreview: (next: SelectedPreviewState) => void
   onRealizePlan: (plan: AutoEditPlanApi, index: number) => void
   onExportJianyingDraft: (plan: AutoEditPlanApi, index: number) => void
@@ -38,7 +40,9 @@ export function AutoEditPlanCard({
   expandedPreviewPlanIds,
   togglePreviewExpand,
   clipMetaByClip,
-  onOpenDetailPlan,
+  isActive = false,
+  onSelectPlan,
+  onOpenFullscreenPlan,
   onSelectPreview,
   onRealizePlan,
   onExportJianyingDraft,
@@ -53,7 +57,14 @@ export function AutoEditPlanCard({
   const activeCount = segs.filter((s) => !s.exclude_from_output).length
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
+    <div
+      className={[
+        'rounded-2xl border bg-slate-900/60 p-4 space-y-2 transition-shadow',
+        isActive
+          ? 'border-cyan-500/50 ring-2 ring-cyan-400/40 shadow-[0_0_24px_-8px_rgba(34,211,238,0.35)]'
+          : 'border-slate-800',
+      ].join(' ')}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-slate-100 truncate">{planTitle}</p>
@@ -96,11 +107,23 @@ export function AutoEditPlanCard({
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => onOpenDetailPlan(p, idx)}
-          className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-200 hover:bg-slate-950/70"
-          title="查看本方案的字幕、音频模式、片段选择等详情"
+          onClick={() => onSelectPlan(p, idx)}
+          className={`text-[11px] rounded-lg border px-2 py-1 transition-colors ${
+            isActive
+              ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-100'
+              : 'border-slate-700 bg-slate-950/40 text-slate-200 hover:bg-slate-950/70'
+          }`}
+          title="在上方时间轴主工作区编辑此方案"
         >
-          打开剪辑台
+          {isActive ? '当前编辑中' : '编辑此方案'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpenFullscreenPlan(p, idx)}
+          className="text-[11px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-400 hover:bg-slate-950/70 hover:text-slate-200"
+          title="全屏打开剪辑台"
+        >
+          全屏
         </button>
         {p.segments?.some((s) => s.subtitle?.text?.trim()) && (
           <span className="text-[11px] text-emerald-300/80">含字幕</span>

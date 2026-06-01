@@ -667,10 +667,14 @@ export function PlanEditWorkspace({
           const isNewSegment = sel.clipId !== currentLayoutIdRef.current
           setSelection(sel)
           currentLayoutIdRef.current = sel.clipId
-          // 仅切换片段时跳到段首；拖出入点、同段重选不移动播放头
           if (isNewSegment) {
             const l = layouts.find((x) => x.segmentId === sel.clipId)
-            if (l) onPlayheadChange(l.timelineStart)
+            if (l) {
+              const hit = playheadToSourceTime(layouts, playheadRef.current)
+              const srcTime =
+                hit?.layout.segmentId === l.segmentId ? hit.sourceTime : l.sourceStart
+              switchToLayout(l, srcTime)
+            }
           }
         }}
         editable={editable}

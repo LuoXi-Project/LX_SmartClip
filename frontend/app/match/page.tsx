@@ -818,6 +818,8 @@ export default function MatchPage() {
   }, [segments, mode])
 
   const manualLikeWideLayout = isManualLikeMode(mode) && segments.length > 0
+  const autoLikeWideLayout = isAutoLikeMode(mode) && autoPlans.length > 0
+  const timelineWideLayout = manualLikeWideLayout || autoLikeWideLayout
 
   const segmentTimelineWorkspace =
     manualLikeWideLayout ? (
@@ -1670,7 +1672,7 @@ export default function MatchPage() {
         />
       )}
       <div className={isFilmMode ? '' : 'pr-64'}>
-        <div className={manualLikeWideLayout ? 'max-w-[min(1600px,100%)] mx-auto px-6 py-10 space-y-8' : 'max-w-3xl mx-auto px-6 py-10 space-y-8'}>
+        <div className={timelineWideLayout ? 'max-w-[min(1600px,100%)] mx-auto px-6 py-10 space-y-8' : 'max-w-3xl mx-auto px-6 py-10 space-y-8'}>
           <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
           <div className="rounded-xl border border-violet-500/25 bg-violet-500/5 px-4 py-3 text-sm text-slate-300 flex flex-wrap items-center gap-2">
             <span>推荐使用对话式</span>
@@ -2343,7 +2345,6 @@ export default function MatchPage() {
                 bgmListError={bgmListError}
                 timelineWorkspace={segmentTimelineWorkspace}
                 focusedSegId={timelineFocusedSegId}
-                onFocusSegment={setTimelineFocusedSegId}
               />
           ) : (
             <>
@@ -2441,7 +2442,6 @@ export default function MatchPage() {
                 onOpenClipInOut={setClipInOutSegId}
                 timelineWorkspace={segmentTimelineWorkspace}
                 focusedSegId={timelineFocusedSegId}
-                onFocusSegment={setTimelineFocusedSegId}
               />
             </>
           )}

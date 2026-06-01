@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { EyeOff, Pause, Play, SkipBack, SkipForward } from 'lucide-react'
+import { EyeOff, PanelBottom, PanelTop, Pause, Play, SkipBack, SkipForward } from 'lucide-react'
 import {
   TimelineEditor,
   type TimelineSelection,
@@ -59,6 +59,8 @@ export function SegmentTimelineWorkspace({
   const [selection, setSelection] = useState<TimelineSelection>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playWholeTimeline, setPlayWholeTimeline] = useState(true)
+  const [previewExpanded, setPreviewExpanded] = useState(true)
+  const [pinTimelineBar, setPinTimelineBar] = useState(false)
   const [previewSource, setPreviewSource] = useState<'video' | 'clip'>('clip')
   const [trackStates, setTrackStates] = useState<Record<string, TimelineTrackState>>({
     video: { visible: true },
@@ -209,15 +211,6 @@ export function SegmentTimelineWorkspace({
   }, [segments.length])
 
   useEffect(() => {
-    if (!focusedSegId || syncingFromVideoRef.current || lockPlayheadRef.current) return
-    const hit = layouts.find((l) => l.segmentId === focusedSegId && !l.placeholder)
-    if (hit && hit.blockId !== currentBlockIdRef.current) {
-      switchToLayout(hit, hit.sourceStart)
-      setPlayhead(hit.timelineStart)
-    }
-  }, [focusedSegId, layouts, setPlayhead, switchToLayout])
-
-  useEffect(() => {
     if (syncingFromVideoRef.current || lockPlayheadRef.current) return
     const hit = playheadToSegmentLayout(layouts, playheadSec)
     if (!hit || hit.layout.placeholder) return
@@ -360,6 +353,72 @@ export function SegmentTimelineWorkspace({
     }))
   }, [])
 
+  const handlePinTimelineBar = (next: boolean) => {
+    setPinTimelineBar(next)
+    if (next) setPreviewExpanded(false)
+  }
+
+  const transportControls = (
+    <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
+      <button
+        type="button"
+        onClick={() => jumpBlock(-1)}
+        className="p-1.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800"
+        title="上一段"
+      >
+        <SkipBack className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => void togglePlay()}
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-900 text-[11px] text-slate-200 hover:bg-slate-800"
+      >
+        {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+        {isPlaying ? '暂停' : '播放'}
+      </button>
+      <button
+        type="button"
+        onClick={() => jumpBlock(1)}
+        className="p-1.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800"
+        title="下一段"
+      >
+        <SkipForward className="w-3.5 h-3.5" />
+      </button>
+      <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer ml-1">
+        <input
+          type="checkbox"
+          checked={playWholeTimeline}
+          onChange={(e) => setPlayWholeTimeline(e.target.checked)}
+          className="rounded border-slate-600"
+        />
+        连续播放
+      </label>
+      <button
+        type="button"
+        disabled={!resolvedVideoId}
+        onClick={() => setPreviewSource('video')}
+        className={`text-[10px] rounded-md border px-1.5 py-0.5 ${
+          previewSource === 'video'
+            ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200'
+            : 'border-slate-700 text-slate-400'
+        }`}
+      >
+        原视频
+      </button>
+      <button
+        type="button"
+        onClick={() => setPreviewSource('clip')}
+        className={`text-[10px] rounded-md border px-1.5 py-0.5 ${
+          previewSource === 'clip'
+            ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200'
+            : 'border-slate-700 text-slate-400'
+        }`}
+      >
+        片段
+      </button>
+    </div>
+  )
+
   const videoTrackVisible = trackStates.video?.visible !== false
   const subtitlePreviewVisible = trackStates.subtitle?.visible !== false
   const previewSubtitleText = useMemo(() => {
@@ -380,7 +439,10 @@ export function SegmentTimelineWorkspace({
     currentBlockIdRef.current = target.blockId
     onFocusSegment?.(target.segmentId)
     if (!target.placeholder) {
-      onPlayheadChange(target.timelineStart)
+      const hit = playheadToSegmentLayout(layouts, playheadRef.current)
+      const srcTime =
+        hit?.layout.blockId === target.blockId ? hit.sourceTime : target.sourceStart
+      switchToLayout(target, srcTime)
     }
   }
 
@@ -397,12 +459,32 @@ export function SegmentTimelineWorkspace({
             {workspaceTitle}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            {readyCount}/{segments.length} 段已匹配 · 总长 {fmt(totalDuration)} · 主工作区（预览 + 裁剪 + 顺序浏览）
+            {readyCount}/{segments.length} 段已匹配 · 总长 {fmt(totalDuration)}
+            {pinTimelineBar ? ' · 时间轴已固定底栏' : ''}
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPreviewExpanded((v) => !v)}
+            className="inline-flex items-center gap-1 text-[10px] rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-slate-300 hover:bg-slate-950/70"
+          >
+            {previewExpanded ? <PanelTop className="w-3 h-3" /> : <PanelBottom className="w-3 h-3" />}
+            {previewExpanded ? '收起预览' : '展开预览'}
+          </button>
+          <label className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={pinTimelineBar}
+              onChange={(e) => handlePinTimelineBar(e.target.checked)}
+              className="rounded border-slate-600"
+            />
+            底栏固定时间轴
+          </label>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_260px] gap-3 min-h-[300px]">
+      <div className={`grid grid-cols-1 xl:grid-cols-[1fr_260px] gap-3 min-h-[200px] ${previewExpanded ? '' : 'hidden'}`}>
         <div className="flex flex-col gap-2 min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-slate-500 truncate min-w-0">
@@ -412,75 +494,18 @@ export function SegmentTimelineWorkspace({
                   ? `${selectedLayout.label} · 请先匹配素材`
                   : '点击时间轴选择片段'}
             </p>
-            <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => jumpBlock(-1)}
-                className="p-1.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800"
-                title="上一段"
-              >
-                <SkipBack className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void togglePlay()}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-900 text-[11px] text-slate-200 hover:bg-slate-800"
-              >
-                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                {isPlaying ? '暂停' : '播放'}
-              </button>
-              <button
-                type="button"
-                onClick={() => jumpBlock(1)}
-                className="p-1.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800"
-                title="下一段"
-              >
-                <SkipForward className="w-3.5 h-3.5" />
-              </button>
-              <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer ml-1">
-                <input
-                  type="checkbox"
-                  checked={playWholeTimeline}
-                  onChange={(e) => setPlayWholeTimeline(e.target.checked)}
-                  className="rounded border-slate-600"
-                />
-                连续播放
-              </label>
-              <button
-                type="button"
-                disabled={!resolvedVideoId}
-                onClick={() => setPreviewSource('video')}
-                className={`text-[10px] rounded-md border px-1.5 py-0.5 ${
-                  previewSource === 'video'
-                    ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200'
-                    : 'border-slate-700 text-slate-400'
-                }`}
-              >
-                原视频
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreviewSource('clip')}
-                className={`text-[10px] rounded-md border px-1.5 py-0.5 ${
-                  previewSource === 'clip'
-                    ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200'
-                    : 'border-slate-700 text-slate-400'
-                }`}
-              >
-                片段
-              </button>
-            </div>
+            {transportControls}
           </div>
 
-          <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black flex-1 min-h-[220px] flex flex-col">
+          <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black flex-1 min-h-[160px] flex flex-col">
             {previewSrc ? (
               <>
-                <div className="w-full flex-1 min-h-0 max-h-[42vh] flex items-center justify-center overflow-hidden">
+                <div className="w-full flex-1 min-h-0 max-h-[32vh] flex items-center justify-center overflow-hidden">
                   <video
                     ref={videoRef}
                     key={previewSrc}
                     src={previewSrc}
-                    className={`max-w-full max-h-[42vh] w-full h-full object-contain transition-opacity ${
+                    className={`max-w-full max-h-[32vh] w-full h-full object-contain transition-opacity ${
                       videoTrackVisible ? 'opacity-100' : 'opacity-0'
                     }`}
                     controls
@@ -542,7 +567,7 @@ export function SegmentTimelineWorkspace({
                 )}
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center h-[220px] text-sm text-slate-500 gap-2 px-6 text-center">
+              <div className="flex flex-col items-center justify-center h-[160px] text-sm text-slate-500 gap-2 px-6 text-center">
                 <p>时间轴即作品本体</p>
                 <p className="text-[11px] text-slate-600">
                   在下方段落中匹配素材后，可在此预览、裁剪出入点并顺序浏览全片
@@ -576,6 +601,24 @@ export function SegmentTimelineWorkspace({
         </div>
       </div>
 
+      <div
+        className={
+          pinTimelineBar
+            ? 'sticky bottom-0 z-20 -mx-4 px-4 pt-2 pb-3 border-t border-indigo-500/20 bg-[#0d0f14]/95 backdrop-blur-md shadow-[0_-10px_28px_rgba(0,0,0,0.45)] space-y-2'
+            : 'space-y-2'
+        }
+      >
+        {!previewExpanded && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] text-slate-500 truncate min-w-0">
+              {selectedLayout && !selectedLayout.placeholder
+                ? `${selectedLayout.label} · ${fmt(playheadSec)} / ${fmt(totalDuration)}`
+                : '时间轴'}
+            </p>
+            {transportControls}
+          </div>
+        )}
+
       <TimelineEditor
         tracks={tracks}
         totalDuration={totalDuration}
@@ -594,9 +637,12 @@ export function SegmentTimelineWorkspace({
         className="flex-shrink-0"
       />
 
+      {!pinTimelineBar && (
       <p className="text-[10px] text-slate-600 leading-relaxed">
         空格播放/暂停 · I/O 设入出点 · 方向键微调播放头 · 拖边缘裁剪（松手生效）· 勾选「连续播放」可顺序预览全片。
       </p>
+      )}
+      </div>
     </section>
   )
 }

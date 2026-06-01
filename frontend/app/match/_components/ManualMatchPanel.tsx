@@ -65,7 +65,6 @@ export type ManualMatchPanelProps = {
   /** 主工作区：成片时间轴（预览 + 裁剪） */
   timelineWorkspace?: ReactNode
   focusedSegId?: string | null
-  onFocusSegment?: (segId: string) => void
 }
 
 export function ManualMatchPanel({
@@ -116,7 +115,6 @@ export function ManualMatchPanel({
   bgmListError,
   timelineWorkspace,
   focusedSegId,
-  onFocusSegment,
 }: ManualMatchPanelProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -136,11 +134,6 @@ export function ManualMatchPanel({
   useEffect(() => () => {
     if (flashClearRef.current) clearTimeout(flashClearRef.current)
   }, [])
-
-  useEffect(() => {
-    if (!focusedSegId) return
-    document.getElementById(`seg-card-${focusedSegId}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [focusedSegId])
 
   /** 拖动靠近视口上下边缘时自动滚动，便于长列表排序 */
   useEffect(() => {
@@ -314,7 +307,6 @@ export function ManualMatchPanel({
                   ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
                   : '',
               ].join(' ')}
-              onFocusCapture={() => onFocusSegment?.(seg.id)}
               onDragOver={(e) => {
                 if (!draggingId || draggingId === seg.id) return
                 e.preventDefault()

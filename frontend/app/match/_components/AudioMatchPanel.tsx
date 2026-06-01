@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from 'react'
+import { useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   Headphones,
   Loader2,
@@ -79,7 +79,6 @@ export type AudioMatchPanelProps = {
   /** 主工作区：成片时间轴（预览 + 裁剪） */
   timelineWorkspace?: ReactNode
   focusedSegId?: string | null
-  onFocusSegment?: (segId: string) => void
 }
 
 export function AudioMatchPanel({
@@ -132,7 +131,6 @@ export function AudioMatchPanel({
   timelineSaving = false,
   timelineWorkspace,
   focusedSegId,
-  onFocusSegment,
 }: AudioMatchPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [timelineOpen, setTimelineOpen] = useState(false)
@@ -148,11 +146,6 @@ export function AudioMatchPanel({
     setTimelineFocusSegId(segId ?? null)
     setTimelineOpen(true)
   }
-
-  useEffect(() => {
-    if (!focusedSegId) return
-    document.getElementById(`seg-card-${focusedSegId}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [focusedSegId])
 
   const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -387,7 +380,6 @@ export function AudioMatchPanel({
                   ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
                   : '',
               ].join(' ')}
-              onFocusCapture={() => onFocusSegment?.(seg.id)}
             >
               <SegmentRow
                 seg={seg}

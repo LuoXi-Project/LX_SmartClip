@@ -39,7 +39,8 @@ import { toMixClipFilterApi } from './_components/mixEditTypes'
 import { VideoDubPanel, type VideoDubGeneratePayload } from './_components/VideoDubPanel'
 import { TemplateClipPanel } from './_components/TemplateClipPanel'
 import { MatchSubtitleWorkspace } from './_components/MatchSubtitleWorkspace'
-import { isAutoLikeMode } from './_components/matchModeTypes'
+import { isAutoLikeMode, isManualLikeMode } from './_components/matchModeTypes'
+import { SegmentTimelineWorkspace } from './_components/SegmentTimelineWorkspace'
 import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
@@ -194,6 +195,7 @@ export default function MatchPage() {
   const [videoPage, setVideoPage] = useState(1)
   const [previewClip, setPreviewClip] = useState<MatchClip | null>(null)
   const [clipInOutSegId, setClipInOutSegId] = useState<string | null>(null)
+  const [timelineFocusedSegId, setTimelineFocusedSegId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegId, setPlayingSegId] = useState<string | null>(null)
   const [audioCurrentTime, setAudioCurrentTime] = useState(0)
@@ -814,6 +816,19 @@ export default function MatchPage() {
     }
     return withSelection
   }, [segments, mode])
+
+  const manualLikeWideLayout = isManualLikeMode(mode) && segments.length > 0
+
+  const segmentTimelineWorkspace =
+    manualLikeWideLayout ? (
+      <SegmentTimelineWorkspace
+        segments={segments}
+        onSegmentsChange={setMatchSegments}
+        focusedSegId={timelineFocusedSegId}
+        onFocusSegment={setTimelineFocusedSegId}
+        workspaceTitle={mode === 'audio_match' ? '音频匹配 · 成片时间轴' : '手动匹配 · 成片时间轴'}
+      />
+    ) : null
 
   const clipInOutSeg = useMemo(() => {
     if (!clipInOutSegId) return undefined
@@ -1655,7 +1670,7 @@ export default function MatchPage() {
         />
       )}
       <div className={isFilmMode ? '' : 'pr-64'}>
-        <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
+        <div className={manualLikeWideLayout ? 'max-w-[min(1600px,100%)] mx-auto px-6 py-10 space-y-8' : 'max-w-3xl mx-auto px-6 py-10 space-y-8'}>
           <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
           <div className="rounded-xl border border-violet-500/25 bg-violet-500/5 px-4 py-3 text-sm text-slate-300 flex flex-wrap items-center gap-2">
             <span>推荐使用对话式</span>
@@ -2326,6 +2341,9 @@ export default function MatchPage() {
                   )
                 }}
                 bgmListError={bgmListError}
+                timelineWorkspace={segmentTimelineWorkspace}
+                focusedSegId={timelineFocusedSegId}
+                onFocusSegment={setTimelineFocusedSegId}
               />
           ) : (
             <>
@@ -2421,6 +2439,9 @@ export default function MatchPage() {
                   patchSeg(seg.id, { expanded: !seg.expanded })
                 }}
                 onOpenClipInOut={setClipInOutSegId}
+                timelineWorkspace={segmentTimelineWorkspace}
+                focusedSegId={timelineFocusedSegId}
+                onFocusSegment={setTimelineFocusedSegId}
               />
             </>
           )}

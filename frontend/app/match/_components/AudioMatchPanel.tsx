@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, type ChangeEvent, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   Headphones,
   Loader2,
@@ -76,6 +76,10 @@ export type AudioMatchPanelProps = {
   /** 保存时间轴微调并重新切片 */
   onTimelineSave: (next: Segment[]) => void | Promise<void>
   timelineSaving?: boolean
+  /** 主工作区：成片时间轴（预览 + 裁剪） */
+  timelineWorkspace?: ReactNode
+  focusedSegId?: string | null
+  onFocusSegment?: (segId: string) => void
 }
 
 export function AudioMatchPanel({
@@ -126,6 +130,9 @@ export function AudioMatchPanel({
   bgmListError,
   onTimelineSave,
   timelineSaving = false,
+  timelineWorkspace,
+  focusedSegId,
+  onFocusSegment,
 }: AudioMatchPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [timelineOpen, setTimelineOpen] = useState(false)
@@ -141,6 +148,11 @@ export function AudioMatchPanel({
     setTimelineFocusSegId(segId ?? null)
     setTimelineOpen(true)
   }
+
+  useEffect(() => {
+    if (!focusedSegId) return
+    document.getElementById(`seg-card-${focusedSegId}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [focusedSegId])
 
   const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -338,13 +350,15 @@ export function AudioMatchPanel({
         </div>
       </section>
 
+      {timelineWorkspace}
+
       {segments.length > 0 && (
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-              ③ 匹配素材 · {segments.length} 段
+              ③ 段落详情 · {segments.length} 段
               <span className="ml-2 font-normal normal-case text-slate-600 hidden sm:inline">
-                段落顺序与底音频对齐，仅可编辑文案
+                素材选择与文案；成片预览请用上方时间轴，底音频对齐请用「底音频时间轴」
               </span>
             </p>
             <div className="flex items-center gap-3">
@@ -364,7 +378,17 @@ export function AudioMatchPanel({
             </div>
           </div>
           {segments.map((seg, i) => (
-            <div key={seg.id}>
+            <div
+              key={seg.id}
+              id={`seg-card-${seg.id}`}
+              className={[
+                'scroll-mt-24 rounded-2xl transition-shadow duration-200',
+                focusedSegId === seg.id
+                  ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
+                  : '',
+              ].join(' ')}
+              onFocusCapture={() => onFocusSegment?.(seg.id)}
+            >
               <SegmentRow
                 seg={seg}
                 index={i}

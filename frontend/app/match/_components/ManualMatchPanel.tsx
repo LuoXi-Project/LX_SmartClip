@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { Loader2, Mic, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
 import { type BgmTrack, type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
@@ -62,6 +62,10 @@ export type ManualMatchPanelProps = {
     patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
   ) => void
   bgmListError?: string
+  /** 主工作区：成片时间轴（预览 + 裁剪） */
+  timelineWorkspace?: ReactNode
+  focusedSegId?: string | null
+  onFocusSegment?: (segId: string) => void
 }
 
 export function ManualMatchPanel({
@@ -110,6 +114,9 @@ export function ManualMatchPanel({
   onRemoveManualBgmTimelineSegment,
   onUpdateManualBgmTimelineSegment,
   bgmListError,
+  timelineWorkspace,
+  focusedSegId,
+  onFocusSegment,
 }: ManualMatchPanelProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -129,6 +136,11 @@ export function ManualMatchPanel({
   useEffect(() => () => {
     if (flashClearRef.current) clearTimeout(flashClearRef.current)
   }, [])
+
+  useEffect(() => {
+    if (!focusedSegId) return
+    document.getElementById(`seg-card-${focusedSegId}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [focusedSegId])
 
   /** 拖动靠近视口上下边缘时自动滚动，便于长列表排序 */
   useEffect(() => {
@@ -271,12 +283,15 @@ export function ManualMatchPanel({
           </button>
         </div>
       </section>
+      {timelineWorkspace}
       {segments.length > 0 && (
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-              文案段落 · {segments.length} 段
-              <span className="ml-2 font-normal normal-case text-slate-600 hidden sm:inline">可拖拽排序，或用每段标题栏箭头</span>
+              段落详情 · {segments.length} 段
+              <span className="ml-2 font-normal normal-case text-slate-600 hidden sm:inline">
+                素材检索与文案编辑；成片预览与裁剪请用上方时间轴
+              </span>
             </p>
             <button onClick={onClearAll} className="text-xs text-slate-600 hover:text-red-400 transition-colors">
               清空全部
@@ -285,8 +300,9 @@ export function ManualMatchPanel({
           {segments.map((seg, i) => (
             <div
               key={seg.id}
+              id={`seg-card-${seg.id}`}
               className={[
-                'rounded-2xl transition-[opacity,box-shadow] duration-200',
+                'rounded-2xl transition-[opacity,box-shadow] duration-200 scroll-mt-24',
                 draggingId === seg.id ? 'opacity-45' : '',
                 draggingId && draggingId !== seg.id && dropTargetId === seg.id
                   ? 'ring-2 ring-indigo-400/90 shadow-[0_0_0_1px_rgba(129,140,248,0.35),0_8px_28px_-6px_rgba(99,102,241,0.45)]'
@@ -294,7 +310,11 @@ export function ManualMatchPanel({
                 flashId === seg.id
                   ? 'ring-2 ring-emerald-400 shadow-[0_0_24px_-4px_rgba(52,211,153,0.55)]'
                   : '',
+                focusedSegId === seg.id
+                  ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
+                  : '',
               ].join(' ')}
+              onFocusCapture={() => onFocusSegment?.(seg.id)}
               onDragOver={(e) => {
                 if (!draggingId || draggingId === seg.id) return
                 e.preventDefault()

@@ -7,12 +7,6 @@ import { Menu, X } from 'lucide-react'
 import clsx from 'clsx'
 import { NavDropdown, type NavDropdownItem } from '@/components/ui/nav-dropdown'
 
-const assetItems: NavDropdownItem[] = [
-  { href: '/library', label: '素材库', description: '上传、管理、预览' },
-  { href: '/process', label: '素材处理', description: '切分与多模态分析' },
-  { href: '/search', label: '素材检索', description: '语义搜索片段' },
-]
-
 const editItems: NavDropdownItem[] = [
   { href: '/match', label: '经典模式', description: '文案素材三级匹配' },
   { href: '/summary', label: '视频总结', description: '长视频 AI 摘要' },
@@ -24,16 +18,25 @@ const audioItems: NavDropdownItem[] = [
 ]
 
 const moreItems: NavDropdownItem[] = [
-  { href: '/settings', label: '设置' },
-  { href: '/license', label: '卡密' },
+  { href: '/search', label: '素材检索', description: '语义搜索片段' },
   { href: '/about', label: '关于与支持' },
+  { href: '/logs', label: '日志' },
 ]
 
 const mobileSections = [
-  { title: '创作', items: [{ href: '/studio', label: '智剪工作台' }, ...editItems] },
-  { title: '素材', items: assetItems },
+  {
+    title: '常用',
+    items: [
+      { href: '/studio', label: '智剪工作台' },
+      { href: '/library', label: '素材库', description: '上传、管理、预览' },
+      { href: '/process', label: '素材处理', description: '切分与多模态分析' },
+      { href: '/settings', label: '设置' },
+      { href: '/license', label: '卡密' },
+    ],
+  },
+  { title: '剪辑', items: editItems },
   { title: '音频', items: audioItems },
-  { title: '系统', items: [{ href: '/logs', label: '日志' }, ...moreItems] },
+  { title: '更多', items: moreItems },
 ]
 
 function isActive(pathname: string, href: string) {
@@ -84,13 +87,21 @@ export default function TopNav() {
         <Link href="/studio" className={navLinkClass(isActive(pathname, '/studio'), true)}>
           智剪工作台
         </Link>
-        <NavDropdown label="素材" items={assetItems} active={groupActive(pathname, assetItems)} />
+        <Link href="/library" className={navLinkClass(isActive(pathname, '/library'))}>
+          素材库
+        </Link>
+        <Link href="/process" className={navLinkClass(isActive(pathname, '/process'))}>
+          素材处理
+        </Link>
         <NavDropdown label="剪辑" items={editItems} active={groupActive(pathname, editItems)} />
         <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />
 
         <div className="ml-auto flex items-center gap-1 pl-2">
-          <Link href="/logs" className={navLinkClass(isActive(pathname, '/logs'))}>
-            日志
+          <Link href="/settings" className={navLinkClass(isActive(pathname, '/settings'))}>
+            设置
+          </Link>
+          <Link href="/license" className={navLinkClass(isActive(pathname, '/license'))}>
+            卡密
           </Link>
           <NavDropdown
             label="更多"

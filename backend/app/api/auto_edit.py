@@ -692,10 +692,19 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
             # 把 LLM 鉴权/调用失败等关键异常透传到前端展示
             raise HTTPException(status_code=502, detail=str(e)) from e
     else:
+        resolved_target_sec = None
+        if req.strategy == "standard":
+            from app.core.auto_edit.duration_hint import resolve_voiceover_target_duration_sec
+
+            resolved_target_sec = resolve_voiceover_target_duration_sec(
+                explicit_sec=req.target_duration_sec,
+                user_prompt=(req.user_prompt or "").strip(),
+            )
         build_kwargs = {
             "clip_groups": groups,
             "strategy": req.strategy,
             "video_title_hint": hint,
+            "target_duration_sec": resolved_target_sec,
             "audio_activity_cfg": {
                 "db_threshold": float(req.activity_db_threshold),
                 "min_silence_sec": float(req.activity_min_silence_sec),
@@ -1538,4 +1547,3 @@ async def export_jianying_draft_from_plan(
         strict_use_client_srt=False,
         include_subtitle=req.include_subtitle,
     )
-

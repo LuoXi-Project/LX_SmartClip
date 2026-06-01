@@ -6,6 +6,7 @@ import logging
 import re
 import subprocess
 import uuid
+from dataclasses import dataclass
 from typing import Any, List, Sequence
 
 import aiosqlite
@@ -28,6 +29,71 @@ logger = logging.getLogger(__name__)
 
 # 同一 clip 内判断「已占用源时间」时的容差（秒）
 _VO_OVERLAP_EPS_SEC = 0.05
+_STANDARD_MERGE_GAP_SEC = 0.28
+_STANDARD_BUFFER_SEC = 0.06
+_STANDARD_DEFAULT_KEEP_RATIO = 0.62
+_STANDARD_MIN_KEEP_SEC = 12.0
+_STANDARD_MAX_DELETE_RATIO = 0.72
+
+_FILLER_WORDS = (
+    "嗯",
+    "啊",
+    "呃",
+    "额",
+    "哦",
+    "这个",
+    "那个",
+    "就是",
+    "然后",
+    "其实",
+    "就是说",
+    "对吧",
+    "是不是",
+    "好吧",
+)
+_VALUE_KEYWORDS = (
+    "重点",
+    "关键",
+    "核心",
+    "推荐",
+    "建议",
+    "注意",
+    "总结",
+    "原因",
+    "问题",
+    "解决",
+    "效果",
+    "优势",
+    "缺点",
+    "对比",
+    "价格",
+    "优惠",
+    "体验",
+    "功能",
+    "步骤",
+    "方法",
+    "技巧",
+)
+
+
+@dataclass(frozen=True)
+class _StandardSentence:
+    clip_id: str
+    video_id: str
+    clip_base: float
+    clip_dur: float
+    st_rel: float
+    et_rel: float
+    text: str
+    source_index: int
+
+    @property
+    def dur(self) -> float:
+        return max(0.0, self.et_rel - self.st_rel)
+
+    @property
+    def abs_start(self) -> float:
+        return self.clip_base + self.st_rel
 
 
 def _clip_has_asr(asr_text: str | None) -> bool:
@@ -186,6 +252,295 @@ def _is_meaningful_text(text: str | None) -> bool:
         if ch.isalnum() or ("\u4e00" <= ch <= "\u9fff")
     )
     return bool(meaningful)
+
+
+def _compact_for_scoring(text: str) -> str:
+    return re.sub(r"[\s，。！？、,.!?；;：:\-—]+", "", text or "")
+
+
+def _standard_sentence_score(sentence: _StandardSentence, *, first_in_video: bool) -> float:
+    text = (sentence.text or "").strip()
+    compact = _compact_for_scoring(text)
+    if not compact:
+        return -100.0
+
+    dur = sentence.dur
+    length = len(compact)
+    score = 0.0
+
+    # 信息密度：太短多为口癖，过长容易拖节奏。
+    score += min(18.0, length * 0.58)
+    if 8 <= length <= 42:
+        score += 3.0
+    elif length < 4:
+        score -= 8.0
+    elif length > 70:
+        score -= min(8.0, (length - 70) * 0.12)
+
+    # 语速/密度：口播短视频更偏向信息密集片段。
+    density = length / max(0.3, dur)
+    if density >= 2.2:
+        score += min(8.0, (density - 2.2) * 1.4)
+    elif density < 0.9:
+        score -= 3.0
+
+    for word in _VALUE_KEYWORDS:
+        if word in text:
+            score += 3.2
+    filler_hits = sum(1 for word in _FILLER_WORDS if word in text)
+    score -= filler_hits * 2.1
+
+    # 全句几乎都是口癖时直接重罚。
+    stripped = compact
+    for word in _FILLER_WORDS:
+        stripped = stripped.replace(word, "")
+    if len(stripped) <= 2 and filler_hits:
+        score -= 20.0
+
+    if text[-1:] in "。！？!?":
+        score += 1.0
+    if first_in_video and dur <= 8.0:
+        score += 2.0
+
+    if dur < 0.35:
+        score -= 10.0
+    elif dur > 18.0:
+        score -= min(10.0, (dur - 18.0) * 0.5)
+
+    return score
+
+
+def _collect_standard_sentences(
+    clip_groups: Sequence[Sequence[aiosqlite.Row | dict[str, Any]]],
+) -> list[_StandardSentence]:
+    sentences: list[_StandardSentence] = []
+    source_index = 0
+    for rows in clip_groups:
+        for row in rows:
+            cid = str(row["id"])
+            vid = str(row["video_id"])
+            clip_base = float(row["start_time"] or 0.0)
+            clip_dur = float(row["duration"] or 0.0)
+            seg_items = _parse_asr_segments(row["asr_segments"])
+
+            if not seg_items:
+                if not _clip_has_asr(row["asr_text"]):
+                    continue
+                text = (row["asr_text"] or "").strip()
+                if not _is_meaningful_text(text):
+                    continue
+                et_rel = clip_dur if clip_dur > 0 else 1.0
+                sentences.append(
+                    _StandardSentence(
+                        clip_id=cid,
+                        video_id=vid,
+                        clip_base=clip_base,
+                        clip_dur=clip_dur,
+                        st_rel=0.0,
+                        et_rel=et_rel,
+                        text=text,
+                        source_index=source_index,
+                    )
+                )
+                source_index += 1
+                continue
+
+            raw_rows: list[tuple[float, float, str]] = []
+            for seg in seg_items:
+                try:
+                    st_rel = float(seg.get("start") or 0.0)
+                    et_rel = float(seg.get("end") or st_rel)
+                except Exception:
+                    continue
+                if et_rel <= st_rel:
+                    continue
+                text = str(seg.get("text") or "").strip()
+                if not _is_meaningful_text(text):
+                    continue
+                raw_rows.append((st_rel, et_rel, text))
+
+            raw_rows.sort(key=lambda r: r[0])
+            for st_rel, et_rel, text in _merge_contiguous_asr_rows(raw_rows):
+                if et_rel <= st_rel:
+                    continue
+                sentences.append(
+                    _StandardSentence(
+                        clip_id=cid,
+                        video_id=vid,
+                        clip_base=clip_base,
+                        clip_dur=clip_dur,
+                        st_rel=st_rel,
+                        et_rel=et_rel,
+                        text=text,
+                        source_index=source_index,
+                    )
+                )
+                source_index += 1
+    return sentences
+
+
+def _select_standard_sentences(
+    sentences: list[_StandardSentence],
+    *,
+    target_duration_sec: float | None,
+) -> tuple[list[_StandardSentence], dict[str, float]]:
+    if not sentences:
+        return [], {"total_speech_sec": 0.0, "target_sec": 0.0, "kept_speech_sec": 0.0}
+
+    total = sum(s.dur for s in sentences)
+    if target_duration_sec and target_duration_sec > 0:
+        target = min(float(target_duration_sec), total)
+    else:
+        target = max(_STANDARD_MIN_KEEP_SEC, total * _STANDARD_DEFAULT_KEEP_RATIO)
+    min_allowed = max(0.0, total * (1.0 - _STANDARD_MAX_DELETE_RATIO))
+    target = max(min_allowed, min(target, total))
+
+    seen_video: set[str] = set()
+    scored: list[tuple[float, _StandardSentence]] = []
+    for s in sentences:
+        first_in_video = s.video_id not in seen_video
+        seen_video.add(s.video_id)
+        scored.append((_standard_sentence_score(s, first_in_video=first_in_video), s))
+
+    scored.sort(key=lambda x: (x[0], x[1].dur), reverse=True)
+
+    chosen: list[_StandardSentence] = []
+    chosen_ids: set[int] = set()
+    cur = 0.0
+    for score, s in scored:
+        if score < -2.0 and cur >= min_allowed:
+            continue
+        chosen.append(s)
+        chosen_ids.add(id(s))
+        cur += s.dur
+        if cur >= target:
+            break
+
+    # 连贯性保护：入选句的前后短句如果间隔很小，自动补入，避免切得像断崖。
+    by_clip: dict[str, list[_StandardSentence]] = {}
+    for s in sentences:
+        by_clip.setdefault(s.clip_id, []).append(s)
+    for rows in by_clip.values():
+        rows.sort(key=lambda x: x.st_rel)
+        for i, s in enumerate(rows):
+            if id(s) not in chosen_ids:
+                continue
+            for neighbor in (rows[i - 1] if i > 0 else None, rows[i + 1] if i + 1 < len(rows) else None):
+                if neighbor is None or id(neighbor) in chosen_ids:
+                    continue
+                gap = min(abs(neighbor.et_rel - s.st_rel), abs(neighbor.st_rel - s.et_rel))
+                if gap <= 0.18 and neighbor.dur <= 2.5:
+                    chosen.append(neighbor)
+                    chosen_ids.add(id(neighbor))
+                    cur += neighbor.dur
+
+    chosen.sort(key=lambda s: (s.source_index, s.abs_start))
+    return chosen, {
+        "total_speech_sec": round(total, 3),
+        "target_sec": round(target, 3),
+        "kept_speech_sec": round(sum(s.dur for s in chosen), 3),
+    }
+
+
+def _merge_standard_sentences_to_segments(sentences: list[_StandardSentence]) -> list[tuple[_StandardSentence, ...]]:
+    if not sentences:
+        return []
+    ordered = sorted(sentences, key=lambda s: (s.source_index, s.abs_start))
+    groups: list[list[_StandardSentence]] = []
+    cur = [ordered[0]]
+    for s in ordered[1:]:
+        prev = cur[-1]
+        same_clip = prev.clip_id == s.clip_id
+        gap = s.st_rel - prev.et_rel
+        if same_clip and gap <= _STANDARD_MERGE_GAP_SEC:
+            cur.append(s)
+        else:
+            groups.append(cur)
+            cur = [s]
+    groups.append(cur)
+    return [tuple(g) for g in groups]
+
+
+def _build_standard_plan(
+    *,
+    clip_groups: Sequence[Sequence[aiosqlite.Row | dict[str, Any]]],
+    video_title_hint: str | None,
+    target_duration_sec: float | None,
+) -> Plan:
+    sentences = _collect_standard_sentences(clip_groups)
+    selected, stats = _select_standard_sentences(sentences, target_duration_sec=target_duration_sec)
+    groups = _merge_standard_sentences_to_segments(selected)
+
+    segments: list[SegmentPlan] = []
+    total_sec = 0.0
+    for order, group in enumerate(groups):
+        first = group[0]
+        last = group[-1]
+        clip_dur = first.clip_dur
+        st_rel = max(0.0, first.st_rel - _STANDARD_BUFFER_SEC)
+        et_rel = min(clip_dur if clip_dur > 0 else last.et_rel, last.et_rel + _STANDARD_BUFFER_SEC)
+        if et_rel <= st_rel:
+            et_rel = last.et_rel
+        dur = max(0.0, et_rel - st_rel)
+        if dur <= 0:
+            continue
+        text = "\n".join(s.text.strip() for s in group if s.text.strip())
+        st_abs = first.clip_base + st_rel
+        et_abs = first.clip_base + et_rel
+        total_sec += dur
+        segments.append(
+            SegmentPlan(
+                id=f"vq_{order:04d}_{first.clip_id[:6]}_std",
+                order=order,
+                clip_group=[ClipRef(clip_id=first.clip_id, video_id=first.video_id, weight=1.0)],
+                selected_clip_ids=[first.clip_id],
+                start_time_sec=st_abs,
+                end_time_sec=et_abs,
+                override_duration_sec=dur,
+                clip_start_offset_sec=st_rel,
+                audio_mode="original",
+                subtitle=SubtitlePlan(
+                    strategy="asr",
+                    text=text,
+                    source="asr",
+                    timing_hint=TimingHint(start=st_abs, end=et_abs),
+                ),
+            )
+        )
+
+    vt = (video_title_hint or "").strip()
+    title = f"口播快剪（标准）· {vt}" if vt else "口播快剪（标准）"
+    summary = (
+        "基于 ASR 句子质量评分的标准快剪："
+        f"保留 {len(selected)}/{len(sentences)} 条句子；"
+        f"语音保留约 {stats['kept_speech_sec']:.1f}/{stats['total_speech_sec']:.1f}s；"
+        f"成片约 {total_sec:.1f}s。"
+    )
+    return Plan(
+        plan_id=uuid.uuid4().hex[:8],
+        title=title,
+        summary=summary,
+        video_title=vt or None,
+        video_description=None,
+        mode="original",
+        target_duration_sec=target_duration_sec,
+        estimated_duration_sec=round(total_sec, 2) if total_sec > 0 else None,
+        chapters=[
+            {
+                "id": "standard_quality_score",
+                "title": "标准快剪评分",
+                "input_sentence_count": len(sentences),
+                "kept_sentence_count": len(selected),
+                "total_speech_sec": stats["total_speech_sec"],
+                "target_sec": stats["target_sec"],
+                "kept_speech_sec": stats["kept_speech_sec"],
+            }
+        ],
+        segments=segments,
+        bgm=BGMPlan(enabled=False),
+        constraints=None,
+        keep_flags=PlanKeepFlags(clips=False, subtitles=False, transitions=False, bgm=False),
+    )
 
 
 def _sum_segment_output_duration(segments: Sequence[SegmentPlan]) -> float:
@@ -469,15 +824,20 @@ def build_plan_from_clip_groups(
     strategy: str,
     video_title_hint: str | None,
     audio_activity_cfg: dict[str, float] | None = None,
+    target_duration_sec: float | None = None,
 ) -> Plan:
     if strategy not in ("asr_fast", "standard", "audio_activity_fast"):
         raise ValueError(f"unsupported strategy: {strategy}")
 
-    # MVP：standard 暂时与 asr_fast 等价（均用 clips.asr_segments 精确裁剪）。
+    if strategy == "standard":
+        return _build_standard_plan(
+            clip_groups=clip_groups,
+            video_title_hint=video_title_hint,
+            target_duration_sec=target_duration_sec,
+        )
+
     if strategy == "asr_fast":
         label = "极速"
-    elif strategy == "standard":
-        label = "标准"
     else:
         label = "音频活动"
 

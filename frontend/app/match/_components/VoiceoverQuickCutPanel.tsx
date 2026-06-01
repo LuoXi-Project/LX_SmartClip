@@ -8,7 +8,7 @@ import { VoiceInputControl } from '@/components/ui/voice-input'
 import type { TtsVideoAlignConfigApi, TtsVideoAlignPolicyApi } from '@/lib/api'
 import { fmt, videoAudioStreamUrl } from './types'
 
-export type VoiceoverQuickCutStrategy = 'asr_fast' | 'semantic' | 'audio_activity_fast'
+export type VoiceoverQuickCutStrategy = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'
 
 export type VoiceoverAudioActivityConfig = {
   activityDbThreshold: number
@@ -58,6 +58,11 @@ const STRATEGY_OPTIONS = [
     id: 'asr_fast' as const,
     label: '极速快剪',
     desc: '有 ASR 字幕保留，无 ASR 段删除，速度优先',
+  },
+  {
+    id: 'standard' as const,
+    label: '标准快剪',
+    desc: '句子评分筛选，自动过滤口癖和低密度片段',
   },
   {
     id: 'semantic' as const,
@@ -253,9 +258,9 @@ export function VoiceoverQuickCutPanel({
 }: VoiceoverQuickCutPanelProps) {
   const overlapSwitchId = useId()
   const overlapLabelId = `${overlapSwitchId}-label`
-  const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('asr_fast')
+  const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('standard')
   const [semanticUserPrompt, setSemanticUserPrompt] = useState('')
-  /** 成片目标时长（秒），仅智能快剪；留空则后端从提示词解析 */
+  /** 成片目标时长（秒），标准/智能快剪生效；留空则后端从提示词解析 */
   const [semanticTargetDurationSec, setSemanticTargetDurationSec] = useState('')
   const [audioActivityConfig, setAudioActivityConfig] = useState<VoiceoverAudioActivityConfig>({
     activityDbThreshold: -36,
@@ -470,9 +475,11 @@ export function VoiceoverQuickCutPanel({
         return
       }
     }
-    const userPrompt = strategy === 'semantic' ? semanticUserPrompt.trim() : undefined
+    const userPrompt = strategy === 'semantic' || strategy === 'standard'
+      ? semanticUserPrompt.trim() || undefined
+      : undefined
     let targetDurationSec: number | undefined
-    if (strategy === 'semantic' && semanticTargetDurationSec.trim()) {
+    if ((strategy === 'semantic' || strategy === 'standard') && semanticTargetDurationSec.trim()) {
       const n = Number(semanticTargetDurationSec.trim())
       if (Number.isFinite(n) && n >= 5 && n <= 7200) {
         targetDurationSec = n
@@ -1003,27 +1010,31 @@ export function VoiceoverQuickCutPanel({
           )}
         </div>
 
-        {strategy === 'semantic' && (
+        {(strategy === 'semantic' || strategy === 'standard') && (
           <div className="space-y-2 rounded-xl border border-violet-500/20 bg-slate-950/40 px-4 py-3">
             <label className="flex items-center gap-2 text-[11px] font-medium text-violet-200/95">
               <MessageSquare className="w-3.5 h-3.5 text-violet-400" />
-              智能快剪 · 提示词（必填）
+              {strategy === 'semantic' ? '智能快剪 · 提示词（必填）' : '标准快剪 · 目标与偏好（可选）'}
             </label>
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              描述你的剪辑诉求，后端将结合 ASR 句子与约束调用 LLM 筛选/保留片段（非全量重写，仅辅助选段）。
+              {strategy === 'semantic'
+                ? '描述你的剪辑诉求，后端将结合 ASR 句子与约束调用 LLM 筛选/保留片段（非全量重写，仅辅助选段）。'
+                : '标准快剪不调用 LLM，会按句子信息密度、关键词、口癖和完整性打分；提示词里可写“60秒/2分钟”作为目标时长。'}
             </p>
             <div className="relative">
               <textarea
                 value={semanticUserPrompt}
                 onChange={(e) => setSemanticUserPrompt(e.target.value)}
-                placeholder="例如：保留介绍价格和优惠的段落，删掉闲聊和重复口癖；节奏紧凑，总时长控制在 2 分钟内…"
+                placeholder={strategy === 'semantic'
+                  ? '例如：保留介绍价格和优惠的段落，删掉闲聊和重复口癖；节奏紧凑，总时长控制在 2 分钟内…'
+                  : '可选：例如 总时长 60 秒，节奏紧凑，尽量删掉口癖和低密度闲聊…'}
                 rows={4}
                 disabled={generating}
                 className="w-full rounded-xl bg-slate-900/70 border border-slate-700 px-3 py-2.5 pr-14 pt-11 text-sm text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600 resize-y min-h-[88px] disabled:opacity-50"
               />
               <div className="absolute right-2 top-2 z-10">
                 <VoiceInputControl
-                  intent="口播快剪「智能快剪」提示词：说明要保留/删减的内容、节奏与时长偏好；后端会结合 ASR 做选段。整理成一条清晰中文指令，不要 Markdown。"
+                  intent="口播快剪提示词：说明要保留/删减的内容、节奏与时长偏好；整理成一条清晰中文指令，不要 Markdown。"
                   value={semanticUserPrompt}
                   onTextChange={setSemanticUserPrompt}
                   merge="append"
@@ -1044,7 +1055,9 @@ export function VoiceoverQuickCutPanel({
                 className="w-40 rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1 text-xs text-slate-200 outline-none focus:border-violet-500/60 placeholder:text-slate-600"
               />
               <span className="text-[10px] text-slate-500">
-                填写后优先于提示词中的时长；仍会与 LLM 筛选 + 程序末尾截断共同生效。
+                {strategy === 'semantic'
+                  ? '填写后优先于提示词中的时长；仍会与 LLM 筛选 + 程序末尾截断共同生效。'
+                  : '填写后优先于提示词中的时长；标准快剪会按评分从高到低保留到目标附近。'}
               </span>
             </div>
           </div>

@@ -330,7 +330,7 @@ class VoiceoverQuickCutRequest(BaseModel):
         None,
         ge=5.0,
         le=7200.0,
-        description="成片目标总时长（秒）；不设时尝试从 user_prompt 解析（如「2分钟」「120秒」）",
+        description="成片目标总时长（秒）；standard/semantic 生效；不设时尝试从 user_prompt 解析（如「2分钟」「120秒」）",
     )
     allow_overlapping_source_timeline: bool = Field(
         False,

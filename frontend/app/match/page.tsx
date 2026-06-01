@@ -1401,7 +1401,7 @@ export default function MatchPage() {
     videoIds: string[]
     strategy: VoiceoverQuickCutStrategy
     userPrompt?: string
-    /** 秒；仅智能快剪生效；可与提示词内「2分钟」等同时存在，显式值优先 */
+    /** 秒；标准/智能快剪生效；可与提示词内「2分钟」等同时存在，显式值优先 */
     targetDurationSec?: number
     allowOverlappingSourceTimeline?: boolean
     audioActivityConfig?: {
@@ -2570,4 +2570,3 @@ export default function MatchPage() {
     </main>
   )
 }
-

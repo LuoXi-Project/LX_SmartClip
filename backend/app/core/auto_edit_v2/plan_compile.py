@@ -13,7 +13,8 @@ from app.models.auto_edit import (
     SubtitlePlan,
     TransitionPlan,
 )
-from app.models.auto_edit_timeline import FinalTimeline, StrategyDSL, TimelineItem
+from app.models.auto_edit_timeline import FinalTimeline, MergedEventPool, StrategyDSL, TimelineItem
+from app.core.auto_edit_v2.plan_quality import compute_plan_quality_from_segments, compute_timeline_quality
 from app.core.auto_edit_v2.template_config import get_template_style_hint, normalize_template_preset
 
 
@@ -40,13 +41,14 @@ def compile_timeline_to_plan(
     video_description: Optional[str] = None,
     mode: str,
     allow_cross_video: bool,
+    pool: Optional[MergedEventPool] = None,
 ) -> Plan:
     """
     把 FinalTimeline（事件级、有序、有预算）编译为现有 Plan.segments。
 
     低侵入原则：
     - 生成的 Plan 必须满足现有 Pydantic 校验
-    - 不引入新字段（未来需要可解释性时，再通过可选 meta/日志落盘实现）
+    - quality 为可选可解释性字段，旧前端可忽略
     """
     segments: List[SegmentPlan] = []
 
@@ -95,6 +97,8 @@ def compile_timeline_to_plan(
     target = dsl.target_duration_sec
     est = float(t) if segments else 0.0
 
+    quality = compute_timeline_quality(timeline=timeline, dsl=dsl, pool=pool)
+
     return Plan(
         plan_id=plan_id,
         title=title,
@@ -109,6 +113,7 @@ def compile_timeline_to_plan(
         bgm=bgm,
         constraints=constraints,
         keep_flags=keep_flags,
+        quality=quality,
     )
 
 

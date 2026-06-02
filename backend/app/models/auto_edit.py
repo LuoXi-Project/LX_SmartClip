@@ -188,6 +188,25 @@ class Constraints(BaseModel):
     split_narration_by_sentence: Optional[bool] = None
 
 
+class PlanQualityScores(BaseModel):
+    """成片质量六维评分（0~1，越高越好；repetition 表示新颖度/低重复）。"""
+
+    hook: float = Field(0.0, ge=0.0, le=1.0)
+    info_density: float = Field(0.0, ge=0.0, le=1.0)
+    emotion_curve: float = Field(0.0, ge=0.0, le=1.0)
+    rhythm: float = Field(0.0, ge=0.0, le=1.0)
+    repetition: float = Field(0.0, ge=0.0, le=1.0)
+    platform_fit: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class PlanQualityInsight(BaseModel):
+    scores: PlanQualityScores = Field(default_factory=PlanQualityScores)
+    overall: float = Field(0.0, ge=0.0, le=1.0)
+    grade: str = "C"
+    summary: str = ""
+    reasons: List[str] = Field(default_factory=list)
+
+
 class Plan(BaseModel):
     plan_id: str
     title: str
@@ -204,6 +223,10 @@ class Plan(BaseModel):
     postprocess: Optional[MixPostprocessConfig] = None
     constraints: Optional[Constraints] = None
     keep_flags: Optional[PlanKeepFlags] = None
+    quality: Optional[PlanQualityInsight] = Field(
+        None,
+        description="成片质量评分与推荐理由（Timeline Engine / 启发式）",
+    )
 
 
 class AutoEditPlanRequest(BaseModel):

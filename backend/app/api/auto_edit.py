@@ -28,6 +28,7 @@ from app.core.auto_edit_v2.plan_compile import (
     build_v0_timelines_from_context,
     compile_timeline_to_plan,
 )
+from app.core.auto_edit_v2.plan_quality import sort_plans_by_quality
 from app.core.auto_edit_v2.template_config import (
     get_long_video_events_profile,
     list_templates,
@@ -475,6 +476,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 req.user_prompt, req.mode, req.target_duration_sec, template_preset=template_preset
             )
 
+        pool = None
         try:
             logger.info("auto_edit 启用新引擎：正在生成事件池")
             batches = await call_llm_for_events_all(
@@ -531,9 +533,10 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                         video_description=(final_desc or video_description),
                         mode=req.mode,
                         allow_cross_video=req.allow_cross_video,
+                        pool=pool,
                     )
                 )
-            return AutoEditPlanResponse(plans=plans)
+            return AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
         except HTTPException:
             raise
         except Exception as e:
@@ -581,9 +584,10 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                             video_description=(final_desc or video_description),
                             mode=req.mode,
                             allow_cross_video=req.allow_cross_video,
+                            pool=None,
                         )
                     )
-                return AutoEditPlanResponse(plans=plans)
+                return AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
 
             # 最终兜底：回退旧逻辑，避免新引擎缺信息直接失败
             return await call_llm_for_plans(cfg, context, req)
@@ -1122,6 +1126,7 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         template_preset=template_preset,
                     )
 
+                pool = None
                 try:
                     batches = await call_llm_for_events_all(
                         cfg=cfg,
@@ -1173,9 +1178,10 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                                 video_description=(final_desc or video_description),
                                 mode=req.mode,
                                 allow_cross_video=req.allow_cross_video,
+                                pool=pool,
                             )
                         )
-                    plan_res = AutoEditPlanResponse(plans=plans)
+                    plan_res = AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
                 except HTTPException as e:
                     msg = e.detail if isinstance(e.detail, str) else "生成方案失败"
                     yield _build_sse_event("failed", {"message": msg})
@@ -1230,9 +1236,10 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                                     video_description=(final_desc or video_description),
                                     mode=req.mode,
                                     allow_cross_video=req.allow_cross_video,
+                                    pool=pool,
                                 )
                             )
-                        plan_res = AutoEditPlanResponse(plans=plans)
+                        plan_res = AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
                     else:
                         plan_res = await call_llm_for_plans(cfg, context, req)
             else:

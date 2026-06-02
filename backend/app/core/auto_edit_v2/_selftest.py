@@ -97,10 +97,14 @@ def main() -> None:
         summary="test2",
         mode="voiceover",
         allow_cross_video=True,
+        pool=pool,
     )
     res2 = AutoEditPlanResponse(plans=[plan2])
     assert res2.plans[0].segments, "V1 pipeline 编译后应有 segments"
+    assert res2.plans[0].quality is not None, "V1 pipeline 应包含 quality"
+    assert res2.plans[0].quality.scores.hook > 0, "Hook 分应大于 0"
     print("OK: v1 pipeline segments =", len(res2.plans[0].segments))
+    print("OK: v1 quality overall =", round(res2.plans[0].quality.overall, 3))
 
 
 if __name__ == "__main__":

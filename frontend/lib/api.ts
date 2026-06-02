@@ -917,6 +917,24 @@ export interface AutoEditBgmPlanApi {
   timeline_segments?: BgmTimelineSegmentApi[]
 }
 
+export interface AutoEditPlanQualityScoresApi {
+  hook: number
+  info_density: number
+  emotion_curve: number
+  rhythm: number
+  /** 越高表示素材/文案重复越少（新颖度） */
+  repetition: number
+  platform_fit: number
+}
+
+export interface AutoEditPlanQualityApi {
+  scores: AutoEditPlanQualityScoresApi
+  overall: number
+  grade: string
+  summary: string
+  reasons: string[]
+}
+
 export interface AutoEditPlanApi {
   plan_id: string
   title: string
@@ -930,6 +948,7 @@ export interface AutoEditPlanApi {
   segments: AutoEditSegmentPlanApi[]
   bgm?: AutoEditBgmPlanApi | null
   postprocess?: MixPostprocessConfigApi | null
+  quality?: AutoEditPlanQualityApi | null
 }
 
 export interface AutoEditPlanResponseApi {

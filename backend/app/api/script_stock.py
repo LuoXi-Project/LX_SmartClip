@@ -978,47 +978,47 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
                         f"多段 {seg.kind} 素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
                     )
 
-    tts_paths: List[Optional[str]] = []
-    if req.audio_mode in ("tts_only", "mix"):
-        for seg in req.segments:
-            txt = (seg.text or "").strip()
-            if not txt:
-                tts_paths.append(None)
-                continue
-            try:
-                res = await synthesize(
-                    SynthesizeRequest(
-                        text=txt,
-                        voice=req.tts_voice,
-                        rate=req.tts_rate,
-                        volume=req.tts_volume,
-                    )
-                )
-                tts_paths.append(os.path.join(TTS_AUDIO_DIR, res.filename))
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.exception("script-stock jianying TTS failed")
-                raise HTTPException(500, detail=f"TTS 合成失败: {e}") from e
-    else:
-        tts_paths = [None] * len(req.segments)
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        rows = await _resolve_compose_rows(db, req)
-        async with db.execute(
-            "SELECT value FROM config WHERE key = ?", ("jianying_draft_parent_dir",)
-        ) as cur:
-            cfg_row = await cur.fetchone()
-        jy_parent = (
-            normalize_jianying_parent_dir(str(cfg_row[0])) if cfg_row and cfg_row[0] is not None else ""
-        )
-
-    base_name = (req.project_name or "stock_clip").replace(" ", "_")[:80]
-    unique = f"{base_name}_jy_{uuid.uuid4().hex[:10]}"
-    jy_dir = ensure_storage_subpath("jianying_drafts")
-    jy_zip = os.path.join(jy_dir, f"{unique}_jianying.zip")
-
     try:
+        tts_paths: List[Optional[str]] = []
+        if req.audio_mode in ("tts_only", "mix"):
+            for seg in req.segments:
+                txt = (seg.text or "").strip()
+                if not txt:
+                    tts_paths.append(None)
+                    continue
+                try:
+                    res = await synthesize(
+                        SynthesizeRequest(
+                            text=txt,
+                            voice=req.tts_voice,
+                            rate=req.tts_rate,
+                            volume=req.tts_volume,
+                        )
+                    )
+                    tts_paths.append(os.path.join(TTS_AUDIO_DIR, res.filename))
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.exception("script-stock jianying TTS failed")
+                    raise HTTPException(500, detail=f"TTS 合成失败: {e}") from e
+        else:
+            tts_paths = [None] * len(req.segments)
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            rows = await _resolve_compose_rows(db, req)
+            async with db.execute(
+                "SELECT value FROM config WHERE key = ?", ("jianying_draft_parent_dir",)
+            ) as cur:
+                cfg_row = await cur.fetchone()
+            jy_parent = (
+                normalize_jianying_parent_dir(str(cfg_row[0])) if cfg_row and cfg_row[0] is not None else ""
+            )
+
+        base_name = (req.project_name or "stock_clip").replace(" ", "_")[:80]
+        unique = f"{base_name}_jy_{uuid.uuid4().hex[:10]}"
+        jy_dir = ensure_storage_subpath("jianying_drafts")
+        jy_zip = os.path.join(jy_dir, f"{unique}_jianying.zip")
+
         out_path, out_mode = await run_heavy(
             build_script_stock_jianying_zip_sync,
             segment_rows=rows,
@@ -1033,17 +1033,17 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
             output_zip_path=jy_zip,
             jianying_draft_parent_dir=jy_parent or None,
         )
+
+        if out_mode == "direct":
+            return JianYingDraftExportResponse(mode="direct", filename="", url="", local_path=out_path)
+        return JianYingDraftExportResponse(
+            mode="zip",
+            filename=os.path.basename(out_path),
+            url=storage_public_url_for_file(out_path),
+            local_path="",
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("export_jianying_draft_stock failed")
         raise HTTPException(500, detail=f"剪映草稿导出失败: {e}") from e
-
-    if out_mode == "direct":
-        return JianYingDraftExportResponse(mode="direct", filename="", url="", local_path=out_path)
-    return JianYingDraftExportResponse(
-        mode="zip",
-        filename=os.path.basename(out_path),
-        url=storage_public_url_for_file(out_path),
-        local_path="",
-    )

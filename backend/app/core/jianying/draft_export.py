@@ -444,6 +444,7 @@ def build_jianying_draft_zip(
 
         # 主轨视频实际结束微秒；与 resolve_durations 计划起点若有漂移则后移起点，避免 SegmentOverlap
         main_video_tail_us = 0
+        tts_tail_us = 0
 
         from app.core.jianying.visual_effect_bridge import visual_effect_to_clip_settings
 
@@ -530,24 +531,41 @@ def build_jianying_draft_zip(
                 tts_copy = _copy_into_materials(tts_path, materials_dir, path_cache)
                 tts_dur = float(probe_duration(tts_copy, log_on_failure=True) or seg_durs[seg_idx] or 1.0)
                 mat_total_us = _jy_audio_material_total_us(tts_copy, tts_dur)
-                tts_dur_us = min(int(round(tts_dur * SEC)), mat_total_us)
-                if tts_dur_us < 1000:
-                    tts_dur_us = min(mat_total_us, max(tts_dur_us, 1))
-                planned_us = int(round(tts_dur * SEC))
-                if planned_us > mat_total_us:
+                tts_natural_us = min(int(round(tts_dur * SEC)), mat_total_us)
+                if tts_natural_us < 1000:
+                    tts_natural_us = min(mat_total_us, max(tts_natural_us, 1))
+                if int(round(tts_dur * SEC)) > mat_total_us:
                     logger.info(
                         "剪映草稿 TTS 时长对齐素材: %s %d -> %d us",
                         os.path.basename(str(tts_name)),
-                        planned_us,
-                        tts_dur_us,
+                        int(round(tts_dur * SEC)),
+                        tts_natural_us,
                     )
+
+                # 与 resolve_durations / 烧录一致：TTS 不得超出段落计划窗口，否则 pyJianYingDraft 报 SegmentOverlap
+                seg_end_planned_us = seg_start_planned_us + seg_window_us
+                tts_start_us = max(seg_start_planned_us, tts_tail_us)
+                max_tts_us = max(0, seg_end_planned_us - tts_start_us)
+                tts_dur_us = min(tts_natural_us, max_tts_us)
+                if tts_dur_us < 1000:
+                    tts_dur_us = min(mat_total_us, max(1, tts_dur_us))
+                if tts_natural_us > tts_dur_us + 1000:
+                    logger.info(
+                        "剪映草稿 TTS 截断至段落窗口: %s %.3fs -> %.3fs (第 %d 段)",
+                        os.path.basename(str(tts_name)),
+                        tts_natural_us / SEC,
+                        tts_dur_us / SEC,
+                        seg_idx + 1,
+                    )
+
                 au = AudioSegment(
                     tts_copy,
-                    Timerange(seg_start_us, tts_dur_us),
+                    Timerange(tts_start_us, tts_dur_us),
                     source_timerange=Timerange(0, tts_dur_us),
                     volume=1.0,
                 )
                 script.add_segment(au, track_name="tts")
+                tts_tail_us = tts_start_us + tts_dur_us
 
         # 字幕：写入临时 SRT 再导入
         if srt_entries:

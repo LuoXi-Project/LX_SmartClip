@@ -1529,50 +1529,56 @@ async def export_jianying_draft_from_plan(
     """仅导出剪映草稿 ZIP，不调用 burn / export_original。"""
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
-    plan = req.plan
-    seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
-        plan=plan,
-        project_name=req.project_name,
-        style=req.style,
-        force_tts_pipeline=req.force_tts_pipeline,
-        tts_align=req.tts_align,
-    )
-    if use_tts_branch:
-        from app.api.subtitle import generate_srt as generate_srt_route
+    try:
+        plan = req.plan
+        seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
+            plan=plan,
+            project_name=req.project_name,
+            style=req.style,
+            force_tts_pipeline=req.force_tts_pipeline,
+            tts_align=req.tts_align,
+        )
+        if use_tts_branch:
+            from app.api.subtitle import generate_srt as generate_srt_route
 
-        align_cfg = req.tts_align
-        fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
+            align_cfg = req.tts_align
+            fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
 
-        if req.include_subtitle:
-            if await request.is_disconnected():
-                raise HTTPException(status_code=400, detail="客户端已断开连接")
-            srt_req = GenerateSRTRequest(
+            if req.include_subtitle:
+                if await request.is_disconnected():
+                    raise HTTPException(status_code=400, detail="客户端已断开连接")
+                srt_req = GenerateSRTRequest(
+                    segments=seg_inputs,
+                    style=style,
+                    use_tts_timing=True,
+                    split_narration_by_sentence=fine_grain,
+                )
+                srt_res = await generate_srt_route(srt_req)
+                srt_content = srt_res.srt_content
+            else:
+                srt_content = ""
+            return await export_jianying_draft_zip_async(
                 segments=seg_inputs,
+                mode="tts",
+                project_name_base=project_name,
+                tts_audio_dir=TTS_AUDIO_DIR,
                 style=style,
-                use_tts_timing=True,
-                split_narration_by_sentence=fine_grain,
+                client_srt_content=srt_content,
+                strict_use_client_srt=False,
+                include_subtitle=True,
             )
-            srt_res = await generate_srt_route(srt_req)
-            srt_content = srt_res.srt_content
-        else:
-            srt_content = ""
         return await export_jianying_draft_zip_async(
             segments=seg_inputs,
-            mode="tts",
+            mode="original",
             project_name_base=project_name,
             tts_audio_dir=TTS_AUDIO_DIR,
             style=style,
-            client_srt_content=srt_content,
+            client_srt_content="",
             strict_use_client_srt=False,
-            include_subtitle=True,
+            include_subtitle=req.include_subtitle,
         )
-    return await export_jianying_draft_zip_async(
-        segments=seg_inputs,
-        mode="original",
-        project_name_base=project_name,
-        tts_audio_dir=TTS_AUDIO_DIR,
-        style=style,
-        client_srt_content="",
-        strict_use_client_srt=False,
-        include_subtitle=req.include_subtitle,
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("export_jianying_draft_from_plan failed")
+        raise HTTPException(status_code=500, detail=f"剪映草稿导出失败: {e}") from e

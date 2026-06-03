@@ -25,6 +25,7 @@ from .segment_render import (
 )
 
 if TYPE_CHECKING:
+    from app.models.production import ProductionProfile
     from app.models.subtitle import SubtitleStyle, TtsVideoAlignConfig
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,34 @@ def prepare_tts_burn_segments(
     return prepared, align
 
 
+def _style_from_production(
+    style: "SubtitleStyle",
+    production_profile: Optional["ProductionProfile"],
+) -> "SubtitleStyle":
+    if not production_profile:
+        return style
+    from app.models.subtitle import SubtitleStyle
+
+    motion = production_profile.subtitle_motion
+    if motion.template == "static" and getattr(style, "motion_template", "static") != "static":
+        return style
+    return style.model_copy(
+        update={
+            "motion_template": motion.template,
+            "motion_fade_ms": motion.fade_ms,
+        }
+    )
+
+
+def _collect_segment_transitions(segments, production_profile: Optional["ProductionProfile"]) -> list:
+    from app.core.postprod.transitions import resolve_segment_transitions
+
+    raw = [getattr(s, "transition_in", None) for s in segments]
+    if production_profile:
+        return resolve_segment_transitions(len(segments), production_profile, plan_transitions=raw)
+    return [t or "hard_cut" for t in raw]
+
+
 def burn_to_mp4(
     segments,
     srt_entries: list,
@@ -150,6 +179,7 @@ def burn_to_mp4(
     materialize_from_source: bool = True,
     tts_align: Optional["TtsVideoAlignConfig"] = None,
     require_tts_audio: bool = False,
+    production_profile: Optional["ProductionProfile"] = None,
 ) -> tuple:
     from fastapi import HTTPException
 
@@ -181,6 +211,14 @@ def burn_to_mp4(
 
     if mode == "tts" and tts_align is not None:
         tts_align = enrich_tts_align_for_burn(segments, clip_map, tts_align)
+
+    effective_style = _style_from_production(style, production_profile)
+    seg_transitions = _collect_segment_transitions(segments, production_profile)
+    tr_dissolve = 0.35
+    tr_fade_ms = 80
+    if production_profile:
+        tr_dissolve = float(production_profile.transition.dissolve_sec)
+        tr_fade_ms = int(production_profile.transition.segment_fade_ms)
 
     tmp_base_dir = get_render_tmp_base_dir()
     with tempfile.TemporaryDirectory(dir=tmp_base_dir, prefix="burn_") as tmp:
@@ -260,25 +298,31 @@ def burn_to_mp4(
             out_path = compose_final_video_moviepy(
                 seg_paths=seg_paths,
                 srt_entries=srt_entries,
-                style=style,
+                style=effective_style,
                 fonts_dir=fonts_dir,
                 tmp=tmp,
                 project_name=project_name,
                 final_render_opts=final_render_opts,
                 normalize_audio=normalize_audio,
                 prefer_gpu=prefer_gpu,
+                segment_transition_ins=seg_transitions,
+                transition_dissolve_sec=tr_dissolve,
+                segment_fade_ms=tr_fade_ms,
             )
         else:
             out_path = compose_final_video(
                 seg_paths=seg_paths,
                 srt_entries=srt_entries,
-                style=style,
+                style=effective_style,
                 fonts_dir=fonts_dir,
                 tmp=tmp,
                 project_name=project_name,
                 final_render_opts=final_render_opts,
                 normalize_audio=normalize_audio,
                 prefer_gpu=prefer_gpu,
+                segment_transition_ins=seg_transitions,
+                transition_dissolve_sec=tr_dissolve,
+                segment_fade_ms=tr_fade_ms,
             )
         logger.info("导出 MP4 完成: %s", out_path)
 

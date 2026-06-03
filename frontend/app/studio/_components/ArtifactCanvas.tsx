@@ -1,14 +1,17 @@
 'use client'
 
-import { useMemo, useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { Layers } from 'lucide-react'
-import type { AutoEditPlanApi } from '@/lib/api'
+import type { AutoEditPlanApi, BgmTrack } from '@/lib/api'
+import { bgmApi } from '@/lib/api'
 import { patchAgentWorkspace } from '@/lib/agent-api'
 import { useStudioStore } from '@/lib/studio-store'
 import { PlanEditWorkspace } from '@/app/match/_components/PlanEditWorkspace'
 import { StudioPlanActions } from './StudioPlanActions'
 import { ExportResultPanel } from './ExportResultPanel'
 import { isVideoExport, payloadToExportArtifact } from '@/lib/studio-media-url'
+import { useStudioMediaConfig } from './useStudioMediaConfig'
+import { bgmTrackLabel } from '@/lib/studio-media-config'
 import type { ClipMetaByClip } from '@/app/match/_components/autoEditTypes'
 import type { ArtifactRef } from '@/lib/agent-types'
 
@@ -22,8 +25,20 @@ function latestVideoExport(exports: Record<string, unknown>[] | undefined) {
 }
 
 export function ArtifactCanvas() {
-  const { sessionId, workspace, selectedArtifact, setWorkspace, setSelectedArtifact } =
-    useStudioStore()
+  const {
+    sessionId,
+    workspace,
+    selectedArtifact,
+    setWorkspace,
+    setSelectedArtifact,
+    setInspectorTab,
+  } = useStudioStore()
+  const { media } = useStudioMediaConfig()
+  const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
+
+  useEffect(() => {
+    bgmApi.list().then(setBgmTracks).catch(() => {})
+  }, [])
 
   const exportArtifact: ArtifactRef | null = useMemo(() => {
     if (selectedArtifact?.type === 'export') return selectedArtifact
@@ -43,6 +58,16 @@ export function ArtifactCanvas() {
   }, [workspace, selectedArtifact])
 
   const clipMetaByClip: ClipMetaByClip = useMemo(() => ({}), [plan?.plan_id])
+
+  const bgmLabel = useMemo(
+    () =>
+      media.bgm.enabled
+        ? media.bgm.mode === 'manual' && media.bgm.track_ids.length
+          ? bgmTrackLabel(media.bgm.track_ids, bgmTracks)
+          : '自动选曲'
+        : '',
+    [media.bgm, bgmTracks]
+  )
 
   const setPlan: Dispatch<SetStateAction<AutoEditPlanApi | null>> = useCallback(
     (updater) => {
@@ -91,6 +116,14 @@ export function ArtifactCanvas() {
               clipMetaByClip={clipMetaByClip}
               editable
               planTitle={plan.title || '方案'}
+              subtitleStyle={media.subtitle.style}
+              subtitleEnabled={media.subtitle.enabled}
+              bgmTimeline={
+                media.bgm.enabled
+                  ? { enabled: true, label: bgmLabel || 'BGM' }
+                  : undefined
+              }
+              onBgmTrackFocus={() => setInspectorTab('bgm')}
             />
           </>
         ) : !exportArtifact ? (

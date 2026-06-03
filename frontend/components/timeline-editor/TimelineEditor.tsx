@@ -297,6 +297,7 @@ export function TimelineEditor({
     video: 'text-violet-300/90',
     audio: 'text-emerald-300/90',
     subtitle: 'text-amber-300/90',
+    bgm: 'text-fuchsia-300/90',
   }
 
   const getTrackState = (trackId: string) => trackStates?.[trackId] ?? {}
@@ -313,7 +314,7 @@ export function TimelineEditor({
 
   const renderTrackControl = (track: (typeof tracks)[0]) => {
     const st = getTrackState(track.id)
-    if (track.kind === 'audio') {
+    if (track.kind === 'audio' || track.kind === 'bgm') {
       const muted = st.muted === true
       return (
         <button

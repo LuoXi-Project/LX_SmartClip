@@ -11,6 +11,35 @@ export type PipelinePhase =
 
 export type ArtifactType = 'plan' | 'match_results' | 'process_job' | 'export' | 'video'
 
+export type ProductionPresetId = 'auto' | 'ecommerce' | 'knowledge' | 'cinematic' | 'fast_cut' | 'custom'
+
+export type InspectorTabId = 'production' | 'subtitle' | 'bgm'
+
+export interface ProductionProfileApi {
+  preset_id?: ProductionPresetId
+  transition?: { policy?: string; dissolve_sec?: number }
+  audio?: { loudnorm?: string; ducking?: string }
+  bgm?: { beat_align?: string }
+  subtitle_motion?: { template?: string; fade_ms?: number }
+  locks?: string[]
+}
+
+export interface StudioMediaConfigApi {
+  subtitle?: {
+    enabled?: boolean
+    style?: Record<string, unknown>
+    strict_use_client_srt?: boolean
+    locked?: boolean
+  }
+  bgm?: {
+    enabled?: boolean
+    mode?: 'auto' | 'manual' | 'none'
+    track_ids?: string[]
+    volume_db?: number
+    locked?: boolean
+  }
+}
+
 export interface WorkspaceState {
   session_id: string
   title: string

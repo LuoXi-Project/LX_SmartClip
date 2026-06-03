@@ -179,6 +179,16 @@ def _resolve_plan_window_for_clip(
     return None, None
 
 
+def _transition_from_plan(seg: SegmentPlan) -> Optional[str]:
+    tr = getattr(seg, "transition", None)
+    if tr is None:
+        return None
+    t = getattr(tr, "type", None) or (tr.get("type") if isinstance(tr, dict) else None)
+    if t in ("hard_cut", "cross_dissolve", "fade_in", "fade_out"):
+        return t
+    return None
+
+
 async def segments_from_plan(
     plan: Plan,
     valid_clip_ids: Set[str],
@@ -297,6 +307,7 @@ async def segments_from_plan(
                         clip_trims=plan_trims,
                         mute_audio=(seg.audio_mode == "mute"),
                         visual_effect=getattr(seg, "visual_effect", None),
+                        transition_in=_transition_from_plan(seg),
                     )
                 )
                 continue
@@ -352,6 +363,7 @@ async def segments_from_plan(
                 clip_trims=None,
                 mute_audio=(seg.audio_mode == "mute"),
                 visual_effect=getattr(seg, "visual_effect", None),
+                transition_in=_transition_from_plan(seg),
             )
         )
 

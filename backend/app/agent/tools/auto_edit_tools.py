@@ -10,12 +10,20 @@ from app.api.auto_edit import (
     realize_auto_edit_plan,
 )
 from app.models.agent import ArtifactRef, ToolResult
+from app.agent.media_merge import (
+    include_subtitle_from_media,
+    merge_bgm_from_media,
+    subtitle_style_from_media,
+)
+from app.core.postprod.intent import parse_production_intent
+from app.core.postprod.profile import apply_profile_patch, resolve_production_profile
 from app.models.auto_edit import (
     AutoEditExportJianyingDraftRequest,
     AutoEditPlanRequest,
     AutoEditRealizeRequest,
     Plan,
 )
+from app.models.production import ProductionProfile
 
 
 class _AgentRequestShim:
@@ -35,6 +43,23 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
         user_prompt = (ctx.workspace.user_preferences.get("last_user_prompt") or "").strip()
     if not user_prompt:
         return ToolResult(ok=False, summary="", error="缺少 user_prompt（剪辑诉求）")
+
+    # 用户话里若含制作诉求，自动解析到 workspace profile
+    intent_patch = parse_production_intent(user_prompt)
+    prefs = dict(ctx.workspace.user_preferences or {})
+    if any(
+        [
+            intent_patch.preset_id,
+            intent_patch.transition,
+            intent_patch.audio,
+            intent_patch.bgm,
+            intent_patch.subtitle_motion,
+        ]
+    ):
+        cur = resolve_production_profile(workspace_prefs=prefs)
+        merged = apply_profile_patch(cur, intent_patch, respect_locks=True)
+        prefs["production_profile"] = merged.model_dump()
+        prefs["default_production_preset"] = merged.preset_id
 
     target = args.get("target_duration_sec")
     if target is None:
@@ -60,15 +85,22 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
     plan_id = str(plan_dict.get("plan_id") or plan_dict.get("id") or "plan_1")
 
     plans_payload = [p.model_dump() if hasattr(p, "model_dump") else dict(p) for p in resp.plans]
+    profile = resolve_production_profile(workspace_prefs=prefs)
+    for i, p in enumerate(plans_payload):
+        p["production_profile"] = profile.model_dump()
+        plans_payload[i] = p
 
     return ToolResult(
         ok=True,
-        summary=f"已生成方案「{plan_dict.get('title') or plan_id}」，约 {plan_dict.get('estimated_duration_sec', '?')} 秒",
+        summary=(
+            f"已生成方案「{plan_dict.get('title') or plan_id}」，约 {plan_dict.get('estimated_duration_sec', '?')} 秒"
+            f"（制作：{profile.human_summary()}）"
+        ),
         workspace_patch={
             "pipeline_phase": "plan",
             "plans": plans_payload,
             "active_plan_id": plan_id,
-            "user_preferences": {"last_user_prompt": user_prompt},
+            "user_preferences": {**prefs, "last_user_prompt": user_prompt},
         },
         artifact=ArtifactRef(type="plan", id=plan_id, payload=plan_dict),
         next_suggestions=["可在画布中预览方案", "确认后说「按当前方案成片」"],
@@ -115,10 +147,32 @@ async def _realize_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
     except Exception as e:
         return ToolResult(ok=False, summary="", error=f"方案结构无效: {e}")
 
+    profile = resolve_production_profile(
+        explicit=ProductionProfile.model_validate(raw["production_profile"])
+        if raw.get("production_profile")
+        else None,
+        plan=plan,
+        workspace_prefs=ctx.workspace.user_preferences or {},
+    )
+
+    prefs = ctx.workspace.user_preferences or {}
+    media = prefs.get("media_config") if isinstance(prefs.get("media_config"), dict) else None
+    plan = merge_bgm_from_media(plan, media)
+    style = subtitle_style_from_media(media)
+    include_sub = include_subtitle_from_media(
+        media,
+        default=bool(args.get("include_subtitle", True)),
+    )
+
     req = AutoEditRealizeRequest(
         plan=plan,
         project_name=args.get("project_name") or plan.title or "agent_export",
-        include_subtitle=bool(args.get("include_subtitle", True)),
+        include_subtitle=include_sub,
+        style=style,
+        force_tts_pipeline=bool(
+            args.get("force_tts_pipeline", plan.mode in ("voiceover", "auto"))
+        ),
+        production_profile=profile,
     )
     try:
         res = await realize_auto_edit_plan(req, _AgentRequestShim())  # type: ignore[arg-type]
@@ -137,7 +191,7 @@ async def _realize_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
 
     return ToolResult(
         ok=True,
-        summary=f"成片已生成：{res.filename}。下载：{res.url}",
+        summary=f"成片已生成（{profile.preset_id}）：{res.filename}。下载：{res.url}",
         workspace_patch={
             "pipeline_phase": "export",
             "last_exports": last_exports,

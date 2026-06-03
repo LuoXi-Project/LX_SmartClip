@@ -28,4 +28,22 @@ def build_workspace_summary(ws: WorkspaceState) -> str:
     if prefs.get("last_user_prompt"):
         prompt = str(prefs["last_user_prompt"])[:120]
         lines.append(f"- 上次诉求: {prompt}")
+    try:
+        from app.core.postprod.profile import resolve_production_profile
+
+        prof = resolve_production_profile(workspace_prefs=prefs)
+        lines.append(f"- 制作风格: {prof.human_summary()}")
+        media = prefs.get("media_config")
+        if isinstance(media, dict):
+            sub = media.get("subtitle") or {}
+            bgm = media.get("bgm") or {}
+            lines.append(
+                f"- 媒体: 字幕={'开' if sub.get('enabled', True) else '关'}"
+                f"{'🔒' if sub.get('locked') else ''} · "
+                f"BGM={'开' if bgm.get('enabled') else '关'}"
+                f"({bgm.get('mode', 'auto')})"
+                f"{'🔒' if bgm.get('locked') else ''}"
+            )
+    except Exception:
+        pass
     return "\n".join(lines)

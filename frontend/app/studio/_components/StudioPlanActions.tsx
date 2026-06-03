@@ -4,12 +4,16 @@ import { useState } from 'react'
 import { Download, Film, Loader2, Scissors } from 'lucide-react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import { resolveStorageUrl } from '@/lib/studio-media-url'
-import { autoEditApi } from '@/lib/api'
-import { DEFAULT_SUBTITLE_STYLE } from '@/lib/subtitle-types'
+import { autoEditApi, formatFastApiDetail } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
 import { useConfirm } from '@/hooks/use-confirm'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { useStudioStore } from '@/lib/studio-store'
+import { useStudioMediaConfig } from './useStudioMediaConfig'
+import {
+  mergeBgmIntoPlan,
+  readProductionProfile,
+} from '@/lib/studio-media-config'
 
 type StudioPlanActionsProps = {
   plan: AutoEditPlanApi
@@ -19,6 +23,7 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
   const toast = useToast()
   const confirm = useConfirm()
   const { workspace, setWorkspace, setSelectedArtifact } = useStudioStore()
+  const { media } = useStudioMediaConfig()
   const [realizing, setRealizing] = useState(false)
   const [exportingJY, setExportingJY] = useState(false)
   const [lastVideoUrl, setLastVideoUrl] = useState<string | null>(null)
@@ -26,23 +31,31 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
 
   const isVoiceover = plan.mode === 'voiceover' || plan.mode === 'auto'
 
+  function buildRealizePayload() {
+    const production_profile = readProductionProfile(workspace?.user_preferences)
+    const planForExport = mergeBgmIntoPlan(plan, media)
+    return {
+      plan: planForExport,
+      project_name: `studio_${(plan.title || plan.plan_id).slice(0, 24)}`,
+      include_subtitle: media.subtitle.enabled,
+      style: media.subtitle.style,
+      production_profile,
+      ...(isVoiceover ? { force_tts_pipeline: true } : {}),
+    }
+  }
+
   async function handleRealize() {
     const ok = await confirm({
       title: '生成成片',
-      description: '将按当前方案合成视频（含 TTS/字幕等），耗时可能数分钟，是否继续？',
+      description:
+        '将按当前方案、字幕样式与 BGM 设置合成视频，耗时可能数分钟，是否继续？',
       confirmLabel: '开始成片',
     })
     if (!ok) return
 
     setRealizing(true)
     try {
-      const res = await autoEditApi.realize({
-        plan,
-        project_name: `studio_${(plan.title || plan.plan_id).slice(0, 24)}`,
-        include_subtitle: true,
-        style: DEFAULT_SUBTITLE_STYLE,
-        ...(isVoiceover ? { force_tts_pipeline: true } : {}),
-      })
+      const res = await autoEditApi.realize(buildRealizePayload())
       const url = resolveStorageUrl(res.url)
       setLastVideoUrl(url)
       toast.success('成片已生成')
@@ -68,8 +81,7 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
         })
       }
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      toast.error(err.response?.data?.detail || err.message || '成片失败')
+      toast.error(formatFastApiDetail(e) || (e as Error)?.message || '成片失败')
     } finally {
       setRealizing(false)
     }
@@ -78,12 +90,10 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
   async function handleJianying() {
     setExportingJY(true)
     try {
+      const payload = buildRealizePayload()
       const res = await autoEditApi.exportJianyingDraft({
-        plan,
+        ...payload,
         project_name: `jy_${(plan.title || plan.plan_id).slice(0, 24)}`,
-        include_subtitle: true,
-        style: DEFAULT_SUBTITLE_STYLE,
-        ...(isVoiceover ? { force_tts_pipeline: true } : {}),
       })
       if (res.mode === 'zip') {
         toastRecommendJianyingParentDir(toast)
@@ -107,8 +117,7 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
         },
       })
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      toast.error(err.response?.data?.detail || err.message || '剪映导出失败')
+      toast.error(formatFastApiDetail(e) || (e as Error)?.message || '剪映导出失败')
     } finally {
       setExportingJY(false)
     }
@@ -117,7 +126,8 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
   return (
     <div className="mb-4 rounded-xl border border-slate-700 bg-slate-900/60 p-3 space-y-3">
       <p className="text-xs text-slate-400">
-        方案已就绪。可一键成片，或导出剪映草稿继续精修（也可在对话里说「导出剪映」「按方案成片」）。
+        成片将使用右侧检查器中的<strong className="text-slate-300">字幕</strong>与
+        <strong className="text-slate-300"> BGM</strong> 设置；制作风格（转场/响度）见「制作」Tab。
       </p>
       <div className="flex flex-wrap gap-2">
         <button

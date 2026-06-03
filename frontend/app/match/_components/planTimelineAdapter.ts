@@ -73,7 +73,10 @@ export function buildPlanSegmentLayouts(
 
 export function planLayoutsToTracks(
   layouts: PlanSegmentLayout[],
-  options?: { allowSegmentReorder?: boolean },
+  options?: {
+    allowSegmentReorder?: boolean
+    bgm?: { enabled: boolean; label: string; totalDuration: number }
+  },
 ): {
   tracks: TimelineTrack[]
   totalDuration: number
@@ -127,12 +130,35 @@ export function planLayoutsToTracks(
     })
   }
 
+  const tracks: TimelineTrack[] = [
+    { id: 'video', kind: 'video', label: '视频', clips: videoClips },
+    { id: 'audio', kind: 'audio', label: '音频', clips: audioClips },
+    { id: 'subtitle', kind: 'subtitle', label: '字幕', clips: subtitleClips },
+  ]
+
+  if (options?.bgm?.enabled && totalDuration > 0) {
+    tracks.push({
+      id: 'bgm',
+      kind: 'bgm',
+      label: 'BGM',
+      clips: [
+        {
+          id: 'bgm_main',
+          label: options.bgm.label || 'BGM',
+          timelineStart: 0,
+          timelineEnd: totalDuration,
+          sourceStart: 0,
+          sourceEnd: totalDuration,
+          color: 'bg-violet-600/45 border-violet-400/55',
+          allowTrim: false,
+          allowReorder: false,
+        },
+      ],
+    })
+  }
+
   return {
-    tracks: [
-      { id: 'video', kind: 'video', label: '视频', clips: videoClips },
-      { id: 'audio', kind: 'audio', label: '音频', clips: audioClips },
-      { id: 'subtitle', kind: 'subtitle', label: '字幕', clips: subtitleClips },
-    ],
+    tracks,
     totalDuration,
   }
 }

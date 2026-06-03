@@ -187,6 +187,41 @@ def has_video_stream(
         return False
 
 
+def has_audio_stream(
+    path: str,
+    *,
+    timeout: int = 600,
+    logger_: Optional[logging.Logger] = None,
+) -> bool:
+    """
+    判断媒体是否包含音频流（判断 a:0 的 codec_type 是否为 audio）。
+
+    失败时返回 False（与 has_video_stream 一致）。
+    """
+    log = logger_ or logger
+    probe = _run_ffprobe(
+        [
+            ffprobe_bin(),
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        timeout=timeout,
+    )
+
+    try:
+        return (probe.stdout.decode(errors="replace") or "").strip() == "audio"
+    except Exception:
+        log.warning("ffprobe 检查音频流失败，返回 False: %s", path)
+        return False
+
+
 def probe_keyframes_times(
     path: str,
     *,

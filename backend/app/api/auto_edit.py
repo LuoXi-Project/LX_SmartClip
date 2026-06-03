@@ -41,6 +41,8 @@ from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batche
 from app.core.auto_edit_v2.arrange import arrange_timeline_variants
 from app.core.bgm.auto_bgm import apply_bgm_postprocess_if_needed
 from app.core.auto_edit.mix_postprocess import apply_mix_overlay_if_needed
+from app.core.postprod.pipeline import apply_postprod_master_if_needed
+from app.core.postprod.profile import resolve_production_profile, style_with_production
 from app.api.copy_gen import _build_video_context_with_recall
 from app.models.subtitle import (
     BurnSubtitleRequest,
@@ -1385,6 +1387,36 @@ async def _prepare_auto_edit_segments_from_plan(
     return seg_inputs, resolved_style, resolved_name, use_tts_branch
 
 
+async def _run_realize_postprocess(
+    plan: Plan,
+    filename: str,
+    url: str,
+    profile,
+) -> tuple[str, str]:
+    final_filename, final_url = await run_heavy(
+        apply_mix_overlay_if_needed,
+        plan,
+        filename,
+        url,
+    )
+    final_filename, final_url = await run_heavy(
+        apply_postprod_master_if_needed,
+        plan=plan,
+        filename=final_filename,
+        url=final_url,
+        production_profile=profile,
+    )
+    duck = profile.audio.ducking if profile else "off"
+    final_filename, final_url = await run_heavy(
+        apply_bgm_postprocess_if_needed,
+        plan,
+        final_filename,
+        final_url,
+        ducking=duck,
+    )
+    return final_filename, final_url
+
+
 @router.post("/realize", response_model=AutoEditRealizeResponse)
 async def realize_auto_edit_plan(
     req: AutoEditRealizeRequest,
@@ -1394,13 +1426,17 @@ async def realize_auto_edit_plan(
     将一个 Plan 实际转为成片：
     - voiceover 模式：TTS + 字幕 + burn 管线
     - original 模式：保留原声，按段落平均切字幕，调用 export_original
-
-    当前版本：
-    - 忽略 Plan.keep_flags / BGM / transition，仅打通基础链路。
+    - Production Profile：转场 / 响度 / ducking / 字幕动效（Agent 或 realize 请求传入）
     """
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
     plan = req.plan
+    profile = resolve_production_profile(
+        explicit=req.production_profile,
+        plan=plan,
+    )
+    logger.info("realize production: %s", profile.human_summary())
+
     seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
         plan=plan,
         project_name=req.project_name,
@@ -1408,6 +1444,7 @@ async def realize_auto_edit_plan(
         force_tts_pipeline=req.force_tts_pipeline,
         tts_align=req.tts_align,
     )
+    style = style_with_production(style, profile)
     align_cfg = req.tts_align
 
     if use_tts_branch:
@@ -1432,6 +1469,7 @@ async def realize_auto_edit_plan(
                 project_name=project_name,
                 tts_align=align_cfg,
                 require_tts_audio=True,
+                production_profile=profile,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         else:
@@ -1444,22 +1482,14 @@ async def realize_auto_edit_plan(
                 project_name=project_name,
                 tts_align=align_cfg,
                 require_tts_audio=True,
+                production_profile=profile,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():
             raise HTTPException(status_code=400, detail="客户端已断开连接")
         final_filename, final_url = burn_res["filename"], burn_res["url"]
-        final_filename, final_url = await run_heavy(
-            apply_mix_overlay_if_needed,
-            plan,
-            final_filename,
-            final_url,
-        )
-        final_filename, final_url = await run_heavy(
-            apply_bgm_postprocess_if_needed,
-            plan,
-            final_filename,
-            final_url,
+        final_filename, final_url = await _run_realize_postprocess(
+            plan, final_filename, final_url, profile
         )
         return AutoEditRealizeResponse(
             mode="voiceover",
@@ -1473,6 +1503,7 @@ async def realize_auto_edit_plan(
         project_name=project_name,
         include_subtitle=req.include_subtitle,
         normalize_audio=True,
+        production_profile=profile,
     )
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
@@ -1480,17 +1511,8 @@ async def realize_auto_edit_plan(
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
     final_filename, final_url = res.get("filename") or "", res.get("url") or ""
-    final_filename, final_url = await run_heavy(
-        apply_mix_overlay_if_needed,
-        plan,
-        final_filename,
-        final_url,
-    )
-    final_filename, final_url = await run_heavy(
-        apply_bgm_postprocess_if_needed,
-        plan,
-        final_filename,
-        final_url,
+    final_filename, final_url = await _run_realize_postprocess(
+        plan, final_filename, final_url, profile
     )
     return AutoEditRealizeResponse(
         mode="original",

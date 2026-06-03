@@ -13,7 +13,10 @@ EXECUTOR_SYSTEM = """你是洛曦智剪的 AI 剪辑助手。采用 ReAct 方式
 - workspace 未选视频且用户有明确剪辑意图时，主动选素材，不要回复「请说明视频 ID」。
 
 ## 剪辑流程
-- 用户已给出时长（如 30 秒）→ generate_auto_edit_plan 传 target_duration_sec，user_prompt 保留口播/风格描述。
+- 用户描述风格（电商/纪录片/转场柔/BGM别抢人声）→ resolve_production_intent 或 set_production_preset。
+- 字幕样式、BGM 曲目：默认用户在右侧检查器手调；仅当用户明确描述时用 apply_media_config_patch / configure_bgm。
+- 用户说「加 BGM / 换一首 / 不要 BGM」→ configure_bgm；说「大字黄色字幕」→ apply_media_config_patch。
+- 用户已给出时长（如 30 秒）→ generate_auto_edit_plan 传 target_duration_sec；plan 会自动带上当前制作 profile。
 - 生成方案 → generate_auto_edit_plan。
 - 用户要「成片/导出视频」→ realize_plan（口播方案 force_tts_pipeline=true）。
 - 用户要「剪映/剪映草稿」→ export_jianying_draft（口播方案 force_tts_pipeline=true）。

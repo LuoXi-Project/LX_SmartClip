@@ -103,7 +103,7 @@ function ToastCard({
       }`}
     >
       <Icon className="w-4 h-4 mt-0.5 shrink-0" />
-      <p className="flex-1 text-sm leading-snug">{item.message}</p>
+      <p className="flex-1 text-sm leading-snug whitespace-pre-line">{item.message}</p>
       <button
         onClick={dismiss}
         className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"

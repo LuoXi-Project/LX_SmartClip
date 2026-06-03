@@ -129,6 +129,24 @@ def wrap_text_for_ass_display(text: str, max_chars: int) -> str:
     return "\\N".join(lines_out)
 
 
+def _motion_tags(style: "SubtitleStyle", pos_x: int, pos_y: int) -> str:
+    template = str(getattr(style, "motion_template", "static") or "static")
+    ms = int(getattr(style, "motion_fade_ms", 150) or 150)
+    ms = max(50, min(600, ms))
+    if template == "fade":
+        return f"{{\\fad({ms},{ms})}}"
+    if template == "pop":
+        half = max(20, ms // 2)
+        return (
+            f"{{\\fscx50\\fscy50\\alpha&HFF&"
+            f"\\t(0,{half},\\fscx100\\fscy100\\alpha&H00&)}}"
+        )
+    if template == "slide_up":
+        y0 = pos_y + 40
+        return f"{{\\move({pos_x},{y0},{pos_x},{pos_y},0,{ms})\\fad({ms // 2},{ms // 2})}}"
+    return ""
+
+
 def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> str:
     """将 srt_entries 列表转换为完整 ASS 字幕字符串。"""
     lines = [_style_to_ass_header(style, video_size)]
@@ -143,8 +161,9 @@ def build_ass(srt_entries: list, style: "SubtitleStyle", video_size: tuple) -> s
         if not raw_text or entry["end"] <= entry["start"]:
             continue
         text = raw_text
+        motion = _motion_tags(style, pos_x, pos_y)
         # 用 \pos 锚定坐标，确保导出位置与前端预览一致。
-        text = f"{{\\pos({pos_x},{pos_y})}}{text}"
+        text = f"{{\\pos({pos_x},{pos_y})}}{motion}{text}"
         if getattr(style, "background", False):
             lines.append(
                 f"Dialogue: 0,{_ass_time(entry['start'])},{_ass_time(entry['end'])},"

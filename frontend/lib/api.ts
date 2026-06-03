@@ -949,6 +949,7 @@ export interface AutoEditPlanApi {
   bgm?: AutoEditBgmPlanApi | null
   postprocess?: MixPostprocessConfigApi | null
   quality?: AutoEditPlanQualityApi | null
+  production_profile?: import('./agent-types').ProductionProfileApi | null
 }
 
 export interface AutoEditPlanResponseApi {
@@ -1105,6 +1106,7 @@ export const autoEditApi = {
     style?: import('./subtitle-types').SubtitleStyle
     force_tts_pipeline?: boolean
     tts_align?: TtsVideoAlignConfigApi | null
+    production_profile?: import('./agent-types').ProductionProfileApi | null
   }) =>
     apiClient.post<
       unknown,

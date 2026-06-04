@@ -7,6 +7,9 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+from app.models.production import ProductionProfile
+
+
 class SegmentVisualEffect(BaseModel):
     """混剪段落级视觉随机变换（成片 materialize 时应用）。"""
 
@@ -104,6 +107,10 @@ class SubtitleSegmentInput(BaseModel):
     mute_audio: bool = False
     # 混剪视觉随机变换（段落级 materialize 滤镜）
     visual_effect: Optional[SegmentVisualEffect] = None
+    # 进入本段的转场（与 Plan.transition 对齐；首段可为 fade_in）
+    transition_in: Optional[
+        Literal["hard_cut", "cross_dissolve", "fade_in", "fade_out"]
+    ] = None
 
 
 class SubtitleStyle(BaseModel):
@@ -124,6 +131,8 @@ class SubtitleStyle(BaseModel):
     background_pad_y: float = 3.0
     background_opacity: int = 55
     max_chars_per_line: int = 20
+    motion_template: Literal["static", "fade", "pop", "slide_up"] = "static"
+    motion_fade_ms: int = Field(150, ge=50, le=600)
 
 
 class GenerateSRTRequest(BaseModel):
@@ -216,6 +225,7 @@ class BurnSubtitleRequest(BaseModel):
     tts_align: Optional[TtsVideoAlignConfig] = None
     # 一键成片 / 口播 TTS 管线：有文案的段必须有可用 TTS 文件，禁止回退素材原声
     require_tts_audio: bool = False
+    production_profile: Optional[ProductionProfile] = None
 
 
 class ExportOriginalRequest(BaseModel):
@@ -236,4 +246,5 @@ class ExportOriginalRequest(BaseModel):
     bgm: Optional[BgmMixConfig] = None
     # 默认 True：从原始完整视频按时间窗裁剪拼接；False：仅用预处理 clip（旧行为）
     materialize_from_source: bool = True
+    production_profile: Optional[ProductionProfile] = None
 

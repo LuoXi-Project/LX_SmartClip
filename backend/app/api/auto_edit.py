@@ -28,6 +28,7 @@ from app.core.auto_edit_v2.plan_compile import (
     build_v0_timelines_from_context,
     compile_timeline_to_plan,
 )
+from app.core.auto_edit_v2.plan_quality import sort_plans_by_quality
 from app.core.auto_edit_v2.template_config import (
     get_long_video_events_profile,
     list_templates,
@@ -40,6 +41,8 @@ from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batche
 from app.core.auto_edit_v2.arrange import arrange_timeline_variants
 from app.core.bgm.auto_bgm import apply_bgm_postprocess_if_needed
 from app.core.auto_edit.mix_postprocess import apply_mix_overlay_if_needed
+from app.core.postprod.pipeline import apply_postprod_master_if_needed
+from app.core.postprod.profile import resolve_production_profile, style_with_production
 from app.api.copy_gen import _build_video_context_with_recall
 from app.models.subtitle import (
     BurnSubtitleRequest,
@@ -475,6 +478,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                 req.user_prompt, req.mode, req.target_duration_sec, template_preset=template_preset
             )
 
+        pool = None
         try:
             logger.info("auto_edit 启用新引擎：正在生成事件池")
             batches = await call_llm_for_events_all(
@@ -531,9 +535,10 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                         video_description=(final_desc or video_description),
                         mode=req.mode,
                         allow_cross_video=req.allow_cross_video,
+                        pool=pool,
                     )
                 )
-            return AutoEditPlanResponse(plans=plans)
+            return AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
         except HTTPException:
             raise
         except Exception as e:
@@ -581,9 +586,10 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                             video_description=(final_desc or video_description),
                             mode=req.mode,
                             allow_cross_video=req.allow_cross_video,
+                            pool=None,
                         )
                     )
-                return AutoEditPlanResponse(plans=plans)
+                return AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
 
             # 最终兜底：回退旧逻辑，避免新引擎缺信息直接失败
             return await call_llm_for_plans(cfg, context, req)
@@ -1122,6 +1128,7 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                         template_preset=template_preset,
                     )
 
+                pool = None
                 try:
                     batches = await call_llm_for_events_all(
                         cfg=cfg,
@@ -1173,9 +1180,10 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                                 video_description=(final_desc or video_description),
                                 mode=req.mode,
                                 allow_cross_video=req.allow_cross_video,
+                                pool=pool,
                             )
                         )
-                    plan_res = AutoEditPlanResponse(plans=plans)
+                    plan_res = AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
                 except HTTPException as e:
                     msg = e.detail if isinstance(e.detail, str) else "生成方案失败"
                     yield _build_sse_event("failed", {"message": msg})
@@ -1230,9 +1238,10 @@ async def stream_auto_edit_plan(session_id: str) -> StreamingResponse:
                                     video_description=(final_desc or video_description),
                                     mode=req.mode,
                                     allow_cross_video=req.allow_cross_video,
+                                    pool=pool,
                                 )
                             )
-                        plan_res = AutoEditPlanResponse(plans=plans)
+                        plan_res = AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
                     else:
                         plan_res = await call_llm_for_plans(cfg, context, req)
             else:
@@ -1378,6 +1387,36 @@ async def _prepare_auto_edit_segments_from_plan(
     return seg_inputs, resolved_style, resolved_name, use_tts_branch
 
 
+async def _run_realize_postprocess(
+    plan: Plan,
+    filename: str,
+    url: str,
+    profile,
+) -> tuple[str, str]:
+    final_filename, final_url = await run_heavy(
+        apply_mix_overlay_if_needed,
+        plan,
+        filename,
+        url,
+    )
+    final_filename, final_url = await run_heavy(
+        apply_postprod_master_if_needed,
+        plan=plan,
+        filename=final_filename,
+        url=final_url,
+        production_profile=profile,
+    )
+    duck = profile.audio.ducking if profile else "off"
+    final_filename, final_url = await run_heavy(
+        apply_bgm_postprocess_if_needed,
+        plan,
+        final_filename,
+        final_url,
+        ducking=duck,
+    )
+    return final_filename, final_url
+
+
 @router.post("/realize", response_model=AutoEditRealizeResponse)
 async def realize_auto_edit_plan(
     req: AutoEditRealizeRequest,
@@ -1387,13 +1426,17 @@ async def realize_auto_edit_plan(
     将一个 Plan 实际转为成片：
     - voiceover 模式：TTS + 字幕 + burn 管线
     - original 模式：保留原声，按段落平均切字幕，调用 export_original
-
-    当前版本：
-    - 忽略 Plan.keep_flags / BGM / transition，仅打通基础链路。
+    - Production Profile：转场 / 响度 / ducking / 字幕动效（Agent 或 realize 请求传入）
     """
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
     plan = req.plan
+    profile = resolve_production_profile(
+        explicit=req.production_profile,
+        plan=plan,
+    )
+    logger.info("realize production: %s", profile.human_summary())
+
     seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
         plan=plan,
         project_name=req.project_name,
@@ -1401,6 +1444,7 @@ async def realize_auto_edit_plan(
         force_tts_pipeline=req.force_tts_pipeline,
         tts_align=req.tts_align,
     )
+    style = style_with_production(style, profile)
     align_cfg = req.tts_align
 
     if use_tts_branch:
@@ -1425,6 +1469,7 @@ async def realize_auto_edit_plan(
                 project_name=project_name,
                 tts_align=align_cfg,
                 require_tts_audio=True,
+                production_profile=profile,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         else:
@@ -1437,22 +1482,14 @@ async def realize_auto_edit_plan(
                 project_name=project_name,
                 tts_align=align_cfg,
                 require_tts_audio=True,
+                production_profile=profile,
             )
             burn_res = await execute_burn_subtitle(burn_req)
         if await request.is_disconnected():
             raise HTTPException(status_code=400, detail="客户端已断开连接")
         final_filename, final_url = burn_res["filename"], burn_res["url"]
-        final_filename, final_url = await run_heavy(
-            apply_mix_overlay_if_needed,
-            plan,
-            final_filename,
-            final_url,
-        )
-        final_filename, final_url = await run_heavy(
-            apply_bgm_postprocess_if_needed,
-            plan,
-            final_filename,
-            final_url,
+        final_filename, final_url = await _run_realize_postprocess(
+            plan, final_filename, final_url, profile
         )
         return AutoEditRealizeResponse(
             mode="voiceover",
@@ -1466,6 +1503,7 @@ async def realize_auto_edit_plan(
         project_name=project_name,
         include_subtitle=req.include_subtitle,
         normalize_audio=True,
+        production_profile=profile,
     )
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
@@ -1473,17 +1511,8 @@ async def realize_auto_edit_plan(
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
     final_filename, final_url = res.get("filename") or "", res.get("url") or ""
-    final_filename, final_url = await run_heavy(
-        apply_mix_overlay_if_needed,
-        plan,
-        final_filename,
-        final_url,
-    )
-    final_filename, final_url = await run_heavy(
-        apply_bgm_postprocess_if_needed,
-        plan,
-        final_filename,
-        final_url,
+    final_filename, final_url = await _run_realize_postprocess(
+        plan, final_filename, final_url, profile
     )
     return AutoEditRealizeResponse(
         mode="original",
@@ -1500,50 +1529,56 @@ async def export_jianying_draft_from_plan(
     """仅导出剪映草稿 ZIP，不调用 burn / export_original。"""
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
-    plan = req.plan
-    seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
-        plan=plan,
-        project_name=req.project_name,
-        style=req.style,
-        force_tts_pipeline=req.force_tts_pipeline,
-        tts_align=req.tts_align,
-    )
-    if use_tts_branch:
-        from app.api.subtitle import generate_srt as generate_srt_route
+    try:
+        plan = req.plan
+        seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
+            plan=plan,
+            project_name=req.project_name,
+            style=req.style,
+            force_tts_pipeline=req.force_tts_pipeline,
+            tts_align=req.tts_align,
+        )
+        if use_tts_branch:
+            from app.api.subtitle import generate_srt as generate_srt_route
 
-        align_cfg = req.tts_align
-        fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
+            align_cfg = req.tts_align
+            fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
 
-        if req.include_subtitle:
-            if await request.is_disconnected():
-                raise HTTPException(status_code=400, detail="客户端已断开连接")
-            srt_req = GenerateSRTRequest(
+            if req.include_subtitle:
+                if await request.is_disconnected():
+                    raise HTTPException(status_code=400, detail="客户端已断开连接")
+                srt_req = GenerateSRTRequest(
+                    segments=seg_inputs,
+                    style=style,
+                    use_tts_timing=True,
+                    split_narration_by_sentence=fine_grain,
+                )
+                srt_res = await generate_srt_route(srt_req)
+                srt_content = srt_res.srt_content
+            else:
+                srt_content = ""
+            return await export_jianying_draft_zip_async(
                 segments=seg_inputs,
+                mode="tts",
+                project_name_base=project_name,
+                tts_audio_dir=TTS_AUDIO_DIR,
                 style=style,
-                use_tts_timing=True,
-                split_narration_by_sentence=fine_grain,
+                client_srt_content=srt_content,
+                strict_use_client_srt=False,
+                include_subtitle=True,
             )
-            srt_res = await generate_srt_route(srt_req)
-            srt_content = srt_res.srt_content
-        else:
-            srt_content = ""
         return await export_jianying_draft_zip_async(
             segments=seg_inputs,
-            mode="tts",
+            mode="original",
             project_name_base=project_name,
             tts_audio_dir=TTS_AUDIO_DIR,
             style=style,
-            client_srt_content=srt_content,
+            client_srt_content="",
             strict_use_client_srt=False,
-            include_subtitle=True,
+            include_subtitle=req.include_subtitle,
         )
-    return await export_jianying_draft_zip_async(
-        segments=seg_inputs,
-        mode="original",
-        project_name_base=project_name,
-        tts_audio_dir=TTS_AUDIO_DIR,
-        style=style,
-        client_srt_content="",
-        strict_use_client_srt=False,
-        include_subtitle=req.include_subtitle,
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("export_jianying_draft_from_plan failed")
+        raise HTTPException(status_code=500, detail=f"剪映草稿导出失败: {e}") from e

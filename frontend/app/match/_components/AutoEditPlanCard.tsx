@@ -3,6 +3,7 @@
 import { Loader2 } from 'lucide-react'
 import type { AutoEditPlanApi, AutoJianyingDraftDownloadEntryApi } from '@/lib/api'
 import { HoverTruncatedTooltip } from '@/components/ui/hover-truncated-tooltip'
+import { PlanQualitySection } from './PlanQualitySection'
 import type { ClipMetaByClip, SelectedPreviewState } from './autoEditTypes'
 import { planSegmentPreviewAbsRange } from './planSegmentPreviewRange'
 import { fmt } from './types'
@@ -96,6 +97,22 @@ export function AutoEditPlanCard({
           </div>
         </div>
         <div className="flex-shrink-0 text-right text-[11px] text-slate-500 space-y-0.5">
+          {p.quality && (
+            <span
+              className={`inline-flex items-center justify-center min-w-[1.75rem] h-6 px-1.5 rounded-md border text-[10px] font-bold ${
+                p.quality.grade === 'S'
+                  ? 'border-amber-400/50 bg-amber-500/15 text-amber-200'
+                  : p.quality.grade === 'A'
+                    ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-200'
+                    : p.quality.grade === 'B'
+                      ? 'border-cyan-400/45 bg-cyan-500/12 text-cyan-200'
+                      : 'border-slate-600/40 bg-slate-800/50 text-slate-400'
+              }`}
+              title={p.quality.summary || '成片质量预估'}
+            >
+              {p.quality.grade}
+            </span>
+          )}
           {p.target_duration_sec && <p>目标：{p.target_duration_sec.toFixed(3)}s</p>}
           {p.estimated_duration_sec && <p>预估：{p.estimated_duration_sec.toFixed(3)}s</p>}
           <p>
@@ -103,6 +120,8 @@ export function AutoEditPlanCard({
           </p>
         </div>
       </div>
+
+      {p.quality && <PlanQualitySection quality={p.quality} />}
 
       <div className="flex flex-wrap items-center gap-2">
         <button

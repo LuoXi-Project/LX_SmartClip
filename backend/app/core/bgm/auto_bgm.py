@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 from app.models.auto_edit import Plan
 from app.utils.bin_paths import ffmpeg_bin
-from app.utils.ffprobe_utils import probe_duration
+from app.utils.ffprobe_utils import has_audio_stream, probe_duration
 from app.utils.paths import (
     ensure_storage_subpath,
     get_writable_backend_root,
@@ -297,6 +297,18 @@ def _choose_auto_bgm_track(plan: Plan) -> Optional[str]:
     return best_path
 
 
+def _ducking_sidechain_filter(bgm_label: str, voice_label: str, strength: str) -> str:
+    if strength in ("off", "", None):
+        return bgm_label
+    ratio = {"light": 3, "medium": 5, "strong": 8}.get(str(strength), 5)
+    threshold = {"light": 0.04, "medium": 0.03, "strong": 0.02}.get(str(strength), 0.03)
+    out = f"{bgm_label}_duck"
+    return (
+        f"[{bgm_label}][{voice_label}]sidechaincompress="
+        f"threshold={threshold}:ratio={ratio}:attack=20:release=280:makeup=1[{out}]"
+    )
+
+
 def _mix_bgm_for_video(
     video_path: str,
     bgm_path: str,
@@ -304,6 +316,7 @@ def _mix_bgm_for_video(
     loop: bool,
     fade_in_sec: float,
     fade_out_sec: float,
+    ducking: str = "off",
 ) -> str:
     video_dur = probe_duration(video_path)
     if video_dur <= 0:
@@ -326,12 +339,19 @@ def _mix_bgm_for_video(
             f"afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}"
         )
     bgm_filter = ",".join(bgm_filter_parts)
+    duck = (ducking or "off").strip().lower()
+    use_duck = duck not in ("off", "") and has_audio_stream(video_path)
 
     if loop:
-        # loop 背景音乐到视频时长，再与原声混合
+        bgm_chain = f"[1:a]{bgm_filter},aloop=loop=-1:size=2000000000,atrim=0:{video_dur:.3f}[bgm_raw]"
+        if use_duck:
+            bgm_chain += ";" + _ducking_sidechain_filter("bgm_raw", "0:a", duck)
+            bgm_out = "bgm_raw_duck"
+        else:
+            bgm_out = "bgm_raw"
         filter_complex = (
-            f"[1:a]{bgm_filter},aloop=loop=-1:size=2000000000,atrim=0:{video_dur:.3f}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+            f"{bgm_chain};"
+            f"[0:a][{bgm_out}]amix=inputs=2:duration=first:dropout_transition=2[aout]"
         )
         args = [
             "-i",
@@ -352,10 +372,15 @@ def _mix_bgm_for_video(
             out_path,
         ]
     else:
-        # 不 loop 时，BGM 按原长度参与混音
+        bgm_chain = f"[1:a]{bgm_filter}[bgm_raw]"
+        if use_duck:
+            bgm_chain += ";" + _ducking_sidechain_filter("bgm_raw", "0:a", duck)
+            bgm_out = "bgm_raw_duck"
+        else:
+            bgm_out = "bgm_raw"
         filter_complex = (
-            f"[1:a]{bgm_filter}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+            f"{bgm_chain};"
+            f"[0:a][{bgm_out}]amix=inputs=2:duration=first:dropout_transition=2[aout]"
         )
         args = [
             "-i",
@@ -525,7 +550,13 @@ def apply_bgm_config_postprocess(filename: str, url: str, bgm_cfg: Optional[dict
     return mixed_filename, storage_public_url_for_file(mixed_path)
 
 
-def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tuple[str, str]:
+def apply_bgm_postprocess_if_needed(
+    plan: Plan,
+    filename: str,
+    url: str,
+    *,
+    ducking: str = "off",
+) -> Tuple[str, str]:
     bgm = plan.bgm
     if not bgm or not bgm.enabled:
         logger.info("BGM 混音跳过：plan.bgm 未启用")
@@ -576,6 +607,7 @@ def apply_bgm_postprocess_if_needed(plan: Plan, filename: str, url: str) -> Tupl
             loop=bgm.loop,
             fade_in_sec=bgm.fade_in_sec,
             fade_out_sec=bgm.fade_out_sec,
+            ducking=ducking,
         )
     except Exception as e:
         logger.error("BGM 混音失败，已回退原成片: %s", e)

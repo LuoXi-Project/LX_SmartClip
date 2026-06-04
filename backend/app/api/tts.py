@@ -35,6 +35,18 @@ async def _read_cfg(db: aiosqlite.Connection, key: str, default: str = "") -> st
         row = await cur.fetchone()
     return row[0] if row else default
 
+
+def _friendly_tts_error(exc: BaseException) -> str:
+    msg = str(exc).strip()
+    lower = msg.lower()
+    if "connection timeout" in lower or "servertimeouterror" in lower:
+        return "Edge TTS 连接超时，请检查网络或配置 HTTP_PROXY/HTTPS_PROXY 代理后重试"
+    if "cannot connect" in lower or "clientconnectorerror" in lower:
+        return "无法连接 Edge TTS 服务，请检查网络或代理设置"
+    if "wss://" in msg:
+        return msg.split("wss://", 1)[0].strip().rstrip(":") or "Edge TTS 网络错误"
+    return msg or exc.__class__.__name__
+
 # ──────────────────────────── 路由 ──────────────────────────── #
 
 @router.post("/synthesize", response_model=SynthesizeResponse)
@@ -141,7 +153,7 @@ async def synthesize(req: SynthesizeRequest):
         raise
     except Exception as e:
         logger.error("TTS 合成失败: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"TTS 合成失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"TTS 合成失败: {_friendly_tts_error(e)}")
 
     return SynthesizeResponse(
         filename=filename,

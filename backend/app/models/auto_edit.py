@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from app.models.production import ProductionProfile
 from app.models.subtitle import (
     ClipTrimPart,
     SegmentVisualEffect,
@@ -188,6 +189,25 @@ class Constraints(BaseModel):
     split_narration_by_sentence: Optional[bool] = None
 
 
+class PlanQualityScores(BaseModel):
+    """成片质量六维评分（0~1，越高越好；repetition 表示新颖度/低重复）。"""
+
+    hook: float = Field(0.0, ge=0.0, le=1.0)
+    info_density: float = Field(0.0, ge=0.0, le=1.0)
+    emotion_curve: float = Field(0.0, ge=0.0, le=1.0)
+    rhythm: float = Field(0.0, ge=0.0, le=1.0)
+    repetition: float = Field(0.0, ge=0.0, le=1.0)
+    platform_fit: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class PlanQualityInsight(BaseModel):
+    scores: PlanQualityScores = Field(default_factory=PlanQualityScores)
+    overall: float = Field(0.0, ge=0.0, le=1.0)
+    grade: str = "C"
+    summary: str = ""
+    reasons: List[str] = Field(default_factory=list)
+
+
 class Plan(BaseModel):
     plan_id: str
     title: str
@@ -204,6 +224,14 @@ class Plan(BaseModel):
     postprocess: Optional[MixPostprocessConfig] = None
     constraints: Optional[Constraints] = None
     keep_flags: Optional[PlanKeepFlags] = None
+    production_profile: Optional[ProductionProfile] = Field(
+        None,
+        description="成片制作风格快照（转场/音频/字幕动效）；realize 时写入",
+    )
+    quality: Optional[PlanQualityInsight] = Field(
+        None,
+        description="成片质量评分与推荐理由（Timeline Engine / 启发式）",
+    )
 
 
 class AutoEditPlanRequest(BaseModel):
@@ -427,6 +455,10 @@ class AutoEditRealizeRequest(BaseModel):
     force_tts_pipeline: bool = False
     # 与 force_tts_pipeline / voiceover 成片配合：画面与 TTS 时长对齐策略；None 表示沿用渲染默认（循环拼接素材）
     tts_align: Optional[TtsVideoAlignConfig] = None
+    production_profile: Optional[ProductionProfile] = Field(
+        None,
+        description="制作风格；优先于 plan.production_profile 与 workspace 默认",
+    )
 
 
 class AutoEditRealizeResponse(BaseModel):

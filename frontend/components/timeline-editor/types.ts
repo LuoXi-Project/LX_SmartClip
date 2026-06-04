@@ -21,7 +21,7 @@ export type TimelineClipBlock = {
   allowReorder?: boolean
 }
 
-export type TimelineTrackKind = 'video' | 'audio' | 'subtitle'
+export type TimelineTrackKind = 'video' | 'audio' | 'subtitle' | 'bgm'
 
 export type TimelineTrackState = {
   /** 视频/字幕轨：是否在预览中显示 */

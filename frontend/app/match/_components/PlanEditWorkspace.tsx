@@ -34,6 +34,9 @@ import {
   hasVisualEffectPreview,
   visualEffectToPreviewStyle,
 } from './visualEffectPreview'
+import type { SubtitleStyle } from '@/lib/subtitle-types'
+import { DEFAULT_SUBTITLE_STYLE } from '@/lib/subtitle-types'
+import { subtitleOverlayStyle } from '@/lib/subtitle-preview-style'
 
 const SEG_END_EPS = 0.04
 
@@ -44,6 +47,12 @@ export type PlanEditWorkspaceProps = {
   editable?: boolean
   planTitle?: string
   onExternalPreview?: (next: SelectedPreviewState) => void
+  /** 工作台：字幕样式预览 */
+  subtitleStyle?: SubtitleStyle
+  subtitleEnabled?: boolean
+  /** 工作台：BGM 时间轴块 */
+  bgmTimeline?: { enabled: boolean; label: string }
+  onBgmTrackFocus?: () => void
 }
 
 export function PlanEditWorkspace({
@@ -53,6 +62,10 @@ export function PlanEditWorkspace({
   editable = false,
   planTitle = '方案',
   onExternalPreview,
+  subtitleStyle,
+  subtitleEnabled = true,
+  bgmTimeline,
+  onBgmTrackFocus,
 }: PlanEditWorkspaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const layoutsRef = useRef<PlanSegmentLayout[]>([])
@@ -72,6 +85,7 @@ export function PlanEditWorkspace({
     video: { visible: true },
     audio: { muted: false },
     subtitle: { visible: true },
+    bgm: { muted: false },
   })
 
   const segments = plan.segments ?? []
@@ -83,8 +97,14 @@ export function PlanEditWorkspace({
   playheadRef.current = playheadSec
 
   const { tracks, totalDuration } = useMemo(
-    () => planLayoutsToTracks(layouts, { allowSegmentReorder: editable }),
-    [layouts, editable],
+    () =>
+      planLayoutsToTracks(layouts, {
+        allowSegmentReorder: editable,
+        bgm: bgmTimeline?.enabled
+          ? { enabled: true, label: bgmTimeline.label, totalDuration: 0 }
+          : undefined,
+      }),
+    [layouts, editable, bgmTimeline?.enabled, bgmTimeline?.label],
   )
 
   const selectedLayout = useMemo(() => {
@@ -348,7 +368,8 @@ export function PlanEditWorkspace({
   const selectedSeg = selectedLayout ? segments[selectedLayout.segIdx] : null
 
   const videoTrackVisible = trackStates.video?.visible !== false
-  const subtitlePreviewVisible = trackStates.subtitle?.visible !== false
+  const subtitlePreviewVisible =
+    subtitleEnabled !== false && trackStates.subtitle?.visible !== false
   const audioMuted = trackStates.audio?.muted === true
 
   const previewSubtitleText = useMemo(() => {
@@ -520,14 +541,8 @@ export function PlanEditWorkspace({
                 </div>
               )}
               {subtitlePreviewVisible && previewSubtitleText && (
-                <div className="absolute inset-x-0 bottom-6 px-6 flex justify-center pointer-events-none z-10">
-                  <p
-                    className="max-w-[92%] text-center text-lg sm:text-xl font-bold leading-snug text-white px-3 py-1.5 rounded"
-                    style={{
-                      textShadow:
-                        '0 0 4px rgba(0,0,0,1), 0 1px 2px rgba(0,0,0,0.95), 1px 1px 0 #000, -1px -1px 0 #000',
-                    }}
-                  >
+                <div className="absolute inset-0 pointer-events-none z-10">
+                  <p style={subtitleOverlayStyle(subtitleStyle ?? DEFAULT_SUBTITLE_STYLE)}>
                     {previewSubtitleText}
                   </p>
                 </div>
@@ -679,6 +694,11 @@ export function PlanEditWorkspace({
         selection={selection}
         onSelectionChange={(sel) => {
           if (!sel) return
+          if (sel.trackId === 'bgm') {
+            setSelection(sel)
+            onBgmTrackFocus?.()
+            return
+          }
           const isNewSegment = sel.clipId !== currentLayoutIdRef.current
           setSelection(sel)
           currentLayoutIdRef.current = sel.clipId

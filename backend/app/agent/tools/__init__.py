@@ -11,6 +11,7 @@ def register_all_tools() -> None:
     from app.agent.tools.workspace_tools import register_workspace_tools
     from app.agent.tools.process_tool import register_process_tools
     from app.agent.tools.auto_edit_tools import register_auto_edit_tools
+    from app.agent.tools.production_tools import register_production_tools
     from app.agent.tools.select_videos import register_select_video_tools
 
     register_video_tools()
@@ -18,4 +19,8 @@ def register_all_tools() -> None:
     register_select_video_tools()
     register_process_tools()
     register_auto_edit_tools()
+    register_production_tools()
+    from app.agent.tools.media_tools import register_media_tools
+
+    register_media_tools()
     _tools_registered = True

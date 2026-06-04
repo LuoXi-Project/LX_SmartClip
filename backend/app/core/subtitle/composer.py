@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Callable, Dict, List
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence
 
 from app.utils.ffprobe_utils import probe_audio_sample_rate, probe_video_dimensions
 
@@ -72,6 +72,52 @@ def _segments_uniform_for_stream_copy(seg_paths: List[str]) -> bool:
     return True
 
 
+def _maybe_merge_segments_with_transitions(
+    *,
+    seg_paths: List[str],
+    tmp: str,
+    project_name: str,
+    segment_transition_ins: Optional[Sequence[Optional[str]]],
+    transition_dissolve_sec: float,
+    segment_fade_ms: int,
+) -> List[str]:
+    if len(seg_paths) <= 1 or not segment_transition_ins:
+        return seg_paths
+    from app.core.postprod.transitions import compose_with_transitions, resolve_segment_transitions
+    from app.models.production import ProductionProfile, TransitionPolicy
+
+    # 用临时 profile 解析 effective transitions
+    prof = ProductionProfile(
+        transition=TransitionPolicy(
+            policy="soft" if any(t in ("cross_dissolve", "fade_in", "fade_out") for t in segment_transition_ins if t) else "hard_cut",
+            dissolve_sec=transition_dissolve_sec,
+            segment_fade_ms=segment_fade_ms,
+        )
+    )
+    kinds = resolve_segment_transitions(
+        len(seg_paths),
+        prof,
+        plan_transitions=segment_transition_ins,
+    )
+    need = any(k != "hard_cut" for k in kinds) or segment_fade_ms > 0
+    if not need:
+        return seg_paths
+    merged = os.path.join(tmp, f"{project_name}__xfade.mp4")
+    try:
+        compose_with_transitions(
+            seg_paths,
+            kinds,
+            dissolve_sec=transition_dissolve_sec,
+            segment_fade_ms=segment_fade_ms,
+            out_path=merged,
+        )
+        logger.info("段间转场合成完成: %s", merged)
+        return [merged]
+    except Exception as e:
+        logger.warning("段间转场合成失败，回退 composer 多段拼接: %s", e)
+        return seg_paths
+
+
 def compose_final_video(
     *,
     seg_paths: List[str],
@@ -83,7 +129,18 @@ def compose_final_video(
     final_render_opts: Dict[str, str],
     normalize_audio: bool,
     prefer_gpu: bool = False,
+    segment_transition_ins: Optional[Sequence[Optional[str]]] = None,
+    transition_dissolve_sec: float = 0.35,
+    segment_fade_ms: int = 80,
 ) -> str:
+    seg_paths = _maybe_merge_segments_with_transitions(
+        seg_paths=list(seg_paths),
+        tmp=tmp,
+        project_name=project_name,
+        segment_transition_ins=segment_transition_ins,
+        transition_dissolve_sec=transition_dissolve_sec,
+        segment_fade_ms=segment_fade_ms,
+    )
     out_path = os.path.join(tmp, f"{project_name}.mp4")
     target_w, target_h = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)
 
@@ -234,6 +291,9 @@ def compose_final_video_moviepy(
     final_render_opts: Dict[str, str],
     normalize_audio: bool,
     prefer_gpu: bool = False,
+    segment_transition_ins: Optional[Sequence[Optional[str]]] = None,
+    transition_dissolve_sec: float = 0.35,
+    segment_fade_ms: int = 80,
 ) -> str:
     """
     备用导出方案：先用 FFmpeg 将分段拼成中间 MP4，再用 FFmpeg 做单文件烧字幕/滤镜/编码。
@@ -261,6 +321,9 @@ def compose_final_video_moviepy(
         final_render_opts=plain_opts,
         normalize_audio=False,
         prefer_gpu=prefer_gpu,
+        segment_transition_ins=segment_transition_ins,
+        transition_dissolve_sec=transition_dissolve_sec,
+        segment_fade_ms=segment_fade_ms,
     )
     logger.info("FFmpeg 拼接完成: %s", concat_path)
 

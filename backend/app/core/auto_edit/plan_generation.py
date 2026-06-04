@@ -9,9 +9,31 @@ from pydantic import ValidationError
 
 from app.core.llm import LLMClient
 from app.core.llm.prompts.auto_edit_plan import SYSTEM_PROMPT, SCHEMA_HINT, build_user_message
-from app.models.auto_edit import AutoEditPlanRequest, AutoEditPlanResponse
+from app.core.auto_edit_v2.plan_compile import build_v0_dsl_from_request
+from app.core.auto_edit_v2.plan_quality import compute_plan_quality_from_segments, sort_plans_by_quality
+from app.models.auto_edit import AutoEditPlanRequest, AutoEditPlanResponse, Plan
 
 logger = logging.getLogger(__name__)
+
+
+def attach_plan_quality(plans: list[Plan], req: AutoEditPlanRequest) -> list[Plan]:
+    dsl = build_v0_dsl_from_request(
+        req.user_prompt,
+        req.mode,
+        req.target_duration_sec,
+        template_preset=getattr(req, "template_preset", None),
+    )
+    enriched: list[Plan] = []
+    for plan in plans:
+        if plan.quality is not None:
+            enriched.append(plan)
+            continue
+        enriched.append(
+            plan.model_copy(
+                update={"quality": compute_plan_quality_from_segments(plan, dsl)},
+            )
+        )
+    return enriched
 
 
 def _extract_json_array(raw: str) -> str:
@@ -75,7 +97,9 @@ async def call_llm_for_plans(cfg: dict[str, Any], context: str, req: AutoEditPla
             raise HTTPException(status_code=502, detail="LLM 返回的 JSON 无法解析")
 
     try:
-        return AutoEditPlanResponse(**data)
+        res = AutoEditPlanResponse(**data)
+        res.plans = sort_plans_by_quality(attach_plan_quality(res.plans, req))
+        return res
     except ValidationError as e:
         logger.error("auto_edit Plan 验证失败: %s", e)
         raise HTTPException(status_code=502, detail="LLM 返回的 Plan 结构不符合预期")

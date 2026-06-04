@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { AutoEditPlanApi } from '@/lib/api'
-import type { ArtifactRef, PendingConfirm, StudioMessage, WorkspaceState } from '@/lib/agent-types'
+import type { ArtifactRef, InspectorTabId, PendingConfirm, StudioMessage, WorkspaceState } from '@/lib/agent-types'
 import type { SessionListItem } from '@/lib/agent-api'
 
 function genId() {
@@ -18,6 +18,7 @@ interface StudioStore {
   pendingConfirm: PendingConfirm | null
   selectedArtifact: ArtifactRef | null
   error: string | null
+  inspectorTab: InspectorTabId
 
   setSession: (sessionId: string, workspace: WorkspaceState) => void
   setWorkspace: (ws: WorkspaceState) => void
@@ -31,6 +32,7 @@ interface StudioStore {
   setPendingConfirm: (c: PendingConfirm | null) => void
   setSelectedArtifact: (a: ArtifactRef | null) => void
   setError: (e: string | null) => void
+  setInspectorTab: (tab: InspectorTabId) => void
   getActivePlan: () => AutoEditPlanApi | null
   checkpointCount: () => number
   canRollback: () => boolean
@@ -45,6 +47,7 @@ export const useStudioStore = create<StudioStore>((set, get) => ({
   pendingConfirm: null,
   selectedArtifact: null,
   error: null,
+  inspectorTab: 'production',
 
   setSession: (sessionId, workspace) =>
     set({ sessionId, workspace, error: null, pendingConfirm: null }),
@@ -68,6 +71,7 @@ export const useStudioStore = create<StudioStore>((set, get) => ({
   setPendingConfirm: (pendingConfirm) => set({ pendingConfirm }),
   setSelectedArtifact: (selectedArtifact) => set({ selectedArtifact }),
   setError: (error) => set({ error }),
+  setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   checkpointCount: () => get().workspace?.checkpoints?.length ?? 0,
   canRollback: () => {
     const { workspace, messages } = get()

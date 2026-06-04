@@ -46,6 +46,9 @@ def _emit_content_chunks(content: str) -> list[tuple[str, dict[str, Any]]]:
 CHECKPOINT_BEFORE = frozenset({
     "set_selected_videos",
     "select_videos_by_keyword",
+    "set_production_preset",
+    "resolve_production_intent",
+    "apply_production_patch",
     "generate_auto_edit_plan",
     "apply_plan_patch",
     "realize_plan",

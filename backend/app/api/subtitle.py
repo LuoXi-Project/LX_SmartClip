@@ -436,6 +436,7 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         materialize_from_source=req.materialize_from_source,
         tts_align=burn_tts_align,
         require_tts_audio=bool(getattr(req, "require_tts_audio", False)),
+        production_profile=getattr(req, "production_profile", None),
     )
 
     if not saved_path or not os.path.exists(saved_path):
@@ -551,6 +552,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
                 clip_trims=getattr(seg, "clip_trims", None),
                 tts_filename=None,
                 mute_audio=bool(getattr(seg, "mute_audio", False)),
+                transition_in=getattr(seg, "transition_in", None),
             )
         )
 
@@ -571,6 +573,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         normalize_audio=req.normalize_audio,
         export_backend=(req.export_backend or export_backend_cfg),
         materialize_from_source=req.materialize_from_source,
+        production_profile=getattr(req, "production_profile", None),
     )
 
     if not saved_path or not os.path.exists(saved_path):

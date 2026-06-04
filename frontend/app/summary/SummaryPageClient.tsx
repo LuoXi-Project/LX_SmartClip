@@ -38,6 +38,7 @@ export default function SummaryPage() {
     markdown,
     setMarkdown,
     streamStatus,
+    stageProgress,
     markdownRef,
     notePanelRef,
     loadLatest,
@@ -157,6 +158,7 @@ export default function SummaryPage() {
               videoId={videoId}
               loading={loading}
               streamStatus={streamStatus}
+              stageProgress={stageProgress}
               onCopy={copyMarkdown}
               onExport={exportMarkdown}
             />

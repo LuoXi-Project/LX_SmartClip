@@ -11,6 +11,10 @@ import {
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
 import type { NoteLayoutOptions } from '../_lib/types'
+import {
+  formatStageAProgressMarkdown,
+  type StageASegment,
+} from '../_lib/stage-a-preview'
 
 const defaultNoteOptions = (): NoteLayoutOptions => ({
   toc: true,
@@ -41,6 +45,8 @@ export function useSummaryPage() {
 
   const [markdown, setMarkdown] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
+  const [stageProgress, setStageProgress] = useState<{ idx: number; total: number } | null>(null)
+  const stageSegmentsRef = useRef<StageASegment[]>([])
   const markdownRef = useRef<HTMLTextAreaElement | null>(null)
   const notePanelRef = useRef<HTMLDivElement | null>(null)
 
@@ -109,6 +115,8 @@ export function useSummaryPage() {
     setLoading(true)
     setMarkdown('')
     setStreamStatus('开始生成...')
+    setStageProgress(null)
+    stageSegmentsRef.current = []
     try {
       const payload: SummaryGenerateRequest = {
         video_id: videoId,
@@ -152,14 +160,62 @@ export function useSummaryPage() {
             content?: string
             summary?: VideoSummary
             detail?: string
+            idx?: number
+            total?: number
+            segment?: StageASegment
           }
-          if (d?.type === 'status') setStreamStatus(String(d.message || '生成中...'))
-          if (d?.type === 'markdown') setMarkdown(String(d.content || ''))
+          if (d?.type === 'status') {
+            const msg = String(d.message || '生成中...')
+            setStreamStatus(msg)
+            const seg = msg.match(/分段摘要\s+(\d+)\/(\d+)/)
+            if (seg) {
+              const current = Number(seg[1])
+              const total = Number(seg[2])
+              if (current > 0 && total > 0) {
+                setStageProgress({ idx: current - 1, total })
+                setStreamStatus(`正在分析第 ${current}/${total} 段…`)
+              }
+            }
+          }
+          if (d?.type === 'stage_a' && d.segment != null) {
+            const idx = Number(d.idx) || stageSegmentsRef.current.length + 1
+            const total = Number(d.total) || idx
+            stageSegmentsRef.current = [...stageSegmentsRef.current, d.segment]
+            setStageProgress({ idx, total })
+            setStreamStatus(`分段分析 ${idx}/${total} 已完成`)
+            setMarkdown(
+              formatStageAProgressMarkdown(stageSegmentsRef.current, {
+                idx,
+                total,
+                phase: 'stage_a',
+              }),
+            )
+          }
+          if (d?.type === 'markdown') {
+            setStreamStatus('正在生成完整 Markdown 笔记（流式）…')
+            const content = String(d.content || '')
+            if (content.trim()) {
+              setStageProgress(null)
+              setMarkdown(content)
+            } else if (stageSegmentsRef.current.length) {
+              const total = stageSegmentsRef.current.length
+              setStageProgress({ idx: total, total })
+              setMarkdown(
+                formatStageAProgressMarkdown(stageSegmentsRef.current, {
+                  idx: total,
+                  total,
+                  phase: 'stage_b',
+                }),
+              )
+            }
+          }
           if (d?.type === 'done' && d.summary) {
             setCurrent(d.summary)
             const saved = d.summary.summary_markdown
             if (saved != null && saved !== '') setMarkdown(saved)
             setStreamStatus('生成完成')
+            setStageProgress(null)
+            stageSegmentsRef.current = []
             notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
           if (d?.type === 'error') {
@@ -255,6 +311,7 @@ export function useSummaryPage() {
     markdown,
     setMarkdown,
     streamStatus,
+    stageProgress,
     markdownRef,
     notePanelRef,
     loadLatest,

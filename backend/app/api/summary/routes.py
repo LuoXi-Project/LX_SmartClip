@@ -213,7 +213,21 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                         + "\n\n"
                     ).encode()
                     user = build_stage_a_user_message(req, schema_hint=schema_hint, chunk=chunk, idx=idx, total=total)
-                    stage_a.append(await call_llm_json(llm, system_prompt=sys_prompt, user_prompt=user))
+                    segment = await call_llm_json(llm, system_prompt=sys_prompt, user_prompt=user)
+                    stage_a.append(segment)
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "stage_a",
+                                "idx": idx,
+                                "total": total,
+                                "segment": segment,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    ).encode()
 
                 stage_log("总结", "StageB 流式生成完整 Markdown 笔记…", status="running")
                 yield ("data: " + json.dumps({"type": "status", "message": "生成完整 Markdown 笔记（流式）..."}, ensure_ascii=False) + "\n\n").encode()

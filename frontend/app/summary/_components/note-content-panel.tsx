@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, type ComponentPropsWithRef, type RefObject } from 'react'
-import { Copy, Eye, FileCode, FileDown } from 'lucide-react'
+import { Copy, Eye, FileCode, FileDown, Loader2 } from 'lucide-react'
 import { SummaryNotePreview } from '@/components/summary/summary-note-preview'
 import { API_BASE_URL } from '@/lib/runtime-config'
 
@@ -15,6 +15,7 @@ type NoteContentPanelProps = {
   videoId: string
   loading: boolean
   streamStatus: string
+  stageProgress: { idx: number; total: number } | null
   onCopy: () => void
   onExport: () => void
 }
@@ -29,6 +30,7 @@ export function NoteContentPanel({
   videoId,
   loading,
   streamStatus,
+  stageProgress,
   onCopy,
   onExport,
 }: NoteContentPanelProps) {
@@ -97,9 +99,41 @@ export function NoteContentPanel({
           </button>
         </div>
       </div>
-      <p className="text-xs text-slate-500 mt-1">
-        {loading ? streamStatus || '生成中…' : '预览中时间点链接可跳转上方视频；截图占位在正文中以引用块展示。'}
-      </p>
+      {loading ? (
+        <div className="mt-2 rounded-lg border border-cyan-500/25 bg-cyan-950/30 px-3 py-2.5">
+          <div className="flex items-center gap-2 text-sm text-cyan-100">
+            <Loader2 className="w-4 h-4 shrink-0 animate-spin text-cyan-400" />
+            <span>{streamStatus || '生成中…'}</span>
+          </div>
+          {stageProgress && stageProgress.total > 0 ? (
+            <div className="mt-2">
+              <div className="flex justify-between text-[11px] text-slate-400 mb-1">
+                <span>分段分析进度</span>
+                <span>
+                  {stageProgress.idx}/{stageProgress.total}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-cyan-500 transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, (stageProgress.idx / stageProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+          <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+            {markdown.trim()
+              ? '下方预览会随分段完成或笔记流式输出实时更新。'
+              : '正在准备素材与分段，完成后将在此展示分析摘要。'}
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500 mt-1">
+          预览中时间点链接可跳转上方视频；截图占位在正文中以引用块展示。
+        </p>
+      )}
 
       <div className="mt-3 shrink-0">
         {streamUrl ? (

@@ -9,6 +9,7 @@ import aiosqlite
 from fastapi import HTTPException
 
 from app.core.llm import LLMClient
+from app.utils.logging_utils import stage_log
 from app.models.summary import SummaryGenerateRequest
 
 from .context import build_video_context, prompt_extra_vars
@@ -120,6 +121,11 @@ async def prepare_summary_context(
     )
     if not context_chunks:
         raise HTTPException(status_code=400, detail="视频内容为空，无法总结（缺少 ASR/VLM）")
+    stage_log(
+        "总结",
+        f"上下文已就绪：mode={req.mode}，分 {len(context_chunks)} 段，约 {len(context)} 字",
+        status="running",
+    )
     return vars_, context, context_chunks
 
 
@@ -133,9 +139,12 @@ async def run_stage_a_chunks(
 ) -> list[dict[str, Any]]:
     stage_a: list[dict[str, Any]] = []
     total = len(context_chunks)
+    stage_log("总结", f"StageA 分段摘要开始，共 {total} 段", status="running")
     for idx, chunk in enumerate(context_chunks, start=1):
+        stage_log("总结", f"StageA 正在处理第 {idx}/{total} 段…", status="running")
         user = build_stage_a_user_message(req, schema_hint=schema_hint, chunk=chunk, idx=idx, total=total)
         stage_a.append(await call_llm_json(llm, system_prompt=sys_prompt, user_prompt=user))
+    stage_log("总结", f"StageA 分段摘要完成，共 {len(stage_a)} 段结果", status="done")
     return stage_a
 
 
@@ -145,6 +154,7 @@ async def pipeline_stage_a_and_markdown(
     llm: LLMClient,
 ) -> tuple[str, dict[str, Any], dict[str, Any], str, str, str]:
     """返回 final_md, summary_json_obj, vars_, context, stage_b_system, stage_a_schema_hint"""
+    stage_log("总结", f"开始生成视频总结 video_id={req.video_id} mode={req.mode}", status="running")
     vars_, context, context_chunks = await prepare_summary_context(db, req)
 
     schema_hint = STAGE_A_SCHEMA_HINT
@@ -152,6 +162,7 @@ async def pipeline_stage_a_and_markdown(
 
     stage_a = await run_stage_a_chunks(llm, req, context_chunks=context_chunks, schema_hint=schema_hint, sys_prompt=sys_prompt)
 
+    stage_log("总结", "StageB 正在合并为完整 Markdown 笔记…", status="running")
     final_user = build_stage_b_user_prompt(
         video_title=str(vars_.get("video_title") or ""),
         tags=str(vars_.get("tags") or ""),
@@ -162,6 +173,7 @@ async def pipeline_stage_a_and_markdown(
         prompt_vars=req.prompt_vars,
     )
     final_md = await call_llm_markdown(llm, system_prompt=STAGE_B_SYSTEM, user_prompt=final_user)
+    stage_log("总结", f"StageB 完成，笔记约 {len(final_md)} 字", status="done")
     summary_json_obj: dict[str, Any] = {
         "format": "markdown_note_v1",
         "stage_a": stage_a,

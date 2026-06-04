@@ -20,6 +20,7 @@ from .process_db import (
 )
 from .process_pipeline import run_pipeline
 from .process_shared import ProcessCancelled, _job_tasks, _task_subscribers, request_process_cancel
+from app.utils.logging_utils import stage_log
 
 ALLOWED_SKIP_STEPS = frozenset({"split", "extract_frames", "asr", "vlm", "embed"})
 
@@ -86,6 +87,7 @@ async def _run_task(
     clip_ids_filter: frozenset[str] | None = None,
 ):
     reporter = ProgressReporter(ws=None, task_id=task_id)
+    stage_log("预处理", f"任务 {task_id[:8]}… 已启动 video_id={video_id}", status="running")
     try:
         await run_pipeline(
             video_id,
@@ -95,6 +97,7 @@ async def _run_task(
             clip_ids_filter=clip_ids_filter,
         )
         await update_task_status(task_id, "done")
+        stage_log("预处理", f"任务 {task_id[:8]}… 全部完成", status="done")
     except asyncio.CancelledError:
         await set_video_status(video_id, "pending")
         await reporter.send("done", "done", "处理已停止", {"cancelled": True})

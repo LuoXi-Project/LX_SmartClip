@@ -2,6 +2,8 @@ import difflib
 import logging
 from typing import List, Optional
 
+from app.utils.logging_utils import stage_log
+
 logger = logging.getLogger(__name__)
 
 # ASR 与文案最低相似度（SequenceMatcher），低于此值则改为「全部片段 0 分」兜底
@@ -161,6 +163,7 @@ class Matcher:
         video_ids = [v for v in (video_ids or []) if v]
 
         # ── Level 1：向量初筛 ──────────────────────────────────────────
+        stage_log("检索", f"向量初筛（top_k={top_k}）…", status="running")
         logger.info("[Matcher] Level-1 向量初筛: query_len=%d, top_k=%d", len(query), top_k)
         query_vec = self.embedder.embed(query)
         candidate_ids = self.vector_db.search(query_vec, top_k=top_k, video_ids=video_ids or None)
@@ -191,6 +194,7 @@ class Matcher:
 
         # ── Level 2：LLM 精排 ──────────────────────────────────────────
         if self.llm is not None and not skip_llm:
+            stage_log("检索", f"LLM 精排 {len(candidates)} 个候选…", status="running")
             logger.info("[Matcher] Level-2 LLM 精排...")
             try:
                 candidates = self.llm.rank(query, candidates)

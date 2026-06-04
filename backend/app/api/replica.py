@@ -29,6 +29,8 @@ from app.utils.paths import ensure_storage_subpath, to_stored_path
 from app.utils.video_thumbnail import generate_thumbnail
 from app.utils.video_link_downloader import VideoLinkDownloadError, download_video_from_link
 
+from app.utils.logging_utils import stage_log
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/replica", tags=["replica"])
@@ -335,10 +337,13 @@ async def _run_stage_a_summaries(
     sys_prompt = _build_stage_a_system_prompt(replica_type, style_profile)
     windows = _build_stage_a_windows(rows, target_windows)
     summaries: list[dict] = []
+    total_win = len(windows)
+    stage_log("复刻模板", f"StageA 分段摘要开始，共 {total_win} 个窗口", status="running")
     for i, win in enumerate(windows, start=1):
         context = _rows_to_context(win, context_max_chars=5000)
         if not context:
             continue
+        stage_log("复刻模板", f"StageA 正在处理窗口 {i}/{total_win}…", status="running")
         user = f"【窗口序号】{i}\n【窗口ASR】\n{context}"
         raw = await llm.chat(messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}])
         cleaned = extract_json_object(raw if isinstance(raw, str) else "")
@@ -473,6 +478,11 @@ async def generate_replica_template(
         timeout=3600,
     )
 
+    stage_log(
+        "复刻模板",
+        f"开始生成复刻模板 video_id={video_id} type={selected_replica_type}",
+        status="running",
+    )
     stage_a_target = int(cfg_by_type["chunk_target"])
     if quality_mode == "balanced":
         stage_a_target = max(3, stage_a_target - 2)
@@ -486,6 +496,7 @@ async def generate_replica_template(
     if not stage_a:
         raise HTTPException(status_code=502, detail="分段摘要失败，无法生成模板")
 
+    stage_log("复刻模板", "StageB 正在生成最终模板 JSON…", status="running")
     stage_b_prompt = _build_stage_b_system_prompt(selected_replica_type, style_profile)
     stage_b_user = (
         f"【复刻类型】\n{selected_replica_type}\n\n"
@@ -596,6 +607,7 @@ async def generate_replica_template(
     finally:
         await db.close()
 
+    stage_log("复刻模板", f"模板已生成 template_id={template_id[:8]}…", status="done")
     return ReplicaTemplateDraft(
         template_id=template_id,
         template_json=template_json if isinstance(template_json, dict) else {"raw": template_json},

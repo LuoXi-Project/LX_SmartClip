@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from fastapi import WebSocket
 from app.db.database import get_db_conn
 from app.utils.paths import resolve_stored_path, to_stored_path
-from .process_shared import now_iso, _task_subscribers
+from .process_shared import STEP_LABELS, now_iso, _task_subscribers
+from app.utils.logging_utils import stage_log
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +337,8 @@ class ProgressReporter:
             "message": message,
             "detail": detail or {},
         }
+        step_label = STEP_LABELS.get(step, step)
+        stage_log("预处理", f"{step_label} — {message}", status=status)
         logger.info("[%s] %s: %s", step, status, message)
         if self.task_id:
             await update_task_from_progress(

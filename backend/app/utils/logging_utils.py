@@ -329,6 +329,31 @@ def _try_build_color_formatter(fmt: str, datefmt: str, *, for_access: bool = Fal
         return None
 
 
+_STAGE_LOGGER_NAME = "smartclip.stage"
+_STAGE_STATUS_CN = {
+    "running": "进行中",
+    "done": "完成",
+    "skip": "跳过",
+    "error": "失败",
+}
+
+
+def stage_log(module: str, message: str, *, status: str = "running") -> None:
+    """
+    在控制台输出可读的阶段性进度，便于用户在 CMD 中了解当前执行到哪一步。
+
+    module: 功能模块名，如「预处理」「检索」「总结」
+    status: running | done | skip | error
+    """
+    status_cn = _STAGE_STATUS_CN.get(status, status)
+    line = f"[阶段][{module}] [{status_cn}] {message}"
+    log = logging.getLogger(_STAGE_LOGGER_NAME)
+    if status == "error":
+        log.error(line)
+    else:
+        log.info(line)
+
+
 def setup_logging(level: int = logging.INFO, *, force: bool = False) -> None:
     """
     Initialize root logging once (idempotent).

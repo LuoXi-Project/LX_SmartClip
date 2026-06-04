@@ -11,6 +11,8 @@ from app.utils.paths import resolve_stored_path
 from app.utils.ffmpeg_utils import extract_audio_for_asr
 import logging
 
+from app.utils.logging_utils import stage_log
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["asr"])
@@ -129,6 +131,11 @@ async def process_asr(video_id: str):
         if not clips:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 没有片段")
 
+        stage_log(
+            "预处理",
+            f"ASR 开始：{len(clips)} 个片段 provider={asr_provider} 并发={asr_concurrency}",
+            status="running",
+        )
         logger.info(
             "开始处理 %d 个片段的 ASR (provider=%s, concurrency=%d)",
             len(clips),
@@ -192,11 +199,14 @@ async def process_asr(video_id: str):
                 )
         await db.commit()
 
+        ok = sum(1 for r in results if r["status"] == "success")
+        fail = sum(1 for r in results if r["status"] == "error")
+        stage_log("预处理", f"ASR 完成：成功 {ok}/{len(clips)}，失败 {fail}", status="done")
         return {
             "video_id": video_id,
             "total_clips": len(clips),
-            "processed": sum(1 for r in results if r["status"] == "success"),
-            "failed": sum(1 for r in results if r["status"] == "error"),
+            "processed": ok,
+            "failed": fail,
             "results": results,
         }
 

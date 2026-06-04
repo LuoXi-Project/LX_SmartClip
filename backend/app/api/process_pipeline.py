@@ -24,12 +24,14 @@ from .process_db import (
 )
 from .process_shared import (
     ProcessCancelled,
+    STEP_LABELS,
     cancel_event_for,
     check_cancel,
     get_splitter,
     logger,
     parse_positive_int,
 )
+from app.utils.logging_utils import stage_log
 
 # 单片段单步（抽帧/ASR/VLM/Embedding）上限：短切片下一般远小于此值；超时则子进程 terminate/kill 或抛出后重试
 PIPELINE_STEP_TIMEOUT_SEC = 600.0
@@ -122,6 +124,12 @@ async def run_pipeline(
 
     clip_ids_filter: 仅在不重新切分时生效；只处理这些 clip id（须已通过 API 校验归属）。"""
     skip_steps = skip_steps or []
+    skip_cn = "、".join(STEP_LABELS.get(s, s) for s in skip_steps) if skip_steps else "无"
+    stage_log(
+        "预处理",
+        f"开始处理视频 {video_id}（跳过: {skip_cn}）",
+        status="running",
+    )
 
     video = await get_video(video_id)
     if not video:

@@ -9,6 +9,7 @@ from app.models.match import MatchRequest, MatchResponse, ClipResult
 
 from app.core.blocking_pool import run_heavy
 from app.db.database import DB_PATH
+from app.utils.logging_utils import stage_log
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,12 @@ async def match_clips(req: MatchRequest, request: Request):
     if await request.is_disconnected():
         raise HTTPException(status_code=400, detail="客户端已断开连接")
     api_base_url = str(request.base_url).rstrip("/")
+    scope = f"{len(req.video_ids)} 个视频" if req.video_ids else "全部视频"
+    stage_log(
+        "检索",
+        f"素材匹配开始：「{(req.query or '')[:60]}」范围={scope} top_k={req.top_k} top_n={req.top_n}",
+        status="running",
+    )
 
     timeout_raw = (os.environ.get("SMARTCLIP_MATCH_TIMEOUT_SEC") or "").strip()
     timeout_sec = float(timeout_raw) if timeout_raw else 0.0
@@ -129,9 +136,17 @@ async def match_clips(req: MatchRequest, request: Request):
 
     try:
         if timeout_sec > 0:
-            return await asyncio.wait_for(_run(), timeout=timeout_sec)
-        return await _run()
+            result = await asyncio.wait_for(_run(), timeout=timeout_sec)
+        else:
+            result = await _run()
+        stage_log(
+            "检索",
+            f"素材匹配完成：推荐 {len(result.recommended)} 条，候选 {len(result.candidates)} 条",
+            status="done",
+        )
+        return result
     except asyncio.TimeoutError:
+        stage_log("检索", "素材匹配超时", status="error")
         raise HTTPException(
             status_code=504,
             detail="匹配处理超时，请稍后重试或缩小匹配范围",

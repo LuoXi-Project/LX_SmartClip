@@ -7,6 +7,8 @@ from app.utils.storage_dedupe import strip_leading_material_id_from_clip_basenam
 import logging
 import os
 
+from app.utils.logging_utils import stage_log
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["vlm"])
@@ -96,6 +98,7 @@ async def process_vlm(video_id: str):
         if not clips:
             raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 没有片段")
 
+        stage_log("预处理", f"VLM 开始：{len(clips)} 个片段", status="running")
         logger.info(f"开始处理 {len(clips)} 个片段的 VLM 描述")
 
         # 处理每个片段
@@ -181,11 +184,14 @@ async def process_vlm(video_id: str):
         # 提交数据库更改
         await db.commit()
 
+        ok = sum(1 for r in results if r["status"] == "success")
+        fail = sum(1 for r in results if r["status"] == "error")
+        stage_log("预处理", f"VLM 完成：成功 {ok}/{len(clips)}，失败 {fail}", status="done")
         return {
             "video_id": video_id,
             "total_clips": len(clips),
-            "processed": sum(1 for r in results if r["status"] == "success"),
-            "failed": sum(1 for r in results if r["status"] == "error"),
+            "processed": ok,
+            "failed": fail,
             "skipped": sum(1 for r in results if r["status"] == "skipped"),
             "results": results,
         }

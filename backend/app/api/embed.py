@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.embedder import Embedder
 from app.core.vector_db.faiss_db import FaissVectorDB
 from app.db.database import DB_PATH, get_db_conn
+from app.utils.logging_utils import stage_log
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,11 @@ async def process_embed(video_id: str):
     embedder, vector_db, concurrency = await _get_embedder_and_db()
 
     results = []
+    stage_log(
+        "预处理",
+        f"向量入库开始：{len(clips)} 个片段 并发={concurrency}",
+        status="running",
+    )
     logger.info("开始处理 %d 个片段的 Embedding (concurrency=%d)", len(clips), concurrency)
 
     sem = asyncio.Semaphore(concurrency)
@@ -126,11 +132,19 @@ async def process_embed(video_id: str):
 
     results = await asyncio.gather(*[_process_one(i, clip) for i, clip in enumerate(clips)])
 
+    ok = sum(1 for r in results if r["status"] == "success")
+    fail = sum(1 for r in results if r["status"] == "error")
+    skipped = sum(1 for r in results if r["status"] == "skipped")
+    stage_log(
+        "预处理",
+        f"向量入库完成：成功 {ok}/{len(clips)}，跳过 {skipped}，失败 {fail}",
+        status="done",
+    )
     return {
         "video_id": video_id,
         "total_clips": len(clips),
-        "processed": sum(1 for r in results if r["status"] == "success"),
-        "skipped": sum(1 for r in results if r["status"] == "skipped"),
-        "failed": sum(1 for r in results if r["status"] == "error"),
+        "processed": ok,
+        "skipped": skipped,
+        "failed": fail,
         "results": results,
     }

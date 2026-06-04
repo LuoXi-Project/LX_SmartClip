@@ -41,6 +41,7 @@ from .screenshots import cleanup_previous_summary_shots_for_video
 from .smart_outline_store import fetch_saved_outline, generate_smart_outline_and_persist
 from .store import parse_video_summary_row, persist_generated_summary
 from .utils import now_iso, strip_markdown_fences
+from app.utils.logging_utils import stage_log
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/summary", tags=["summary"])
@@ -125,6 +126,7 @@ async def get_latest_summary(
 
 @router.post("/generate", response_model=VideoSummary)
 async def generate_summary(req: SummaryGenerateRequest):
+    stage_log("总结", f"收到总结请求 video_id={req.video_id} mode={req.mode}", status="running")
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await cleanup_previous_summary_shots_for_video(db, req.video_id, req.mode)
@@ -152,7 +154,7 @@ async def generate_summary(req: SummaryGenerateRequest):
 
         final_md, summary_json_obj, vars_, context, _stage_b, schema_hint = await pipeline_stage_a_and_markdown(db, req, llm)
 
-        return await persist_generated_summary(
+        result = await persist_generated_summary(
             db,
             req=req,
             final_md=final_md,
@@ -161,12 +163,15 @@ async def generate_summary(req: SummaryGenerateRequest):
             context=context,
             schema_hint=schema_hint,
         )
+        stage_log("总结", f"总结已保存 summary_id={result.id}", status="done")
+        return result
 
 
 @router.post("/generate-stream")
 async def generate_summary_stream(req: SummaryGenerateRequest):
     async def _sse():
         try:
+            stage_log("总结", f"流式总结开始 video_id={req.video_id} mode={req.mode}", status="running")
             yield ("data: " + json.dumps({"type": "status", "message": "开始准备总结..."}, ensure_ascii=False) + "\n\n").encode()
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
@@ -185,6 +190,7 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                     raise HTTPException(status_code=400, detail=str(e))
 
                 vars_, context, context_chunks = await prepare_summary_context(db, req)
+                total = len(context_chunks)
 
                 llm = LLMClient(
                     base_url=cfg["base_url"],
@@ -198,8 +204,9 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                 sys_prompt = STAGE_A_SYSTEM
 
                 stage_a: list = []
-                total = len(context_chunks)
+                stage_log("总结", f"StageA 分段摘要开始，共 {total} 段", status="running")
                 for idx, chunk in enumerate(context_chunks, start=1):
+                    stage_log("总结", f"StageA 正在处理第 {idx}/{total} 段…", status="running")
                     yield (
                         "data: "
                         + json.dumps({"type": "status", "message": f"分段摘要 {idx}/{total}"}, ensure_ascii=False)
@@ -208,6 +215,7 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                     user = build_stage_a_user_message(req, schema_hint=schema_hint, chunk=chunk, idx=idx, total=total)
                     stage_a.append(await call_llm_json(llm, system_prompt=sys_prompt, user_prompt=user))
 
+                stage_log("总结", "StageB 流式生成完整 Markdown 笔记…", status="running")
                 yield ("data: " + json.dumps({"type": "status", "message": "生成完整 Markdown 笔记（流式）..."}, ensure_ascii=False) + "\n\n").encode()
                 final_user = build_stage_b_user_prompt(
                     video_title=str(vars_.get("video_title") or ""),
@@ -244,6 +252,7 @@ async def generate_summary_stream(req: SummaryGenerateRequest):
                     schema_hint=schema_hint,
                 )
                 payload = summary.model_dump()
+                stage_log("总结", f"流式总结完成 summary_id={summary.id}", status="done")
                 yield ("data: " + json.dumps({"type": "done", "summary": payload}, ensure_ascii=False) + "\n\n").encode()
                 yield b"data: [DONE]\n\n"
         except HTTPException as e:

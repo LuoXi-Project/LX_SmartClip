@@ -123,6 +123,16 @@ async def update_job_fields(job_id: str, **fields: Any) -> None:
         await db.close()
 
 
+_STEP_CN = {
+    "parsing": "原片解析",
+    "summarize": "剧情摘要",
+    "screenplay": "解说剧本",
+    "align": "画面对齐",
+    "plan": "剪辑方案",
+    "render": "成片渲染",
+}
+
+
 async def update_job_progress(job_id: str, step: str, status: str, message: str, detail: dict | None = None) -> None:
     row = await get_job_row(job_id)
     if not row:
@@ -134,6 +144,10 @@ async def update_job_progress(job_id: str, step: str, status: str, message: str,
         current_step=step,
         progress_json=json.dumps(progress, ensure_ascii=False),
     )
+    from app.utils.logging_utils import stage_log
+
+    step_label = _STEP_CN.get(step, step)
+    stage_log("影视解说", f"[{job_id[:8]}] {step_label} — {message}", status=status)
 
 
 async def get_job_row(job_id: str) -> dict | None:

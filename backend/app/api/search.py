@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.api.match import MatchRequest, _match_clips_sync, MatchPipelineError  # type: ignore
 from app.db.database import DB_PATH
+from app.utils.logging_utils import stage_log
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +336,16 @@ async def semantic_search_assets(payload: SemanticSearchRequest, request: Reques
     """
     # FastAPI 的 Request.base_url 类似于 http://host:port/，与 /api/match 保持一致传入
     api_base_url = str(request.base_url).rstrip("/")
+    scope = (
+        f"{len(payload.filters.video_ids)} 个视频"
+        if payload.filters and payload.filters.video_ids
+        else "全部视频"
+    )
+    stage_log(
+        "检索",
+        f"语义检索开始：「{(payload.query or '')[:60]}」范围={scope}",
+        status="running",
+    )
 
     # 将 filters.video_ids 透传给 match 引擎
     match_req = MatchRequest(
@@ -371,6 +382,7 @@ async def semantic_search_assets(payload: SemanticSearchRequest, request: Reques
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
     grouped = _group_by_asset(match_res.dict(), highlight_only=payload.highlight_only)
+    stage_log("检索", f"语义检索完成：命中 {len(grouped)} 个素材", status="done")
     return SemanticSearchResponse(query=payload.query, results=grouped)
 
 

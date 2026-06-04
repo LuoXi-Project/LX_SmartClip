@@ -1,6 +1,5 @@
 'use client'
 
-import dynamic from 'next/dynamic'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Noto_Sans_SC, JetBrains_Mono } from 'next/font/google'
@@ -20,16 +19,9 @@ import {
 import { useAppStore } from '@/lib/store'
 import logoPng from '../logo.png'
 import apiClient from '@/lib/api'
+import { HomeCosmosBackground } from './_components/home/HomeCosmosBackground'
 import { useHomeGsap } from './_components/home/useHomeGsap'
 import './_components/home/home.css'
-
-const HomeScene3D = dynamic(
-  () => import('./_components/home/HomeScene3D').then((m) => ({ default: m.HomeScene3D })),
-  {
-    ssr: false,
-    loading: () => <div className="absolute inset-0 bg-[#030712]" aria-hidden />,
-  },
-)
 
 const noto = Noto_Sans_SC({
   subsets: ['latin'],
@@ -46,13 +38,13 @@ const mono = JetBrains_Mono({
 const TITLE = '洛曦智剪'
 
 const PIPELINE = [
-  '批量素材入库',
-  '多模式切分',
-  '多模态理解',
-  '三级精准匹配',
-  'TTS 配音',
-  '导出工程',
-]
+  { label: '批量素材入库', icon: Film },
+  { label: '多模式切分', icon: Scissors },
+  { label: '多模态理解', icon: Brain },
+  { label: '三级精准匹配', icon: Target },
+  { label: 'TTS 配音', icon: Mic },
+  { label: '导出工程', icon: Package },
+] as const
 
 const FEATURES = [
   {
@@ -141,22 +133,19 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [setBackendStatus])
 
-  const marqueeItems = [...PIPELINE, ...PIPELINE]
-
   return (
     <main
       ref={mainRef}
-      className={`${noto.className} relative min-h-full overflow-hidden bg-[#030712] text-slate-200`}
+      className={`${noto.className} relative min-h-full overflow-hidden bg-[#00040c] text-slate-100`}
     >
-      <HomeScene3D />
+      <HomeCosmosBackground />
 
       <div className="pointer-events-none absolute inset-0 z-[1]">
-        <div className="home-float absolute -left-32 top-1/4 h-[420px] w-[420px] rounded-full bg-cyan-500/8 blur-[100px]" />
-        <div className="home-float home-float-delay absolute -right-24 top-1/3 h-[380px] w-[380px] rounded-full bg-violet-600/10 blur-[110px]" />
+        <div className="home-float absolute left-1/4 top-1/3 h-[360px] w-[360px] -translate-x-1/2 rounded-full bg-sky-400/[0.04] blur-[120px]" />
+        <div className="home-float home-float-delay absolute right-1/4 top-2/5 h-[320px] w-[320px] translate-x-1/2 rounded-full bg-violet-400/[0.05] blur-[130px]" />
       </div>
 
-      <div className="home-scanlines absolute inset-0 z-[2] opacity-25" aria-hidden />
-      <div className="home-vignette absolute inset-0 z-[3]" aria-hidden />
+      <div className="home-vignette absolute inset-0 z-[2]" aria-hidden />
 
       <div className="relative z-10">
         <section className="relative flex min-h-[min(92vh,860px)] flex-col items-center justify-center px-4 pb-8 pt-20 sm:pt-24">
@@ -233,28 +222,38 @@ export default function Home() {
               data-magnetic
               className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-8 py-3.5 text-sm font-medium text-slate-200 backdrop-blur-md transition-all hover:border-cyan-500/40 hover:bg-white/10"
             >
+              <Film className="h-4 w-4 text-cyan-400/80" />
               素材库
             </Link>
           </div>
 
-          <div
-            data-hero="pipeline"
-            className="relative mt-16 w-full max-w-4xl overflow-hidden"
-          >
-            <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#030712] to-transparent" />
-            <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#030712] to-transparent" />
-            <div className="flex animate-home-marquee whitespace-nowrap">
-              {marqueeItems.map((step, i) => (
-                <span
-                  key={`${step}-${i}`}
-                  className={`${mono.className} mx-6 inline-flex items-center gap-3 text-xs text-slate-500 sm:text-sm`}
-                >
-                  <span className="text-cyan-500/60">◆</span>
-                  {step}
-                </span>
-              ))}
+          <div data-hero="pipeline" className="mt-16 w-full max-w-5xl px-2">
+            <p
+              className={`${mono.className} mb-8 text-center text-[10px] uppercase tracking-[0.35em] text-slate-600`}
+            >
+              Pipeline · 全流程
+            </p>
+            <div className="grid grid-cols-3 gap-x-2 gap-y-8 sm:grid-cols-6 sm:gap-x-0">
+              {PIPELINE.map((step, i) => {
+                const Icon = step.icon
+                return (
+                  <div key={step.label} className="relative flex flex-col items-center text-center">
+                    {i < PIPELINE.length - 1 && (
+                      <div
+                        className="pointer-events-none absolute left-[calc(50%+1.25rem)] top-5 hidden h-px w-[calc(100%-2.5rem)] bg-gradient-to-r from-cyan-500/35 via-violet-500/25 to-cyan-500/35 sm:block"
+                        aria-hidden
+                      />
+                    )}
+                    <div className="relative z-10 mb-2.5 flex size-10 items-center justify-center rounded-xl border border-white/[0.08] bg-slate-950/70 shadow-[0_0_20px_rgba(34,211,238,0.06)] ring-1 ring-cyan-500/15 backdrop-blur-sm">
+                      <Icon className="size-4 text-cyan-400/90" />
+                    </div>
+                    <span className="text-[11px] leading-snug text-slate-400 sm:text-xs">
+                      {step.label}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
-            <div className="home-pipeline-flow mx-auto mt-3 h-px w-48 max-w-full rounded-full opacity-60" />
           </div>
         </section>
 

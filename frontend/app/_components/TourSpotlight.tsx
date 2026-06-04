@@ -96,9 +96,9 @@ export function computePopoverLayout(
   const order: ResolvedPlacement[] =
     preferred === 'auto'
       ? ['bottom', 'top', 'right', 'left']
-      : [preferred as ResolvedPlacement, 'bottom', 'top', 'right', 'left'].filter(
+      : ([preferred as ResolvedPlacement, 'bottom', 'top', 'right', 'left'].filter(
           (p, i, arr) => arr.indexOf(p) === i,
-        )
+        ) as ResolvedPlacement[])
 
   for (const placement of order) {
     const raw = positionForPlacement(placement, rect, popW, popH)

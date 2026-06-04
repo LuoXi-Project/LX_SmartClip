@@ -49,12 +49,27 @@ export function useHomeGsap(rootRef: RefObject<HTMLElement | null>) {
         )
         .from('[data-hero="sub"]', { y: 32, opacity: 0, duration: 0.65 }, '-=0.35')
         .from('[data-hero="desc"]', { y: 20, opacity: 0, duration: 0.55 }, '-=0.4')
-        .from(
+        .fromTo(
           '[data-hero="cta"]',
-          { y: 24, opacity: 0, scale: 0.92, stagger: 0.12, duration: 0.6 },
+          { y: 24, opacity: 0, scale: 0.92 },
+          { y: 0, opacity: 1, scale: 1, stagger: 0.12, duration: 0.6 },
           '-=0.3',
         )
-        .from('[data-hero="pipeline"]', { opacity: 0, scaleX: 0, duration: 0.8, ease: 'power2.inOut' }, '-=0.2')
+        .fromTo(
+          '[data-hero="pipeline"]',
+          { y: 24, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.75, ease: 'power2.out' },
+          '-=0.2',
+        )
+
+      tl.eventCallback('onComplete', () => {
+        gsap.set('[data-hero="cta"], [data-hero="pipeline"]', {
+          opacity: 1,
+          y: 0,
+          scale: 1,
+          clearProps: 'opacity,transform',
+        })
+      })
 
       gsap.to('[data-hero="title-char"]', {
         backgroundPosition: '200% center',
@@ -140,6 +155,10 @@ export function useHomeGsap(rootRef: RefObject<HTMLElement | null>) {
 
     return () => {
       magneticCleanups.forEach((fn) => fn())
+      gsap.set(root.querySelectorAll('[data-hero="cta"], [data-hero="pipeline"]'), {
+        opacity: 1,
+        clearProps: 'opacity,transform',
+      })
       ctx.revert()
     }
   }, [rootRef])

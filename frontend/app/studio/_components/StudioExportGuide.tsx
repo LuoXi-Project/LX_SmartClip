@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, CircleHelp, Sparkles } from 'lucide-react'
+import { ChevronDown, ChevronUp, HelpCircle, Sparkles } from 'lucide-react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import {
   getExportPathsForPlan,
@@ -27,7 +27,7 @@ export function StudioExportGuide({
     return (
       <div className="rounded-xl border border-slate-700/80 bg-slate-900/50 p-3 space-y-2 text-xs text-slate-400">
         <p className="text-slate-300 font-medium flex items-center gap-1.5">
-          <CircleHelp className="w-3.5 h-3.5 text-violet-400" />
+          <HelpCircle className="w-3.5 h-3.5 text-violet-400" />
           成片前先看：方案类型决定听感
         </p>
         <p className="leading-relaxed whitespace-pre-line">{STUDIO_WORKFLOW_HINT}</p>

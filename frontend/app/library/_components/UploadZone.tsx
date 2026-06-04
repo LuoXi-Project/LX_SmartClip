@@ -47,6 +47,7 @@ export function UploadZone({
 }: UploadZoneProps) {
   return (
     <div
+      data-tour="page-library-upload"
       onDragEnter={onDrag}
       onDragLeave={onDrag}
       onDragOver={onDrag}

@@ -397,6 +397,8 @@ DEFAULT_CONFIG = [
     ("vlm_concurrency", "3", "number", "VLM 并发数量", None),
     # 卡密（仅通过 /api/license 读写，不在 /api/config 中暴露）
     ("license_card", "", "string", "卡密", None),
+    # 新手指引（/api/ui/onboarding 读写，不在设置页展示）
+    ("ui_onboarding_v1", "", "string", "新手指引状态（内部）", None),
 ]
 
 DEFAULT_SUMMARY_TEMPLATES = [

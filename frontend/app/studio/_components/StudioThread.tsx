@@ -222,7 +222,7 @@ export function StudioThread() {
       {useStudioStore.getState().error && (
         <div className="px-4 text-xs text-red-400">{useStudioStore.getState().error}</div>
       )}
-      <div className="p-3 border-t border-slate-800">
+      <div className="p-3 border-t border-slate-800" data-tour="page-studio-input">
         <div className="flex gap-2 items-end">
           <textarea
             value={input}

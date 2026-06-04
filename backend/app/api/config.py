@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
-_CONFIG_EXCLUDE_KEYS = frozenset({"license_card"})
+_CONFIG_EXCLUDE_KEYS = frozenset({"license_card", "ui_onboarding_v1"})
 
 
 @router.get("")

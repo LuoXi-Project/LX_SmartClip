@@ -1,0 +1,11 @@
+# 全项目所有层级node_modules全部屏蔽
+**/node_modules/
+# 打包产物、lock可选一并屏蔽
+dist/
+build/
+.next/
+out/
+*.log
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

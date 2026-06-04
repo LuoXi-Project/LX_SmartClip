@@ -3,6 +3,7 @@ const isDev = process.env.NODE_ENV === 'development'
 
 const nextConfig = {
   reactStrictMode: true,
+  transpilePackages: ['three'],
   // 仅在生产构建时启用静态导出；开发模式需要 Next server 才能支持 rewrites。
   output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
   ...(isDev

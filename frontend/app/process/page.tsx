@@ -496,8 +496,13 @@ export default function ProcessPage() {
         </section>
 
         <section className="flex flex-wrap items-center gap-3">
-          <button onClick={handleStart} disabled={!selId || selectionLocked}
-            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors">
+          <button
+            type="button"
+            data-tour="page-process-start"
+            onClick={handleStart}
+            disabled={!selId || selectionLocked}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+          >
             {selectionLocked ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
           </button>
           <button

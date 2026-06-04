@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { licenseApi } from '@/lib/api'
 
@@ -9,6 +9,8 @@ export function LicenseGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const [ready, setReady] = useState(false)
+  /** 已通过校验后切换路由不再卸载子树（避免新手指引等状态被重置） */
+  const passedOnceRef = useRef(false)
 
   useEffect(() => {
     if (pathname?.startsWith('/license')) {
@@ -19,29 +21,43 @@ export function LicenseGate({ children }: { children: React.ReactNode }) {
       setReady(true)
       return
     }
-    setReady(false)
+
+    let cancelled = false
     licenseApi
       .status()
       .then((s) => {
+        if (cancelled) return
         if (s.enforced && !s.valid) {
+          passedOnceRef.current = false
           router.replace('/license')
-        } else {
+          return
+        }
+        passedOnceRef.current = true
+        setReady(true)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          passedOnceRef.current = true
           setReady(true)
         }
       })
-      .catch(() => setReady(true))
+
+    return () => {
+      cancelled = true
+    }
   }, [pathname, router])
 
   if (pathname?.startsWith('/license')) {
     return <>{children}</>
   }
 
-  if (!ready) {
+  if (!ready && !passedOnceRef.current) {
     return (
       <div className="min-h-[40vh] flex items-center justify-center text-slate-400 text-sm">
         正在校验授权…
       </div>
     )
   }
+
   return <>{children}</>
 }

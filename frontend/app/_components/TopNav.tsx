@@ -7,6 +7,11 @@ import { BookOpen, Menu, X } from 'lucide-react'
 import clsx from 'clsx'
 import { NavDropdown, type NavDropdownItem } from '@/components/ui/nav-dropdown'
 import { openOnboardingGuide } from './OnboardingGuide'
+import {
+  ONBOARDING_PREPARE_EVENT,
+  TOUR_ANCHORS,
+  tourAnchorProps,
+} from '@/lib/onboarding-tour'
 
 const editItems: NavDropdownItem[] = [
   { href: '/match', label: '经典模式', description: '文案素材三级匹配' },
@@ -19,7 +24,6 @@ const audioItems: NavDropdownItem[] = [
 ]
 
 const moreItems: NavDropdownItem[] = [
-  
   { href: '/about', label: '关于与支持' },
   { href: '/logs', label: '日志' },
 ]
@@ -28,17 +32,17 @@ const mobileSections = [
   {
     title: '常用',
     items: [
-      { href: '/studio', label: '智剪工作台' },
-      { href: '/library', label: '素材库', description: '上传、管理、预览' },
-      { href: '/process', label: '素材处理', description: '切分与多模态分析' },
+      { href: '/studio', label: '智剪工作台', tour: TOUR_ANCHORS.navStudio },
+      { href: '/library', label: '素材库', description: '上传、管理、预览', tour: TOUR_ANCHORS.navLibrary },
+      { href: '/process', label: '素材处理', description: '切分与多模态分析', tour: TOUR_ANCHORS.navProcess },
       { href: '/search', label: '素材检索', description: '语义搜索片段' },
-      { href: '/settings', label: '设置' },
+      { href: '/settings', label: '设置', tour: TOUR_ANCHORS.navSettings },
       { href: '/license', label: '卡密' },
     ],
   },
   { title: '剪辑', items: editItems },
   { title: '音频', items: audioItems },
-      { title: '更多', items: moreItems },
+  { title: '更多', items: moreItems },
 ]
 
 const guideMobileItem = { href: '#guide', label: '新手指引', description: '四步上手：设置 → 素材库 → 处理 → 智剪' }
@@ -84,17 +88,39 @@ export default function TopNav() {
     return () => document.removeEventListener('mousedown', close)
   }, [mobileOpen])
 
+  useEffect(() => {
+    const onPrepare = (e: Event) => {
+      const detail = (e as CustomEvent<{ openMobileNav?: boolean; scrollToId?: string }>).detail
+      if (detail?.openMobileNav && window.innerWidth < 768) {
+        setMobileOpen(true)
+      }
+    }
+    window.addEventListener(ONBOARDING_PREPARE_EVENT, onPrepare)
+    return () => window.removeEventListener(ONBOARDING_PREPARE_EVENT, onPrepare)
+  }, [])
+
   return (
     <div ref={mobileRef} className="flex items-center flex-1 min-w-0">
-      {/* Desktop */}
       <nav className="hidden md:flex items-center flex-1 min-w-0 gap-1">
-        <Link href="/studio" className={navLinkClass(isActive(pathname, '/studio'), true)}>
+        <Link
+          href="/studio"
+          {...tourAnchorProps(TOUR_ANCHORS.navStudio)}
+          className={navLinkClass(isActive(pathname, '/studio'), true)}
+        >
           智剪工作台
         </Link>
-        <Link href="/library" className={navLinkClass(isActive(pathname, '/library'))}>
+        <Link
+          href="/library"
+          {...tourAnchorProps(TOUR_ANCHORS.navLibrary)}
+          className={navLinkClass(isActive(pathname, '/library'))}
+        >
           素材库
         </Link>
-        <Link href="/process" className={navLinkClass(isActive(pathname, '/process'))}>
+        <Link
+          href="/process"
+          {...tourAnchorProps(TOUR_ANCHORS.navProcess)}
+          className={navLinkClass(isActive(pathname, '/process'))}
+        >
           素材处理
         </Link>
         <Link href="/search" className={navLinkClass(isActive(pathname, '/search'))}>
@@ -118,7 +144,11 @@ export default function TopNav() {
               指引
             </span>
           </button>
-          <Link href="/settings" className={navLinkClass(isActive(pathname, '/settings'))}>
+          <Link
+            href="/settings"
+            {...tourAnchorProps(TOUR_ANCHORS.navSettings)}
+            className={navLinkClass(isActive(pathname, '/settings'))}
+          >
             设置
           </Link>
           <Link href="/license" className={navLinkClass(isActive(pathname, '/license'))}>
@@ -133,7 +163,6 @@ export default function TopNav() {
         </div>
       </nav>
 
-      {/* Mobile toggle */}
       <div className="md:hidden flex items-center flex-1 justify-end">
         <button
           type="button"
@@ -145,7 +174,6 @@ export default function TopNav() {
         </button>
       </div>
 
-      {/* Mobile panel */}
       {mobileOpen ? (
         <div className="md:hidden absolute top-12 inset-x-0 border-b border-slate-800 bg-[#0d0f14]/98 backdrop-blur-md shadow-lg shadow-black/30 z-40">
           <div className="px-4 py-3 space-y-4 max-h-[calc(100vh-3rem)] overflow-y-auto styled-scrollbar">
@@ -171,10 +199,12 @@ export default function TopNav() {
                   {section.items.map((item) => {
                     const active = isActive(pathname, item.href)
                     const accent = item.href === '/studio'
+                    const tour = 'tour' in item ? item.tour : undefined
                     return (
                       <Link
                         key={item.href}
                         href={item.href}
+                        {...(tour ? tourAnchorProps(tour) : {})}
                         className={clsx(
                           'block rounded-md px-3 py-2 text-sm transition-colors',
                           accent

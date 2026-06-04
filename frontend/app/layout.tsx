@@ -31,10 +31,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ToastProvider>
           <ConfirmProvider>
             <div className="pt-12 flex-1">
-              <LicenseGate>
-                {children}
-                <OnboardingGuide />
-              </LicenseGate>
+              <LicenseGate>{children}</LicenseGate>
+              <OnboardingGuide />
             </div>
             <footer className="border-t border-slate-800 bg-[#0d0f14]">
               <div className="max-w-6xl mx-auto px-6 py-4 text-xs text-slate-400 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">

@@ -285,7 +285,7 @@ export default function SettingsPage() {
                 <div id="vlm" className="scroll-mt-28">
                   <VlmSection {...sharedProps} vlmProvider={vlmProvider} onApplyProvider={applyVlmProvider} />
                 </div>
-                <div id="llm" className="scroll-mt-28">
+                <div id="llm" data-tour="page-settings-llm" className="scroll-mt-28">
                   <LlmSection {...sharedProps} llmProvider={llmProvider} onApplyProvider={applyLlmProvider} />
                 </div>
                 <div id="embedding" className="scroll-mt-28">

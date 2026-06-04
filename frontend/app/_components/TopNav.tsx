@@ -18,7 +18,7 @@ const audioItems: NavDropdownItem[] = [
 ]
 
 const moreItems: NavDropdownItem[] = [
-  { href: '/search', label: '素材检索', description: '语义搜索片段' },
+  
   { href: '/about', label: '关于与支持' },
   { href: '/logs', label: '日志' },
 ]
@@ -30,6 +30,7 @@ const mobileSections = [
       { href: '/studio', label: '智剪工作台' },
       { href: '/library', label: '素材库', description: '上传、管理、预览' },
       { href: '/process', label: '素材处理', description: '切分与多模态分析' },
+      { href: '/search', label: '素材检索', description: '语义搜索片段' },
       { href: '/settings', label: '设置' },
       { href: '/license', label: '卡密' },
     ],
@@ -92,6 +93,9 @@ export default function TopNav() {
         </Link>
         <Link href="/process" className={navLinkClass(isActive(pathname, '/process'))}>
           素材处理
+        </Link>
+        <Link href="/search" className={navLinkClass(isActive(pathname, '/search'))}>
+          素材检索
         </Link>
         <NavDropdown label="剪辑" items={editItems} active={groupActive(pathname, editItems)} />
         <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />

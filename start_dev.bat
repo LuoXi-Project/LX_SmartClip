@@ -160,11 +160,9 @@ echo.
 
 echo [3/5] 准备后端 Python 环境...
 
-if not exist "backend\venv\Scripts\python.exe" (
+if not exist "venv\Scripts\python.exe" (
 
-    echo   创建虚拟环境 backend\venv ...
-
-    pushd "backend"
+    echo   创建虚拟环境 venv ...
 
     python -m venv venv
 
@@ -172,19 +170,13 @@ if not exist "backend\venv\Scripts\python.exe" (
 
         echo [错误] 创建 venv 失败，请检查 Python 安装。
 
-        popd
-
         goto :fail
 
     )
 
-    popd
-
 )
 
 
-
-pushd "backend"
 
 "venv\Scripts\python.exe" -m pip install --upgrade pip -q
 
@@ -192,27 +184,21 @@ if errorlevel 1 (
 
     echo [错误] pip 升级失败。
 
-    popd
-
     goto :fail
 
 )
 
 echo   安装/同步 backend\requirements.txt ...
 
-"venv\Scripts\python.exe" -m pip install -r requirements.txt
+"venv\Scripts\python.exe" -m pip install -r backend\requirements.txt
 
 if errorlevel 1 (
 
     echo [错误] 后端依赖安装失败。
 
-    popd
-
     goto :fail
 
 )
-
-popd
 
 echo   后端依赖已就绪
 
@@ -292,7 +278,7 @@ echo.
 
 
 
-start "LX Backend" cmd /k "cd /d ""%~dp0backend"" && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 127.0.0.1 --port %BACKEND_PORT%"
+start "LX Backend" cmd /k "call ""%~dp0venv\Scripts\activate.bat"" && cd /d ""%~dp0backend"" && uvicorn app.main:app --reload --host 127.0.0.1 --port %BACKEND_PORT%"
 
 
 

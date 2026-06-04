@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Noto_Sans_SC, JetBrains_Mono } from 'next/font/google'
 import {
@@ -19,8 +20,16 @@ import {
 import { useAppStore } from '@/lib/store'
 import logoPng from '../logo.png'
 import apiClient from '@/lib/api'
-import { HomeCanvas } from './_components/home/HomeCanvas'
+import { useHomeGsap } from './_components/home/useHomeGsap'
 import './_components/home/home.css'
+
+const HomeScene3D = dynamic(
+  () => import('./_components/home/HomeScene3D').then((m) => ({ default: m.HomeScene3D })),
+  {
+    ssr: false,
+    loading: () => <div className="absolute inset-0 bg-[#030712]" aria-hidden />,
+  },
+)
 
 const noto = Noto_Sans_SC({
   subsets: ['latin'],
@@ -33,6 +42,8 @@ const mono = JetBrains_Mono({
   weight: ['400', '500'],
   display: 'swap',
 })
+
+const TITLE = '洛曦智剪'
 
 const PIPELINE = [
   '批量素材入库',
@@ -97,6 +108,9 @@ const FEATURES = [
 export default function Home() {
   const { backendStatus, setBackendStatus } = useAppStore()
   const [loading, setLoading] = useState(true)
+  const mainRef = useRef<HTMLElement>(null)
+
+  useHomeGsap(mainRef)
 
   useEffect(() => {
     const checkBackendHealth = async () => {
@@ -131,23 +145,22 @@ export default function Home() {
 
   return (
     <main
+      ref={mainRef}
       className={`${noto.className} relative min-h-full overflow-hidden bg-[#030712] text-slate-200`}
     >
-      {/* Ambient layers */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="home-float absolute -left-32 top-1/4 h-[420px] w-[420px] rounded-full bg-cyan-500/10 blur-[100px]" />
-        <div className="home-float home-float-delay absolute -right-24 top-1/3 h-[380px] w-[380px] rounded-full bg-violet-600/12 blur-[110px]" />
-        <div className="absolute bottom-0 left-1/2 h-[300px] w-[600px] -translate-x-1/2 rounded-full bg-indigo-600/8 blur-[120px]" />
+      <HomeScene3D />
+
+      <div className="pointer-events-none absolute inset-0 z-[1]">
+        <div className="home-float absolute -left-32 top-1/4 h-[420px] w-[420px] rounded-full bg-cyan-500/8 blur-[100px]" />
+        <div className="home-float home-float-delay absolute -right-24 top-1/3 h-[380px] w-[380px] rounded-full bg-violet-600/10 blur-[110px]" />
       </div>
 
-      <HomeCanvas />
-      <div className="home-scanlines absolute inset-0 z-[1] opacity-30" aria-hidden />
-      <div className="home-vignette absolute inset-0 z-[2]" aria-hidden />
+      <div className="home-scanlines absolute inset-0 z-[2] opacity-25" aria-hidden />
+      <div className="home-vignette absolute inset-0 z-[3]" aria-hidden />
 
       <div className="relative z-10">
-        {/* Hero */}
-        <section className="relative flex min-h-[min(88vh,820px)] flex-col items-center justify-center px-4 pb-8 pt-20 sm:pt-24">
-          <div className="home-hero-in mb-8 flex justify-center">
+        <section className="relative flex min-h-[min(92vh,860px)] flex-col items-center justify-center px-4 pb-8 pt-20 sm:pt-24">
+          <div data-hero="logo" className="mb-8 flex justify-center">
             <div className="home-logo-ring relative rounded-full p-1">
               <img
                 src={logoPng.src ?? logoPng}
@@ -166,28 +179,48 @@ export default function Home() {
           </div>
 
           <p
-            className={`${mono.className} home-hero-in home-hero-in-delay-1 mb-4 text-[11px] uppercase tracking-[0.35em] text-cyan-400/80`}
+            data-hero="tag"
+            className={`${mono.className} mb-4 text-[11px] uppercase tracking-[0.35em] text-cyan-400/80`}
           >
-            LX AI · Smart Clip
+            Deep Space · Cosmos Engine
           </p>
 
-          <h1 className="home-hero-in home-hero-in-delay-2 mb-5 text-center text-5xl font-black tracking-tight sm:text-6xl md:text-7xl">
-            <span className="home-title-shimmer bg-gradient-to-r from-cyan-300 via-white to-violet-300 bg-clip-text text-transparent">
-              洛曦智剪
-            </span>
+          <h1
+            data-hero="title"
+            className="mb-5 flex justify-center gap-0.5 text-center text-5xl font-black tracking-tight sm:text-6xl md:text-7xl"
+            style={{ perspective: '900px' }}
+          >
+            {TITLE.split('').map((char, i) => (
+              <span
+                key={`${char}-${i}`}
+                data-hero="title-char"
+                className="home-title-shimmer inline-block bg-gradient-to-r from-cyan-300 via-white to-violet-300 bg-clip-text text-transparent"
+                style={{ transformStyle: 'preserve-3d' }}
+              >
+                {char}
+              </span>
+            ))}
           </h1>
 
-          <p className="home-hero-in home-hero-in-delay-3 max-w-2xl text-center text-lg font-light text-slate-300 sm:text-xl">
+          <p
+            data-hero="sub"
+            className="max-w-2xl text-center text-lg font-light text-slate-300 sm:text-xl"
+          >
             本地轻量化 AI 智能素材匹配剪辑工具
           </p>
 
-          <p className="home-hero-in home-hero-in-delay-4 mt-3 max-w-3xl text-center text-sm text-slate-500 sm:text-base">
+          <p
+            data-hero="desc"
+            className="mt-3 max-w-3xl text-center text-sm text-slate-500 sm:text-base"
+          >
             从素材入库到工程导出，全流程在本地完成 — 隐私可控、响应迅速
           </p>
 
-          <div className="home-hero-in home-hero-in-delay-5 mt-10 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
             <Link
               href="/studio"
+              data-hero="cta"
+              data-magnetic
               className="home-cta-primary group inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-600 via-violet-600 to-indigo-600 px-8 py-3.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 transition-shadow hover:shadow-cyan-500/35"
             >
               <Sparkles className="h-4 w-4" />
@@ -196,14 +229,18 @@ export default function Home() {
             </Link>
             <Link
               href="/library"
+              data-hero="cta"
+              data-magnetic
               className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-8 py-3.5 text-sm font-medium text-slate-200 backdrop-blur-md transition-all hover:border-cyan-500/40 hover:bg-white/10"
             >
               素材库
             </Link>
           </div>
 
-          {/* Pipeline marquee */}
-          <div className="home-hero-in home-hero-in-delay-6 relative mt-16 w-full max-w-4xl overflow-hidden">
+          <div
+            data-hero="pipeline"
+            className="relative mt-16 w-full max-w-4xl overflow-hidden"
+          >
             <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#030712] to-transparent" />
             <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#030712] to-transparent" />
             <div className="flex animate-home-marquee whitespace-nowrap">
@@ -221,9 +258,8 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Status */}
-        <section className="mx-auto max-w-md px-4 pb-14">
-          <div className="home-hero-in home-hero-in-delay-6 home-status-border rounded-2xl p-[1px]">
+        <section data-section="status" className="mx-auto max-w-md px-4 pb-14">
+          <div className="home-status-border rounded-2xl p-[1px]">
             <div className="rounded-2xl bg-slate-950/80 p-6 backdrop-blur-xl">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
@@ -259,11 +295,10 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Features */}
-        <section className="mx-auto max-w-6xl px-4 pb-24">
-          <div className="mb-10 text-center">
+        <section data-section="features" className="mx-auto max-w-6xl px-4 pb-24">
+          <div data-section="features-header" className="mb-10 text-center">
             <p className={`${mono.className} text-xs uppercase tracking-[0.3em] text-slate-500`}>
-              Capabilities
+              Capabilities · Universe
             </p>
             <h2 className="mt-2 text-2xl font-bold text-slate-100 sm:text-3xl">
               全流程能力矩阵
@@ -271,14 +306,15 @@ export default function Home() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-5">
-            {FEATURES.map((feature, idx) => {
+            {FEATURES.map((feature) => {
               const Icon = feature.icon
               return (
                 <Link
                   key={feature.title}
                   href={feature.href}
-                  className="home-card-glow group block rounded-2xl border border-white/[0.06] bg-slate-950/50 p-6 backdrop-blur-md"
-                  style={{ animationDelay: `${0.08 * idx}s` }}
+                  data-feature-card
+                  className="home-card-glow group block rounded-2xl border border-white/[0.06] bg-slate-950/60 p-6 backdrop-blur-md"
+                  style={{ transformStyle: 'preserve-3d' }}
                 >
                   <div
                     className={`mb-4 inline-flex rounded-xl bg-gradient-to-br ${feature.accent} p-3 ring-1 ring-white/5`}
@@ -299,14 +335,15 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Bottom CTA strip */}
-        <section className="border-t border-white/[0.04] bg-slate-950/40 py-16 backdrop-blur-sm">
+        <section
+          data-section="cta-bottom"
+          className="border-t border-white/[0.04] bg-slate-950/50 py-16 backdrop-blur-sm"
+        >
           <div className="mx-auto max-w-3xl px-4 text-center">
-            <p className="text-slate-400">
-              准备好把素材变成成片？
-            </p>
+            <p className="text-slate-400">准备好把素材变成成片？</p>
             <Link
               href="/studio"
+              data-magnetic
               className="home-cta-primary mt-6 inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-10 py-4 text-base font-semibold text-cyan-100 transition-colors hover:bg-cyan-500/20"
             >
               打开智剪工作台

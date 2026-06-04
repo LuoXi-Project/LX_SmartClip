@@ -113,6 +113,70 @@ async def get_task(task_id: str):
         await db.close()
 
 
+def _task_has_live_worker(task_id: str) -> bool:
+    from .process_shared import _job_tasks
+
+    t = _job_tasks.get(task_id)
+    return t is not None and not t.done()
+
+
+async def reconcile_orphan_task(row) -> dict:
+    """进程内已无运行协程但库中仍为 running/pending 时，与视频状态对齐，避免前端永久「处理中」。"""
+    if not row:
+        return {}
+    status = row["status"]
+    if status not in ("running", "pending"):
+        return row_to_task_payload(row)
+
+    task_id = row["id"]
+    if _task_has_live_worker(task_id):
+        return row_to_task_payload(row)
+
+    video = await get_video(row["video_id"])
+    video_status = (video or {}).get("status") if video else None
+
+    if video_status == "done":
+        await update_task_status(task_id, "done")
+        err = None
+    elif video_status == "error":
+        await update_task_status(task_id, "error", error_message="RECONCILED_FROM_VIDEO")
+        err = "RECONCILED_FROM_VIDEO"
+    else:
+        await update_task_status(task_id, "cancelled", error_message="ORPHAN_TASK_NO_WORKER")
+        err = "ORPHAN_TASK_NO_WORKER"
+        if video_status == "processing":
+            await set_video_status(row["video_id"], "pending")
+    logger.warning(
+        "已对齐孤儿任务: task_id=%s video_id=%s video_status=%s -> task reconciled (%s)",
+        task_id,
+        row["video_id"],
+        video_status,
+        err or "done",
+    )
+    refreshed = await get_task(task_id)
+    return row_to_task_payload(refreshed)
+
+
+async def reconcile_all_orphan_tasks_on_startup() -> int:
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM process_tasks WHERE status IN ('running', 'pending')",
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await db.close()
+    n = 0
+    for row in rows:
+        before = row["status"]
+        payload = await reconcile_orphan_task(row)
+        if payload.get("status") != before:
+            n += 1
+    if n:
+        logger.warning("启动时已对齐 %d 个孤儿 process_tasks", n)
+    return n
+
+
 async def get_running_task_for_video(video_id: str):
     db = await get_db_conn()
     try:
@@ -153,34 +217,36 @@ def row_to_task_payload(row) -> dict:
 async def create_task(video_id: str) -> dict:
     running = await get_running_task_for_video(video_id)
     if running:
-        try:
-            updated_raw = running["updated_at"]
-        except Exception:
-            updated_raw = None
-        updated_dt = _parse_iso_dt(updated_raw)
-        if updated_dt is not None:
-            age_sec = (datetime.now(timezone.utc) - updated_dt).total_seconds()
-            if age_sec > STALE_RUNNING_TASK_SEC:
-                now = now_iso()
-                db = await get_db_conn()
-                try:
-                    await db.execute(
-                        "UPDATE process_tasks SET status = 'error', error_message = ?, updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?",
-                        ("STALE_TASK_REPLACED", now, now, running["id"]),
+        reconciled = await reconcile_orphan_task(running)
+        if reconciled.get("status") in ("running", "pending"):
+            try:
+                updated_raw = running["updated_at"]
+            except Exception:
+                updated_raw = None
+            updated_dt = _parse_iso_dt(updated_raw)
+            if updated_dt is not None:
+                age_sec = (datetime.now(timezone.utc) - updated_dt).total_seconds()
+                if age_sec > STALE_RUNNING_TASK_SEC:
+                    now = now_iso()
+                    db = await get_db_conn()
+                    try:
+                        await db.execute(
+                            "UPDATE process_tasks SET status = 'error', error_message = ?, updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?",
+                            ("STALE_TASK_REPLACED", now, now, running["id"]),
+                        )
+                        await db.commit()
+                    finally:
+                        await db.close()
+                    logger.warning(
+                        "检测到僵尸任务并替换: video_id=%s old_task_id=%s age_sec=%.0f",
+                        video_id,
+                        running["id"],
+                        age_sec,
                     )
-                    await db.commit()
-                finally:
-                    await db.close()
-                logger.warning(
-                    "检测到僵尸任务并替换: video_id=%s old_task_id=%s age_sec=%.0f",
-                    video_id,
-                    running["id"],
-                    age_sec,
-                )
+                else:
+                    return reconciled
             else:
-                return row_to_task_payload(running)
-        else:
-            return row_to_task_payload(running)
+                return reconciled
     task_id = str(uuid.uuid4())
     now = now_iso()
     db = await get_db_conn()

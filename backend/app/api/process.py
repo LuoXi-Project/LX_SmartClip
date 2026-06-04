@@ -13,6 +13,7 @@ from .process_db import (
     get_running_task_for_video,
     get_task,
     get_video,
+    reconcile_orphan_task,
     row_to_task_payload,
     set_video_status,
     update_task_status,
@@ -160,7 +161,7 @@ async def get_process_job(task_id: str):
     row = await get_task(task_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"任务 '{task_id}' 不存在")
-    return row_to_task_payload(row)
+    return await reconcile_orphan_task(row)
 
 
 @jobs_router.post("/{task_id}/cancel")

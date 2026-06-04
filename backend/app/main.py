@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import os
 import sys
 from app.db.init_db import init_db
+from app.api.process_db import reconcile_all_orphan_tasks_on_startup
 from app.utils.paths import get_storage_root, iter_storage_static_mount_candidates
 from app.core.blocking_pool import init_blocking_pool, shutdown_blocking_pool
 from app.api.config import router as config_router
@@ -48,6 +49,7 @@ setup_logging(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await reconcile_all_orphan_tasks_on_startup()
     await init_blocking_pool()
     try:
         yield

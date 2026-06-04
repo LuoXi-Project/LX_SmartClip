@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import apiClient, { connectProcessJobWebSocket, processJobsApi, videosApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
+import apiClient, { clipsApi, connectProcessJobWebSocket, processJobsApi, videosApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { VoiceInputControl } from '@/components/ui/voice-input'
@@ -41,6 +41,8 @@ function cardCls(s: StepStatus) {
 
 const PAGE_SIZE = 9
 const ACTIVE_TASK_KEY = 'smartclip:process:activeTask'
+/** WS 断线或漏消息时，轮询任务快照的间隔（毫秒） */
+const TASK_POLL_MS = 3000
 
 export default function ProcessPage() {
   const searchParams = useSearchParams()
@@ -67,7 +69,15 @@ export default function ProcessPage() {
   const [runPreset, setRunPreset] = useState<'full' | 'asr_only'>('full')
   const [activeTaskId, setActiveTaskId] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+
+  const stopTaskPolling = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }
 
   /** 关闭 WS 但不触发旧 handler（避免 replace/unmount 时 onclose 误把 running 置 false） */
   const closeWsQuietly = () => {
@@ -140,6 +150,26 @@ export default function ProcessPage() {
     else localStorage.removeItem(ACTIVE_TASK_KEY)
   }
 
+  const refreshVideoMeta = async (videoId: string, videoStatus?: Video['status']) => {
+    if (!videoId) return
+    try {
+      const clips = await clipsApi.listByVideo(videoId)
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === videoId
+            ? {
+                ...v,
+                total_clips: clips.length,
+                ...(videoStatus ? { status: videoStatus } : {}),
+              }
+            : v,
+        ),
+      )
+    } catch {
+      /* 列表刷新失败不阻断 UI 解锁 */
+    }
+  }
+
   const applyTaskSnapshot = (snapshot: ProcessTaskSnapshot) => {
     const next = blank()
     STEPS.forEach((s) => {
@@ -157,8 +187,66 @@ export default function ProcessPage() {
     setRunning(snapshot.status === 'running' || snapshot.status === 'pending')
   }
 
+  const finishTaskFromSnapshot = (snapshot: ProcessTaskSnapshot) => {
+    applyTaskSnapshot(snapshot)
+    const vid = snapshot.video_id || ''
+    if (snapshot.status === 'done') {
+      setRunning(false)
+      setDone(true)
+      setSteps((p) => {
+        const n = { ...p }
+        STEPS.forEach((s) => {
+          if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} }
+        })
+        return n
+      })
+      stopTaskPolling()
+      persistActiveTask('')
+      void refreshVideoMeta(vid, 'done')
+      return
+    }
+    if (snapshot.status === 'cancelled') {
+      setRunning(false)
+      setDone(false)
+      normalizeRunningStepsAsStopped()
+      stopTaskPolling()
+      persistActiveTask('')
+      void refreshVideoMeta(vid, 'pending')
+      return
+    }
+    if (snapshot.status === 'error') {
+      setRunning(false)
+      stopTaskPolling()
+      persistActiveTask('')
+      void refreshVideoMeta(vid, 'error')
+    }
+  }
+
+  const pollTaskOnce = async (taskId: string) => {
+    try {
+      const snapshot = await processJobsApi.get(taskId)
+      applyTaskSnapshot(snapshot)
+      if (snapshot.status === 'done' || snapshot.status === 'error' || snapshot.status === 'cancelled') {
+        finishTaskFromSnapshot(snapshot)
+      }
+    } catch {
+      stopTaskPolling()
+      persistActiveTask('')
+      setRunning(false)
+    }
+  }
+
+  const startTaskPolling = (taskId: string) => {
+    stopTaskPolling()
+    void pollTaskOnce(taskId)
+    pollTimerRef.current = setInterval(() => {
+      void pollTaskOnce(taskId)
+    }, TASK_POLL_MS)
+  }
+
   const bindTaskSocket = (taskId: string) => {
     closeWsQuietly()
+    startTaskPolling(taskId)
     const ws = connectProcessJobWebSocket(taskId)
     wsRef.current = ws
     ws.onmessage = (e) => {
@@ -166,33 +254,45 @@ export default function ProcessPage() {
         const msg: ProcessMessage = JSON.parse(e.data)
         applyMsg(msg)
         if (msg.step === 'done') {
-          setRunning(false)
           const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
           const m = (msg.detail && typeof msg.detail === 'object' && 'metrics' in msg.detail)
             ? (msg.detail as { metrics?: Record<string, unknown> }).metrics
             : null
           if (m && typeof m === 'object') setFinalMetrics(m)
           if (cancelled) {
+            setRunning(false)
             setDone(false)
             normalizeRunningStepsAsStopped()
+            stopTaskPolling()
             persistActiveTask('')
           } else {
+            setRunning(false)
             setDone(true)
             setSteps((p) => {
               const n = { ...p }
               STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
               return n
             })
+            stopTaskPolling()
             persistActiveTask('')
+            void refreshVideoMeta(selId, 'done')
           }
         }
         if (msg.step === 'error') {
           setRunning(false)
+          stopTaskPolling()
           persistActiveTask('')
         }
       } catch {
         // noop
       }
+    }
+    ws.onclose = () => {
+      wsRef.current = null
+      /* 轮询继续，直到 GET 返回终态 */
+    }
+    ws.onerror = () => {
+      wsRef.current = null
     }
   }
 
@@ -205,13 +305,19 @@ export default function ProcessPage() {
     processJobsApi.get(taskId)
       .then((snapshot) => {
         persistActiveTask(snapshot.id)
+        if (snapshot.status === 'done' || snapshot.status === 'cancelled' || snapshot.status === 'error') {
+          finishTaskFromSnapshot(snapshot)
+          return
+        }
         applyTaskSnapshot(snapshot)
         if (snapshot.status === 'running' || snapshot.status === 'pending') bindTaskSocket(snapshot.id)
-        if (snapshot.status === 'done' || snapshot.status === 'cancelled' || snapshot.status === 'error') persistActiveTask('')
       })
       .catch(() => persistActiveTask(''))
       .finally(() => setTaskHydrated(true))
-    return () => closeWsQuietly()
+    return () => {
+      closeWsQuietly()
+      stopTaskPolling()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -372,10 +478,12 @@ export default function ProcessPage() {
     if (!activeTaskId) return
     void processJobsApi.cancel(activeTaskId).catch(() => {})
     closeWsQuietly()
+    stopTaskPolling()
     persistActiveTask('')
     setRunning(false)
     setDone(false)
     normalizeRunningStepsAsStopped()
+    void refreshVideoMeta(selId, 'pending')
   }
   const selVideo = videos.find((v) => v.id === selId)
   const selectionLocked = running || !!activeTaskId

@@ -5,6 +5,7 @@ import { LicenseGate } from './_components/LicenseGate'
 import { ToastProvider } from '@/components/ui/toast-provider'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 import TopNav from './_components/TopNav'
+import { OnboardingGuide } from './_components/OnboardingGuide'
 
 export const metadata: Metadata = {
   title: '洛曦智剪 - AI智能剪辑工具',
@@ -30,7 +31,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ToastProvider>
           <ConfirmProvider>
             <div className="pt-12 flex-1">
-              <LicenseGate>{children}</LicenseGate>
+              <LicenseGate>
+                {children}
+                <OnboardingGuide />
+              </LicenseGate>
             </div>
             <footer className="border-t border-slate-800 bg-[#0d0f14]">
               <div className="max-w-6xl mx-auto px-6 py-4 text-xs text-slate-400 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">

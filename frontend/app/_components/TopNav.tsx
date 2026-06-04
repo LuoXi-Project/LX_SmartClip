@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Menu, X } from 'lucide-react'
+import { BookOpen, Menu, X } from 'lucide-react'
 import clsx from 'clsx'
 import { NavDropdown, type NavDropdownItem } from '@/components/ui/nav-dropdown'
+import { openOnboardingGuide } from './OnboardingGuide'
 
 const editItems: NavDropdownItem[] = [
   { href: '/match', label: '经典模式', description: '文案素材三级匹配' },
@@ -37,8 +38,10 @@ const mobileSections = [
   },
   { title: '剪辑', items: editItems },
   { title: '音频', items: audioItems },
-  { title: '更多', items: moreItems },
+      { title: '更多', items: moreItems },
 ]
+
+const guideMobileItem = { href: '#guide', label: '新手指引', description: '四步上手：设置 → 素材库 → 处理 → 智剪' }
 
 function isActive(pathname: string, href: string) {
   if (href === '/') return pathname === '/'
@@ -101,6 +104,20 @@ export default function TopNav() {
         <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />
 
         <div className="ml-auto flex items-center gap-1 pl-2">
+          <button
+            type="button"
+            onClick={() => openOnboardingGuide()}
+            className={clsx(
+              'text-sm transition-colors rounded-md px-2.5 py-1.5 border whitespace-nowrap',
+              'text-slate-400 border-transparent hover:text-violet-200 hover:border-violet-500/30 hover:bg-violet-600/10',
+            )}
+            title="查看新手指引"
+          >
+            <span className="inline-flex items-center gap-1">
+              <BookOpen className="w-3.5 h-3.5" />
+              指引
+            </span>
+          </button>
           <Link href="/settings" className={navLinkClass(isActive(pathname, '/settings'))}>
             设置
           </Link>
@@ -138,6 +155,19 @@ export default function TopNav() {
                   {section.title}
                 </p>
                 <div className="space-y-0.5">
+                  {section.title === '常用' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileOpen(false)
+                        openOnboardingGuide()
+                      }}
+                      className="w-full text-left block rounded-md px-3 py-2 text-sm text-violet-200 hover:bg-violet-600/15 transition-colors"
+                    >
+                      {guideMobileItem.label}
+                      <span className="block text-xs text-slate-500 mt-0.5">{guideMobileItem.description}</span>
+                    </button>
+                  ) : null}
                   {section.items.map((item) => {
                     const active = isActive(pathname, item.href)
                     const accent = item.href === '/studio'

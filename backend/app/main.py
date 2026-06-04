@@ -38,6 +38,7 @@ from app.api.film_commentary import router as film_commentary_router
 from app.api.agent import router as agent_router
 from app.api.license import router as license_router
 from app.api.logs import router as logs_router
+from app.api.ui import router as ui_router
 from app.middleware.license_middleware import LicenseMiddleware
 
 
@@ -68,6 +69,7 @@ app.add_middleware(
 )
 
 app.include_router(license_router)
+app.include_router(ui_router)
 app.include_router(config_router)
 app.include_router(videos_router)
 app.include_router(clips_router)

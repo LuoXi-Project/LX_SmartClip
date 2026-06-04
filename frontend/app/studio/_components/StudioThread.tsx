@@ -9,6 +9,7 @@ import { ExportResultPanel } from './ExportResultPanel'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { applyRollbackResult, refreshStudioMessagesInStore } from '@/lib/studio-load-session'
+import { idleReasonMessage, isExportLikeMessage } from '@/lib/studio-action-intent'
 
 export function StudioThread() {
   const confirm = useConfirm()
@@ -29,6 +30,8 @@ export function StudioThread() {
     setWorkspace,
     setPendingConfirm,
     setSelectedArtifact,
+    lastSuggestions,
+    setLastSuggestions,
   } = useStudioStore()
 
   useEffect(() => {
@@ -42,6 +45,9 @@ export function StudioThread() {
       setError(null)
       const asstId = genId()
       let asstText = ''
+      let hadToolStart = false
+      let hadConfirm = false
+      const userIntentExport = isExportLikeMessage(body.message)
       addMessage({ id: asstId, type: 'assistant', content: '' })
 
       const ctrl = new AbortController()
@@ -49,9 +55,18 @@ export function StudioThread() {
 
       await streamAgentChat(sessionId, body, {
         signal: ctrl.signal,
-        onError: (err) => setError(err.message),
+        onError: (err) => {
+          const msg = err.message || '请求失败'
+          setError(msg)
+          toast.error(msg)
+        },
         onEvent: (event, data) => {
           const d = data as Record<string, unknown>
+          if (event === 'error') {
+            const msg = String(d.detail || d.message || '服务端错误')
+            setError(msg)
+            toast.error(msg)
+          }
           if (event === 'user_message' && typeof d.id === 'string') {
             const localId = [...useStudioStore.getState().messages]
               .reverse()
@@ -67,7 +82,12 @@ export function StudioThread() {
               addMessage({ id: genId(), type: 'artifact', artifact: art })
             }
           }
+          if (event === 'suggestions') {
+            const items = (d.items as string[]) || []
+            if (items.length) setLastSuggestions(items)
+          }
           if (event === 'tool_start') {
+            hadToolStart = true
             addMessage({
               id: String(d.call_id || genId()),
               type: 'tool',
@@ -100,6 +120,7 @@ export function StudioThread() {
             })
           }
           if (event === 'confirm_required') {
+            hadConfirm = true
             setPendingConfirm({
               callId: String(d.call_id),
               tool: String(d.tool),
@@ -117,6 +138,16 @@ export function StudioThread() {
           }
           if (event === 'done') {
             if (d.pending_confirm) return
+            const idleMsg = idleReasonMessage(d)
+            if (idleMsg) {
+              setError(idleMsg)
+              toast.error(idleMsg)
+            } else if (userIntentExport && !hadToolStart && !hadConfirm) {
+              const hint =
+                '导出指令未触发成片任务。请确认已有方案，或点击中间方案区的「一键成片」；也可再说「导出成片」。'
+              setError(hint)
+              toast.error(hint)
+            }
           }
         },
       })
@@ -142,7 +173,19 @@ export function StudioThread() {
       setWorkspace,
       setPendingConfirm,
       setSelectedArtifact,
+      setLastSuggestions,
+      toast,
     ]
+  )
+
+  const quickSend = useCallback(
+    async (text: string) => {
+      if (!sessionId || streaming) return
+      setInput('')
+      addMessage({ id: genId(), type: 'user', content: text })
+      await handleStream({ message: text })
+    },
+    [sessionId, streaming, setInput, addMessage, handleStream]
   )
 
   const send = async () => {
@@ -217,10 +260,15 @@ export function StudioThread() {
             onRollbackToMessage={rollbackToMessage}
           />
         ))}
+        {lastSuggestions.length > 0 && !streaming && (
+          <SuggestionChips items={lastSuggestions} disabled={streaming} onPick={(t) => void quickSend(t)} />
+        )}
         <div ref={bottomRef} />
       </div>
       {useStudioStore.getState().error && (
-        <div className="shrink-0 px-4 pb-1 text-xs text-red-400">{useStudioStore.getState().error}</div>
+        <div className="shrink-0 px-4 pb-2 text-xs text-red-400/95 bg-red-500/10 border border-red-500/20 rounded-lg mx-3">
+          {useStudioStore.getState().error}
+        </div>
       )}
       <div className="shrink-0 p-3 border-t border-slate-800" data-tour="page-studio-input">
         <div className="flex gap-2 items-end">
@@ -306,14 +354,16 @@ function MessageRow({
   }
   if (msg.type === 'confirm') {
     return (
-      <div className="text-xs border border-amber-500/40 bg-amber-500/10 rounded-lg p-3 mr-4">
-        <p className="text-amber-200 mb-2">{msg.preview}</p>
+      <div className="text-sm border border-amber-500/50 bg-amber-500/15 rounded-lg p-3 mr-4 space-y-2">
+        <p className="text-amber-100 font-medium">需要你的确认</p>
+        <p className="text-amber-200/90 text-xs leading-relaxed">{msg.preview}</p>
         <button
           type="button"
+          disabled={streaming}
           onClick={onApproveConfirm}
-          className="px-2 py-1 rounded bg-amber-600 text-slate-900 text-xs font-medium"
+          className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-semibold disabled:opacity-40"
         >
-          确认执行 ({msg.tool})
+          确认执行 · {msg.tool}
         </button>
       </div>
     )
@@ -333,4 +383,33 @@ function MessageRow({
     )
   }
   return null
+}
+
+function SuggestionChips({
+  items,
+  disabled,
+  onPick,
+}: {
+  items: string[]
+  disabled: boolean
+  onPick: (text: string) => void
+}) {
+  const unique = [...new Set(items.map((s) => s.trim()).filter(Boolean))]
+  if (!unique.length) return null
+  return (
+    <div className="flex flex-col gap-1.5 mr-4">
+      <p className="text-[10px] text-slate-500 px-1">快捷操作</p>
+      {unique.map((label) => (
+        <button
+          key={label}
+          type="button"
+          disabled={disabled}
+          onClick={() => onPick(label)}
+          className="text-left text-sm text-slate-200 bg-slate-800/80 border border-slate-600 hover:border-violet-500/50 rounded-lg px-3 py-2 disabled:opacity-40 transition-colors"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
 }

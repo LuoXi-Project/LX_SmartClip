@@ -10,6 +10,7 @@ import aiosqlite
 
 from app.agent import session_store
 from app.agent.context_builder import build_workspace_summary
+from app.agent.export_intent import ExportIntent, detect_export_intent
 from app.agent.planner import build_task_plan
 from app.agent.prompts.executor import EXECUTOR_SYSTEM
 from app.agent.intent_preflight import run_intent_preflight
@@ -122,6 +123,165 @@ async def _maybe_autotitle(session_id: str, user_message: str, ws) -> None:
         await session_store.update_session_title(session_id, snippet)
 
 
+def _plan_title(ctx: AgentContext, plan_id: str) -> str:
+    raw = next((p for p in ctx.workspace.plans if str(p.get("plan_id")) == plan_id), None)
+    if not raw:
+        return plan_id
+    return str(raw.get("title") or plan_id)
+
+
+def _confirm_preview(tool_name: str, args: dict[str, Any], ctx: AgentContext) -> str:
+    plan_id = str(args.get("plan_id") or ctx.workspace.active_plan_id or "").strip()
+    title = _plan_title(ctx, plan_id) if plan_id else "当前方案"
+    if tool_name == "realize_plan":
+        tts = "（TTS 配音）" if args.get("force_tts_pipeline") else ""
+        return f"将按方案「{title}」渲染成片{tts}，含字幕与混音，预计耗时数分钟。"
+    if tool_name == "export_jianying_draft":
+        return f"将方案「{title}」导出为剪映草稿（ZIP 或写入剪映目录）。"
+    if tool_name == "start_process_job":
+        return "将开始处理选中素材（抽帧/ASR/向量等），耗时较长。"
+    return f"将执行 {tool_name}"
+
+
+def _export_prerequisite_error(intent: ExportIntent, ws) -> str | None:
+    if not ws.plans:
+        return "当前还没有剪辑方案。请先说剪辑诉求让我生成方案，例如：「用选中素材做 60 秒口播方案」。"
+    plan_id = (ws.active_plan_id or "").strip()
+    if not plan_id and ws.plans:
+        plan_id = str(ws.plans[0].get("plan_id") or "")
+    if not plan_id:
+        return "未找到可用方案 ID，请重新生成方案后再试。"
+    if intent.kind in ("realize", "tts_realize", "jianying"):
+        if not any(str(p.get("plan_id")) == plan_id for p in ws.plans):
+            return f"方案 {plan_id} 不存在，请重新生成或选中方案。"
+    return None
+
+
+def _build_export_tool_call(intent: ExportIntent, ws) -> tuple[str, dict[str, Any]]:
+    plan_id = str(ws.active_plan_id or (ws.plans[0].get("plan_id") if ws.plans else "") or "")
+    if intent.kind == "jianying":
+        return "export_jianying_draft", {
+            "plan_id": plan_id,
+            "force_tts_pipeline": intent.force_tts_pipeline,
+        }
+    return "realize_plan", {
+        "plan_id": plan_id,
+        "force_tts_pipeline": intent.force_tts_pipeline,
+    }
+
+
+async def _finish_tool_result(
+    session_id: str,
+    *,
+    call_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    result: ToolResult,
+) -> AsyncIterator[bytes]:
+    payload: dict[str, Any] = {
+        "call_id": call_id,
+        "ok": result.ok,
+        "summary": result.summary,
+    }
+    if result.artifact:
+        art = result.artifact.model_dump()
+        payload["artifact"] = art
+        yield _sse("artifact", art)
+        await _persist_artifact_message(session_id, art)
+    if result.error:
+        payload["error"] = result.error
+    if result.next_suggestions:
+        payload["suggestions"] = result.next_suggestions
+        yield _sse("suggestions", {"items": result.next_suggestions})
+    await _persist_tool_message(
+        session_id,
+        call_id=call_id,
+        name=tool_name,
+        status="done" if result.ok else "failed",
+        summary=result.summary or result.error or "",
+        input_data=args,
+    )
+    yield _sse("tool_end", payload)
+    yield _sse(
+        "message_delta",
+        {"content": result.summary if result.ok else f"操作失败：{result.error}"},
+    )
+
+
+async def _dispatch_tool(
+    *,
+    session_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    ctx: AgentContext,
+    call_id: str | None = None,
+) -> AsyncIterator[bytes]:
+    """执行工具；L2/L3 则暂停并等待用户确认。"""
+    spec = REGISTRY.get(tool_name)
+    if not spec:
+        yield _sse("error", {"detail": f"未知工具 {tool_name}"})
+        yield _sse("done", {"idle_reason": "unknown_tool"})
+        return
+
+    cid = call_id or str(uuid.uuid4())
+    if needs_confirm(spec, ctx):
+        preview = _confirm_preview(tool_name, args, ctx)
+        await session_store.save_pending_confirm(
+            call_id=cid,
+            session_id=session_id,
+            tool_name=tool_name,
+            input_json=args,
+            risk=spec.risk,
+        )
+        yield _sse(
+            "confirm_required",
+            {
+                "call_id": cid,
+                "tool": tool_name,
+                "input": args,
+                "risk": spec.risk,
+                "preview": preview,
+            },
+        )
+        yield _sse("message_delta", {"content": f"需要确认：{preview}\n请点击下方「确认执行」继续。"})
+        yield _sse("done", {"pending_confirm": cid})
+        return
+
+    yield _sse("tool_start", {"call_id": cid, "name": tool_name, "input": args})
+    await _maybe_checkpoint(session_id, tool_name)
+    result = await invoke(tool_name, args, ctx)
+    await _apply_tool_result(session_id, result, ctx)
+    async for chunk in _finish_tool_result(
+        session_id, call_id=cid, tool_name=tool_name, args=args, result=result
+    ):
+        yield chunk
+    yield _sse("done", {})
+
+
+async def _handle_export_intent(
+    session_id: str,
+    intent: ExportIntent,
+    ctx: AgentContext,
+) -> AsyncIterator[bytes]:
+    err = _export_prerequisite_error(intent, ctx.workspace)
+    if err:
+        yield _sse("message_delta", {"content": err})
+        await session_store.persist_studio_message(
+            session_id, {"studio_type": "assistant", "text": err}
+        )
+        yield _sse("done", {"idle_reason": "missing_prerequisite", "detail": err})
+        return
+
+    tool_name, args = _build_export_tool_call(intent, ctx.workspace)
+    async for chunk in _dispatch_tool(
+        session_id=session_id,
+        tool_name=tool_name,
+        args=args,
+        ctx=ctx,
+    ):
+        yield chunk
+
+
 async def _run_confirmed_tool(
     *,
     session_id: str,
@@ -140,31 +300,14 @@ async def _run_confirmed_tool(
     await _maybe_checkpoint(session_id, tool_name)
     result = await invoke(tool_name, args, ctx)
     await _apply_tool_result(session_id, result, ctx)
-    payload: dict[str, Any] = {
-        "call_id": call_id,
-        "ok": result.ok,
-        "summary": result.summary,
-    }
-    if result.artifact:
-        payload["artifact"] = result.artifact.model_dump()
-        art = result.artifact.model_dump()
-        yield _sse("artifact", art)
-        await _persist_artifact_message(session_id, art)
-    if result.error:
-        payload["error"] = result.error
-    await _persist_tool_message(
+    async for chunk in _finish_tool_result(
         session_id,
         call_id=call_id,
-        name=tool_name,
-        status="done" if result.ok else "failed",
-        summary=result.summary or result.error or "",
-        input_data=args,
-    )
-    yield _sse("tool_end", payload)
-    yield _sse(
-        "message_delta",
-        {"content": result.summary if result.ok else f"操作失败：{result.error}"},
-    )
+        tool_name=tool_name,
+        args=args,
+        result=result,
+    ):
+        yield chunk
     yield _sse("done", {})
 
 
@@ -236,6 +379,12 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
             yield chunk
         return
 
+    export_intent = detect_export_intent(req.message)
+    if export_intent:
+        async for chunk in _handle_export_intent(session_id, export_intent, ctx):
+            yield chunk
+        return
+
     route_out = await classify_route(user_message=req.message, workspace_summary=summary)
     yield _sse("route", route_out.model_dump())
 
@@ -276,106 +425,134 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
 
     tools = get_openai_tools()
 
-    for round_idx in range(MAX_TOOL_ROUNDS):
-        resp = await client.chat.completions.create(
-            model=cfg["model"],
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=cfg.get("temperature", 0.5),
-            max_tokens=cfg.get("max_tokens", 4096),
-        )
-        choice = resp.choices[0]
-        msg = choice.message
-
-        if msg.content:
-            for evt, payload in _emit_content_chunks(msg.content):
-                yield _sse(evt, payload)
-
-        tool_calls = msg.tool_calls or []
-        if not tool_calls:
-            final_text = msg.content or ""
-            await session_store.persist_studio_message(
-                session_id,
-                {"studio_type": "assistant", "text": final_text},
-            )
-            yield _sse("done", {"rounds_used": round_idx})
-            return
-
-        messages.append(msg.model_dump())
-
-        for tc in tool_calls:
-            fn = tc.function
-            name = fn.name or ""
+    try:
+        for round_idx in range(MAX_TOOL_ROUNDS):
             try:
-                args = json.loads(fn.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-
-            spec: ToolSpec | None = REGISTRY.get(name)
-            call_id = tc.id or str(uuid.uuid4())
-
-            if spec and needs_confirm(spec, ctx):
-                await session_store.save_pending_confirm(
-                    call_id=call_id,
-                    session_id=session_id,
-                    tool_name=name,
-                    input_json=args,
-                    risk=spec.risk,
+                resp = await client.chat.completions.create(
+                    model=cfg["model"],
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=cfg.get("temperature", 0.5),
+                    max_tokens=cfg.get("max_tokens", 4096),
                 )
-                yield _sse(
-                    "confirm_required",
-                    {
-                        "call_id": call_id,
-                        "tool": name,
-                        "input": args,
-                        "risk": spec.risk,
-                        "preview": f"将执行 {name}",
-                    },
+            except Exception as e:
+                logger.exception("executor LLM call failed")
+                detail = f"模型调用失败：{e}。请检查「设置」中的 LLM API 地址、密钥与模型名。"
+                yield _sse("error", {"detail": detail})
+                yield _sse("message_delta", {"content": detail})
+                await session_store.persist_studio_message(
+                    session_id, {"studio_type": "assistant", "text": detail}
                 )
-                yield _sse("done", {"pending_confirm": call_id})
+                yield _sse("done", {"idle_reason": "llm_error"})
                 return
 
-            yield _sse("tool_start", {"call_id": call_id, "name": name, "input": args, "round": round_idx + 1})
-            await _maybe_checkpoint(session_id, name)
-            result = await invoke(name, args, ctx)
-            await _apply_tool_result(session_id, result, ctx)
+            choice = resp.choices[0]
+            msg = choice.message
 
-            end_payload: dict[str, Any] = {
-                "call_id": call_id,
-                "ok": result.ok,
-                "summary": result.summary,
-            }
-            if result.artifact:
-                art = result.artifact.model_dump()
-                end_payload["artifact"] = art
-                yield _sse("artifact", art)
-                await _persist_artifact_message(session_id, art)
-            if result.error:
-                end_payload["error"] = result.error
-            await _persist_tool_message(
-                session_id,
-                call_id=call_id,
-                name=name,
-                status="done" if result.ok else "failed",
-                summary=result.summary or result.error or "",
-                input_data=args,
-            )
-            yield _sse("tool_end", end_payload)
+            if msg.content:
+                for evt, payload in _emit_content_chunks(msg.content):
+                    yield _sse(evt, payload)
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": json.dumps(
-                        result.model_dump(),
-                        ensure_ascii=False,
-                    ),
-                }
-            )
+            tool_calls = msg.tool_calls or []
+            if not tool_calls:
+                final_text = msg.content or ""
+                await session_store.persist_studio_message(
+                    session_id,
+                    {"studio_type": "assistant", "text": final_text},
+                )
+                done_payload: dict[str, Any] = {"rounds_used": round_idx}
+                if detect_export_intent(req.message) and not final_text.strip():
+                    hint = (
+                        "已收到导出指令，但助手未执行工具。"
+                        "请再说「导出成片」或点击方案区「一键成片」；"
+                        "若需 Agent 导出，请确认 LLM 配置正常。"
+                    )
+                    done_payload["idle_reason"] = "no_tool_for_export_intent"
+                    done_payload["detail"] = hint
+                    yield _sse("message_delta", {"content": hint})
+                elif detect_export_intent(req.message):
+                    done_payload["idle_reason"] = "model_text_only"
+                    done_payload["detail"] = (
+                        "助手仅回复了文字，未调用成片工具。"
+                        "请再说「导出成片」或使用右侧方案区的「一键成片」。"
+                    )
+                yield _sse("done", done_payload)
+                return
 
-        if choice.finish_reason == "stop":
-            break
+            messages.append(msg.model_dump())
+
+            for tc in tool_calls:
+                fn = tc.function
+                name = fn.name or ""
+                try:
+                    args = json.loads(fn.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+
+                call_id = tc.id or str(uuid.uuid4())
+                spec = REGISTRY.get(name)
+                if spec and needs_confirm(spec, ctx):
+                    preview = _confirm_preview(name, args, ctx)
+                    await session_store.save_pending_confirm(
+                        call_id=call_id,
+                        session_id=session_id,
+                        tool_name=name,
+                        input_json=args,
+                        risk=spec.risk,
+                    )
+                    yield _sse(
+                        "confirm_required",
+                        {
+                            "call_id": call_id,
+                            "tool": name,
+                            "input": args,
+                            "risk": spec.risk,
+                            "preview": preview,
+                        },
+                    )
+                    yield _sse(
+                        "message_delta",
+                        {"content": f"需要确认：{preview}\n请点击下方「确认执行」继续。"},
+                    )
+                    yield _sse("done", {"pending_confirm": call_id})
+                    return
+
+                yield _sse(
+                    "tool_start",
+                    {"call_id": call_id, "name": name, "input": args, "round": round_idx + 1},
+                )
+                await _maybe_checkpoint(session_id, name)
+                result = await invoke(name, args, ctx)
+                await _apply_tool_result(session_id, result, ctx)
+                async for chunk in _finish_tool_result(
+                    session_id,
+                    call_id=call_id,
+                    tool_name=name,
+                    args=args,
+                    result=result,
+                ):
+                    yield chunk
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": json.dumps(
+                            result.model_dump(),
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+
+            if choice.finish_reason == "stop":
+                break
+    except Exception as e:
+        logger.exception("executor loop failed")
+        detail = f"对话执行异常：{e}"
+        yield _sse("error", {"detail": detail})
+        yield _sse("done", {"idle_reason": "executor_error"})
+        return
 
     limit_msg = (
         f"\n\n（已达 {MAX_TOOL_ROUNDS} 轮工具调用上限；如需继续请补充说明或指定下一步。）"

@@ -18,6 +18,7 @@ interface StudioStore {
   pendingConfirm: PendingConfirm | null
   selectedArtifact: ArtifactRef | null
   error: string | null
+  lastSuggestions: string[]
   inspectorTab: InspectorTabId
 
   setSession: (sessionId: string, workspace: WorkspaceState) => void
@@ -32,6 +33,7 @@ interface StudioStore {
   setPendingConfirm: (c: PendingConfirm | null) => void
   setSelectedArtifact: (a: ArtifactRef | null) => void
   setError: (e: string | null) => void
+  setLastSuggestions: (items: string[]) => void
   setInspectorTab: (tab: InspectorTabId) => void
   getActivePlan: () => AutoEditPlanApi | null
   checkpointCount: () => number
@@ -47,6 +49,7 @@ export const useStudioStore = create<StudioStore>((set, get) => ({
   pendingConfirm: null,
   selectedArtifact: null,
   error: null,
+  lastSuggestions: [],
   inspectorTab: 'production',
 
   setSession: (sessionId, workspace) =>
@@ -66,11 +69,13 @@ export const useStudioStore = create<StudioStore>((set, get) => ({
       pendingConfirm: null,
       selectedArtifact: null,
       streaming: false,
+      lastSuggestions: [],
     }),
   setStreaming: (streaming) => set({ streaming }),
   setPendingConfirm: (pendingConfirm) => set({ pendingConfirm }),
   setSelectedArtifact: (selectedArtifact) => set({ selectedArtifact }),
   setError: (error) => set({ error }),
+  setLastSuggestions: (lastSuggestions) => set({ lastSuggestions }),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   checkpointCount: () => get().workspace?.checkpoints?.length ?? 0,
   canRollback: () => {

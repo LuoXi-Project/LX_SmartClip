@@ -103,7 +103,7 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
             "user_preferences": {**prefs, "last_user_prompt": user_prompt},
         },
         artifact=ArtifactRef(type="plan", id=plan_id, payload=plan_dict),
-        next_suggestions=["可在画布中预览方案", "确认后说「按当前方案成片」"],
+        next_suggestions=["导出成片", "导出剪映草稿", "不保留原声，进行tts配音"],
     )
 
 
@@ -198,6 +198,7 @@ async def _realize_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
             "jobs": {"realize_job_id": plan_id},
         },
         artifact=ArtifactRef(type="export", id=res.filename, payload=export_entry),
+        next_suggestions=["导出剪映草稿"],
     )
 
 

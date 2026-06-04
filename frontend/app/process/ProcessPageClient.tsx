@@ -94,6 +94,10 @@ export default function ProcessPage() {
   const wsRef = useRef<WebSocket | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const runningRef = useRef(running)
+  const doneRef = useRef(done)
+  runningRef.current = running
+  doneRef.current = done
 
   const stopTaskPolling = () => {
     if (pollTimerRef.current) {
@@ -167,11 +171,11 @@ export default function ProcessPage() {
 
   /** 处理进度更新时仅当用户已在页面底部附近才跟随滚动，避免打断向上查看步骤/选视频 */
   useEffect(() => {
-    if (!running && !done) return
+    if (!runningRef.current && !doneRef.current) return
     const doc = document.documentElement
     const nearBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 160
     if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [steps, running, done])
+  }, [steps])
 
   const persistActiveTask = (taskId: string) => {
     setActiveTaskId(taskId)

@@ -165,7 +165,13 @@ export default function ProcessPage() {
     void loadAllVideos()
   }, [])
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [steps])
+  /** 处理进度更新时仅当用户已在页面底部附近才跟随滚动，避免打断向上查看步骤/选视频 */
+  useEffect(() => {
+    if (!running && !done) return
+    const doc = document.documentElement
+    const nearBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 160
+    if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [steps, running, done])
 
   const persistActiveTask = (taskId: string) => {
     setActiveTaskId(taskId)

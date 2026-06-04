@@ -39,6 +39,29 @@ function cardCls(s: StepStatus) {
   return 'border-slate-800 bg-slate-900/30'
 }
 
+type SplitPhase = 'detecting' | 'planning' | 'cutting' | 'done' | ''
+
+function splitPhaseLabel(phase: SplitPhase, splitMode?: string) {
+  if (phase === 'detecting') return '镜头识别'
+  if (phase === 'planning') return splitMode === 'hybrid' ? '超长镜头二次切分' : '切分规划'
+  if (phase === 'cutting') return '片段导出'
+  if (phase === 'done') return '切分完成'
+  return ''
+}
+
+function resolveSplitProgress(detail: Record<string, unknown>) {
+  const phase = String(detail.phase ?? '') as SplitPhase
+  const shots = Number(detail.shots_detected ?? 0)
+  const planned = Number(detail.segments_planned ?? 0)
+  const ready = Number(detail.clips_ready ?? detail.processed ?? detail.current ?? 0)
+  const splitMode = String(detail.split_mode ?? '')
+  const total = Number(detail.total ?? 0) || (planned > 0 ? planned : 0)
+  const current = Number(detail.current ?? 0) || (phase === 'cutting' && total > 0 ? ready : shots)
+  const showBar = phase === 'cutting' && total > 0
+  const showIndeterminate = phase === 'detecting' || phase === 'planning' || (phase === 'cutting' && total <= 0)
+  return { phase, shots, planned, ready, splitMode, total, current, showBar, showIndeterminate, phaseLabel: splitPhaseLabel(phase, splitMode) }
+}
+
 const PAGE_SIZE = 9
 const ACTIVE_TASK_KEY = 'smartclip:process:activeTask'
 /** WS 断线或漏消息时，轮询任务快照的间隔（毫秒） */
@@ -767,8 +790,13 @@ export default function ProcessPage() {
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">处理步骤</h2>
           {STEPS.map((step) => {
             const st = steps[step.key]
-            const cur = st.detail.current as number | undefined
-            const tot = st.detail.total as number | undefined
+            const splitProg = step.key === 'split' ? resolveSplitProgress(st.detail) : null
+            const cur = splitProg
+              ? (splitProg.showBar ? splitProg.current : undefined)
+              : (st.detail.current as number | undefined)
+            const tot = splitProg
+              ? (splitProg.showBar ? splitProg.total : undefined)
+              : (st.detail.total as number | undefined)
             const sp = cur && tot ? Math.round(cur / tot * 100) : 0
             const metrics = getMetricsFromDetail(st.detail)
             const tStep = getTimingForStep(step.key, metrics)
@@ -790,17 +818,42 @@ export default function ProcessPage() {
                 <div className="flex items-start gap-3">
                   <div className="pt-0.5 shrink-0"><SIcon s={st.status} /></div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <span className="text-sm font-medium">{step.label}</span>
+                      {st.status === 'running' && splitProg?.phaseLabel && (
+                        <span className="text-xs text-amber-300/90 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/25">
+                          {splitProg.phaseLabel}
+                        </span>
+                      )}
                       {st.status === 'running' && <span className="text-xs text-amber-400/80">进行中</span>}
                       {st.status === 'done' && <span className="text-xs text-emerald-400/80">完成</span>}
                       {st.status === 'error' && <span className="text-xs text-red-400/80">失败</span>}
                     </div>
                     <p className="text-xs text-slate-500 mb-2">{step.desc}</p>
+                    {step.key === 'split' && st.status === 'running' && splitProg && (splitProg.shots > 0 || splitProg.planned > 0) && (
+                      <p className="text-[11px] text-slate-500 mb-2">
+                        {splitProg.shots > 0 && <span>镜头 {splitProg.shots}</span>}
+                        {splitProg.planned > 0 && (
+                          <span>
+                            {splitProg.shots > 0 ? ' · ' : ''}
+                            规划 {splitProg.planned} 段
+                            {splitProg.ready > 0 ? ` · 已导出 ${splitProg.ready}` : ''}
+                          </span>
+                        )}
+                        {splitProg.planned > splitProg.shots && splitProg.shots > 0 && (
+                          <span className="text-amber-400/80">（含二次切分）</span>
+                        )}
+                      </p>
+                    )}
                     <p className="text-[11px] text-slate-500 mb-2">
                       {stepMetricText}
                     </p>
-                    {st.status === 'running' && cur && tot && (
+                    {st.status === 'running' && splitProg?.showIndeterminate && (
+                      <div className="mb-2 h-1 bg-slate-800 rounded-full overflow-hidden">
+                        <div className="h-full w-1/3 bg-amber-500/80 rounded-full animate-pulse" />
+                      </div>
+                    )}
+                    {st.status === 'running' && !(splitProg?.showIndeterminate) && cur && tot && (
                       <div className="mb-2 space-y-1">
                         <div className="flex justify-between text-xs text-slate-500"><span>{cur}/{tot}</span><span>{sp}%</span></div>
                         <div className="h-1 bg-slate-800 rounded-full overflow-hidden">

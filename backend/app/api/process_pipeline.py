@@ -711,15 +711,43 @@ async def run_pipeline(
         if do_asr:
             await _put_with_timeout(asr_queue, item, f"asr:{item['id']}")
 
+    def _split_progress_message(d: dict) -> str:
+        phase = str(d.get("phase") or "")
+        shots = int(d.get("shots_detected") or 0)
+        planned = int(d.get("segments_planned") or 0)
+        ready = int(d.get("clips_ready") or 0)
+        mode = str(d.get("split_mode") or split_mode)
+        if phase == "detecting":
+            if mode == "hybrid" and planned > 0 and ready > 0:
+                return (
+                    f"镜头识别中（已发现 {shots} 个镜头），"
+                    f"已导出 {ready}/{planned} 段（含超长镜头二次切分）…"
+                )
+            return f"镜头识别中，已发现 {shots} 个镜头…"
+        if phase == "planning":
+            return (
+                f"混合模式：已规划 {planned} 段（{shots} 个镜头），"
+                f"超长镜头二次切分中，已导出 {ready} 段…"
+            )
+        if phase == "cutting" and planned > 0:
+            return f"正在导出片段 {ready}/{planned}（{shots} 个镜头），切分尚未结束…"
+        if ready > 0:
+            return f"已导出 {ready} 个片段，切分进行中…"
+        return f"切分进行中（模式: {mode}）…"
+
     if do_split:
         await clear_clips_for_video(video_id)
         split_out_queue: asyncio.Queue = asyncio.Queue()
         split_done = object()
         split_error = {"err": None}
         split_count = 0
+        last_split_detail: dict = {"phase": "detecting", "split_mode": split_mode, "shots_detected": 0, "segments_planned": 0, "clips_ready": 0}
 
         def _on_clip_created(clip):
-            asyncio.run_coroutine_threadsafe(split_out_queue.put(clip), loop).result()
+            asyncio.run_coroutine_threadsafe(split_out_queue.put(("clip", clip)), loop).result()
+
+        def _on_split_progress(data: dict):
+            asyncio.run_coroutine_threadsafe(split_out_queue.put(("progress", data)), loop).result()
 
         async def _run_split_task():
             try:
@@ -732,6 +760,7 @@ async def run_pipeline(
                                 fixed_duration,
                                 transcode_opts=transcode_opts,
                                 on_clip_created=_on_clip_created,
+                                on_progress=_on_split_progress,
                                 should_stop=cancel_event.is_set,
                             ),
                         ),
@@ -749,6 +778,7 @@ async def run_pipeline(
                                 fixed_duration,
                                 transcode_opts=transcode_opts,
                                 on_clip_created=_on_clip_created,
+                                on_progress=_on_split_progress,
                                 should_stop=cancel_event.is_set,
                             ),
                         ),
@@ -764,6 +794,7 @@ async def run_pipeline(
                                 scene_min_scene_len,
                                 transcode_opts=transcode_opts,
                                 on_clip_created=_on_clip_created,
+                                on_progress=_on_split_progress,
                                 should_stop=cancel_event.is_set,
                             ),
                         ),
@@ -774,7 +805,7 @@ async def run_pipeline(
             except Exception as e:
                 split_error["err"] = e
             finally:
-                await split_out_queue.put(split_done)
+                await split_out_queue.put(("done", split_done))
 
         split_task = asyncio.create_task(_run_split_task())
         while True:
@@ -785,11 +816,28 @@ async def run_pipeline(
                 cancelled_early = True
                 break
             try:
-                clip_obj = await asyncio.wait_for(split_out_queue.get(), timeout=min(1.0, _remaining_timeout(1.0)))
+                item = await asyncio.wait_for(split_out_queue.get(), timeout=min(1.0, _remaining_timeout(1.0)))
             except asyncio.TimeoutError:
                 continue
-            if clip_obj is split_done:
+            kind = item[0] if isinstance(item, tuple) else "clip"
+            payload = item[1] if isinstance(item, tuple) else item
+            if kind == "done":
                 break
+            if kind == "progress":
+                last_split_detail = {**last_split_detail, **(payload or {})}
+                detail = {
+                    **last_split_detail,
+                    "processed": split_count,
+                    "metrics": _metrics_snapshot(),
+                }
+                await reporter.send(
+                    "split",
+                    "running",
+                    _split_progress_message(detail),
+                    detail,
+                )
+                continue
+            clip_obj = payload
             try:
                 await check_cancel(video_id)
             except ProcessCancelled:
@@ -798,7 +846,21 @@ async def run_pipeline(
             clip_id = await insert_clip_to_db(video_id, clip_obj)
             split_count += 1
             total_clips = split_count
-            await reporter.send("split", "running", f"已切分 {split_count} 个片段，正在流式进入后续处理", {"processed": split_count})
+            last_split_detail["clips_ready"] = split_count
+            planned = int(last_split_detail.get("segments_planned") or 0)
+            detail = {
+                **last_split_detail,
+                "processed": split_count,
+                "current": split_count,
+                "total": max(planned, split_count),
+                "metrics": _metrics_snapshot(),
+            }
+            await reporter.send(
+                "split",
+                "running",
+                _split_progress_message({**detail, "phase": "cutting", "clips_ready": split_count}),
+                detail,
+            )
             await _enqueue_item(_make_item(clip_id, clip_obj.clip_path))
 
         await split_task
@@ -811,7 +873,25 @@ async def run_pipeline(
             await set_video_status(video_id, "error")
             return
         _ensure_step_end("split")
-        await reporter.send("split", "done", f"切分完成，共 {split_count} 个片段", {"total_clips": split_count, "metrics": _metrics_snapshot()})
+        await reporter.send(
+            "split",
+            "done",
+            f"切分完成，共 {split_count} 个片段"
+            + (
+                f"（{int(last_split_detail.get('shots_detected') or 0)} 个镜头"
+                f"→{int(last_split_detail.get('segments_planned') or split_count)} 段）"
+                if split_mode in ("scene", "hybrid")
+                and int(last_split_detail.get("shots_detected") or 0) > 0
+                else ""
+            ),
+            {
+                "total_clips": split_count,
+                "shots_detected": int(last_split_detail.get("shots_detected") or 0),
+                "segments_planned": int(last_split_detail.get("segments_planned") or split_count),
+                "phase": "done",
+                "metrics": _metrics_snapshot(),
+            },
+        )
     else:
         if not clips_rows:
             await _cancel_all_workers()

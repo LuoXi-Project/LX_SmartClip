@@ -4,7 +4,7 @@ import queue
 import threading
 import bisect
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Dict, Generator, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple
 import logging
 
 from app.utils.bin_paths import ffmpeg_bin
@@ -15,6 +15,37 @@ from app.utils.storage_dedupe import strip_leading_material_id_from_clip_basenam
 
 logger = logging.getLogger(__name__)
 _SENTINEL = object()
+
+# phase: detecting（镜头识别）| planning（二次切分规划）| cutting（ffmpeg 导出）
+SplitProgressFn = Callable[[Dict[str, Any]], None]
+
+
+def _notify_split_progress(
+    on_progress: Optional[SplitProgressFn],
+    *,
+    phase: str,
+    split_mode: str = "",
+    shots_detected: int = 0,
+    segments_planned: int = 0,
+    clips_ready: int = 0,
+) -> None:
+    if not on_progress:
+        return
+    total = segments_planned if segments_planned > 0 else 0
+    current = clips_ready if phase == "cutting" and total > 0 else (
+        segments_planned if phase == "planning" and total > 0 else shots_detected
+    )
+    on_progress(
+        {
+            "phase": phase,
+            "split_mode": split_mode,
+            "shots_detected": shots_detected,
+            "segments_planned": segments_planned,
+            "clips_ready": clips_ready,
+            "current": current,
+            "total": total,
+        },
+    )
 
 class StopRequested(Exception):
     """外部请求停止切分流程。"""
@@ -194,10 +225,13 @@ class VideoSplitter:
         *,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        on_progress: Optional[SplitProgressFn] = None,
+        split_mode: str = "",
         should_stop: Optional[Callable[[], bool]] = None,
         # 命名前缀 & 序号格式
         name_prefix: str,
         index_width: int = 3,
+        shots_detected: int = 0,
     ) -> List[ClipInfo]:
         """
         通用切分管线：给定一组 (start, end) 区间，使用 ffmpeg 并行切分。
@@ -210,6 +244,23 @@ class VideoSplitter:
         """
         if not ranges:
             return []
+
+        _notify_split_progress(
+            on_progress,
+            phase="planning",
+            split_mode=split_mode,
+            shots_detected=shots_detected,
+            segments_planned=len(ranges),
+            clips_ready=0,
+        )
+        _notify_split_progress(
+            on_progress,
+            phase="cutting",
+            split_mode=split_mode,
+            shots_detected=shots_detected,
+            segments_planned=len(ranges),
+            clips_ready=0,
+        )
 
         opts = dict(transcode_opts or {})
 
@@ -278,6 +329,7 @@ class VideoSplitter:
 
         results_by_idx: Dict[int, ClipInfo] = {}
         futures = []
+        clips_ready = 0
 
         def _run_one(idx: int, start_time: float, end_time: float, clip_path: str) -> Tuple[int, ClipInfo]:
             start_adj, end_adj = start_time, end_time
@@ -343,6 +395,15 @@ class VideoSplitter:
                 try:
                     idx_ret, clip_info = fut.result()
                     results_by_idx[idx_ret] = clip_info
+                    clips_ready += 1
+                    _notify_split_progress(
+                        on_progress,
+                        phase="cutting",
+                        split_mode=split_mode,
+                        shots_detected=shots_detected,
+                        segments_planned=len(ranges),
+                        clips_ready=clips_ready,
+                    )
                     if on_clip_created:
                         on_clip_created(clip_info)
                 except Exception:
@@ -545,6 +606,7 @@ class VideoSplitter:
         duration: float,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        on_progress: Optional[SplitProgressFn] = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[ClipInfo]:
         """
@@ -585,6 +647,8 @@ class VideoSplitter:
             ranges,
             transcode_opts=transcode_opts,
             on_clip_created=on_clip_created,
+            on_progress=on_progress,
+            split_mode="fixed",
             should_stop=should_stop,
             name_prefix="clip",
             index_width=3,
@@ -679,6 +743,8 @@ class VideoSplitter:
         max_shots: Optional[int] = None,
         show_progress: bool = True,
         should_stop: Optional[Callable[[], bool]] = None,
+        on_progress: Optional[SplitProgressFn] = None,
+        split_mode: str = "scene",
     ) -> Generator[Dict[str, float], None, None]:
         """流式返回镜头区间，避免等待全量检测完成。"""
         if not os.path.exists(video_path):
@@ -805,8 +871,16 @@ class VideoSplitter:
             if max_shots is not None and shot_count >= int(max_shots):
                 continue
             item["shot_id"] = shot_count
-            yield item
             shot_count += 1
+            _notify_split_progress(
+                on_progress,
+                phase="detecting",
+                split_mode=split_mode,
+                shots_detected=shot_count,
+                segments_planned=0,
+                clips_ready=0,
+            )
+            yield item
 
         if detect_error:
             raise detect_error[0]
@@ -821,6 +895,7 @@ class VideoSplitter:
         chunk_sec: float = 10.0,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        on_progress: Optional[SplitProgressFn] = None,
         # 性能优化开关（优先从 transcode_opts 读取；此处保留参数以便直接调用时覆写）
         cut_mode: Optional[str] = None,
         stream_copy: Optional[bool] = None,
@@ -931,6 +1006,9 @@ class VideoSplitter:
 
         futures = []
         clip_idx = 0
+        shots_detected = 0
+        segments_planned = 0
+        clips_ready = 0
 
         def _run_one(idx: int, start_time: float, end_time: float, clip_path: str) -> Tuple[int, ClipInfo]:
             # 对齐关键帧（仅 stream copy）
@@ -990,12 +1068,25 @@ class VideoSplitter:
                 adaptive_min_scene_len=min_scene_len,
                 show_progress=not quiet_split_val,
                 should_stop=should_stop,
+                on_progress=on_progress,
+                split_mode="hybrid",
             ):
                 if should_stop and should_stop():
                     raise StopRequested("混合切分已停止")
+                shots_detected += 1
                 shot_start = float(shot["start"])
                 shot_end = float(shot["end"])
                 expanded = self._expand_long_scene_ranges(shot_start, shot_end, max_segment_sec, chunk_sec)
+                segments_planned += len(expanded)
+                secondary = len(expanded) > 1
+                _notify_split_progress(
+                    on_progress,
+                    phase="planning" if secondary else "detecting",
+                    split_mode="hybrid",
+                    shots_detected=shots_detected,
+                    segments_planned=segments_planned,
+                    clips_ready=clips_ready,
+                )
                 for start_time, end_time in expanded:
                     if should_stop and should_stop():
                         raise StopRequested("混合切分已停止")
@@ -1008,6 +1099,16 @@ class VideoSplitter:
                         logger.info(f"提交混合切分片段 {clip_idx+1}: {start_time:.2f}s - {end_time:.2f}s")
                     clip_idx += 1
 
+            if segments_planned > 0:
+                _notify_split_progress(
+                    on_progress,
+                    phase="cutting",
+                    split_mode="hybrid",
+                    shots_detected=shots_detected,
+                    segments_planned=segments_planned,
+                    clips_ready=clips_ready,
+                )
+
             # 收集结果（尽早触发 on_clip_created 以保持流水线）
             for fut in as_completed(futures):
                 if should_stop and should_stop():
@@ -1017,6 +1118,15 @@ class VideoSplitter:
                 try:
                     idx_ret, clip_info = fut.result()
                     results_by_idx[idx_ret] = clip_info
+                    clips_ready += 1
+                    _notify_split_progress(
+                        on_progress,
+                        phase="cutting",
+                        split_mode="hybrid",
+                        shots_detected=shots_detected,
+                        segments_planned=segments_planned,
+                        clips_ready=clips_ready,
+                    )
                     if on_clip_created:
                         on_clip_created(clip_info)
                 except Exception:
@@ -1038,6 +1148,7 @@ class VideoSplitter:
         min_scene_len: int = 30,
         transcode_opts: Optional[Dict[str, str]] = None,
         on_clip_created: Optional[Callable[[ClipInfo], None]] = None,
+        on_progress: Optional[SplitProgressFn] = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> List[ClipInfo]:
         """
@@ -1071,12 +1182,15 @@ class VideoSplitter:
         # 拉取场景时间区间（复用 streaming 逻辑以避免重复实现）
         # 这里不需要 streaming 消费，一次性拉到列表即可
         ranges: List[Tuple[float, float]] = []
+        shots_detected = 0
         for shot in self.detect_shots_stream(
             video_path,
             mode="adaptive",
             adaptive_threshold=threshold_value,
             adaptive_min_scene_len=min_scene_len_value,
             should_stop=should_stop,
+            on_progress=on_progress,
+            split_mode="scene",
         ):
             if should_stop and should_stop():
                 raise StopRequested("镜头识别切分已停止")
@@ -1085,6 +1199,7 @@ class VideoSplitter:
             if end_time <= start_time + 1e-6:
                 continue
             ranges.append((start_time, end_time))
+            shots_detected = len(ranges)
 
         if not ranges:
             logger.warning("未检测到场景切换，返回整个视频作为一个片段")
@@ -1095,9 +1210,12 @@ class VideoSplitter:
                 [(0.0, total_duration)],
                 transcode_opts=transcode_opts,
                 on_clip_created=on_clip_created,
+                on_progress=on_progress,
+                split_mode="scene",
                 should_stop=should_stop,
                 name_prefix="scene_fallback",
                 index_width=3,
+                shots_detected=0,
             )
             return whole
 
@@ -1106,9 +1224,12 @@ class VideoSplitter:
             ranges,
             transcode_opts=transcode_opts,
             on_clip_created=on_clip_created,
+            on_progress=on_progress,
+            split_mode="scene",
             should_stop=should_stop,
             name_prefix="scene",
             index_width=3,
+            shots_detected=shots_detected,
         )
         logger.info(f"镜头识别切分完成: {len(clips)} 个片段")
         return clips

@@ -21,39 +21,18 @@ const WEBGL_ATTRS: WebGLContextAttributes = {
 
 /** 沙箱/无 GPU 环境下 WebGL 可能失败，返回 null 由 UI 降级为 CSS 背景 */
 function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer | null {
-  const tryWithContext = (gl: WebGL2RenderingContext | WebGLRenderingContext) => {
-    try {
-      const renderer = new THREE.WebGLRenderer({
-        canvas,
-        context: gl,
-        alpha: false,
-        antialias: WEBGL_ATTRS.antialias,
-      })
-      return renderer.getContext() ? renderer : null
-    } catch {
-      return null
-    }
-  }
-
-  for (const type of ['webgl2', 'webgl'] as const) {
-    try {
-      const gl = canvas.getContext(type, WEBGL_ATTRS)
-      if (!gl) continue
-      const renderer = tryWithContext(gl)
-      if (renderer) return renderer
-    } catch {
-      return null
-    }
-  }
-
   try {
     const renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: WEBGL_ATTRS.antialias ?? true,
       alpha: false,
       failIfMajorPerformanceCaveat: false,
     })
-    return renderer.getContext() ? renderer : null
+    if (!renderer.getContext()) {
+      renderer.dispose()
+      return null
+    }
+    return renderer
   } catch {
     return null
   }
@@ -429,6 +408,7 @@ export function createCosmosWorld(canvas: HTMLCanvasElement): CosmosHandle | nul
     dispose() {
       cancelAnimationFrame(raf)
       ro.disconnect()
+      renderer.forceContextLoss()
       renderer.dispose()
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.Line) {

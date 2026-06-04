@@ -14,6 +14,7 @@ export function HomeScene3D() {
   const [ready, setReady] = useState(false)
   const [reduced, setReduced] = useState(false)
   const [webglUnavailable, setWebglUnavailable] = useState(false)
+  const [canvasKey, setCanvasKey] = useState(0)
 
   useEffect(() => {
     setReduced(window.matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -33,8 +34,9 @@ export function HomeScene3D() {
     return () => {
       cosmosRef.current?.dispose()
       cosmosRef.current = null
+      setCanvasKey((k) => k + 1)
     }
-  }, [ready, reduced])
+  }, [ready, reduced, canvasKey])
 
   useEffect(() => {
     if (reduced) return
@@ -61,7 +63,11 @@ export function HomeScene3D() {
 
   return (
     <div ref={wrapRef} className="absolute inset-0" aria-hidden>
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+      <canvas
+        key={canvasKey}
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full"
+      />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_55%_at_50%_42%,transparent_0%,#00040c_68%)] opacity-80" />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#00040c]/20 via-transparent to-[#00040c]/88" />
     </div>

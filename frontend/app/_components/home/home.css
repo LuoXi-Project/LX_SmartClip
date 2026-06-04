@@ -1,0 +1,238 @@
+/* Home page — Active Theory–inspired motion & atmosphere */
+
+.home-scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.12) 2px,
+    rgba(0, 0, 0, 0.12) 4px
+  );
+  pointer-events: none;
+}
+
+.home-vignette {
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 40%,
+    transparent 0%,
+    rgba(2, 6, 23, 0.55) 70%,
+    rgba(2, 6, 23, 0.92) 100%
+  );
+  pointer-events: none;
+}
+
+.home-title-shimmer {
+  background-size: 200% auto;
+  animation: home-shimmer 6s linear infinite;
+}
+
+@keyframes home-shimmer {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.home-hero-in {
+  opacity: 0;
+  transform: translateY(28px);
+  animation: home-hero-in 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.home-hero-in-delay-1 {
+  animation-delay: 0.12s;
+}
+.home-hero-in-delay-2 {
+  animation-delay: 0.24s;
+}
+.home-hero-in-delay-3 {
+  animation-delay: 0.36s;
+}
+.home-hero-in-delay-4 {
+  animation-delay: 0.48s;
+}
+.home-hero-in-delay-5 {
+  animation-delay: 0.6s;
+}
+.home-hero-in-delay-6 {
+  animation-delay: 0.72s;
+}
+
+@keyframes home-hero-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.home-logo-ring {
+  animation: home-logo-pulse 4s ease-in-out infinite;
+}
+
+@keyframes home-logo-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(34, 211, 238, 0.25),
+      0 0 40px rgba(34, 211, 238, 0.15),
+      0 0 80px rgba(99, 102, 241, 0.08);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(167, 139, 250, 0.4),
+      0 0 60px rgba(34, 211, 238, 0.25),
+      0 0 120px rgba(99, 102, 241, 0.15);
+  }
+}
+
+.home-pipeline-flow {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(34, 211, 238, 0.35) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: home-pipeline-sweep 3s ease-in-out infinite;
+}
+
+@keyframes home-pipeline-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.home-card-glow {
+  position: relative;
+  transition:
+    transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.35s ease,
+    box-shadow 0.45s ease;
+}
+
+.home-card-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(34, 211, 238, 0),
+    rgba(34, 211, 238, 0.5),
+    rgba(167, 139, 250, 0.5),
+    rgba(34, 211, 238, 0)
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.home-card-glow:hover::before {
+  opacity: 1;
+}
+
+.home-card-glow:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.45),
+    0 0 40px rgba(34, 211, 238, 0.08);
+}
+
+.home-status-border {
+  background: linear-gradient(
+    90deg,
+    #22d3ee,
+    #818cf8,
+    #a78bfa,
+    #22d3ee
+  );
+  background-size: 300% 100%;
+  animation: home-status-border 4s linear infinite;
+}
+
+@keyframes home-status-border {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 300% 50%;
+  }
+}
+
+.home-cta-primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.home-cta-primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.18) 50%,
+    transparent 60%
+  );
+  transform: translateX(-120%);
+  transition: transform 0.6s ease;
+}
+
+.home-cta-primary:hover::after {
+  transform: translateX(120%);
+}
+
+.home-float {
+  animation: home-float 8s ease-in-out infinite;
+}
+
+.home-float-delay {
+  animation-delay: -4s;
+}
+
+@keyframes home-float {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(12px, -18px) scale(1.05);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-title-shimmer,
+  .home-logo-ring,
+  .home-pipeline-flow,
+  .home-status-border,
+  .home-float,
+  .home-float-delay {
+    animation: none;
+  }
+
+  .home-hero-in,
+  .home-hero-in-delay-1,
+  .home-hero-in-delay-2,
+  .home-hero-in-delay-3,
+  .home-hero-in-delay-4,
+  .home-hero-in-delay-5,
+  .home-hero-in-delay-6 {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}

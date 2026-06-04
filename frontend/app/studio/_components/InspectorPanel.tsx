@@ -144,6 +144,7 @@ export function InspectorPanel() {
               <h3 className="text-slate-500 uppercase tracking-wider mb-2">制作风格</h3>
               <p className="text-[11px] text-slate-500 mb-2">
                 转场、响度、ducking、字幕动效模板。对话里也可说「电商风、转场柔一点」。
+                成片听感由<strong className="text-slate-400">方案模式</strong>（配音/原声）决定，导出前请在画布展开「成片怎么选？」。
               </p>
               <div className="flex flex-col gap-1.5">
                 {PRESETS.map((p) => (

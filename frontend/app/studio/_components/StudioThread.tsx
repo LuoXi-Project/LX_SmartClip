@@ -6,6 +6,7 @@ import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession } from 
 import { genId, useStudioStore } from '@/lib/studio-store'
 import type { ArtifactRef, StudioMessage } from '@/lib/agent-types'
 import { ExportResultPanel } from './ExportResultPanel'
+import { StudioExportGuide } from './StudioExportGuide'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { applyRollbackResult, refreshStudioMessagesInStore } from '@/lib/studio-load-session'
@@ -249,9 +250,15 @@ export function StudioThread() {
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
         {messages.length === 0 && (
-          <p className="text-xs text-slate-500 leading-relaxed">
-            描述你的剪辑目标，例如：「用素材库最新视频做 60 秒电商口播并导出成片」
-          </p>
+          <div className="space-y-3 mr-2">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              先说明素材与诉求（口播 / 原声 / 时长），生成方案后再选导出方式。不同方案听感差别很大，生成前建议想清楚。
+            </p>
+            <StudioExportGuide variant="overview" compact />
+            <p className="text-[11px] text-slate-500">
+              示例：「用选中素材做 60 秒电商口播方案」→ 方案生成后 →「导出成片（配音版）」
+            </p>
+          </div>
         )}
         {messages.map((m) => (
           <MessageRow

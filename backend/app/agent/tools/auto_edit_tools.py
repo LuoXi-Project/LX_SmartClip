@@ -10,6 +10,7 @@ from app.api.auto_edit import (
     realize_auto_edit_plan,
 )
 from app.models.agent import ArtifactRef, ToolResult
+from app.agent.export_intent import plan_next_suggestions
 from app.agent.media_merge import (
     include_subtitle_from_media,
     merge_bgm_from_media,
@@ -90,11 +91,19 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
         p["production_profile"] = profile.model_dump()
         plans_payload[i] = p
 
+    mode = str(plan_dict.get("mode") or "auto")
+    mode_cn = {"voiceover": "配音剪辑", "original": "原声剪辑", "auto": "自动混合"}.get(mode, mode)
+    export_hint = {
+        "voiceover": "适合「导出成片（配音版）」或剪映草稿二次精剪。",
+        "original": "适合「导出成片（保留原声）」；若需 AI 配音可说「不保留原声，进行 tts 配音」。",
+        "auto": "可先「导出成片」；原声诉求请说明后改用 original 或强制 TTS。",
+    }.get(mode, "")
     return ToolResult(
         ok=True,
         summary=(
-            f"已生成方案「{plan_dict.get('title') or plan_id}」，约 {plan_dict.get('estimated_duration_sec', '?')} 秒"
-            f"（制作：{profile.human_summary()}）"
+            f"已生成方案「{plan_dict.get('title') or plan_id}」（{mode_cn}），"
+            f"约 {plan_dict.get('estimated_duration_sec', '?')} 秒。"
+            f"制作：{profile.human_summary()}。{export_hint}"
         ),
         workspace_patch={
             "pipeline_phase": "plan",
@@ -103,7 +112,7 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
             "user_preferences": {**prefs, "last_user_prompt": user_prompt},
         },
         artifact=ArtifactRef(type="plan", id=plan_id, payload=plan_dict),
-        next_suggestions=["导出成片", "导出剪映草稿", "不保留原声，进行tts配音"],
+        next_suggestions=plan_next_suggestions(str(plan_dict.get("mode") or "auto")),
     )
 
 

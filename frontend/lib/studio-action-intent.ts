@@ -1,16 +1,20 @@
 /** 与 backend export_intent.py 对齐，用于前端无响应时的提示 */
 
+function normalizeExportCmd(text: string): string {
+  return text.trim().replace(/（[^）]*）\s*$/, '').replace(/\([^)]*\)\s*$/, '').trim()
+}
+
 const REALIZE_RE =
-  /按当前方案成片|^(导出成片|生成成片|开始成片|直接成片|一键成片|成片导出)$|^(导出|生成|开始).{0,6}成片/
+  /按当前方案成片|^导出成片$|^生成成片$|^开始成片$|^直接成片$|^一键成片$|^成片导出$|^(导出|生成|开始).{0,6}成片/
 
 const JIANYING_RE = /导出剪映草稿|剪映草稿|^导出剪映/
 
 const TTS_RE = /不保留原声|tts\s*配音|重新配音|配音导出/i
 
 export function isExportLikeMessage(text: string): boolean {
-  const t = text.trim()
+  const t = normalizeExportCmd(text)
   if (!t || t.length > 80) return false
-  return REALIZE_RE.test(t) || JIANYING_RE.test(t) || TTS_RE.test(t)
+  return REALIZE_RE.test(t) || JIANYING_RE.test(t) || TTS_RE.test(text.trim())
 }
 
 export function idleReasonMessage(data: Record<string, unknown>): string | null {

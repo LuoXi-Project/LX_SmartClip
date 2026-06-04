@@ -5,7 +5,14 @@ from app.agent.export_intent import detect_export_intent
 
 class ExportIntentTests(unittest.TestCase):
     def test_realize_phrases(self) -> None:
-        for msg in ("导出成片", "按当前方案成片", "生成成片", "开始导出成片"):
+        for msg in (
+            "导出成片",
+            "导出成片（保留原声）",
+            "导出成片（配音版）",
+            "按当前方案成片",
+            "生成成片",
+            "开始导出成片",
+        ):
             intent = detect_export_intent(msg)
             self.assertIsNotNone(intent, msg)
             self.assertIn(intent.kind, ("realize", "tts_realize"))

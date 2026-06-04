@@ -33,9 +33,26 @@ _TTS_PATTERNS = (
 )
 
 
+def _normalize_export_cmd(message: str) -> str:
+    """去掉快捷指令尾部说明，如「导出成片（保留原声）」→「导出成片」。"""
+    text = (message or "").strip()
+    text = re.sub(r"（[^）]*）\s*$", "", text).strip()
+    text = re.sub(r"\([^)]*\)\s*$", "", text).strip()
+    return text
+
+
+def plan_next_suggestions(mode: str | None) -> list[str]:
+    m = (mode or "auto").strip()
+    if m == "original":
+        return ["导出成片（保留原声）", "导出剪映草稿", "不保留原声，进行tts配音"]
+    if m == "voiceover":
+        return ["导出成片（配音版）", "导出剪映草稿"]
+    return ["导出成片", "导出剪映草稿", "不保留原声，进行tts配音"]
+
+
 def detect_export_intent(message: str) -> ExportIntent | None:
     """识别用户明确的导出/成片意图，供 orchestrator 规则短路（不依赖 LLM）。"""
-    text = (message or "").strip()
+    text = _normalize_export_cmd(message)
     if not text or len(text) > 80:
         return None
 

@@ -8,6 +8,7 @@ import { patchAgentWorkspace } from '@/lib/agent-api'
 import { useStudioStore } from '@/lib/studio-store'
 import { PlanEditWorkspace } from '@/app/match/_components/PlanEditWorkspace'
 import { StudioPlanActions } from './StudioPlanActions'
+import { StudioExportGuide } from './StudioExportGuide'
 import { ExportResultPanel } from './ExportResultPanel'
 import { isVideoExport, payloadToExportArtifact } from '@/lib/studio-media-url'
 import { useStudioMediaConfig } from './useStudioMediaConfig'
@@ -109,6 +110,7 @@ export function ArtifactCanvas() {
 
         {plan ? (
           <>
+            <StudioExportGuide plan={plan} />
             <StudioPlanActions plan={plan} />
             <PlanEditWorkspace
               plan={plan}
@@ -127,9 +129,7 @@ export function ArtifactCanvas() {
             />
           </>
         ) : !exportArtifact ? (
-          <p className="text-xs text-slate-500">
-            生成方案或匹配结果后，将在此显示时间线与预览。
-          </p>
+          <StudioExportGuide variant="overview" />
         ) : null}
       </div>
     </div>

@@ -197,12 +197,12 @@ export function StudioThread() {
   }
 
   return (
-    <div className="flex flex-col h-full border-r border-slate-800 bg-[#0d0f14]">
-      <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden border-r border-slate-800 bg-[#0d0f14]">
+      <div className="shrink-0 px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-violet-400" />
         <span className="text-sm font-medium text-slate-200">对话</span>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
         {messages.length === 0 && (
           <p className="text-xs text-slate-500 leading-relaxed">
             描述你的剪辑目标，例如：「用素材库最新视频做 60 秒电商口播并导出成片」
@@ -220,9 +220,9 @@ export function StudioThread() {
         <div ref={bottomRef} />
       </div>
       {useStudioStore.getState().error && (
-        <div className="px-4 text-xs text-red-400">{useStudioStore.getState().error}</div>
+        <div className="shrink-0 px-4 pb-1 text-xs text-red-400">{useStudioStore.getState().error}</div>
       )}
-      <div className="p-3 border-t border-slate-800" data-tour="page-studio-input">
+      <div className="shrink-0 p-3 border-t border-slate-800" data-tour="page-studio-input">
         <div className="flex gap-2 items-end">
           <textarea
             value={input}

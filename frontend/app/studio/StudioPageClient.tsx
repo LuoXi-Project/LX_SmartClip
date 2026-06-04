@@ -90,7 +90,7 @@ export default function StudioPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0d0f14] text-slate-200 flex flex-col">
+    <main className="h-[calc(100dvh-3rem)] max-h-[calc(100dvh-3rem)] bg-[#0d0f14] text-slate-200 flex flex-col overflow-hidden">
       <header className="h-auto min-h-12 border-b border-slate-800 flex flex-wrap items-center px-4 py-2 gap-3 shrink-0">
         <Link href="/" className="text-slate-400 hover:text-slate-200 flex items-center gap-1 text-sm shrink-0">
           <ArrowLeft className="w-4 h-4" />
@@ -107,8 +107,8 @@ export default function StudioPage() {
           经典模式 →
         </Link>
       </header>
-      <div className="flex-1 grid grid-cols-12 min-h-0" style={{ height: 'calc(100vh - 3.5rem)' }}>
-        <div className="col-span-12 lg:col-span-3 min-h-0 relative">
+      <div className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-12 overflow-hidden">
+        <div className="h-[min(42vh,360px)] shrink-0 min-h-0 overflow-hidden lg:h-full lg:max-h-none lg:col-span-3 relative border-b border-slate-800 lg:border-b-0">
           {loading ? (
             <div className="absolute inset-0 z-10 bg-[#0d0f14]/80 flex items-center justify-center">
               <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
@@ -116,10 +116,10 @@ export default function StudioPage() {
           ) : null}
           <StudioThread />
         </div>
-        <div className="col-span-12 lg:col-span-5 min-h-0 border-x border-slate-800">
+        <div className="flex-1 min-h-0 lg:col-span-5 border-x border-slate-800 overflow-hidden">
           <ArtifactCanvas />
         </div>
-        <div className="col-span-12 lg:col-span-4 min-h-0 hidden lg:block">
+        <div className="min-h-0 hidden lg:block lg:col-span-4 overflow-hidden">
           <InspectorPanel />
         </div>
       </div>

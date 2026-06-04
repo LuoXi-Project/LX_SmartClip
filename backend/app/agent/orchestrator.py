@@ -233,6 +233,7 @@ async def _dispatch_tool(
             input_json=args,
             risk=spec.risk,
         )
+        hint = f"需要确认：{preview}\n请点击下方「确认执行」继续。"
         yield _sse(
             "confirm_required",
             {
@@ -243,7 +244,20 @@ async def _dispatch_tool(
                 "preview": preview,
             },
         )
-        yield _sse("message_delta", {"content": f"需要确认：{preview}\n请点击下方「确认执行」继续。"})
+        yield _sse("message_delta", {"content": hint})
+        await session_store.persist_studio_message(
+            session_id, {"studio_type": "assistant", "text": hint}
+        )
+        await session_store.persist_studio_message(
+            session_id,
+            {
+                "studio_type": "confirm",
+                "call_id": cid,
+                "tool": tool_name,
+                "risk": spec.risk,
+                "preview": preview,
+            },
+        )
         yield _sse("done", {"pending_confirm": cid})
         return
 
@@ -501,6 +515,7 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                         input_json=args,
                         risk=spec.risk,
                     )
+                    hint = f"需要确认：{preview}\n请点击下方「确认执行」继续。"
                     yield _sse(
                         "confirm_required",
                         {
@@ -511,9 +526,19 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                             "preview": preview,
                         },
                     )
-                    yield _sse(
-                        "message_delta",
-                        {"content": f"需要确认：{preview}\n请点击下方「确认执行」继续。"},
+                    yield _sse("message_delta", {"content": hint})
+                    await session_store.persist_studio_message(
+                        session_id, {"studio_type": "assistant", "text": hint}
+                    )
+                    await session_store.persist_studio_message(
+                        session_id,
+                        {
+                            "studio_type": "confirm",
+                            "call_id": call_id,
+                            "tool": name,
+                            "risk": spec.risk,
+                            "preview": preview,
+                        },
                     )
                     yield _sse("done", {"pending_confirm": call_id})
                     return

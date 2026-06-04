@@ -1,4 +1,4 @@
-import type { ArtifactRef, StudioMessage } from '@/lib/agent-types'
+import type { ArtifactRef, PendingConfirm, StudioMessage } from '@/lib/agent-types'
 import { genId } from '@/lib/studio-store'
 
 type ApiMessageRow = {
@@ -50,9 +50,35 @@ export function hydrateStudioMessages(rows: ApiMessageRow[]): StudioMessage[] {
         type: 'artifact',
         artifact: c.artifact as ArtifactRef,
       })
+      continue
+    }
+    if (studioType === 'confirm') {
+      out.push({
+        id,
+        type: 'confirm',
+        callId: String(c.call_id || id),
+        tool: String(c.tool || ''),
+        risk: String(c.risk || 'L2'),
+        preview: String(c.preview || ''),
+      })
     }
   }
   return out
+}
+
+export function pickPendingConfirmFromMessages(messages: StudioMessage[]): PendingConfirm | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (m.type === 'confirm') {
+      return {
+        callId: m.callId,
+        tool: m.tool,
+        risk: m.risk,
+        preview: m.preview,
+      }
+    }
+  }
+  return null
 }
 
 export function pickLatestExportArtifact(messages: StudioMessage[]): ArtifactRef | null {

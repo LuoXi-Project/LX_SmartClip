@@ -155,11 +155,13 @@ export function StudioThread() {
       setStreaming(false)
       abortRef.current = null
       try {
-        const [sess] = await Promise.all([
-          getAgentSession(sessionId),
-          refreshStudioMessagesInStore(sessionId, useStudioStore.getState()),
-        ])
+        const sess = await getAgentSession(sessionId)
         setWorkspace(sess.workspace)
+        // 有待确认或本轮已出现确认卡片时，不要用 DB 列表覆盖 SSE 刚写入的本地消息
+        const after = useStudioStore.getState()
+        if (!after.pendingConfirm && !hadConfirm) {
+          await refreshStudioMessagesInStore(sessionId, after)
+        }
       } catch {
         /* ignore */
       }
@@ -331,9 +333,10 @@ function MessageRow({
     )
   }
   if (msg.type === 'assistant') {
+    if (!msg.content?.trim()) return null
     return (
       <div className="text-sm text-slate-300 bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 mr-4 whitespace-pre-wrap">
-        {msg.content || '…'}
+        {msg.content}
       </div>
     )
   }

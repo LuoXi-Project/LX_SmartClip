@@ -3,6 +3,7 @@ import {
   hydrateStudioMessages,
   pickLatestExportArtifact,
   pickLatestPlanArtifact,
+  pickPendingConfirmFromMessages,
 } from '@/lib/studio-message-hydrate'
 import { writeLastStudioSessionId } from '@/lib/studio-session-persist'
 import { useStudioStore } from '@/lib/studio-store'
@@ -14,6 +15,7 @@ export async function refreshStudioMessagesInStore(
   const msgRes = await listAgentMessages(sessionId)
   const messages = hydrateStudioMessages(msgRes.messages || [])
   store.setMessages(messages)
+  store.setPendingConfirm(pickPendingConfirmFromMessages(messages))
   const exportArt = pickLatestExportArtifact(messages)
   const planArt = pickLatestPlanArtifact(messages)
   store.setSelectedArtifact(exportArt || planArt)
@@ -41,6 +43,7 @@ export async function loadStudioSessionIntoStore(
   const messages = hydrateStudioMessages(msgRes.messages || [])
   store.setSession(sess.session_id, sess.workspace)
   store.setMessages(messages)
+  store.setPendingConfirm(pickPendingConfirmFromMessages(messages))
   const exportArt = pickLatestExportArtifact(messages)
   const planArt = pickLatestPlanArtifact(messages)
   store.setSelectedArtifact(exportArt || planArt)

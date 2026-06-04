@@ -180,6 +180,22 @@ export async function streamAgentChat(
         }
       }
     }
+    if (buffer.trim()) {
+      const lines = buffer.split('\n')
+      let eventName = currentEvent
+      let dataStr = ''
+      for (const line of lines) {
+        if (line.startsWith('event: ')) eventName = line.slice(7).trim()
+        if (line.startsWith('data: ')) dataStr += line.slice(6)
+      }
+      if (dataStr) {
+        try {
+          handlers.onEvent(eventName, JSON.parse(dataStr))
+        } catch {
+          handlers.onEvent(eventName, { raw: dataStr })
+        }
+      }
+    }
   } catch (e) {
     if ((e as Error).name !== 'AbortError') handlers.onError(e as Error)
   }

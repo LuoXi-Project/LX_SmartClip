@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createCosmosWorld, type CosmosHandle } from './createCosmosWorld'
 
+const STATIC_BG_CLASS =
+  'pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,#1e3a5f33_0%,transparent_55%),#00040c]'
+
 /** 纯 Three.js 宇宙背景（无 @react-three/fiber，兼容 Next.js 16 + Turbopack） */
 export function HomeScene3D() {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -10,6 +13,7 @@ export function HomeScene3D() {
   const cosmosRef = useRef<CosmosHandle | null>(null)
   const [ready, setReady] = useState(false)
   const [reduced, setReduced] = useState(false)
+  const [webglUnavailable, setWebglUnavailable] = useState(false)
 
   useEffect(() => {
     setReduced(window.matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -19,7 +23,13 @@ export function HomeScene3D() {
   useEffect(() => {
     if (!ready || reduced || !canvasRef.current) return
 
-    cosmosRef.current = createCosmosWorld(canvasRef.current)
+    const handle = createCosmosWorld(canvasRef.current)
+    if (!handle) {
+      setWebglUnavailable(true)
+      return
+    }
+    setWebglUnavailable(false)
+    cosmosRef.current = handle
     return () => {
       cosmosRef.current?.dispose()
       cosmosRef.current = null
@@ -45,14 +55,8 @@ export function HomeScene3D() {
     return <div className="absolute inset-0 bg-[#00040c]" aria-hidden />
   }
 
-  if (reduced) {
-    return (
-      <div
-        ref={wrapRef}
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,#1e3a5f33_0%,transparent_55%),#00040c]"
-        aria-hidden
-      />
-    )
+  if (reduced || webglUnavailable) {
+    return <div ref={wrapRef} className={STATIC_BG_CLASS} aria-hidden />
   }
 
   return (

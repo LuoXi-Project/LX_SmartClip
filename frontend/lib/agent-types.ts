@@ -64,10 +64,20 @@ export interface ArtifactRef {
   payload: Record<string, unknown>
 }
 
+export type PlanStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+
+export type PlanStepState = {
+  id: string
+  title: string
+  tool: string
+  status: PlanStepStatus
+  message?: string
+}
+
 export type StudioMessage =
   | { id: string; type: 'user'; content: string }
   | { id: string; type: 'assistant'; content: string }
-  | { id: string; type: 'reasoning'; content: string }
+  | { id: string; type: 'reasoning'; content: string; collapsed?: boolean }
   | {
       id: string
       type: 'tool'
@@ -75,6 +85,7 @@ export type StudioMessage =
       status: 'running' | 'done' | 'failed'
       summary?: string
       input?: Record<string, unknown>
+      round?: number
     }
   | { id: string; type: 'artifact'; artifact: ArtifactRef }
   | {
@@ -84,6 +95,14 @@ export type StudioMessage =
       tool: string
       risk: string
       preview: string
+    }
+  | {
+      id: string
+      type: 'execution_trace'
+      route?: string
+      routeReason?: string
+      steps: PlanStepState[]
+      progress?: { jobId?: string; message: string; percent?: number; status?: string }
     }
 
 export interface PendingConfirm {

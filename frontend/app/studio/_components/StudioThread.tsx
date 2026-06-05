@@ -4,13 +4,40 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { Send, Loader2, Sparkles, RotateCcw } from 'lucide-react'
 import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession } from '@/lib/agent-api'
 import { genId, useStudioStore } from '@/lib/studio-store'
-import type { ArtifactRef, StudioMessage } from '@/lib/agent-types'
+import type { ArtifactRef, PlanStepState, StudioMessage } from '@/lib/agent-types'
 import { ExportResultPanel } from './ExportResultPanel'
 import { StudioExportGuide } from './StudioExportGuide'
+import {
+  ReasoningBlock,
+  StudioExecutionTrace,
+  ToolCallBlock,
+} from './StudioExecutionTrace'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { applyRollbackResult, refreshStudioMessagesInStore } from '@/lib/studio-load-session'
 import { idleReasonMessage, isExportLikeMessage } from '@/lib/studio-action-intent'
+
+function mergeWorkspacePatch(
+  ws: ReturnType<typeof useStudioStore.getState>['workspace'],
+  patch: Record<string, unknown>
+) {
+  if (!ws) return ws
+  const jobs = { ...(ws.jobs || {}), ...((patch.jobs as object) || {}) }
+  const prefs = { ...(ws.user_preferences || {}), ...((patch.user_preferences as object) || {}) }
+  return {
+    ...ws,
+    ...patch,
+    jobs,
+    user_preferences: prefs,
+    selected_video_ids: (patch.selected_video_ids as string[]) ?? ws.selected_video_ids,
+    plans: (patch.plans as typeof ws.plans) ?? ws.plans,
+    pipeline_phase: (patch.pipeline_phase as typeof ws.pipeline_phase) ?? ws.pipeline_phase,
+    active_plan_id:
+      patch.active_plan_id !== undefined
+        ? (patch.active_plan_id as string | null)
+        : ws.active_plan_id,
+  }
+}
 
 export function StudioThread() {
   const confirm = useConfirm()
@@ -18,6 +45,7 @@ export function StudioThread() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [input, setInput] = useState('')
+  const error = useStudioStore((s) => s.error)
 
   const {
     sessionId,
@@ -37,7 +65,7 @@ export function StudioThread() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, streaming])
 
   const handleStream = useCallback(
     async (body: { message: string; resume_call_id?: string; confirm_approved?: boolean }) => {
@@ -45,11 +73,23 @@ export function StudioThread() {
       setStreaming(true)
       setError(null)
       const asstId = genId()
+      const traceId = genId()
+      const reasoningId = genId()
       let asstText = ''
+      let reasoningText = ''
       let hadToolStart = false
       let hadConfirm = false
+      let traceAdded = false
+      let reasoningAdded = false
       const userIntentExport = isExportLikeMessage(body.message)
       addMessage({ id: asstId, type: 'assistant', content: '' })
+
+      const ensureTrace = () => {
+        if (!traceAdded) {
+          addMessage({ id: traceId, type: 'execution_trace', steps: [] })
+          traceAdded = true
+        }
+      }
 
       const ctrl = new AbortController()
       abortRef.current = ctrl
@@ -76,6 +116,60 @@ export function StudioThread() {
               updateMessage(localId, { id: d.id } as Partial<StudioMessage>)
             }
           }
+          if (event === 'route') {
+            ensureTrace()
+            updateMessage(traceId, {
+              type: 'execution_trace',
+              route: String(d.route || ''),
+              routeReason: String(d.reason || ''),
+            } as Partial<StudioMessage>)
+          }
+          if (event === 'plan_steps') {
+            ensureTrace()
+            const rawSteps = (d.steps as Array<Record<string, unknown>>) || []
+            const steps: PlanStepState[] = rawSteps.map((s) => ({
+              id: String(s.id || genId()),
+              title: String(s.title || s.tool || '步骤'),
+              tool: String(s.tool || ''),
+              status: 'pending',
+            }))
+            updateMessage(traceId, { type: 'execution_trace', steps } as Partial<StudioMessage>)
+          }
+          if (event === 'plan_step_update') {
+            ensureTrace()
+            const stepId = String(d.step_id || '')
+            const cur = useStudioStore.getState().messages.find((m) => m.id === traceId)
+            if (cur?.type === 'execution_trace') {
+              const steps = cur.steps.map((s) =>
+                s.id === stepId
+                  ? {
+                      ...s,
+                      status: (d.status as PlanStepState['status']) || s.status,
+                      message: String(d.message || s.message || ''),
+                      title: String(d.title || s.title),
+                      tool: String(d.tool || s.tool),
+                    }
+                  : s
+              )
+              updateMessage(traceId, { type: 'execution_trace', steps } as Partial<StudioMessage>)
+            }
+          }
+          if (event === 'progress') {
+            ensureTrace()
+            updateMessage(traceId, {
+              type: 'execution_trace',
+              progress: {
+                jobId: String(d.job_id || ''),
+                message: String(d.message || ''),
+                percent: typeof d.percent === 'number' ? d.percent : undefined,
+                status: String(d.status || ''),
+              },
+            } as Partial<StudioMessage>)
+          }
+          if (event === 'workspace_patch' && d.patch && typeof d.patch === 'object') {
+            const ws = useStudioStore.getState().workspace
+            if (ws) setWorkspace(mergeWorkspacePatch(ws, d.patch as Record<string, unknown>))
+          }
           if (event === 'artifact') {
             const art = d as unknown as ArtifactRef
             setSelectedArtifact(art)
@@ -95,6 +189,7 @@ export function StudioThread() {
               name: String(d.name || ''),
               status: 'running',
               input: (d.input as Record<string, unknown>) || {},
+              round: typeof d.round === 'number' ? d.round : undefined,
             })
           }
           if (event === 'tool_end') {
@@ -114,11 +209,13 @@ export function StudioThread() {
             updateMessage(asstId, { type: 'assistant', content: asstText })
           }
           if (event === 'reasoning_delta' && typeof d.content === 'string') {
-            addMessage({
-              id: genId(),
-              type: 'reasoning',
-              content: String(d.content),
-            })
+            reasoningText += d.content
+            if (!reasoningAdded) {
+              addMessage({ id: reasoningId, type: 'reasoning', content: reasoningText })
+              reasoningAdded = true
+            } else {
+              updateMessage(reasoningId, { type: 'reasoning', content: reasoningText })
+            }
           }
           if (event === 'confirm_required') {
             hadConfirm = true
@@ -139,6 +236,9 @@ export function StudioThread() {
           }
           if (event === 'done') {
             if (d.pending_confirm) return
+            if (!asstText.trim() && traceAdded) {
+              updateMessage(asstId, { type: 'assistant', content: '' })
+            }
             const idleMsg = idleReasonMessage(d)
             if (idleMsg) {
               setError(idleMsg)
@@ -158,7 +258,6 @@ export function StudioThread() {
       try {
         const sess = await getAgentSession(sessionId)
         setWorkspace(sess.workspace)
-        // 有待确认或本轮已出现确认卡片时，不要用 DB 列表覆盖 SSE 刚写入的本地消息
         const after = useStudioStore.getState()
         if (!after.pendingConfirm && !hadConfirm) {
           await refreshStudioMessagesInStore(sessionId, after)
@@ -247,6 +346,12 @@ export function StudioThread() {
       <div className="shrink-0 px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-violet-400" />
         <span className="text-sm font-medium text-slate-200">对话</span>
+        {streaming ? (
+          <span className="ml-auto flex items-center gap-1.5 text-[10px] text-violet-300">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Agent 执行中…
+          </span>
+        ) : null}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
         {messages.length === 0 && (
@@ -260,11 +365,14 @@ export function StudioThread() {
             </p>
           </div>
         )}
-        {messages.map((m) => (
+        {messages.map((m, idx) => (
           <MessageRow
             key={m.id}
             msg={m}
             streaming={streaming}
+            isLastAssistant={
+              streaming && m.type === 'assistant' && idx === messages.length - 1
+            }
             onApproveConfirm={approveConfirm}
             onRollbackToMessage={rollbackToMessage}
           />
@@ -274,11 +382,11 @@ export function StudioThread() {
         )}
         <div ref={bottomRef} />
       </div>
-      {useStudioStore.getState().error && (
+      {error ? (
         <div className="shrink-0 px-4 pb-2 text-xs text-red-400/95 bg-red-500/10 border border-red-500/20 rounded-lg mx-3">
-          {useStudioStore.getState().error}
+          {error}
         </div>
-      )}
+      ) : null}
       <div className="shrink-0 p-3 border-t border-slate-800" data-tour="page-studio-input">
         <div className="flex gap-2 items-end">
           <textarea
@@ -292,8 +400,8 @@ export function StudioThread() {
             }}
             rows={2}
             disabled={streaming}
-            placeholder="输入指令…"
-            className="flex-1 resize-none rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-violet-500/50"
+            placeholder={streaming ? 'Agent 正在执行，请稍候…' : '输入指令…'}
+            className="flex-1 resize-none rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-violet-500/50 disabled:opacity-60"
           />
           <button
             type="button"
@@ -312,11 +420,13 @@ export function StudioThread() {
 function MessageRow({
   msg,
   streaming,
+  isLastAssistant,
   onApproveConfirm,
   onRollbackToMessage,
 }: {
   msg: StudioMessage
   streaming: boolean
+  isLastAssistant?: boolean
   onApproveConfirm: () => void
   onRollbackToMessage: (messageId: string, preview: string) => void
 }) {
@@ -339,28 +449,25 @@ function MessageRow({
       </div>
     )
   }
+  if (msg.type === 'execution_trace') {
+    return <StudioExecutionTrace msg={msg} />
+  }
   if (msg.type === 'assistant') {
-    if (!msg.content?.trim()) return null
+    if (!msg.content?.trim() && !isLastAssistant) return null
     return (
       <div className="text-sm text-slate-300 bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 mr-4 whitespace-pre-wrap">
         {msg.content}
+        {isLastAssistant && streaming ? (
+          <span className="inline-block w-1.5 h-4 ml-0.5 bg-violet-400 animate-pulse align-middle" />
+        ) : null}
       </div>
     )
   }
   if (msg.type === 'reasoning') {
-    return (
-      <div className="text-xs text-slate-500 italic border-l-2 border-slate-700 pl-2 mr-6">
-        {msg.content}
-      </div>
-    )
+    return <ReasoningBlock content={msg.content} streaming={streaming} />
   }
   if (msg.type === 'tool') {
-    return (
-      <div className="text-xs text-slate-400 font-mono px-2">
-        [{msg.status}] {msg.name}
-        {msg.summary ? ` — ${msg.summary}` : ''}
-      </div>
-    )
+    return <ToolCallBlock msg={msg} />
   }
   if (msg.type === 'confirm') {
     return (

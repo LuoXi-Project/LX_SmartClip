@@ -11,6 +11,7 @@ import aiosqlite
 from app.agent import session_store
 from app.agent.context_builder import build_workspace_summary
 from app.agent.export_intent import ExportIntent, detect_export_intent
+from app.agent.plan_runner import run_plan_steps
 from app.agent.planner import build_task_plan
 from app.agent.prompts.executor import EXECUTOR_SYSTEM
 from app.agent.intent_preflight import run_intent_preflight
@@ -24,7 +25,7 @@ from app.models.agent import ChatRequest, ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 6
+MAX_TOOL_ROUNDS = 8
 
 
 def _emit_content_chunks(content: str) -> list[tuple[str, dict[str, Any]]]:
@@ -39,10 +40,93 @@ def _emit_content_chunks(content: str) -> list[tuple[str, dict[str, Any]]]:
         else:
             events.append(("message_delta", {"content": line + "\n"}))
     if events and events[-1][0] == "message_delta":
-        # 去掉最后一行多余换行
         last = events[-1][1]["content"]
         events[-1] = ("message_delta", {"content": last.rstrip("\n")})
     return events
+
+
+def _emit_stream_delta(delta: str, *, in_reasoning: list[bool]) -> list[tuple[str, dict[str, Any]]]:
+    """流式 token：检测「思考：」后走 reasoning 通道。"""
+    if not delta:
+        return []
+    if not in_reasoning[0] and ("思考：" in delta or "思考:" in delta):
+        in_reasoning[0] = True
+    if in_reasoning[0] and "\n\n" in delta:
+        in_reasoning[0] = False
+    kind = "reasoning_delta" if in_reasoning[0] else "message_delta"
+    return [(kind, {"content": delta})]
+
+
+async def _stream_executor_completion(
+    client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    temperature: float,
+    max_tokens: int,
+) -> AsyncIterator[tuple[str, dict[str, Any] | tuple[str, Any, str, list[Any]]]]:
+    """
+    流式调用 Executor LLM。
+    产出 SSE 事件；最后一项为 ('_result', content, finish_reason, tool_calls)。
+    """
+    in_reasoning = [False]
+    content_parts: list[str] = []
+    tool_calls_acc: dict[int, dict[str, Any]] = {}
+    finish_reason = "stop"
+
+    stream = await client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=tools,
+        tool_choice="auto",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+        choice = chunk.choices[0]
+        if choice.finish_reason:
+            finish_reason = choice.finish_reason
+        delta = choice.delta
+        if not delta:
+            continue
+        if delta.content:
+            content_parts.append(delta.content)
+            for evt, payload in _emit_stream_delta(delta.content, in_reasoning=in_reasoning):
+                yield (evt, payload)
+        if delta.tool_calls:
+            for tc in delta.tool_calls:
+                idx = tc.index if tc.index is not None else 0
+                if idx not in tool_calls_acc:
+                    tool_calls_acc[idx] = {
+                        "id": "",
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    }
+                if tc.id:
+                    tool_calls_acc[idx]["id"] = tc.id
+                if tc.function:
+                    if tc.function.name:
+                        tool_calls_acc[idx]["function"]["name"] += tc.function.name
+                    if tc.function.arguments:
+                        tool_calls_acc[idx]["function"]["arguments"] += tc.function.arguments
+
+    content = "".join(content_parts)
+    tool_calls_list: list[Any] = []
+    for idx in sorted(tool_calls_acc.keys()):
+        entry = tool_calls_acc[idx]
+        tool_calls_list.append(type("ToolCall", (), {
+            "id": entry["id"] or str(uuid.uuid4()),
+            "function": type("Fn", (), {
+                "name": entry["function"]["name"],
+                "arguments": entry["function"]["arguments"],
+            })(),
+        })())
+
+    yield ("_result", content, finish_reason, tool_calls_list)
 
 CHECKPOINT_BEFORE = frozenset({
     "set_selected_videos",
@@ -75,9 +159,13 @@ async def _load_llm_cfg() -> dict[str, Any]:
         )
 
 
-async def _apply_tool_result(session_id: str, result: ToolResult, ctx: AgentContext) -> None:
+async def _apply_tool_result(
+    session_id: str, result: ToolResult, ctx: AgentContext
+) -> dict[str, Any] | None:
     if result.workspace_patch:
         ctx.workspace = await session_store.patch_workspace(session_id, result.workspace_patch)
+        return result.workspace_patch
+    return None
 
 
 async def _maybe_checkpoint(session_id: str, tool_name: str) -> None:
@@ -264,7 +352,9 @@ async def _dispatch_tool(
     yield _sse("tool_start", {"call_id": cid, "name": tool_name, "input": args})
     await _maybe_checkpoint(session_id, tool_name)
     result = await invoke(tool_name, args, ctx)
-    await _apply_tool_result(session_id, result, ctx)
+    patch = await _apply_tool_result(session_id, result, ctx)
+    if patch:
+        yield _sse("workspace_patch", {"patch": patch})
     async for chunk in _finish_tool_result(
         session_id, call_id=cid, tool_name=tool_name, args=args, result=result
     ):
@@ -313,7 +403,9 @@ async def _run_confirmed_tool(
     yield _sse("tool_start", {"call_id": call_id, "name": tool_name, "input": args})
     await _maybe_checkpoint(session_id, tool_name)
     result = await invoke(tool_name, args, ctx)
-    await _apply_tool_result(session_id, result, ctx)
+    patch = await _apply_tool_result(session_id, result, ctx)
+    if patch:
+        yield _sse("workspace_patch", {"patch": patch})
     async for chunk in _finish_tool_result(
         session_id,
         call_id=call_id,
@@ -346,7 +438,7 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
     await _maybe_autotitle(session_id, req.message, ws)
 
     ctx = AgentContext(session_id=session_id, workspace=ws)
-    summary = build_workspace_summary(ws)
+    summary = await build_workspace_summary(ws)
 
     preflight = await run_intent_preflight(
         req.message,
@@ -357,7 +449,8 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
             session_id, preflight["workspace_patch"]
         )
         ws = ctx.workspace
-        summary = build_workspace_summary(ws)
+        summary = await build_workspace_summary(ws)
+        yield _sse("workspace_patch", {"patch": preflight["workspace_patch"]})
         note = preflight.get("note")
         if note:
             yield _sse("message_delta", {"content": note + "\n\n"})
@@ -410,6 +503,32 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
             planner_note = "建议步骤：\n" + "\n".join(
                 f"{s.id}. {s.title} (tool={s.tool})" for s in plan_out.steps
             )
+            async for chunk in run_plan_steps(
+                session_id,
+                plan_out,
+                ctx,
+                req.message,
+                confirm_preview_fn=_confirm_preview,
+                finish_tool_result_fn=_finish_tool_result,
+                maybe_checkpoint_fn=_maybe_checkpoint,
+            ):
+                yield chunk
+                if chunk.startswith(b"event: plan_done"):
+                    try:
+                        data_line = chunk.decode().split("data: ", 1)[1].strip()
+                        done_data = json.loads(data_line.split("\n")[0])
+                        if done_data.get("completed"):
+                            await session_store.persist_studio_message(
+                                session_id,
+                                {"studio_type": "assistant", "text": "规划步骤已全部完成。"},
+                            )
+                            yield _sse("done", {"plan_completed": True})
+                            return
+                        reason = str(done_data.get("reason") or "")
+                        if reason == "pending_confirm":
+                            return
+                    except Exception:
+                        pass
 
     if route_out.route == "clarify":
         route_out.route = "execute"
@@ -441,15 +560,23 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
 
     try:
         for round_idx in range(MAX_TOOL_ROUNDS):
+            content = ""
+            tool_calls: list[Any] = []
+            finish_reason = "stop"
             try:
-                resp = await client.chat.completions.create(
+                async for item in _stream_executor_completion(
+                    client,
                     model=cfg["model"],
                     messages=messages,
                     tools=tools,
-                    tool_choice="auto",
-                    temperature=cfg.get("temperature", 0.5),
-                    max_tokens=cfg.get("max_tokens", 4096),
-                )
+                    temperature=float(cfg.get("temperature", 0.5)),
+                    max_tokens=int(cfg.get("max_tokens", 4096)),
+                ):
+                    if item[0] == "_result":
+                        _, content, finish_reason, tool_calls = item  # type: ignore[misc]
+                        break
+                    evt, payload = item  # type: ignore[misc]
+                    yield _sse(evt, payload)
             except Exception as e:
                 logger.exception("executor LLM call failed")
                 detail = f"模型调用失败：{e}。请检查「设置」中的 LLM API 地址、密钥与模型名。"
@@ -461,16 +588,8 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 yield _sse("done", {"idle_reason": "llm_error"})
                 return
 
-            choice = resp.choices[0]
-            msg = choice.message
-
-            if msg.content:
-                for evt, payload in _emit_content_chunks(msg.content):
-                    yield _sse(evt, payload)
-
-            tool_calls = msg.tool_calls or []
             if not tool_calls:
-                final_text = msg.content or ""
+                final_text = content or ""
                 await session_store.persist_studio_message(
                     session_id,
                     {"studio_type": "assistant", "text": final_text},
@@ -494,7 +613,22 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 yield _sse("done", done_payload)
                 return
 
-            messages.append(msg.model_dump())
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+            messages.append(assistant_msg)
 
             for tc in tool_calls:
                 fn = tc.function
@@ -549,7 +683,9 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 )
                 await _maybe_checkpoint(session_id, name)
                 result = await invoke(name, args, ctx)
-                await _apply_tool_result(session_id, result, ctx)
+                patch = await _apply_tool_result(session_id, result, ctx)
+                if patch:
+                    yield _sse("workspace_patch", {"patch": patch})
                 async for chunk in _finish_tool_result(
                     session_id,
                     call_id=call_id,
@@ -570,7 +706,7 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                     }
                 )
 
-            if choice.finish_reason == "stop":
+            if finish_reason == "stop":
                 break
     except Exception as e:
         logger.exception("executor loop failed")

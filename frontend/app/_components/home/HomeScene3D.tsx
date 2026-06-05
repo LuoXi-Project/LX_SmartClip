@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createCosmosWorld, type CosmosHandle } from './createCosmosWorld'
 
 const STATIC_BG_CLASS =
-  'pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,#1e3a5f33_0%,transparent_55%),#00040c]'
+  'pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_75%,#1a1a2e44_0%,transparent_50%),radial-gradient(ellipse_at_50%_20%,#0c1929_0%,#000208_70%)]'
 
 /** 纯 Three.js 宇宙背景（无 @react-three/fiber，兼容 Next.js 16 + Turbopack） */
 export function HomeScene3D() {
@@ -68,8 +68,8 @@ export function HomeScene3D() {
         ref={canvasRef}
         className="absolute inset-0 h-full w-full"
       />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_55%_at_50%_42%,transparent_0%,#00040c_68%)] opacity-80" />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#00040c]/20 via-transparent to-[#00040c]/88" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_88%_68%_at_50%_34%,transparent_0%,#00010a_62%)] opacity-58" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#00010a]/22 via-transparent to-[#00010a]/82" />
     </div>
   )
 }

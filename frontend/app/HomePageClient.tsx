@@ -171,7 +171,7 @@ export default function Home() {
             data-hero="tag"
             className={`${mono.className} mb-4 text-[11px] uppercase tracking-[0.35em] text-cyan-400/80`}
           >
-            Deep Space · Cosmos Engine
+            LuoXi · SmartClip
           </p>
 
           <h1

@@ -15,6 +15,7 @@ import { useStudioMediaConfig } from './useStudioMediaConfig'
 import { bgmTrackLabel } from '@/lib/studio-media-config'
 import type { ClipMetaByClip } from '@/app/match/_components/autoEditTypes'
 import type { ArtifactRef } from '@/lib/agent-types'
+import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
 
 function latestVideoExport(exports: Record<string, unknown>[] | undefined) {
   if (!exports?.length) return null
@@ -100,10 +101,11 @@ export function ArtifactCanvas() {
         <Layers className="w-4 h-4 text-indigo-400" />
         <span className="text-sm font-medium text-slate-200">产物画布</span>
         {workspace && (
-          <span className="text-[10px] text-slate-500 ml-auto">
+          <span className="text-[10px] text-slate-500">
             阶段 · {workspace.pipeline_phase}
           </span>
         )}
+        <StudioPanelHeaderAction panelId="canvas" />
       </div>
       <div className="flex-1 overflow-auto min-h-0 p-4 space-y-4">
         {exportArtifact ? <ExportResultPanel artifact={exportArtifact} /> : null}

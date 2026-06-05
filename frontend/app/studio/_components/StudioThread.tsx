@@ -16,6 +16,7 @@ import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { applyRollbackResult, refreshStudioMessagesInStore } from '@/lib/studio-load-session'
 import { idleReasonMessage, isExportLikeMessage } from '@/lib/studio-action-intent'
+import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
 
 function mergeWorkspacePatch(
   ws: ReturnType<typeof useStudioStore.getState>['workspace'],
@@ -168,7 +169,10 @@ export function StudioThread() {
           }
           if (event === 'workspace_patch' && d.patch && typeof d.patch === 'object') {
             const ws = useStudioStore.getState().workspace
-            if (ws) setWorkspace(mergeWorkspacePatch(ws, d.patch as Record<string, unknown>))
+            if (ws) {
+              const merged = mergeWorkspacePatch(ws, d.patch as Record<string, unknown>)
+              if (merged) setWorkspace(merged)
+            }
           }
           if (event === 'artifact') {
             const art = d as unknown as ArtifactRef
@@ -342,16 +346,17 @@ export function StudioThread() {
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden border-r border-slate-800 bg-[#0d0f14]">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-[#0d0f14]">
       <div className="shrink-0 px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-violet-400" />
         <span className="text-sm font-medium text-slate-200">对话</span>
         {streaming ? (
-          <span className="ml-auto flex items-center gap-1.5 text-[10px] text-violet-300">
+          <span className="flex items-center gap-1.5 text-[10px] text-violet-300">
             <Loader2 className="w-3 h-3 animate-spin" />
             Agent 执行中…
           </span>
         ) : null}
+        <StudioPanelHeaderAction panelId="thread" />
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
         {messages.length === 0 && (

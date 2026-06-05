@@ -11,6 +11,7 @@ import { useStudioStore } from '@/lib/studio-store'
 import { useStudioMediaConfig } from './useStudioMediaConfig'
 import type { InspectorTabId, ProductionPresetId, ProductionProfileApi } from '@/lib/agent-types'
 import { readProductionProfile } from '@/lib/studio-media-config'
+import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
 
 const PRESETS: { id: ProductionPresetId; label: string; hint: string }[] = [
   { id: 'auto', label: '自动', hint: '按内容推断' },
@@ -109,10 +110,11 @@ export function InspectorPanel() {
   const bgmPickValue = media.bgm.track_ids[0] || ''
 
   return (
-    <div className="flex flex-col h-full border-l border-slate-800 bg-[#0d0f14]">
+    <div className="flex flex-col h-full bg-[#0d0f14]">
       <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         <Info className="w-4 h-4 text-slate-400" />
         <span className="text-sm font-medium text-slate-200">检查器</span>
+        <StudioPanelHeaderAction panelId="inspector" />
       </div>
 
       <div className="flex border-b border-slate-800 px-2 pt-2 gap-1">

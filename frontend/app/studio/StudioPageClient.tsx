@@ -12,6 +12,9 @@ import { StudioThread } from './_components/StudioThread'
 import { ArtifactCanvas } from './_components/ArtifactCanvas'
 import { InspectorPanel } from './_components/InspectorPanel'
 import { StudioSessionDrawer, StudioToolbar } from './_components/StudioSessionDrawer'
+import { StudioLayoutShell } from './_components/StudioLayoutShell'
+import { StudioLayoutControls } from './_components/StudioLayoutControls'
+import { useIsDesktopLayout, useStudioLayout } from './_components/useStudioLayout'
 
 export default function StudioPage() {
   const router = useRouter()
@@ -20,6 +23,19 @@ export default function StudioPage() {
   const { sessionId, workspace, setError, resetUiState } = useStudioStore()
   const [loading, setLoading] = useState(true)
   const [historyOpen, setHistoryOpen] = useState(false)
+
+  const isDesktop = useIsDesktopLayout()
+  const {
+    layout,
+    hydrated,
+    setPanelSizes,
+    setPanelCollapsed,
+    togglePanelVisible,
+    movePanel,
+    dragReorder,
+    setMobileActivePanel,
+    resetLayout,
+  } = useStudioLayout()
 
   const navigateSession = useCallback(
     (id: string) => {
@@ -103,26 +119,32 @@ export default function StudioPage() {
           onOpenHistory={() => setHistoryOpen(true)}
           onNewSession={() => void handleNewSession()}
         />
+        {hydrated ? (
+          <StudioLayoutControls
+            layout={layout}
+            isDesktop={isDesktop}
+            onToggleVisible={togglePanelVisible}
+            onMovePanel={movePanel}
+            onDragReorder={dragReorder}
+            onMobileSelect={setMobileActivePanel}
+            onReset={resetLayout}
+          />
+        ) : null}
         <Link href="/match" className="text-xs text-slate-500 hover:text-slate-300 ml-auto shrink-0">
           经典模式 →
         </Link>
       </header>
-      <div className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-12 overflow-hidden">
-        <div className="h-[min(42vh,360px)] shrink-0 min-h-0 overflow-hidden lg:h-full lg:max-h-none lg:col-span-3 relative border-b border-slate-800 lg:border-b-0">
-          {loading ? (
-            <div className="absolute inset-0 z-10 bg-[#0d0f14]/80 flex items-center justify-center">
-              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-            </div>
-          ) : null}
-          <StudioThread />
-        </div>
-        <div className="flex-1 min-h-0 lg:col-span-5 border-x border-slate-800 overflow-hidden">
-          <ArtifactCanvas />
-        </div>
-        <div className="min-h-0 hidden lg:block lg:col-span-4 overflow-hidden">
-          <InspectorPanel />
-        </div>
-      </div>
+      <StudioLayoutShell
+        loading={loading}
+        layout={layout}
+        hydrated={hydrated}
+        isDesktop={isDesktop}
+        setPanelSizes={setPanelSizes}
+        setPanelCollapsed={setPanelCollapsed}
+        thread={<StudioThread />}
+        canvas={<ArtifactCanvas />}
+        inspector={<InspectorPanel />}
+      />
       <StudioSessionDrawer
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}

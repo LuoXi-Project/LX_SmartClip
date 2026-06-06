@@ -1,7 +1,7 @@
 'use client'
 
-import { useRef, useEffect, useState, useCallback } from 'react'
-import { Send, Loader2, Sparkles, RotateCcw } from 'lucide-react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
+import { Send, Loader2, Sparkles, RotateCcw, Square } from 'lucide-react'
 import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession } from '@/lib/agent-api'
 import { genId, useStudioStore } from '@/lib/studio-store'
 import type { ArtifactRef, PlanStepState, StudioMessage } from '@/lib/agent-types'
@@ -16,6 +16,7 @@ import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { applyRollbackResult, refreshStudioMessagesInStore } from '@/lib/studio-load-session'
 import { idleReasonMessage, isExportLikeMessage } from '@/lib/studio-action-intent'
+import { mergeSuggestionChips } from '@/lib/studio-phase-suggestions'
 import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
 
 function mergeWorkspacePatch(
@@ -45,11 +46,13 @@ export function StudioThread() {
   const toast = useToast()
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const pendingUserMsgIdRef = useRef<string | null>(null)
   const [input, setInput] = useState('')
   const error = useStudioStore((s) => s.error)
 
   const {
     sessionId,
+    workspace,
     messages,
     streaming,
     pendingConfirm,
@@ -67,6 +70,18 @@ export function StudioThread() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streaming])
+
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setStreaming(false)
+    setError(null)
+  }, [setStreaming, setError])
+
+  const suggestionItems = useMemo(
+    () => mergeSuggestionChips(lastSuggestions, workspace),
+    [lastSuggestions, workspace]
+  )
 
   const handleStream = useCallback(
     async (body: { message: string; resume_call_id?: string; confirm_approved?: boolean }) => {
@@ -110,11 +125,10 @@ export function StudioThread() {
             toast.error(msg)
           }
           if (event === 'user_message' && typeof d.id === 'string') {
-            const localId = [...useStudioStore.getState().messages]
-              .reverse()
-              .find((m) => m.type === 'user')?.id
+            const localId = pendingUserMsgIdRef.current
             if (localId) {
               updateMessage(localId, { id: d.id } as Partial<StudioMessage>)
+              pendingUserMsgIdRef.current = null
             }
           }
           if (event === 'route') {
@@ -288,7 +302,9 @@ export function StudioThread() {
     async (text: string) => {
       if (!sessionId || streaming) return
       setInput('')
-      addMessage({ id: genId(), type: 'user', content: text })
+      const userId = genId()
+      pendingUserMsgIdRef.current = userId
+      addMessage({ id: userId, type: 'user', content: text })
       await handleStream({ message: text })
     },
     [sessionId, streaming, setInput, addMessage, handleStream]
@@ -298,7 +314,9 @@ export function StudioThread() {
     const text = input.trim()
     if (!text || streaming || !sessionId) return
     setInput('')
-    addMessage({ id: genId(), type: 'user', content: text })
+    const userId = genId()
+    pendingUserMsgIdRef.current = userId
+    addMessage({ id: userId, type: 'user', content: text })
     await handleStream({ message: text })
   }
 
@@ -368,6 +386,9 @@ export function StudioThread() {
             <p className="text-[11px] text-slate-500">
               示例：「用选中素材做 60 秒电商口播方案」→ 方案生成后 →「导出成片（配音版）」
             </p>
+            {!streaming && suggestionItems.length > 0 ? (
+              <SuggestionChips items={suggestionItems} disabled={false} onPick={(t) => void quickSend(t)} />
+            ) : null}
           </div>
         )}
         {messages.map((m, idx) => (
@@ -375,6 +396,7 @@ export function StudioThread() {
             key={m.id}
             msg={m}
             streaming={streaming}
+            pendingConfirm={pendingConfirm}
             isLastAssistant={
               streaming && m.type === 'assistant' && idx === messages.length - 1
             }
@@ -382,8 +404,8 @@ export function StudioThread() {
             onRollbackToMessage={rollbackToMessage}
           />
         ))}
-        {lastSuggestions.length > 0 && !streaming && (
-          <SuggestionChips items={lastSuggestions} disabled={streaming} onPick={(t) => void quickSend(t)} />
+        {suggestionItems.length > 0 && !streaming && (
+          <SuggestionChips items={suggestionItems} disabled={streaming} onPick={(t) => void quickSend(t)} />
         )}
         <div ref={bottomRef} />
       </div>
@@ -400,22 +422,33 @@ export function StudioThread() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                send()
+                if (!streaming) send()
               }
             }}
             rows={2}
             disabled={streaming}
-            placeholder={streaming ? 'Agent 正在执行，请稍候…' : '输入指令…'}
+            placeholder={streaming ? 'Agent 正在执行，可点停止…' : '输入指令…'}
             className="flex-1 resize-none rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200 outline-none focus:border-violet-500/50 disabled:opacity-60"
           />
-          <button
-            type="button"
-            onClick={send}
-            disabled={streaming || !input.trim()}
-            className="p-2 rounded-lg bg-violet-600 text-white disabled:opacity-40"
-          >
-            {streaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </button>
+          {streaming ? (
+            <button
+              type="button"
+              onClick={stopStreaming}
+              title="停止"
+              className="p-2 rounded-lg bg-red-600/90 hover:bg-red-500 text-white"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={send}
+              disabled={!input.trim()}
+              className="p-2 rounded-lg bg-violet-600 text-white disabled:opacity-40"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -425,12 +458,14 @@ export function StudioThread() {
 function MessageRow({
   msg,
   streaming,
+  pendingConfirm,
   isLastAssistant,
   onApproveConfirm,
   onRollbackToMessage,
 }: {
   msg: StudioMessage
   streaming: boolean
+  pendingConfirm: ReturnType<typeof useStudioStore.getState>['pendingConfirm']
   isLastAssistant?: boolean
   onApproveConfirm: () => void
   onRollbackToMessage: (messageId: string, preview: string) => void
@@ -475,18 +510,22 @@ function MessageRow({
     return <ToolCallBlock msg={msg} />
   }
   if (msg.type === 'confirm') {
+    const isActive = pendingConfirm?.callId === msg.callId && !streaming
     return (
       <div className="text-sm border border-amber-500/50 bg-amber-500/15 rounded-lg p-3 mr-4 space-y-2">
         <p className="text-amber-100 font-medium">需要你的确认</p>
         <p className="text-amber-200/90 text-xs leading-relaxed">{msg.preview}</p>
-        <button
-          type="button"
-          disabled={streaming}
-          onClick={onApproveConfirm}
-          className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-semibold disabled:opacity-40"
-        >
-          确认执行 · {msg.tool}
-        </button>
+        {isActive ? (
+          <button
+            type="button"
+            onClick={onApproveConfirm}
+            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-semibold"
+          >
+            确认执行 · {msg.tool}
+          </button>
+        ) : (
+          <p className="text-[10px] text-slate-500">已处理或已过期</p>
+        )}
       </div>
     )
   }

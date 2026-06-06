@@ -455,16 +455,25 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
         if note:
             yield _sse("message_delta", {"content": note + "\n\n"})
 
-    history = await session_store.list_messages(session_id, limit=20)
+    history = await session_store.list_messages(session_id, limit=30)
     history_text = ""
-    for item in history[-10:]:
+    for item in history[-12:]:
         role = item.get("role")
         content = item.get("content") or {}
-        text = content.get("text") or content.get("summary") or ""
-        if content.get("studio_type") == "user":
-            text = content.get("text") or text
-        if role in ("user", "assistant") and text:
-            history_text += f"{role}: {text[:500]}\n"
+        studio_type = str(content.get("studio_type") or "")
+        if studio_type == "user" or role == "user":
+            text = str(content.get("text") or "")[:400]
+            if text:
+                history_text += f"user: {text}\n"
+        elif studio_type == "assistant" or (role == "assistant" and content.get("text")):
+            text = str(content.get("text") or "")[:400]
+            if text:
+                history_text += f"assistant: {text}\n"
+        elif studio_type == "tool":
+            name = content.get("name") or "?"
+            status = content.get("status") or "?"
+            summary = str(content.get("summary") or "")[:200]
+            history_text += f"tool[{name}]({status}): {summary}\n"
 
     # 恢复已确认的 pending tool
     if req.resume_call_id:
@@ -508,6 +517,8 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                 plan_out,
                 ctx,
                 req.message,
+                route=route_out.route,
+                route_reason=route_out.reason or "",
                 confirm_preview_fn=_confirm_preview,
                 finish_tool_result_fn=_finish_tool_result,
                 maybe_checkpoint_fn=_maybe_checkpoint,

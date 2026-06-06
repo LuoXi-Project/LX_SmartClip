@@ -1,9 +1,9 @@
 'use client'
 
-import { useMemo, useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useCallback, type Dispatch, type SetStateAction } from 'react'
 import { Layers } from 'lucide-react'
-import type { AutoEditPlanApi, BgmTrack } from '@/lib/api'
-import { bgmApi } from '@/lib/api'
+import type { AutoEditPlanApi } from '@/lib/api'
+import { useAutoEditBgmTracks, useAutoEditClipMetaByPlans } from '@/app/match/_components/autoEditPanelHooks'
 import { patchAgentWorkspace } from '@/lib/agent-api'
 import { useStudioStore } from '@/lib/studio-store'
 import { PlanEditWorkspace } from '@/app/match/_components/PlanEditWorkspace'
@@ -13,7 +13,6 @@ import { ExportResultPanel } from './ExportResultPanel'
 import { isVideoExport, payloadToExportArtifact } from '@/lib/studio-media-url'
 import { useStudioMediaConfig } from './useStudioMediaConfig'
 import { bgmTrackLabel } from '@/lib/studio-media-config'
-import type { ClipMetaByClip } from '@/app/match/_components/autoEditTypes'
 import type { ArtifactRef } from '@/lib/agent-types'
 import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
 
@@ -36,11 +35,7 @@ export function ArtifactCanvas() {
     setInspectorTab,
   } = useStudioStore()
   const { media } = useStudioMediaConfig()
-  const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
-
-  useEffect(() => {
-    bgmApi.list().then(setBgmTracks).catch(() => {})
-  }, [])
+  const { bgmTracks } = useAutoEditBgmTracks()
 
   const exportArtifact: ArtifactRef | null = useMemo(() => {
     if (selectedArtifact?.type === 'export') return selectedArtifact
@@ -59,7 +54,8 @@ export function ArtifactCanvas() {
     return workspace.plans[0]
   }, [workspace, selectedArtifact])
 
-  const clipMetaByClip: ClipMetaByClip = useMemo(() => ({}), [plan?.plan_id])
+  const plansForMeta = useMemo(() => (plan ? [plan] : []), [plan])
+  const clipMetaByClip = useAutoEditClipMetaByPlans(plansForMeta)
 
   const bgmLabel = useMemo(
     () =>

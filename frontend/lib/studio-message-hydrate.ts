@@ -1,4 +1,4 @@
-import type { ArtifactRef, PendingConfirm, StudioMessage } from '@/lib/agent-types'
+import type { ArtifactRef, PendingConfirm, PlanStepState, StudioMessage } from '@/lib/agent-types'
 import { genId } from '@/lib/studio-store'
 
 type ApiMessageRow = {
@@ -61,24 +61,38 @@ export function hydrateStudioMessages(rows: ApiMessageRow[]): StudioMessage[] {
         risk: String(c.risk || 'L2'),
         preview: String(c.preview || ''),
       })
+      continue
+    }
+    if (studioType === 'execution_trace') {
+      const rawSteps = (c.steps as Array<Record<string, unknown>>) || []
+      const steps: PlanStepState[] = rawSteps.map((s) => ({
+        id: String(s.id || ''),
+        title: String(s.title || s.tool || '步骤'),
+        tool: String(s.tool || ''),
+        status: (s.status as PlanStepState['status']) || 'pending',
+        message: s.message ? String(s.message) : undefined,
+      }))
+      out.push({
+        id,
+        type: 'execution_trace',
+        route: c.route ? String(c.route) : undefined,
+        routeReason: c.route_reason ? String(c.route_reason) : undefined,
+        steps,
+      })
     }
   }
   return out
 }
 
 export function pickPendingConfirmFromMessages(messages: StudioMessage[]): PendingConfirm | null {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const m = messages[i]
-    if (m.type === 'confirm') {
-      return {
-        callId: m.callId,
-        tool: m.tool,
-        risk: m.risk,
-        preview: m.preview,
-      }
-    }
+  const last = messages[messages.length - 1]
+  if (last?.type !== 'confirm') return null
+  return {
+    callId: last.callId,
+    tool: last.tool,
+    risk: last.risk,
+    preview: last.preview,
   }
-  return null
 }
 
 export function pickLatestExportArtifact(messages: StudioMessage[]): ArtifactRef | null {

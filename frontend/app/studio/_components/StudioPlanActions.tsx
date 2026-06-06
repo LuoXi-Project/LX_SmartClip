@@ -5,6 +5,7 @@ import { Download, Film, Loader2, Mic, Scissors, Volume2 } from 'lucide-react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import { resolveStorageUrl } from '@/lib/studio-media-url'
 import { autoEditApi, formatFastApiDetail } from '@/lib/api'
+import { patchAgentWorkspace } from '@/lib/agent-api'
 import { useToast } from '@/components/ui/toast-provider'
 import { useConfirm } from '@/hooks/use-confirm'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
@@ -23,7 +24,7 @@ type StudioPlanActionsProps = {
 export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
   const toast = useToast()
   const confirm = useConfirm()
-  const { workspace, setWorkspace, setSelectedArtifact } = useStudioStore()
+  const { sessionId, workspace, setWorkspace, setSelectedArtifact } = useStudioStore()
   const { media } = useStudioMediaConfig()
   const [realizing, setRealizing] = useState(false)
   const [exportingJY, setExportingJY] = useState(false)
@@ -49,6 +50,16 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
       production_profile,
       ...(useTts ? { force_tts_pipeline: true } : {}),
     }
+  }
+
+  async function persistExport(entry: Record<string, unknown>) {
+    if (!sessionId || !workspace) return
+    const last_exports = [...(workspace.last_exports || []), entry]
+    const res = await patchAgentWorkspace(sessionId, {
+      pipeline_phase: 'export',
+      last_exports,
+    })
+    setWorkspace(res.workspace)
   }
 
   async function handleRealize(forceTts?: boolean) {
@@ -89,16 +100,13 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
           plan_id: plan.plan_id,
         },
       })
-      if (workspace) {
-        setWorkspace({
-          ...workspace,
-          pipeline_phase: 'export',
-          last_exports: [
-            ...(workspace.last_exports || []),
-            { kind: 'video', filename: res.filename, url, plan_id: plan.plan_id },
-          ],
-        })
-      }
+      await persistExport({
+        kind: 'video',
+        filename: res.filename,
+        url,
+        mode: res.mode,
+        plan_id: plan.plan_id,
+      })
     } catch (e: unknown) {
       toast.error(formatFastApiDetail(e) || (e as Error)?.message || '成片失败')
     } finally {
@@ -142,6 +150,14 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
           mode: res.mode,
           plan_id: plan.plan_id,
         },
+      })
+      await persistExport({
+        kind: 'jianying',
+        filename: res.filename,
+        url,
+        local_path: res.local_path,
+        mode: res.mode,
+        plan_id: plan.plan_id,
       })
     } catch (e: unknown) {
       toast.error(formatFastApiDetail(e) || (e as Error)?.message || '剪映导出失败')

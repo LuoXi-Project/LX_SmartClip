@@ -147,6 +147,26 @@ async def _apply_tool_result(session_id: str, result: ToolResult, ctx: AgentCont
         ctx.workspace = await session_store.patch_workspace(session_id, result.workspace_patch)
 
 
+async def _persist_plan_trace(
+    session_id: str,
+    *,
+    route: str,
+    route_reason: str,
+    step_states: list[dict[str, Any]],
+) -> None:
+    if not route and not step_states:
+        return
+    await session_store.persist_studio_message(
+        session_id,
+        {
+            "studio_type": "execution_trace",
+            "route": route,
+            "route_reason": route_reason,
+            "steps": step_states,
+        },
+    )
+
+
 async def _poll_process_job(
     session_id: str,
     task_id: str,
@@ -208,6 +228,8 @@ async def run_plan_steps(
     ctx: AgentContext,
     user_message: str,
     *,
+    route: str = "",
+    route_reason: str = "",
     confirm_preview_fn,
     finish_tool_result_fn,
     maybe_checkpoint_fn,
@@ -221,11 +243,36 @@ async def run_plan_steps(
         yield _sse("plan_done", {"completed": False, "reason": "empty_plan"})
         return
 
+    step_states: dict[str, dict[str, Any]] = {
+        s.id: {"id": s.id, "title": s.title, "tool": s.tool, "status": "pending"}
+        for s in steps
+    }
+
+    def _patch_step(step_id: str, **fields: Any) -> None:
+        if step_id in step_states:
+            step_states[step_id].update(fields)
+
+    async def _finish_plan(payload: dict[str, Any]) -> bytes:
+        await _persist_plan_trace(
+            session_id,
+            route=route,
+            route_reason=route_reason,
+            step_states=list(step_states.values()),
+        )
+        return _sse("plan_done", payload)
+
     yield _sse("message_delta", {"content": f"已规划 {len(steps)} 步，开始按序执行…\n"})
 
     for step in steps:
         spec = REGISTRY.get(step.tool)
         if not spec:
+            _patch_step(
+                step.id,
+                status="skipped",
+                title=step.title,
+                tool=step.tool,
+                message=f"未知工具 {step.tool}",
+            )
             yield _sse("plan_step_update", {
                 "step_id": step.id,
                 "status": "skipped",
@@ -236,6 +283,13 @@ async def run_plan_steps(
             continue
 
         if step.tool not in _AUTO_ARG_TOOLS:
+            _patch_step(
+                step.id,
+                status="skipped",
+                title=step.title,
+                tool=step.tool,
+                message="需 Agent 补充参数，转交对话执行",
+            )
             yield _sse("plan_step_update", {
                 "step_id": step.id,
                 "status": "skipped",
@@ -243,11 +297,18 @@ async def run_plan_steps(
                 "tool": step.tool,
                 "message": "需 Agent 补充参数，转交对话执行",
             })
-            yield _sse("plan_done", {"completed": False, "reason": "needs_executor", "at_step": step.id})
+            yield await _finish_plan({"completed": False, "reason": "needs_executor", "at_step": step.id})
             return
 
         args = build_step_args(step.tool, ctx, user_message)
         if args is None:
+            _patch_step(
+                step.id,
+                status="skipped",
+                title=step.title,
+                tool=step.tool,
+                message="缺少前置条件，转交对话执行",
+            )
             yield _sse("plan_step_update", {
                 "step_id": step.id,
                 "status": "skipped",
@@ -255,11 +316,18 @@ async def run_plan_steps(
                 "tool": step.tool,
                 "message": "缺少前置条件，转交对话执行",
             })
-            yield _sse("plan_done", {"completed": False, "reason": "missing_args", "at_step": step.id})
+            yield await _finish_plan({"completed": False, "reason": "missing_args", "at_step": step.id})
             return
 
         # 生成方案前确保素材已处理
         if step.tool == "generate_auto_edit_plan" and await _videos_need_process(ctx):
+            _patch_step(
+                step.id,
+                status="skipped",
+                title=step.title,
+                tool=step.tool,
+                message="素材尚未处理完成，转交对话执行",
+            )
             yield _sse("plan_step_update", {
                 "step_id": step.id,
                 "status": "skipped",
@@ -267,9 +335,16 @@ async def run_plan_steps(
                 "tool": step.tool,
                 "message": "素材尚未处理完成，转交对话执行",
             })
-            yield _sse("plan_done", {"completed": False, "reason": "videos_not_ready", "at_step": step.id})
+            yield await _finish_plan({"completed": False, "reason": "videos_not_ready", "at_step": step.id})
             return
 
+        _patch_step(
+            step.id,
+            status="running",
+            title=step.title,
+            tool=step.tool,
+            message=f"正在执行 {step.title}",
+        )
         yield _sse("plan_step_update", {
             "step_id": step.id,
             "status": "running",
@@ -298,6 +373,13 @@ async def run_plan_steps(
                 "plan_step_id": step.id,
             })
             yield _sse("message_delta", {"content": hint})
+            _patch_step(
+                step.id,
+                status="pending",
+                title=step.title,
+                tool=step.tool,
+                message="等待确认",
+            )
             yield _sse("plan_step_update", {
                 "step_id": step.id,
                 "status": "pending",
@@ -308,7 +390,7 @@ async def run_plan_steps(
             await session_store.persist_studio_message(
                 session_id, {"studio_type": "assistant", "text": hint}
             )
-            yield _sse("plan_done", {"completed": False, "reason": "pending_confirm", "at_step": step.id})
+            yield await _finish_plan({"completed": False, "reason": "pending_confirm", "at_step": step.id})
             return
 
         yield _sse("tool_start", {"call_id": call_id, "name": step.tool, "input": args, "plan_step_id": step.id})
@@ -328,6 +410,13 @@ async def run_plan_steps(
             yield chunk
 
         if not result.ok:
+            _patch_step(
+                step.id,
+                status="failed",
+                title=step.title,
+                tool=step.tool,
+                message=result.error or result.summary,
+            )
             yield _sse("plan_step_update", {
                 "step_id": step.id,
                 "status": "failed",
@@ -335,15 +424,23 @@ async def run_plan_steps(
                 "tool": step.tool,
                 "message": result.error or result.summary,
             })
-            yield _sse("plan_done", {"completed": False, "reason": "step_failed", "at_step": step.id})
+            yield await _finish_plan({"completed": False, "reason": "step_failed", "at_step": step.id})
             return
 
+        done_msg = result.summary[:120] if result.summary else "完成"
+        _patch_step(
+            step.id,
+            status="done",
+            title=step.title,
+            tool=step.tool,
+            message=done_msg,
+        )
         yield _sse("plan_step_update", {
             "step_id": step.id,
             "status": "done",
             "title": step.title,
             "tool": step.tool,
-            "message": result.summary[:120] if result.summary else "完成",
+            "message": done_msg,
         })
 
         if step.tool == "start_process_job" and result.job_id:
@@ -354,7 +451,7 @@ async def run_plan_steps(
             if row:
                 payload = await reconcile_orphan_task(row)
                 if str(payload.get("status")) != "done":
-                    yield _sse("plan_done", {
+                    yield await _finish_plan({
                         "completed": False,
                         "reason": "process_not_done",
                         "at_step": step.id,
@@ -362,4 +459,4 @@ async def run_plan_steps(
                     return
 
     yield _sse("message_delta", {"content": "\n规划步骤已全部完成。\n"})
-    yield _sse("plan_done", {"completed": True})
+    yield await _finish_plan({"completed": True})

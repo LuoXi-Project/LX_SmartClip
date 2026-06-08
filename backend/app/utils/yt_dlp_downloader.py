@@ -1,11 +1,30 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+from urllib.parse import urlparse
 
 
 class YtDlpDownloadError(Exception):
     pass
+
+
+_BILIBILI_HOST_RE = re.compile(
+    r"(?:^|\.)(?:bilibili|b23)\.(?:com|tv)$",
+    re.IGNORECASE,
+)
+
+# B 站反爬会拒绝缺少 Origin/Referer 的请求（HTTP 412）。
+_BILIBILI_HTTP_HEADERS = {
+    "Origin": "https://www.bilibili.com",
+    "Referer": "https://www.bilibili.com/",
+}
+
+
+def _is_bilibili_url(url: str) -> bool:
+    host = (urlparse((url or "").strip()).hostname or "").lower()
+    return bool(_BILIBILI_HOST_RE.search(host))
 
 
 def ensure_yt_dlp_available() -> None:
@@ -89,7 +108,7 @@ def download_video_with_yt_dlp(
     except Exception as exc:
         raise YtDlpDownloadError(f"导入 yt_dlp 失败：{exc}") from exc
 
-    ydl_opts = {
+    ydl_opts: dict = {
         "format": _build_format_selector(
             resolution=resolution,
             fps_limit=fps_limit,
@@ -104,6 +123,8 @@ def download_video_with_yt_dlp(
         "outtmpl": out_tpl,
         "socket_timeout": timeout_sec,
     }
+    if _is_bilibili_url(url):
+        ydl_opts["http_headers"] = _BILIBILI_HTTP_HEADERS
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

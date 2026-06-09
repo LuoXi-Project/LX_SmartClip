@@ -21,6 +21,7 @@ from app.db.database import DB_PATH
 from app.core.llm import LLMConfig
 from app.core.llm import LLMClient
 from app.core.llm.response_utils import extract_json_object
+from app.core.auto_edit.plan_audio import finalize_plan_audio
 from app.core.auto_edit.plan_generation import call_llm_for_plans
 from app.core.auto_edit.segments import ClipCandidate, collect_plan_clip_ids, segments_from_plan
 from app.core.auto_edit_v2.plan_compile import (
@@ -409,6 +410,12 @@ async def _call_llm_for_final_video_meta(
         return None, None
 
 
+
+
+def _finalize_plans_response(resp: AutoEditPlanResponse) -> AutoEditPlanResponse:
+    resp.plans = [finalize_plan_audio(pl) for pl in resp.plans]
+    return resp
+
 @router.post("/plan", response_model=AutoEditPlanResponse)
 async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanResponse:
     """
@@ -538,7 +545,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                         pool=pool,
                     )
                 )
-            return AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
+            return _finalize_plans_response(AutoEditPlanResponse(plans=sort_plans_by_quality(plans)))
         except HTTPException:
             raise
         except Exception as e:
@@ -589,7 +596,7 @@ async def generate_auto_edit_plan(req: AutoEditPlanRequest) -> AutoEditPlanRespo
                             pool=None,
                         )
                     )
-                return AutoEditPlanResponse(plans=sort_plans_by_quality(plans))
+                return _finalize_plans_response(AutoEditPlanResponse(plans=sort_plans_by_quality(plans)))
 
             # 最终兜底：回退旧逻辑，避免新引擎缺信息直接失败
             return await call_llm_for_plans(cfg, context, req)
@@ -738,7 +745,7 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
             status_code=400,
             detail="没有可保留的片段：请确认已对选中视频跑过 ASR，且至少一个 clip 含有识别文本",
         )
-    return AutoEditPlanResponse(plans=[plan])
+    return _finalize_plans_response(AutoEditPlanResponse(plans=[plan]))
 
 
 async def _load_mix_edit_clips(db: aiosqlite.Connection, video_ids: List[str]) -> list[aiosqlite.Row]:
@@ -863,7 +870,7 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
             status_code=400,
             detail="混剪方案为空：请确认素材已处理，且至少有一段可用画面",
         )
-    return AutoEditPlanResponse(plans=[plan])
+    return _finalize_plans_response(AutoEditPlanResponse(plans=[plan]))
 
 
 _MIX_ASSET_VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".avi")
@@ -1033,7 +1040,7 @@ async def video_dub_plan(req: VideoDubPlanRequest) -> AutoEditPlanResponse:
                 + " 成片对齐：保留画面时长（可在导出前于面板修改）。",
             }
         )
-    return AutoEditPlanResponse(plans=[plan])
+    return _finalize_plans_response(AutoEditPlanResponse(plans=[plan]))
 
 
 @router.post("/plan/session", response_model=AutoEditPlanSessionResponse)
@@ -1356,7 +1363,8 @@ async def _prepare_auto_edit_segments_from_plan(
         valid_clip_ids=valid_clip_ids,
         candidates_by_video=candidates_by_video,
         all_candidates=candidates,
-        fail_fast_on_tts_error=use_tts_branch and plan_has_tts_segments,
+        force_tts=bool(force_tts_pipeline),
+        fail_fast_on_tts_error=use_tts_branch and (plan_has_tts_segments or bool(force_tts_pipeline)),
     )
     if not seg_inputs:
         detail = {

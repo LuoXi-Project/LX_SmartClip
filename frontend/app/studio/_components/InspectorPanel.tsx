@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { Info, Lock, Music2, Sliders, Subtitles } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Info, Lock, Mic, Music2, Sliders, Subtitles } from 'lucide-react'
 import Link from 'next/link'
 import { patchAgentWorkspace } from '@/lib/agent-api'
 import { bgmApi, type BgmTrack } from '@/lib/api'
@@ -9,7 +9,9 @@ import { BgmTrackPicker } from '@/components/ui/bgm-track-picker'
 import { SubtitlePanel } from '@/app/match/_components/SubtitlePanel'
 import { useStudioStore } from '@/lib/studio-store'
 import { useStudioMediaConfig } from './useStudioMediaConfig'
+import type { AutoEditPlanApi } from '@/lib/api'
 import type { InspectorTabId, ProductionPresetId, ProductionProfileApi } from '@/lib/agent-types'
+import { getPlanAudioSummary } from '@/lib/plan-audio-summary'
 import { readProductionProfile } from '@/lib/studio-media-config'
 import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
 
@@ -61,6 +63,17 @@ export function InspectorPanel() {
   const [bgmListError, setBgmListError] = useState('')
 
   const profile = readProductionProfile(workspace?.user_preferences)
+  const activePlan = useMemo(() => {
+    if (!workspace?.plans?.length) return null
+    const pid = workspace.active_plan_id
+    const raw = pid
+      ? workspace.plans.find((p) => (p as AutoEditPlanApi).plan_id === pid) ?? workspace.plans[0]
+      : workspace.plans[0]
+    return raw as AutoEditPlanApi
+  }, [workspace])
+
+  const audioSummary = activePlan ? getPlanAudioSummary(activePlan) : null
+
   const preset = profile.preset_id || 'auto'
 
   useEffect(() => {
@@ -142,6 +155,40 @@ export function InspectorPanel() {
       <div className="flex-1 overflow-auto p-4 text-xs text-slate-400 space-y-4">
         {inspectorTab === 'production' && (
           <>
+            {audioSummary ? (
+              <section className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 space-y-2">
+                <h3 className="text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Mic className="w-3.5 h-3.5" /> 听感 / 配音
+                </h3>
+                <p className="text-sm text-slate-200 font-medium">{audioSummary.label}</p>
+                <p className="text-[11px] text-slate-400">{audioSummary.short}</p>
+                <div className="flex flex-wrap gap-1.5 text-[10px]">
+                  <span className="px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-200 border border-violet-500/30">
+                    TTS {audioSummary.tts_count}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    原声 {audioSummary.original_count}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                    静音 {audioSummary.mute_count}
+                  </span>
+                </div>
+                {audioSummary.will_export_tts ? (
+                  <p className="text-[10px] text-emerald-400">导出成片时将合成 AI 配音</p>
+                ) : audioSummary.will_keep_original ? (
+                  <p className="text-[10px] text-amber-300">导出成片时保留素材原声，不强制 TTS</p>
+                ) : null}
+                {audioSummary.warnings.map((w) => (
+                  <p key={w} className="text-[10px] text-amber-400/90">
+                    {w}
+                  </p>
+                ))}
+                <p className="text-[10px] text-slate-500">
+                  制作风格（如电商）只管转场/响度，不管是否配音；以本栏为准。
+                </p>
+              </section>
+            ) : null}
+
             <section>
               <h3 className="text-slate-500 uppercase tracking-wider mb-2">制作风格</h3>
               <p className="text-[11px] text-slate-500 mb-2">

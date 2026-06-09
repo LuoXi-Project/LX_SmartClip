@@ -950,6 +950,7 @@ export interface AutoEditPlanApi {
   postprocess?: MixPostprocessConfigApi | null
   quality?: AutoEditPlanQualityApi | null
   production_profile?: import('./agent-types').ProductionProfileApi | null
+  audio_summary?: import('./plan-audio-summary').PlanAudioSummaryApi | null
 }
 
 export interface AutoEditPlanResponseApi {

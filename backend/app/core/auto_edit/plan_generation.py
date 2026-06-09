@@ -11,6 +11,7 @@ from app.core.llm import LLMClient
 from app.core.llm.prompts.auto_edit_plan import SYSTEM_PROMPT, SCHEMA_HINT, build_user_message
 from app.core.auto_edit_v2.plan_compile import build_v0_dsl_from_request
 from app.core.auto_edit_v2.plan_quality import compute_plan_quality_from_segments, sort_plans_by_quality
+from app.core.auto_edit.plan_audio import finalize_plan_audio
 from app.models.auto_edit import AutoEditPlanRequest, AutoEditPlanResponse, Plan
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ async def call_llm_for_plans(cfg: dict[str, Any], context: str, req: AutoEditPla
     try:
         res = AutoEditPlanResponse(**data)
         res.plans = sort_plans_by_quality(attach_plan_quality(res.plans, req))
+        res.plans = [finalize_plan_audio(p) for p in res.plans]
         return res
     except ValidationError as e:
         logger.error("auto_edit Plan 验证失败: %s", e)

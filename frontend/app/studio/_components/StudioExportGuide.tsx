@@ -8,6 +8,7 @@ import {
   getPlanModeGuide,
   STUDIO_WORKFLOW_HINT,
 } from '@/lib/studio-export-guide'
+import { getPlanAudioSummary } from '@/lib/plan-audio-summary'
 
 type StudioExportGuideProps = {
   plan?: AutoEditPlanApi | null
@@ -52,6 +53,7 @@ export function StudioExportGuide({
   if (!plan) return null
 
   const modeGuide = getPlanModeGuide(plan.mode)
+  const audioSummary = getPlanAudioSummary(plan)
   const paths = getExportPathsForPlan(plan)
 
   return (
@@ -78,6 +80,9 @@ export function StudioExportGuide({
       {open ? (
         <div className="px-3 pb-3 space-y-3 border-t border-indigo-500/15">
           <section className="text-xs space-y-1.5">
+            <p className="text-[11px] text-violet-200/90 border border-violet-500/25 rounded-lg px-2 py-1.5">
+              实际听感：{audioSummary.label} — {audioSummary.short}
+            </p>
             <p className="text-slate-400 uppercase tracking-wider text-[10px]">本方案成片逻辑</p>
             <ol className="list-decimal list-inside text-slate-300/90 space-y-0.5">
               {modeGuide.pipeline.map((s) => (

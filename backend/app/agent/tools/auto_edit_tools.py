@@ -93,6 +93,10 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
 
     mode = str(plan_dict.get("mode") or "auto")
     mode_cn = {"voiceover": "配音剪辑", "original": "原声剪辑", "auto": "自动混合"}.get(mode, mode)
+    audio = plan_dict.get("audio_summary") or {}
+    audio_hint = ""
+    if isinstance(audio, dict) and audio.get("label"):
+        audio_hint = f"听感：{audio.get('label')}（{audio.get('short', '')}）。"
     export_hint = {
         "voiceover": "适合「导出成片（配音版）」或剪映草稿二次精剪。",
         "original": "适合「导出成片（保留原声）」；若需 AI 配音可说「不保留原声，进行 tts 配音」。",
@@ -103,7 +107,7 @@ async def _generate_plan(ctx: AgentContext, args: dict[str, Any]) -> ToolResult:
         summary=(
             f"已生成方案「{plan_dict.get('title') or plan_id}」（{mode_cn}），"
             f"约 {plan_dict.get('estimated_duration_sec', '?')} 秒。"
-            f"制作：{profile.human_summary()}。{export_hint}"
+            f"制作：{profile.human_summary()}。{audio_hint}{export_hint}"
         ),
         workspace_patch={
             "pipeline_phase": "plan",

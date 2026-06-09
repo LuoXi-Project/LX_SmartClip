@@ -195,6 +195,7 @@ async def segments_from_plan(
     candidates_by_video: Dict[str, List[ClipCandidate]],
     all_candidates: List[ClipCandidate],
     *,
+    force_tts: bool = False,
     fail_fast_on_tts_error: bool = False,
 ) -> List[SubtitleSegmentInput]:
     """
@@ -242,6 +243,7 @@ async def segments_from_plan(
         # 口播 / force_tts 成片：凡有文案的段落一律合成 TTS，避免烧录回退素材原声。
         want_tts = has_text and (
             seg.audio_mode == "tts"
+            or (force_tts and seg.audio_mode != "mute")
             or (fail_fast_on_tts_error and seg.audio_mode != "mute")
         )
         if not want_tts:
@@ -265,6 +267,7 @@ async def segments_from_plan(
         has_text = bool(seg.subtitle and (seg.subtitle.text or "").strip())
         want_tts = has_text and (
             seg.audio_mode == "tts"
+            or (force_tts and seg.audio_mode != "mute")
             or (fail_fast_on_tts_error and seg.audio_mode != "mute")
         )
         if not want_tts:

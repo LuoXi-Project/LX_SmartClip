@@ -208,6 +208,21 @@ class PlanQualityInsight(BaseModel):
     reasons: List[str] = Field(default_factory=list)
 
 
+class PlanAudioSummary(BaseModel):
+    """方案听感摘要：检查器/画布展示是否与成片 TTS 管线一致。"""
+
+    mode: Literal["auto", "voiceover", "original"] = "auto"
+    tts_count: int = 0
+    original_count: int = 0
+    mute_count: int = 0
+    active_segment_count: int = 0
+    will_export_tts: bool = False
+    will_keep_original: bool = False
+    label: str = ""
+    short: str = ""
+    warnings: List[str] = Field(default_factory=list)
+
+
 class Plan(BaseModel):
     plan_id: str
     title: str
@@ -231,6 +246,10 @@ class Plan(BaseModel):
     quality: Optional[PlanQualityInsight] = Field(
         None,
         description="成片质量评分与推荐理由（Timeline Engine / 启发式）",
+    )
+    audio_summary: Optional[PlanAudioSummary] = Field(
+        None,
+        description="听感摘要：TTS/原声/静音段统计，供检查器与导出指引展示",
     )
 
 

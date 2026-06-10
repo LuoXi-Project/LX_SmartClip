@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 MatchMode = Literal["auto", "vector", "text", "llm_only"]
 
-# ASR/VLM 与文案最低相似度，低于此值视为无强匹配
-_TEXT_SIM_MIN = 0.04
+# 文本初筛至少返回的最低分（高于 0 即可进入候选，供 LLM 精排）
+_TEXT_RECALL_FLOOR = 0.01
 # 候选过多时不调用 LLM，避免超长上下文
 _LLM_MAX_CANDIDATES = 40
 
@@ -94,9 +94,38 @@ def _fetch_clips_by_ids(db_conn, clip_ids: List[str]) -> List[dict]:
 
 
 def _text_sim(query: str, text: str) -> float:
-    if not query or not text:
+    """中文友好文本相似度：子串命中 > 滑动窗口 > 字符覆盖 > 全局序列比。"""
+    q = query.strip()
+    t = text.strip()
+    if not q or not t:
         return 0.0
-    return difflib.SequenceMatcher(None, query.strip(), text.strip()).ratio()
+
+    if q in t:
+        return min(1.0, 0.78 + 0.22 * (len(q) / max(len(t), len(q))))
+
+    q_cf, t_cf = q.casefold(), t.casefold()
+    if q_cf in t_cf:
+        return min(1.0, 0.74 + 0.22 * (len(q) / max(len(t), len(q))))
+
+    q_len = len(q)
+    best_window = 0.0
+    if q_len <= len(t):
+        for i in range(len(t) - q_len + 1):
+            window = t[i : i + q_len]
+            r = difflib.SequenceMatcher(None, q, window, autojunk=False).ratio()
+            if r > best_window:
+                best_window = r
+                if r >= 0.95:
+                    break
+
+    q_chars = {c for c in q if not c.isspace()}
+    char_cover = 0.0
+    if q_chars:
+        t_chars = {c for c in t if not c.isspace()}
+        char_cover = len(q_chars & t_chars) / len(q_chars)
+
+    global_ratio = difflib.SequenceMatcher(None, q, t, autojunk=False).quick_ratio()
+    return max(best_window * 0.95, char_cover * 0.88, global_ratio * 0.35)
 
 
 def _clip_text_score(
@@ -119,7 +148,8 @@ def _clip_text_score(
     if not scores:
         return 0.0
     total_w = sum(weights)
-    return sum(s * w for s, w in zip(scores, weights)) / total_w
+    weighted = sum(s * w for s, w in zip(scores, weights)) / total_w
+    return max(weighted, max(scores))
 
 
 def _text_similarity_candidates(
@@ -142,18 +172,15 @@ def _text_similarity_candidates(
     rated: List[tuple[float, dict]] = []
     for c in clips:
         r = _clip_text_score(q, c, weight_asr=weight_asr, weight_vlm=weight_vlm)
-        rated.append((r, c))
+        if r > 0:
+            rated.append((r, c))
     rated.sort(key=lambda x: x[0], reverse=True)
 
-    if not rated or rated[0][0] < _TEXT_SIM_MIN:
+    if not rated or rated[0][0] < _TEXT_RECALL_FLOOR:
         return []
 
     out: List[dict] = []
-    for r, c in rated:
-        if r < _TEXT_SIM_MIN:
-            break
-        if len(out) >= top_k:
-            break
+    for r, c in rated[:top_k]:
         mc = dict(c)
         mc["score"] = round(float(r) * 10.0, 3)
         mc["reason"] = "ASR/VLM 文本相似度（无向量检索）"
@@ -201,6 +228,36 @@ class Matcher:
         self.text_weight_asr = text_weight_asr
         self.text_weight_vlm = text_weight_vlm
 
+    def _recall_on_vector_failure(
+        self,
+        query: str,
+        db_conn,
+        top_k: int,
+        video_ids: Optional[List[str]],
+        *,
+        reason: str,
+    ) -> Tuple[List[dict], bool]:
+        """向量链路失败时的降级：优先 LLM 直接匹配，否则加宽文本初筛。"""
+        logger.warning("[Matcher] %s，尝试降级检索", reason)
+        clips = _load_clips(db_conn, video_ids)
+        if self.llm and clips and len(clips) <= _LLM_MAX_CANDIDATES:
+            logger.info(
+                "[Matcher] %s，候选 %d 个 ≤ %d，改用 LLM 直接匹配",
+                reason,
+                len(clips),
+                _LLM_MAX_CANDIDATES,
+            )
+            stage_log(
+                "检索",
+                f"{reason}，改用 LLM 匹配 {len(clips)} 个片段…",
+                status="running",
+            )
+            return self._recall_llm_only(query, db_conn, top_k, video_ids)
+
+        stage_log("检索", f"{reason}，降级为文本初筛…", status="running")
+        widen_k = min(max(top_k * 3, top_k), _LLM_MAX_CANDIDATES)
+        return self._recall_text(query, db_conn, widen_k, video_ids)
+
     def _recall_vector(
         self,
         query: str,
@@ -213,8 +270,22 @@ class Matcher:
 
         stage_log("检索", f"向量初筛（top_k={top_k}）…", status="running")
         logger.info("[Matcher] vector 初筛: query_len=%d, top_k=%d", len(query), top_k)
-        query_vec = self.embedder.embed(query)
-        candidate_ids = self.vector_db.search(query_vec, top_k=top_k, video_ids=video_ids or None)
+        try:
+            query_vec = self.embedder.embed(query)
+        except Exception as e:
+            return self._recall_on_vector_failure(
+                query, db_conn, top_k, video_ids, reason=f"Embedding 失败: {e}"
+            )
+
+        try:
+            candidate_ids = self.vector_db.search(
+                query_vec, top_k=top_k, video_ids=video_ids or None
+            )
+        except Exception as e:
+            return self._recall_on_vector_failure(
+                query, db_conn, top_k, video_ids, reason=f"向量检索失败: {e}"
+            )
+
         candidates = _fetch_clips_by_ids(db_conn, candidate_ids) if candidate_ids else []
         used_full_fallback = False
 
@@ -334,10 +405,7 @@ class Matcher:
         logger.info("[Matcher] 初筛候选: %d 个片段 (mode=%s)", len(candidates), mode)
 
         force_llm = mode == "llm_only"
-        skip_llm = (
-            not force_llm
-            and (used_full_fallback or len(candidates) > _LLM_MAX_CANDIDATES)
-        )
+        skip_llm = not force_llm and len(candidates) > _LLM_MAX_CANDIDATES
 
         if self.llm is not None and (force_llm or not skip_llm):
             stage_log("检索", f"LLM 精排 {len(candidates)} 个候选…", status="running")
@@ -352,9 +420,9 @@ class Matcher:
         else:
             if skip_llm and self.llm is not None:
                 logger.info(
-                    "[Matcher] 跳过 LLM 精排（fallback=%s, candidates=%d）",
-                    used_full_fallback,
+                    "[Matcher] 跳过 LLM 精排（候选过多: %d > %d）",
                     len(candidates),
+                    _LLM_MAX_CANDIDATES,
                 )
             default_reason = {
                 "vector": "向量相似度排序",

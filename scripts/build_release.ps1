@@ -55,6 +55,13 @@ Copy-Item -Path (Join-Path $FrontendOut "*") -Destination $BackendWebDir -Recurs
 if (-not (Test-Path $DistDir)) {
     New-Item -Path $DistDir -ItemType Directory -Force | Out-Null
 }
+
+Write-Host "[准备] FFmpeg（打包进发布目录）..."
+& (Join-Path $PSScriptRoot "prepare_ffmpeg.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "FFmpeg 准备失败"
+}
+
 if ($Backend -eq "pyarmor") {
     Write-Host "[5/5] PyArmor 加密 + PyInstaller 构建后端并导出 dist/..."
     & (Join-Path $PSScriptRoot "build_backend_pyarmor_pyinstaller.ps1")

@@ -15,13 +15,13 @@ if /I "%~2"=="skip-frontend" set "BUILD_FRONTEND=0"
 if /I "%~2"=="--skip-frontend" set "BUILD_FRONTEND=0"
 
 if "%BUILD_FRONTEND%"=="1" (
-  echo [1/2] 检查目录...
+  echo [1/3] 检查目录...
   if not exist "%FRONTEND_DIR%\package.json" (
     echo 错误：未找到前端目录或 package.json: "%FRONTEND_DIR%"
     exit /b 1
   )
 
-  echo [1/2] 安装前端依赖...
+  echo [1/3] 安装前端依赖...
   cd /d "%FRONTEND_DIR%"
   call npm install
   if errorlevel 1 (
@@ -29,7 +29,7 @@ if "%BUILD_FRONTEND%"=="1" (
     exit /b 1
   )
 
-  echo [1/2] 构建前端导出产物...
+  echo [1/3] 构建前端导出产物...
   call npm run build
   if errorlevel 1 (
     echo 错误：npm run build 失败
@@ -41,7 +41,7 @@ if "%BUILD_FRONTEND%"=="1" (
     exit /b 1
   )
 
-  echo [1/2] 拷贝构建产物到后端静态目录...
+  echo [1/3] 拷贝构建产物到后端静态目录...
   if exist "%BACKEND_WEB_DIR%" rmdir /s /q "%BACKEND_WEB_DIR%"
   mkdir "%BACKEND_WEB_DIR%"
   xcopy "%FRONTEND_OUT%\*" "%BACKEND_WEB_DIR%\" /E /I /Y > nul
@@ -50,10 +50,17 @@ if "%BUILD_FRONTEND%"=="1" (
     exit /b 1
   )
 ) else (
-  echo [1/2] 跳过前端构建（参数: %~2）
+  echo [1/3] 跳过前端构建（参数: %~2）
 )
 
-echo [2/2] 构建后端并导出 dist/... （%BACKEND_BUILDER%）
+echo [2/3] 准备 FFmpeg（打包进发布目录并配置启动环境变量）...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare_ffmpeg.ps1"
+if errorlevel 1 (
+  echo 错误：FFmpeg 准备失败
+  exit /b 1
+)
+
+echo [3/3] 构建后端并导出 dist/... （%BACKEND_BUILDER%）
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 if /I "%BACKEND_BUILDER%"=="pyarmor" (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_backend_pyarmor_pyinstaller.ps1"

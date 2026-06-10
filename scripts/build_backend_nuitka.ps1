@@ -154,6 +154,8 @@ if (-not (Test-Path $ProducedDist)) {
 Write-Host "[backend] 导出到 dist/backend ..."
 Copy-Item -Path (Join-Path $ProducedDist "*") -Destination $BackendOutDir -Recurse -Force
 
+& (Join-Path $PSScriptRoot "write_release_launcher.ps1") -BackendOutDir $BackendOutDir
+
 Write-Host ""
 Write-Host "后端构建完成：$BackendOutDir"
 Write-Host "可执行文件：$(Join-Path $BackendOutDir 'lx_smartclip_backend.exe')"

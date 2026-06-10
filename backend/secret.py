@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 from requests.exceptions import RequestException, Timeout
 import locale
 import subprocess
+import sys
 
 logger = logging.getLogger(__name__)
 

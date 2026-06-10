@@ -28,7 +28,10 @@ frontend/app/library/_components/PreviewModal.tsx
 .gitignore
 backend/app/static/frontend/
 backend/.runtime/backend_url.txt
+venv-py310/
 dist/
+backend/app/version.json
+backend/app/release.config.json
 backend/pyarmor.bug.log
 backend/nuitka-crash-report.xml
 

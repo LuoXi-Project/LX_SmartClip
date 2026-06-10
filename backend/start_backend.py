@@ -37,10 +37,48 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("LX_BACKEND_URL_FILE", ""),
         help="Optional file path to write the chosen base URL into.",
     )
+    p.add_argument(
+        "--validate-frozen",
+        action="store_true",
+        help="Frozen build smoke test: import critical modules then exit (used by release scripts).",
+    )
     return p.parse_args()
+
+
+def validate_frozen_imports() -> None:
+    """Build-time gate: fail fast if PyInstaller missed any early-import module."""
+    if getattr(sys, "frozen", False):
+        os.environ.setdefault("LX_SMARTCLIP_HOME", str(Path(sys.executable).resolve().parent))
+
+    backend_root = _repo_backend_root()
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
+
+    from app.utils.frozen_metadata_shim import apply_frozen_metadata_shim
+
+    apply_frozen_metadata_shim()
+    from app.utils.bin_paths import apply_default_ffmpeg_environment
+
+    apply_default_ffmpeg_environment()
+
+    modules = (
+        "secret",
+        "app.main",
+        "app.db.init_db",
+        "app.utils.paths",
+        "app.core.license",
+        "app.api.process",
+    )
+    for name in modules:
+        __import__(name)
+    print("frozen import validation ok", flush=True)
 
 def main() -> None:
     args = parse_args()
+
+    if args.validate_frozen:
+        validate_frozen_imports()
+        return
 
     # 冻结运行时将持久化根固定到可执行文件目录，避免受启动 cwd 影响
     if getattr(sys, "frozen", False):

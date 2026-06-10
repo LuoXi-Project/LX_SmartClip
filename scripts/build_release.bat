@@ -75,5 +75,10 @@ if "%BUILD_FRONTEND%"=="1" (
 )
 echo Dist dir: "%DIST_DIR%"
 echo.
-echo Release backend: "%DIST_DIR%\backend\lx_smartclip_backend.exe"
+if exist "%DIST_DIR%\.backend_out" (
+  set /p BACKEND_OUT=<"%DIST_DIR%\.backend_out"
+  echo Release backend: "!BACKEND_OUT!\lx_smartclip_backend.exe"
+) else (
+  echo Release backend: "%DIST_DIR%\backend\lx_smartclip_backend.exe"
+)
 exit /b 0

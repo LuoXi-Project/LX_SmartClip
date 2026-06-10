@@ -1,0 +1,47 @@
+# 手动触发：将 dist/release 产物发布到公开发版仓库
+# 适用：本地已运行 prepare_release.bat，希望在 CI 中上传（需先上传 artifact 或 checkout tag）
+#
+# 更推荐日常使用 scripts/publish_release.bat 在本地直接 gh release create
+
+name: Upload Release to Public Repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（与 VERSION 一致，不含 v）'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate secrets
+        run: |
+          test -n "${{ secrets.RELEASE_REPO }}" || (echo "缺少 RELEASE_REPO secret" && exit 1)
+          test -n "${{ secrets.RELEASE_REPO_TOKEN }}" || (echo "缺少 RELEASE_REPO_TOKEN secret" && exit 1)
+
+      - name: Check release artifacts exist
+        run: |
+          VER="${{ github.event.inputs.version }}"
+          ZIP="dist/release/LX_SmartClip-${VER}-win64.zip"
+          test -f "$ZIP" || (echo "未找到 $ZIP，请先在本地运行 prepare_release.bat 并提交/上传产物" && exit 1)
+
+      - name: Create GitHub Release on public repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          RELEASE_REPO: ${{ secrets.RELEASE_REPO }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          ZIP="dist/release/LX_SmartClip-${VERSION}-win64.zip"
+          SHA="dist/release/LX_SmartClip-${VERSION}-win64.zip.sha256"
+          NOTES="dist/release/RELEASE_NOTES.md"
+          ARGS=(release create "$TAG" --repo "$RELEASE_REPO" --title "LX SmartClip ${TAG}")
+          if [ -f "$NOTES" ]; then ARGS+=(--notes-file "$NOTES"); else ARGS+=(--generate-notes); fi
+          ARGS+=("$ZIP")
+          if [ -f "$SHA" ]; then ARGS+=("$SHA"); fi
+          gh "${ARGS[@]}"

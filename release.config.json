@@ -1,0 +1,7 @@
+{
+  "release_repo": "LuoXi-Project/LX_SmartClip-Releases",
+  "asset_name_template": "LX_SmartClip-{version}-win64.zip",
+  "product_name": "LX SmartClip",
+  "backend_builder": "pyarmor",
+  "notes": "公开发版仓库，仅用于 GitHub Releases 托管安装包；源码保留在私有仓库。backend_builder 可选 pyarmor（需有效 PyArmor 许可）或 nuitka。"
+}

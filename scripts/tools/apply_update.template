@@ -1,0 +1,165 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$JobFile
+)
+
+$ErrorActionPreference = "Stop"
+
+function Write-UpdateLog {
+    param([string]$Message)
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+    Write-Host $line
+    if ($script:LogPath) {
+        Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
+    }
+}
+
+function Clear-ReadOnlyTree {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    Get-ChildItem -Path $Path -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+            $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
+        }
+    }
+}
+
+function Remove-TreeForce {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    Clear-ReadOnlyTree -Path $Path
+    Remove-Item -Path $Path -Recurse -Force
+}
+
+function Stop-BackendProcess {
+    param([Parameter(Mandatory = $true)][string]$InstallRoot)
+    $exeName = "lx_smartclip_backend"
+    $installRootNorm = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
+
+    $matchesInstall = {
+        param($Process)
+        try {
+            $procPath = $Process.Path
+            if (-not $procPath) { return $false }
+            $procRoot = [System.IO.Path]::GetFullPath((Split-Path $procPath -Parent)).TrimEnd('\')
+            return $procRoot -eq $installRootNorm
+        } catch {
+            return $false
+        }
+    }
+
+    $targets = @(Get-Process -Name $exeName -ErrorAction SilentlyContinue | Where-Object { & $matchesInstall $_ })
+    foreach ($proc in $targets) {
+        Write-UpdateLog "Stopping backend PID $($proc.Id)..."
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+
+    for ($i = 0; $i -lt 20; $i++) {
+        $left = @(Get-Process -Name $exeName -ErrorAction SilentlyContinue | Where-Object { & $matchesInstall $_ })
+        if ($left.Count -eq 0) { return }
+        Start-Sleep -Seconds 1
+    }
+
+    Get-Process -Name $exeName -ErrorAction SilentlyContinue | Where-Object { & $matchesInstall $_ } | ForEach-Object {
+        Write-UpdateLog "Force stopping backend PID $($_.Id)..."
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if (-not (Test-Path $JobFile)) {
+    throw "Job file not found: $JobFile"
+}
+
+$job = Get-Content -Raw -Path $JobFile -Encoding UTF8 | ConvertFrom-Json
+$installRoot = [string]$job.install_root
+$downloadUrl = [string]$job.download_url
+$tag = [string]$job.tag
+$expectedSha = ([string]$job.sha256).ToLowerInvariant().Trim()
+
+if (-not $installRoot -or -not (Test-Path $installRoot)) {
+    throw "Invalid install_root: $installRoot"
+}
+if (-not $downloadUrl) {
+    throw "Missing download_url in job file"
+}
+
+$jobDir = Join-Path $installRoot "data\update_jobs"
+New-Item -ItemType Directory -Force -Path $jobDir | Out-Null
+$script:LogPath = Join-Path $jobDir "apply.log"
+
+Write-UpdateLog "Starting update to $tag"
+Write-UpdateLog "Install root: $installRoot"
+
+Stop-BackendProcess -InstallRoot $installRoot
+Start-Sleep -Seconds 2
+
+$tempDir = Join-Path $env:TEMP ("lx_smartclip_update_" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+$zipPath = Join-Path $tempDir "update.zip"
+
+try {
+    Write-UpdateLog "Downloading release package..."
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+
+    if ($expectedSha) {
+        $actualSha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -ne $expectedSha) {
+            throw "SHA256 mismatch: expected $expectedSha, got $actualSha"
+        }
+        Write-UpdateLog "SHA256 verified"
+    }
+
+    $extractDir = Join-Path $tempDir "extract"
+    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+
+    $stagingRoot = $extractDir
+    $topLevel = @(Get-ChildItem -Path $extractDir -Force)
+    if ($topLevel.Count -eq 1 -and $topLevel[0].PSIsContainer) {
+        $stagingRoot = $topLevel[0].FullName
+    }
+
+    $preserveDirs = @("data", "storage")
+    foreach ($item in Get-ChildItem -Path $stagingRoot -Force) {
+        $name = $item.Name
+        if ($preserveDirs -contains $name) {
+            Write-UpdateLog "Preserving directory: $name"
+            if ($name -eq "data") {
+                $backupDir = Join-Path $installRoot "data\backups"
+                New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+            }
+            continue
+        }
+        if ($name -eq "config.json" -and (Test-Path (Join-Path $installRoot "config.json"))) {
+            Write-UpdateLog "Preserving existing config.json"
+            continue
+        }
+
+        $dest = Join-Path $installRoot $name
+        Write-UpdateLog "Updating $name ..."
+        Remove-TreeForce -Path $dest
+        Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force
+    }
+
+    $launcher = Join-Path $installRoot "双击我启动.cmd"
+    $exe = Join-Path $installRoot "lx_smartclip_backend.exe"
+    if (Test-Path $launcher) {
+        Write-UpdateLog "Restarting via launcher..."
+        Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "`"$launcher`"") -WorkingDirectory $installRoot | Out-Null
+    } elseif (Test-Path $exe) {
+        Write-UpdateLog "Restarting backend executable..."
+        Start-Process -FilePath $exe -WorkingDirectory $installRoot | Out-Null
+    } else {
+        Write-UpdateLog "WARNING: backend executable not found; manual restart required"
+    }
+
+    Remove-Item -Path $JobFile -Force -ErrorAction SilentlyContinue
+    Write-UpdateLog "Update completed successfully"
+} catch {
+    Write-UpdateLog "ERROR: $($_.Exception.Message)"
+    Set-Content -Path (Join-Path $jobDir "apply_error.txt") -Value ($_.Exception.Message) -Encoding UTF8
+    exit 1
+} finally {
+    if (Test-Path $tempDir) {
+        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

@@ -1,5 +1,13 @@
 /* Home page — Active Theory–inspired motion & atmosphere */
 
+.home-font-sans {
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
+.home-font-mono {
+  font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+
 .home-scanlines {
   background: repeating-linear-gradient(
     0deg,

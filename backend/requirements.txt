@@ -17,7 +17,7 @@ moviepy>=2.0.0
 pillow>=11.3.0
 cryptography>=42.0.8
 Nuitka>=4.0.7
-pyarmor==9.2.4
+pyarmor==7.7.4
 pyinstaller>=6.19.0
 colorlog>=6.10.1
 yt-dlp[default]

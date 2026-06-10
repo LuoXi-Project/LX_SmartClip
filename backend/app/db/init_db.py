@@ -689,4 +689,8 @@ async def init_db():
                 await db.execute("UPDATE clips SET clip_path = ? WHERE id = ?", (cp, r[0]))
         except Exception:
             pass
+
+        from app.db.run_migrations import run_migrations
+
+        await run_migrations(db)
         await db.commit()

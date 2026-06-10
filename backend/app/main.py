@@ -40,6 +40,7 @@ from app.api.agent import router as agent_router
 from app.api.license import router as license_router
 from app.api.logs import router as logs_router
 from app.api.ui import router as ui_router
+from app.api.system import router as system_router
 from app.middleware.license_middleware import LicenseMiddleware
 
 
@@ -72,6 +73,7 @@ app.add_middleware(
 
 app.include_router(license_router)
 app.include_router(ui_router)
+app.include_router(system_router)
 app.include_router(config_router)
 app.include_router(videos_router)
 app.include_router(clips_router)
@@ -156,7 +158,8 @@ async def exported_page_alias(page_name: str):
 # 注意：必须放在路由定义之后挂载，避免 mount("/", ...) 抢占诸如 "/health" 这类 API 路由。
 _frontend_dist_path_candidates = (
     os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "frontend")),  # 源码：backend/app/static/frontend
-    os.path.abspath(os.path.join(_base_dir, "app", "static", "frontend")),  # 打包：_MEIPASS/app/static/frontend
+    os.path.abspath(os.path.join(_base_dir, "static", "frontend")),  # 打包：_MEIPASS/static/frontend
+    os.path.abspath(os.path.join(_base_dir, "app", "static", "frontend")),  # 旧打包路径（兼容）
 )
 _frontend_dist_path = next(
     (p for p in _frontend_dist_path_candidates if os.path.isfile(os.path.join(p, "index.html"))),

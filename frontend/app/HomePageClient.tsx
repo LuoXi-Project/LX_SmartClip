@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Noto_Sans_SC, JetBrains_Mono } from 'next/font/google'
 import {
   Activity,
   AlertCircle,
@@ -22,18 +21,6 @@ import apiClient from '@/lib/api'
 import { HomeCosmosBackground } from './_components/home/HomeCosmosBackground'
 import { useHomeGsap } from './_components/home/useHomeGsap'
 import './_components/home/home.css'
-
-const noto = Noto_Sans_SC({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '700', '900'],
-  display: 'swap',
-})
-
-const mono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
-  display: 'swap',
-})
 
 const TITLE = '洛曦智剪'
 
@@ -136,7 +123,7 @@ export default function Home() {
   return (
     <main
       ref={mainRef}
-      className={`${noto.className} relative min-h-full overflow-hidden bg-[#00040c] text-slate-100`}
+      className="home-font-sans relative min-h-full overflow-hidden bg-[#00040c] text-slate-100"
     >
       <HomeCosmosBackground />
 
@@ -169,7 +156,7 @@ export default function Home() {
 
           <p
             data-hero="tag"
-            className={`${mono.className} mb-4 text-[11px] uppercase tracking-[0.35em] text-cyan-400/80`}
+            className="home-font-mono mb-4 text-[11px] uppercase tracking-[0.35em] text-cyan-400/80"
           >
             LuoXi · SmartClip
           </p>
@@ -229,7 +216,7 @@ export default function Home() {
 
           <div data-hero="pipeline" className="mt-16 w-full max-w-5xl px-2">
             <p
-              className={`${mono.className} mb-8 text-center text-[10px] uppercase tracking-[0.35em] text-slate-600`}
+              className="home-font-mono mb-8 text-center text-[10px] uppercase tracking-[0.35em] text-slate-600"
             >
               Pipeline · 全流程
             </p>
@@ -287,7 +274,7 @@ export default function Home() {
                 </div>
               )}
 
-              <p className={`${mono.className} mt-4 text-xs text-slate-500`}>
+              <p className="home-font-mono mt-4 text-xs text-slate-500">
                 API · 同域（当前站点）
               </p>
             </div>
@@ -296,7 +283,7 @@ export default function Home() {
 
         <section data-section="features" className="mx-auto max-w-6xl px-4 pb-24">
           <div data-section="features-header" className="mb-10 text-center">
-            <p className={`${mono.className} text-xs uppercase tracking-[0.3em] text-slate-500`}>
+            <p className="home-font-mono text-xs uppercase tracking-[0.3em] text-slate-500">
               Capabilities · Universe
             </p>
             <h2 className="mt-2 text-2xl font-bold text-slate-100 sm:text-3xl">

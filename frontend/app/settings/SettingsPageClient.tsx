@@ -13,6 +13,7 @@ import { VideoSection } from './_components/VideoSection'
 import { StockMediaSection } from './_components/StockMediaSection'
 import { TtsSection } from './_components/TtsSection'
 import { AsrSection } from './_components/AsrSection'
+import { UpdateSection } from './_components/UpdateSection'
 export default function SettingsPage() {
   const [config, setConfig] = useState<ConfigMap>({})
   const [edits, setEdits] = useState<Record<string, string>>({})
@@ -78,6 +79,7 @@ export default function SettingsPage() {
     { id: 'video', label: '视频处理' },
     { id: 'stock-media', label: '在线素材' },
     { id: 'tts', label: 'TTS 配音' },
+    { id: 'update', label: '软件更新' },
   ]), [])
 
   useEffect(() => {
@@ -301,6 +303,7 @@ export default function SettingsPage() {
                 <div id="tts" className="scroll-mt-28">
                   <TtsSection {...sharedProps} ttsProvider={ttsProvider} onApplyProvider={applyTtsProvider} />
                 </div>
+                <UpdateSection />
               </>
             )}
           </div>

@@ -55,8 +55,7 @@ pillow==11.3.0
 platformdirs==4.9.4
 proglog==0.1.12
 propcache==0.4.1
-pyarmor==9.2.4
-pyarmor.cli.core==8.1.0
+pyarmor==7.7.4
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5

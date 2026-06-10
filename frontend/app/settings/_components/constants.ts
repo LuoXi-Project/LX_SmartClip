@@ -50,7 +50,30 @@ export const ASR_PROVIDERS: ProviderPreset[] = [
 
 export const VLM_KEYS  = ['vlm_base_url', 'vlm_api_key', 'vlm_model', 'vlm_provider', 'vlm_context_length', 'vlm_max_images_per_batch', 'vlm_concurrency']
 export const LLM_KEYS  = ['llm_base_url', 'llm_api_key', 'llm_model', 'llm_temperature', 'llm_max_tokens', 'llm_max_context_tokens', 'llm_concurrency']
-export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'embedding_concurrency', 'vector_dimension', 'top_k', 'match_top_k', 'match_top_n']
+export const EMB_KEYS  = ['embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_api_key', 'embedding_concurrency', 'vector_dimension', 'top_k', 'match_mode', 'match_top_k', 'match_top_n']
+
+export const MATCH_MODE_OPTIONS: { value: string; label: string; desc: string }[] = [
+  {
+    value: 'auto',
+    label: '自动',
+    desc: '有向量索引时用向量；否则 ASR/VLM 文本 + LLM 精排',
+  },
+  {
+    value: 'vector',
+    label: '向量匹配',
+    desc: 'Embedding 初筛 + LLM 精排（需配置 Embed）',
+  },
+  {
+    value: 'text',
+    label: '文本匹配',
+    desc: 'ASR/VLM 文本相似度初筛 + LLM 精排（无需 Embed）',
+  },
+  {
+    value: 'llm_only',
+    label: '纯 LLM',
+    desc: '直接 LLM 语义评分；素材多时会先文本压候选',
+  },
+]
 export const VIDEO_KEYS = [
   'split_mode',
   'fixed_duration',

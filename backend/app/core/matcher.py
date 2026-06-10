@@ -1,15 +1,43 @@
 import difflib
 import logging
-from typing import List, Optional
+from typing import List, Literal, Optional, Tuple
 
 from app.utils.logging_utils import stage_log
 
 logger = logging.getLogger(__name__)
 
-# ASR 与文案最低相似度（SequenceMatcher），低于此值则改为「全部片段 0 分」兜底
-_ASR_SIM_MIN = 0.06
+MatchMode = Literal["auto", "vector", "text", "llm_only"]
+
+# ASR/VLM 与文案最低相似度，低于此值视为无强匹配
+_TEXT_SIM_MIN = 0.04
 # 候选过多时不调用 LLM，避免超长上下文
 _LLM_MAX_CANDIDATES = 40
+
+VALID_MATCH_MODES = frozenset({"auto", "vector", "text", "llm_only"})
+
+
+def resolve_match_mode(
+    cfg_mode: str,
+    *,
+    has_embed_key: bool,
+    has_vectors: bool,
+    has_llm_key: bool,
+) -> MatchMode:
+    """解析有效匹配模式（auto 时按可用能力自动降级）。"""
+    mode = (cfg_mode or "auto").strip().lower()
+    if mode not in VALID_MATCH_MODES:
+        mode = "auto"
+
+    if mode != "auto":
+        return mode  # type: ignore[return-value]
+
+    if has_embed_key and has_vectors:
+        return "vector"
+    if has_llm_key:
+        return "text"
+    if has_embed_key:
+        return "vector"
+    return "text"
 
 
 def _attach_media_urls(candidates: List[dict], api_base_url: str) -> None:
@@ -40,6 +68,17 @@ def _load_clips_for_videos(db_conn, video_ids: List[str]) -> List[dict]:
     return [dict(r) for r in rows]
 
 
+def _load_clips(db_conn, video_ids: Optional[List[str]] = None) -> List[dict]:
+    if video_ids:
+        return _load_clips_for_videos(db_conn, video_ids)
+    rows = db_conn.execute(
+        "SELECT id AS clip_id, video_id, clip_path, start_time, end_time, "
+        "duration, asr_text, vlm_description "
+        "FROM clips ORDER BY video_id, start_time"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _fetch_clips_by_ids(db_conn, clip_ids: List[str]) -> List[dict]:
     if not clip_ids:
         return []
@@ -54,36 +93,70 @@ def _fetch_clips_by_ids(db_conn, clip_ids: List[str]) -> List[dict]:
     return [row_map[cid] for cid in clip_ids if cid in row_map]
 
 
-def _asr_similarity_candidates(
+def _text_sim(query: str, text: str) -> float:
+    if not query or not text:
+        return 0.0
+    return difflib.SequenceMatcher(None, query.strip(), text.strip()).ratio()
+
+
+def _clip_text_score(
+    query: str,
+    clip: dict,
+    *,
+    weight_asr: float = 0.55,
+    weight_vlm: float = 0.45,
+) -> float:
+    asr = (clip.get("asr_text") or "").strip()
+    vlm = (clip.get("vlm_description") or "").strip()
+    scores: List[float] = []
+    weights: List[float] = []
+    if asr:
+        scores.append(_text_sim(query, asr))
+        weights.append(weight_asr)
+    if vlm:
+        scores.append(_text_sim(query, vlm))
+        weights.append(weight_vlm)
+    if not scores:
+        return 0.0
+    total_w = sum(weights)
+    return sum(s * w for s, w in zip(scores, weights)) / total_w
+
+
+def _text_similarity_candidates(
     db_conn,
     query: str,
-    video_ids: List[str],
+    video_ids: Optional[List[str]],
     top_k: int,
+    *,
+    weight_asr: float = 0.55,
+    weight_vlm: float = 0.45,
 ) -> List[dict]:
-    """向量无结果时，用 ASR 文本与文案的字符级相似度做候选（不依赖 VLM）。"""
-    clips = _load_clips_for_videos(db_conn, video_ids)
+    """ASR + VLM 文本相似度初筛（不依赖向量库）。"""
+    clips = _load_clips(db_conn, video_ids)
     if not clips:
         return []
     q = query.strip()
     if not q:
         return []
+
     rated: List[tuple[float, dict]] = []
     for c in clips:
-        a = (c.get("asr_text") or "").strip()
-        r = difflib.SequenceMatcher(None, q, a).ratio() if a else 0.0
+        r = _clip_text_score(q, c, weight_asr=weight_asr, weight_vlm=weight_vlm)
         rated.append((r, c))
     rated.sort(key=lambda x: x[0], reverse=True)
-    if not rated or rated[0][0] < _ASR_SIM_MIN:
+
+    if not rated or rated[0][0] < _TEXT_SIM_MIN:
         return []
+
     out: List[dict] = []
     for r, c in rated:
-        if r < _ASR_SIM_MIN:
+        if r < _TEXT_SIM_MIN:
             break
         if len(out) >= top_k:
             break
         mc = dict(c)
         mc["score"] = round(float(r) * 10.0, 3)
-        mc["reason"] = "ASR 文本相似度（向量无结果或索引为空，未使用画面描述）"
+        mc["reason"] = "ASR/VLM 文本相似度（无向量检索）"
         out.append(mc)
     return out
 
@@ -93,44 +166,139 @@ def _fallback_all_clips_zero_score(
     query: str,
     video_ids: List[str],
 ) -> List[dict]:
-    """所选视频的全部片段，统一 0 分；按与文案的 ASR 相似度排序便于口播场景挑选。"""
+    """所选视频的全部片段，统一 0 分；按与文案的文本相似度排序便于手动选用。"""
     clips = _load_clips_for_videos(db_conn, video_ids)
     q = (query or "").strip()
     if q:
-        def _sim(c: dict) -> float:
-            a = (c.get("asr_text") or "").strip()
-            if not a:
-                return 0.0
-            return difflib.SequenceMatcher(None, q, a).ratio()
-
-        clips.sort(key=_sim, reverse=True)
+        clips.sort(key=lambda c: _clip_text_score(q, c), reverse=True)
     for c in clips:
         c["score"] = 0.0
-        c["reason"] = "向量检索无匹配，以下为所选视频全部片段（可按口播手动选用）"
+        c["reason"] = "文本检索无强匹配，以下为所选视频全部片段（可手动选用）"
     return clips
 
 
 class Matcher:
     """
-    三级匹配引擎
+    素材匹配引擎（多模式）
 
-    Level 1 — 向量初筛：用 Embedder 将文案向量化，FAISS 检索 top_k 候选
-    Level 2 — LLM 精排：将候选片段的 asr_text + vlm_description 送给 LLM 评分排序
-    Level 3 — 返回结果：输出 top_n 推荐 + 完整候选列表
-
-    兜底：向量无结果且指定了 video_ids 时，先用 ASR 文本相似度候选；仍不可用则返回该视频全部片段（0 分）。
+    - vector：Embedding 向量初筛 → LLM 精排
+    - text：ASR/VLM 文本相似度初筛 → LLM 精排
+    - llm_only：加载候选后直接 LLM 精排（过多时先文本压至 top_k）
     """
 
-    def __init__(self, embedder, vector_db, llm=None):
-        """
-        Args:
-            embedder:   Embedder 实例（文本 -> 向量）
-            vector_db:  IVectorDB 实例（向量检索）
-            llm:        ILLM 实例（精排），可为 None（跳过精排）
-        """
+    def __init__(
+        self,
+        embedder=None,
+        vector_db=None,
+        llm=None,
+        *,
+        text_weight_asr: float = 0.55,
+        text_weight_vlm: float = 0.45,
+    ):
         self.embedder = embedder
         self.vector_db = vector_db
         self.llm = llm
+        self.text_weight_asr = text_weight_asr
+        self.text_weight_vlm = text_weight_vlm
+
+    def _recall_vector(
+        self,
+        query: str,
+        db_conn,
+        top_k: int,
+        video_ids: Optional[List[str]],
+    ) -> Tuple[List[dict], bool]:
+        if self.embedder is None or self.vector_db is None:
+            raise RuntimeError("向量匹配模式需要 embedder 与 vector_db")
+
+        stage_log("检索", f"向量初筛（top_k={top_k}）…", status="running")
+        logger.info("[Matcher] vector 初筛: query_len=%d, top_k=%d", len(query), top_k)
+        query_vec = self.embedder.embed(query)
+        candidate_ids = self.vector_db.search(query_vec, top_k=top_k, video_ids=video_ids or None)
+        candidates = _fetch_clips_by_ids(db_conn, candidate_ids) if candidate_ids else []
+        used_full_fallback = False
+
+        if not candidates and video_ids:
+            logger.warning("[Matcher] 向量初筛无可用候选，尝试文本相似度兜底")
+            candidates = _text_similarity_candidates(
+                db_conn,
+                query,
+                video_ids,
+                top_k,
+                weight_asr=self.text_weight_asr,
+                weight_vlm=self.text_weight_vlm,
+            )
+            if candidates:
+                logger.info("[Matcher] 文本相似度候选: %d 个", len(candidates))
+            else:
+                candidates = _fallback_all_clips_zero_score(db_conn, query, video_ids)
+                used_full_fallback = bool(candidates)
+        elif not candidates:
+            logger.warning("[Matcher] 向量初筛无结果且未限定 video_ids")
+            return [], False
+
+        return candidates, used_full_fallback
+
+    def _recall_text(
+        self,
+        query: str,
+        db_conn,
+        top_k: int,
+        video_ids: Optional[List[str]],
+    ) -> Tuple[List[dict], bool]:
+        stage_log("检索", f"文本初筛（ASR+VLM，top_k={top_k}）…", status="running")
+        logger.info("[Matcher] text 初筛: query_len=%d, top_k=%d", len(query), top_k)
+        candidates = _text_similarity_candidates(
+            db_conn,
+            query,
+            video_ids,
+            top_k,
+            weight_asr=self.text_weight_asr,
+            weight_vlm=self.text_weight_vlm,
+        )
+        used_full_fallback = False
+        if not candidates and video_ids:
+            candidates = _fallback_all_clips_zero_score(db_conn, query, video_ids)
+            used_full_fallback = bool(candidates)
+            if used_full_fallback:
+                logger.warning(
+                    "[Matcher] 文本初筛无强匹配，返回所选视频全部片段共 %d 个",
+                    len(candidates),
+                )
+        return candidates, used_full_fallback
+
+    def _recall_llm_only(
+        self,
+        query: str,
+        db_conn,
+        top_k: int,
+        video_ids: Optional[List[str]],
+    ) -> Tuple[List[dict], bool]:
+        stage_log("检索", "纯 LLM 匹配：加载候选片段…", status="running")
+        clips = _load_clips(db_conn, video_ids)
+        if not clips:
+            return [], False
+        if len(clips) <= _LLM_MAX_CANDIDATES:
+            logger.info("[Matcher] llm_only: 候选 %d 个，直接 LLM 精排", len(clips))
+            return clips, False
+        logger.info(
+            "[Matcher] llm_only: 候选 %d 个，先文本压至 top_k=%d",
+            len(clips),
+            top_k,
+        )
+        narrowed = _text_similarity_candidates(
+            db_conn,
+            query,
+            video_ids,
+            top_k,
+            weight_asr=self.text_weight_asr,
+            weight_vlm=self.text_weight_vlm,
+        )
+        if narrowed:
+            return narrowed, False
+        if video_ids:
+            return _fallback_all_clips_zero_score(db_conn, query, video_ids), True
+        return clips[:top_k], False
 
     def match(
         self,
@@ -140,69 +308,47 @@ class Matcher:
         top_n: int = 5,
         video_ids: Optional[List[str]] = None,
         api_base_url: str = "",
+        mode: MatchMode = "vector",
     ) -> dict:
-        """
-        执行三级匹配。
-
-        Args:
-            query:     用户文案
-            db_conn:   同步 sqlite3 连接（用于获取片段元数据）
-            top_k:     向量初筛数量
-            top_n:     最终推荐数量
-            video_ids: 限定检索范围（None = 全部）
-
-        Returns:
-            {
-                "query": str,
-                "top_n": int,
-                "recommended": [ {clip_id, video_id, clip_path, start_time, end_time,
-                                    duration, asr_text, vlm_description, score, reason}, ... ],
-                "candidates": [ ... ]   # 全部初筛候选（含精排分数）
-            }
-        """
         video_ids = [v for v in (video_ids or []) if v]
+        scoped_ids = video_ids or None
 
-        # ── Level 1：向量初筛 ──────────────────────────────────────────
-        stage_log("检索", f"向量初筛（top_k={top_k}）…", status="running")
-        logger.info("[Matcher] Level-1 向量初筛: query_len=%d, top_k=%d", len(query), top_k)
-        query_vec = self.embedder.embed(query)
-        candidate_ids = self.vector_db.search(query_vec, top_k=top_k, video_ids=video_ids or None)
+        if mode == "vector":
+            candidates, used_full_fallback = self._recall_vector(
+                query, db_conn, top_k, scoped_ids
+            )
+        elif mode == "text":
+            candidates, used_full_fallback = self._recall_text(
+                query, db_conn, top_k, scoped_ids
+            )
+        elif mode == "llm_only":
+            candidates, used_full_fallback = self._recall_llm_only(
+                query, db_conn, top_k, scoped_ids
+            )
+        else:
+            raise ValueError(f"未知匹配模式: {mode}")
 
-        candidates: List[dict] = _fetch_clips_by_ids(db_conn, candidate_ids) if candidate_ids else []
-        used_full_fallback = False
-
-        if not candidates and video_ids:
-            logger.warning("[Matcher] 向量初筛无可用候选，尝试 ASR 文本相似度（不依赖 VLM）")
-            candidates = _asr_similarity_candidates(db_conn, query, video_ids, top_k)
-            if candidates:
-                logger.info("[Matcher] ASR 相似度候选: %d 个", len(candidates))
-            else:
-                candidates = _fallback_all_clips_zero_score(db_conn, query, video_ids)
-                used_full_fallback = bool(candidates)
-                if used_full_fallback:
-                    logger.warning(
-                        "[Matcher] 向量与 ASR 强匹配均无结果，返回所选视频全部片段（0 分）共 %d 个",
-                        len(candidates),
-                    )
-        elif not candidates:
-            logger.warning("[Matcher] 向量初筛无结果且未限定 video_ids，无法展示素材列表")
+        if not candidates:
             return {"query": query, "top_n": top_n, "recommended": [], "candidates": []}
 
-        logger.info("[Matcher] 初筛候选: %d 个片段", len(candidates))
+        logger.info("[Matcher] 初筛候选: %d 个片段 (mode=%s)", len(candidates), mode)
 
-        skip_llm = used_full_fallback or len(candidates) > _LLM_MAX_CANDIDATES
+        force_llm = mode == "llm_only"
+        skip_llm = (
+            not force_llm
+            and (used_full_fallback or len(candidates) > _LLM_MAX_CANDIDATES)
+        )
 
-        # ── Level 2：LLM 精排 ──────────────────────────────────────────
-        if self.llm is not None and not skip_llm:
+        if self.llm is not None and (force_llm or not skip_llm):
             stage_log("检索", f"LLM 精排 {len(candidates)} 个候选…", status="running")
             logger.info("[Matcher] Level-2 LLM 精排...")
             try:
                 candidates = self.llm.rank(query, candidates)
             except Exception as e:
-                logger.warning("[Matcher] LLM 精排异常，使用向量/ASR 排序: %s", e)
+                logger.warning("[Matcher] LLM 精排异常，使用初筛排序: %s", e)
                 for i, c in enumerate(candidates):
                     c.setdefault("score", round(1.0 - i * 0.05, 3))
-                    c.setdefault("reason", "向量相似度排序")
+                    c.setdefault("reason", "初筛排序")
         else:
             if skip_llm and self.llm is not None:
                 logger.info(
@@ -210,16 +356,24 @@ class Matcher:
                     used_full_fallback,
                     len(candidates),
                 )
+            default_reason = {
+                "vector": "向量相似度排序",
+                "text": "文本相似度排序",
+                "llm_only": "候选排序",
+            }.get(mode, "初筛排序")
             for i, c in enumerate(candidates):
                 c.setdefault("score", round(1.0 - i * 0.05, 3))
-                c.setdefault("reason", "向量相似度排序")
+                c.setdefault("reason", default_reason)
 
-        # ── Level 3：补充预览/封面 URL 并返回 ───────────────────────────
         _attach_media_urls(candidates, api_base_url)
 
-        # 全量 0 分兜底时须返回全部片段供手动选片；前端会优先展示 recommended
         recommended = candidates if used_full_fallback else candidates[:top_n]
-        logger.info("[Matcher] 匹配完成: 推荐 %d 个，候选共 %d 个", len(recommended), len(candidates))
+        logger.info(
+            "[Matcher] 匹配完成 (mode=%s): 推荐 %d 个，候选共 %d 个",
+            mode,
+            len(recommended),
+            len(candidates),
+        )
         return {
             "query": query,
             "top_n": top_n,

@@ -139,3 +139,6 @@ class FaissVectorDB(IVectorDB):
 
     def get_vector_dimension(self) -> int:
         return self.vector_dimension
+
+    def embedding_count(self) -> int:
+        return len(self._clip_ids)

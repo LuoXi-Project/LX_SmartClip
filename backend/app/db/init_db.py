@@ -368,6 +368,13 @@ DEFAULT_CONFIG = [
     ),
     ("match_top_k", "12", "number", "初筛数量 top_k", None),
     ("match_top_n", "5", "number", "推荐数量 top_n", None),
+    (
+        "match_mode",
+        "auto",
+        "select",
+        "素材匹配模式",
+        '["auto","vector","text","llm_only"]',
+    ),
     ("tts_voice", "zh-CN-XiaoxiaoNeural", "string", "TTS 语音角色", None),
     ("tts_rate", "+0%", "string", "TTS 语速 (如 +0%/-20%)", None),
     ("tts_volume", "+0%", "string", "TTS 音量 (如 +0%/+10%)", None),

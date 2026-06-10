@@ -1,9 +1,9 @@
 'use client'
 
-import { EMBEDDING_PROVIDERS, EMB_KEYS } from './constants'
+import { EMBEDDING_PROVIDERS, EMB_KEYS, MATCH_MODE_OPTIONS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
-import { Save, Info } from 'lucide-react'
+import { Save, Info, Sparkles, Type, Brain, Zap } from 'lucide-react'
 import type { ConfigMap, ProviderPreset } from './types'
 import { ApiSecretField } from './ApiSecretField'
 import { ApiTextField } from './ApiTextField'
@@ -26,6 +26,13 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
   const isDirty = (k: string) => edits[k] !== config[k]?.value
   const groupDirty = EMB_KEYS.some((k) => isDirty(k) && config[k])
   const concurrency = Math.max(1, parseInt(v('embedding_concurrency') || '3', 10) || 3)
+  const currentMatchMode = v('match_mode') || 'auto'
+  const matchModeIcons: Record<string, typeof Sparkles> = {
+    auto: Sparkles,
+    vector: Zap,
+    text: Type,
+    llm_only: Brain,
+  }
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -107,6 +114,55 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
             saved={!!saved['embedding_model']}
             onSave={() => onSave('embedding_model')}
           />
+        )}
+        {config.match_mode && (
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-xs text-slate-400">素材匹配 / 检索模式</label>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  手动匹配与素材检索共用；即使已配置 Embed 也可切换为文本或纯 LLM 模式
+                </p>
+              </div>
+              <SaveBtn
+                dirty={isDirty('match_mode')}
+                saving={!!saving['match_mode']}
+                saved={!!saved['match_mode']}
+                onSave={() => onSave('match_mode')}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {MATCH_MODE_OPTIONS.map((mode) => {
+                const Icon = matchModeIcons[mode.value] ?? Sparkles
+                const active = currentMatchMode === mode.value
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => onSet('match_mode', mode.value)}
+                    className={`text-left rounded-xl border px-4 py-3.5 transition-all duration-200 ${
+                      active
+                        ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30'
+                        : 'border-slate-700 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-indigo-400' : 'text-slate-400'}`} />
+                      <span className={`text-sm font-medium ${active ? 'text-indigo-300' : 'text-slate-200'}`}>
+                        {mode.label}
+                      </span>
+                      {active && (
+                        <span className="ml-auto text-[10px] font-semibold text-indigo-400 bg-indigo-500/15 px-1.5 py-0.5 rounded-full">
+                          当前
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">{mode.desc}</p>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         )}
         <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
           {(['vector_dimension', 'top_k', 'match_top_k', 'match_top_n'] as const).filter((k) => config[k]).map((key) => (

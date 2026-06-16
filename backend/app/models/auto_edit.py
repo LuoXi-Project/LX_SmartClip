@@ -92,10 +92,64 @@ class MixUserBgmConfig(BaseModel):
     volume: float = Field(0.30, ge=0.0, le=1.0)
 
 
+class MixAntiDetectVideoConfig(BaseModel):
+    """画面防检测管线（OpenCV）。"""
+
+    enabled: bool = True
+    enable_inpaint: bool = Field(True, description="隐形痕迹擦除（水印/光标/字幕区域）")
+    inpaint_strength: float = Field(0.55, ge=0.0, le=1.0)
+    enable_displacement: bool = Field(True, description="位移扰动防重复")
+    displacement_px_max: float = Field(3.0, ge=0.0, le=20.0)
+    enable_color_shift: bool = Field(True, description="色彩扰动")
+    color_shift_max: float = Field(0.06, ge=0.0, le=0.3)
+    enable_frame_ops: bool = Field(True, description="抽补帧扰动")
+    frame_drop_probability: float = Field(0.012, ge=0.0, le=0.08)
+    frame_dup_probability: float = Field(0.015, ge=0.0, le=0.08)
+    enable_scale_jitter: bool = Field(True, description="缩放扰动")
+    scale_jitter_max: float = Field(0.025, ge=0.0, le=0.12)
+    enable_pixel_noise: bool = Field(True, description="强力过检像素噪声")
+    pixel_noise_sigma: float = Field(2.2, ge=0.0, le=12.0)
+    enable_crawl: bool = Field(True, description="锁爬行轨迹平滑插值")
+    crawl_amplitude_px: float = Field(8.0, ge=0.0, le=48.0)
+
+
+class MixAntiDetectAudioConfig(BaseModel):
+    """音频防检测管线（Librosa + FFmpeg 滤镜）。"""
+
+    enabled: bool = True
+    enable_fingerprint_obfusc: bool = Field(True, description="频谱指纹混淆（底噪/相位/EQ）")
+    noise_floor_db: float = Field(-46.0, ge=-60.0, le=-18.0)
+    enable_phase_eq: bool = Field(True, description="相位/EQ 微调")
+    enable_segment_speed: bool = Field(True, description="分段非线性变速")
+    speed_variation: float = Field(0.035, ge=0.0, le=0.15)
+    enable_reverb_pitch: bool = Field(True, description="混响/变调增强")
+    pitch_semitones: float = Field(0.35, ge=-2.0, le=2.0)
+    reverb_mix: float = Field(0.09, ge=0.0, le=0.45)
+
+
+class MixAntiDetectSchedulerConfig(BaseModel):
+    """调度引擎：随机种子、循环增益、蜘蛛爬行循环。"""
+
+    random_seed: Optional[str] = Field(None, description="留空则自动生成差异化种子")
+    loop_iterations: int = Field(1, ge=1, le=5, description="蜘蛛爬行循环次数")
+    loop_gain: float = Field(1.18, ge=1.0, le=2.5, description="每轮迭代扰动放大系数")
+    output_format: Literal["mkv", "mp4"] = Field("mkv", description="成品封装格式")
+
+
+class MixAntiDetectConfig(BaseModel):
+    """混剪成片防检测总开关与管线配置。"""
+
+    enabled: bool = False
+    video: MixAntiDetectVideoConfig = Field(default_factory=MixAntiDetectVideoConfig)
+    audio: MixAntiDetectAudioConfig = Field(default_factory=MixAntiDetectAudioConfig)
+    scheduler: MixAntiDetectSchedulerConfig = Field(default_factory=MixAntiDetectSchedulerConfig)
+
+
 class MixPostprocessConfig(BaseModel):
     visual_random: Optional[MixVisualRandomConfig] = None
     overlay_video: Optional[MixOverlayVideoConfig] = None
     user_bgm: Optional[MixUserBgmConfig] = None
+    anti_detect: Optional[MixAntiDetectConfig] = None
 
 
 class MixClipFilterConfig(BaseModel):

@@ -33,6 +33,30 @@ def _bundled_binary_path_if_present(name: str) -> str | None:
     return None
 
 
+def _dev_repo_binary_candidates(name: str) -> Iterable[str]:
+    """开发仓库根目录 ffmpeg/bin（非 frozen 时优先于系统 PATH）。"""
+    if getattr(sys, "frozen", False):
+        return
+
+    is_windows = os.name == "nt"
+    bin_name = f"{name}.exe" if is_windows else name
+
+    repo_roots: list[str] = []
+    home = (os.getenv("LX_SMARTCLIP_HOME") or "").strip()
+    if home:
+        repo_roots.append(home)
+
+    # backend/app/utils/bin_paths.py -> 仓库根目录
+    repo_roots.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+
+    seen: set[str] = set()
+    for root in repo_roots:
+        path = os.path.abspath(os.path.join(root, "ffmpeg", "bin", bin_name))
+        if path not in seen:
+            seen.add(path)
+            yield path
+
+
 def apply_default_ffmpeg_environment() -> None:
     """
     将 FFmpeg 相关环境变量默认指向打包内置二进制（若存在且未显式设置）。
@@ -41,10 +65,21 @@ def apply_default_ffmpeg_environment() -> None:
     - IMAGEIO_FFMPEG_EXE：imageio-ffmpeg / MoviePy 使用
     """
     ff = _bundled_binary_path_if_present("ffmpeg")
+    if not ff:
+        for p in _dev_repo_binary_candidates("ffmpeg"):
+            if os.path.isfile(p):
+                ff = p
+                break
     if ff:
         os.environ.setdefault("FFMPEG_BIN", ff)
         os.environ.setdefault("IMAGEIO_FFMPEG_EXE", ff)
+
     fp = _bundled_binary_path_if_present("ffprobe")
+    if not fp:
+        for p in _dev_repo_binary_candidates("ffprobe"):
+            if os.path.isfile(p):
+                fp = p
+                break
     if fp:
         os.environ.setdefault("FFPROBE_BIN", fp)
 
@@ -59,6 +94,7 @@ def _candidate_paths(name: str) -> Iterable[str]:
         yield env_path
 
     yield from _bundled_binary_candidates(name)
+    yield from _dev_repo_binary_candidates(name)
 
     which_path = shutil.which(name)
     if which_path:

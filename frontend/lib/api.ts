@@ -996,10 +996,56 @@ export interface MixUserBgmConfigApi {
   volume: number
 }
 
+export interface MixAntiDetectVideoConfigApi {
+  enabled: boolean
+  enable_inpaint: boolean
+  inpaint_strength: number
+  enable_displacement: boolean
+  displacement_px_max: number
+  enable_color_shift: boolean
+  color_shift_max: number
+  enable_frame_ops: boolean
+  frame_drop_probability: number
+  frame_dup_probability: number
+  enable_scale_jitter: boolean
+  scale_jitter_max: number
+  enable_pixel_noise: boolean
+  pixel_noise_sigma: number
+  enable_crawl: boolean
+  crawl_amplitude_px: number
+}
+
+export interface MixAntiDetectAudioConfigApi {
+  enabled: boolean
+  enable_fingerprint_obfusc: boolean
+  noise_floor_db: number
+  enable_phase_eq: boolean
+  enable_segment_speed: boolean
+  speed_variation: number
+  enable_reverb_pitch: boolean
+  pitch_semitones: number
+  reverb_mix: number
+}
+
+export interface MixAntiDetectSchedulerConfigApi {
+  random_seed?: string | null
+  loop_iterations: number
+  loop_gain: number
+  output_format: 'mp4' | 'mkv'
+}
+
+export interface MixAntiDetectConfigApi {
+  enabled: boolean
+  video?: MixAntiDetectVideoConfigApi
+  audio?: MixAntiDetectAudioConfigApi
+  scheduler?: MixAntiDetectSchedulerConfigApi
+}
+
 export interface MixPostprocessConfigApi {
   visual_random?: MixVisualRandomConfigApi | null
   overlay_video?: MixOverlayVideoConfigApi | null
   user_bgm?: MixUserBgmConfigApi | null
+  anti_detect?: MixAntiDetectConfigApi | null
 }
 
 export interface MixClipFilterConfigApi {

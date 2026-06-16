@@ -102,24 +102,46 @@ if errorlevel 1 (
 
 
 
+set "FFMPEG_LOCAL=%~dp0ffmpeg\bin"
+set "FFMPEG_EXE="
+set "FFPROBE_EXE="
+
 where ffmpeg >nul 2>&1
+if not errorlevel 1 set "FFMPEG_EXE=ffmpeg"
 
-if errorlevel 1 (
-
-    echo [错误] 未找到 FFmpeg。请安装并加入 PATH（视频处理必需）。
-
-    echo        下载: https://ffmpeg.org/download.html
-
-    goto :fail
-
+if not defined FFMPEG_EXE (
+    if exist "%FFMPEG_LOCAL%\ffmpeg.exe" (
+        set "PATH=%FFMPEG_LOCAL%;%PATH%"
+        set "FFMPEG_EXE=%FFMPEG_LOCAL%\ffmpeg.exe"
+        set "FFPROBE_EXE=%FFMPEG_LOCAL%\ffprobe.exe"
+        set "FFMPEG_BIN=%FFMPEG_LOCAL%\ffmpeg.exe"
+        set "FFPROBE_BIN=%FFMPEG_LOCAL%\ffprobe.exe"
+        set "IMAGEIO_FFMPEG_EXE=%FFMPEG_LOCAL%\ffmpeg.exe"
+    )
 )
 
-for /f "delims=" %%v in ('ffmpeg -version 2^>^&1 ^| findstr /i "ffmpeg version"') do (
+if not defined FFMPEG_EXE (
+    echo   未在 PATH 中找到 FFmpeg，尝试准备项目内置 ffmpeg\bin ...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\prepare_ffmpeg.ps1"
+    if exist "%FFMPEG_LOCAL%\ffmpeg.exe" (
+        set "PATH=%FFMPEG_LOCAL%;%PATH%"
+        set "FFMPEG_EXE=%FFMPEG_LOCAL%\ffmpeg.exe"
+        set "FFPROBE_EXE=%FFMPEG_LOCAL%\ffprobe.exe"
+        set "FFMPEG_BIN=%FFMPEG_LOCAL%\ffmpeg.exe"
+        set "FFPROBE_BIN=%FFMPEG_LOCAL%\ffprobe.exe"
+        set "IMAGEIO_FFMPEG_EXE=%FFMPEG_LOCAL%\ffmpeg.exe"
+    )
+)
 
+if not defined FFMPEG_EXE (
+    echo [错误] 未找到 FFmpeg。请安装并加入 PATH，或运行 scripts\prepare_ffmpeg.ps1 下载到 ffmpeg\bin。
+    echo        下载: https://ffmpeg.org/download.html
+    goto :fail
+)
+
+for /f "delims=" %%v in ('"%FFMPEG_EXE%" -version 2^>^&1 ^| findstr /i "ffmpeg version"') do (
     echo   FFmpeg: %%v
-
     goto :ffmpeg_ok
-
 )
 
 :ffmpeg_ok

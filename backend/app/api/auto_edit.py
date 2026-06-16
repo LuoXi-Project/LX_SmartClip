@@ -41,6 +41,7 @@ from app.core.auto_edit_v2.events_generation import call_llm_for_events_all
 from app.core.auto_edit_v2.merge_rank import assign_tiers_and_rank, merge_batches
 from app.core.auto_edit_v2.arrange import arrange_timeline_variants
 from app.core.bgm.auto_bgm import apply_bgm_postprocess_if_needed
+from app.core.auto_edit.mix_anti_detect import apply_mix_anti_detect_if_needed
 from app.core.auto_edit.mix_postprocess import apply_mix_overlay_if_needed
 from app.core.postprod.pipeline import apply_postprod_master_if_needed
 from app.core.postprod.profile import resolve_production_profile, style_with_production
@@ -1421,6 +1422,12 @@ async def _run_realize_postprocess(
         final_filename,
         final_url,
         ducking=duck,
+    )
+    final_filename, final_url = await run_heavy(
+        apply_mix_anti_detect_if_needed,
+        plan,
+        final_filename,
+        final_url,
     )
     return final_filename, final_url
 

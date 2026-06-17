@@ -114,7 +114,7 @@ async def transcribe_voice(
 
     async with aiosqlite.connect(DB_PATH) as db:
         asr_provider = await _read_config(db, "asr_provider", "whisper")
-        model_size = await _read_config(db, "asr_model", "base")
+        model_size = await _read_config(db, "asr_model", "small")
         asr_base_url = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")

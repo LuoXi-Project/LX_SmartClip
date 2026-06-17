@@ -172,7 +172,7 @@ async def run_pipeline(
             "quiet_split": await read_config(db, "quiet_split", "true"),
         }
         asr_provider = await read_config(db, "asr_provider", "whisper")
-        asr_model = await read_config(db, "asr_model", "base")
+        asr_model = await read_config(db, "asr_model", "small")
         asr_base_url = await read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key = await read_config(db, "asr_api_key", "")
         asr_openai_model = await read_config(db, "asr_openai_model", "whisper-1")

@@ -62,6 +62,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "FFmpeg 准备失败"
 }
 
+Write-Host "[准备] Whisper / PyTorch（默认 CUDA 版，无 GPU 时运行时回退 CPU）..."
+& (Join-Path $PSScriptRoot "prepare_whisper.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "Whisper 依赖准备失败"
+}
+
 if ($Backend -eq "pyarmor") {
     Write-Host "[5/5] PyArmor 加密 + PyInstaller 构建后端并导出 dist/..."
     & (Join-Path $PSScriptRoot "build_backend_pyarmor_pyinstaller.ps1")

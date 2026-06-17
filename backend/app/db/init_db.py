@@ -301,10 +301,10 @@ DEFAULT_CONFIG = [
     ("asr_provider", "whisper", "select", "ASR 提供商", '["whisper","openai","bailian"]'),
     (
         "asr_model",
-        "base",
+        "small",
         "select",
         "ASR 模型大小 (本地 Whisper)",
-        '["tiny","base","small","medium","large"]',
+        '["tiny","base","small","medium","large","large-v2","large-v3"]',
     ),
     ("asr_base_url", "https://api.openai.com/v1", "string", "ASR API 地址", None),
     ("asr_api_key", "", "string", "ASR API 密钥", None),

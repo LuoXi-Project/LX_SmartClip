@@ -73,7 +73,7 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
         {asrProvider === 'whisper' && (
           <>
             <div className="rounded-lg bg-slate-700/30 border border-slate-600/40 px-4 py-2.5 text-xs text-slate-400">
-              本地 Whisper — 在机器上直接运行，无需网络，需安装 <code className="text-indigo-300 bg-slate-800 px-1 rounded">openai-whisper</code>
+              本地 Whisper — 在机器上直接运行，无需网络。中文与时间轴建议 <code className="text-indigo-300 bg-slate-800 px-1 rounded">small</code> 起步，追求精度可用 <code className="text-indigo-300 bg-slate-800 px-1 rounded">medium</code> / <code className="text-indigo-300 bg-slate-800 px-1 rounded">large-v3</code>；有 NVIDIA GPU 时自动加速。
             </div>
             <SelectRow cfgKey="asr_model" label="模型规格（越大精度越高，速度越慢）" />
           </>

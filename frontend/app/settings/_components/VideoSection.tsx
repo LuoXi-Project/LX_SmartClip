@@ -68,7 +68,7 @@ const PARAM_HINTS: Record<string, string> = {
   frame_fps:           '每秒从片段中抽取的帧数，用于 VLM 画面描述',
   frame_concurrency:   '抽帧阶段并行处理的片段数量；值越大吞吐越高，但会增加 CPU/磁盘压力',
   frame_target_pixels: '抽帧时将图像长边压制到此像素（如 512），0 表示不压制。配合 VLM 可显著降低 token 消耗',
-  asr_model:           'Whisper 语音识别模型规格，越大精度越高但越慢',
+  asr_model:           'Whisper 模型规格：越大识别与时间轴越准但越慢；中文建议 small 起，高精度用 medium / large-v3',
   clip_container: '切分输出片段的容器格式（影响后缀与兼容性；常用 mp4）',
   clip_vcodec: '视频编码器：兼容性优先选 libx264；copy 表示尽量不转码（但浏览器可能无法播放）',
   clip_acodec: '音频编码器：mp4 常用 aac；webm 常用 libopus；copy 表示不转码',

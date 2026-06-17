@@ -73,6 +73,10 @@ def apply_default_ffmpeg_environment() -> None:
     if ff:
         os.environ.setdefault("FFMPEG_BIN", ff)
         os.environ.setdefault("IMAGEIO_FFMPEG_EXE", ff)
+        ff_dir = os.path.dirname(os.path.abspath(ff))
+        path_parts = (os.environ.get("PATH") or "").split(os.pathsep)
+        if ff_dir and ff_dir not in path_parts:
+            os.environ["PATH"] = ff_dir + os.pathsep + os.environ.get("PATH", "")
 
     fp = _bundled_binary_path_if_present("ffprobe")
     if not fp:

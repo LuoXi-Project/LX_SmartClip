@@ -13,6 +13,7 @@ import sys
 from app.db.init_db import init_db
 from app.api.process_db import reconcile_all_orphan_tasks_on_startup
 from app.utils.paths import get_storage_root, iter_storage_static_mount_candidates
+from app.utils.bin_paths import apply_default_ffmpeg_environment
 from app.core.blocking_pool import init_blocking_pool, shutdown_blocking_pool
 from app.api.config import router as config_router
 from app.api.videos import router as videos_router
@@ -44,6 +45,7 @@ from app.middleware.license_middleware import LicenseMiddleware
 
 
 setup_logging(level=logging.INFO)
+apply_default_ffmpeg_environment()
 
 
 @asynccontextmanager

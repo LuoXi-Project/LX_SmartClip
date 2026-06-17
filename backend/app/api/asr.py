@@ -27,7 +27,7 @@ def _cache_key(provider: str, **kwargs) -> str:
 
 def get_asr(
     provider: str = "whisper",
-    model_size: str = "base",
+    model_size: str = "small",
     base_url: str = "",
     api_key: str = "",
     model: str = "whisper-1",
@@ -103,7 +103,7 @@ async def process_asr(video_id: str):
 
         # 读取 ASR 配置
         asr_provider   = await _read_config(db, "asr_provider", "whisper")
-        model_size     = await _read_config(db, "asr_model", "base")
+        model_size     = await _read_config(db, "asr_model", "small")
         asr_base_url   = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_api_key    = await _read_config(db, "asr_api_key", "")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
@@ -226,7 +226,7 @@ async def get_asr_info():
     db = await _get()
     try:
         asr_provider     = await _read_config(db, "asr_provider", "whisper")
-        model_size       = await _read_config(db, "asr_model", "base")
+        model_size       = await _read_config(db, "asr_model", "small")
         asr_base_url     = await _read_config(db, "asr_base_url", "https://api.openai.com/v1")
         asr_openai_model = await _read_config(db, "asr_openai_model", "whisper-1")
         asr_language = (await _read_config(db, "asr_language", "zh") or "").strip()

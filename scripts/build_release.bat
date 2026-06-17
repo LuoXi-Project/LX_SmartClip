@@ -53,14 +53,21 @@ if "%BUILD_FRONTEND%"=="1" (
   echo [1/3] 跳过前端构建（参数: %~2）
 )
 
-echo [2/3] 准备 FFmpeg（打包进发布目录并配置启动环境变量）...
+echo [2/4] 准备 FFmpeg（打包进发布目录并配置启动环境变量）...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare_ffmpeg.ps1"
 if errorlevel 1 (
   echo 错误：FFmpeg 准备失败
   exit /b 1
 )
 
-echo [3/3] 构建后端并导出 dist/... （%BACKEND_BUILDER%）
+echo [3/4] 准备 Whisper / PyTorch（默认 CUDA 版，无 GPU 时运行时回退 CPU）...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare_whisper.ps1"
+if errorlevel 1 (
+  echo 错误：Whisper 依赖准备失败
+  exit /b 1
+)
+
+echo [4/4] 构建后端并导出 dist/... （%BACKEND_BUILDER%）
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 if /I "%BACKEND_BUILDER%"=="pyarmor" (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_backend_pyarmor_pyinstaller.ps1"

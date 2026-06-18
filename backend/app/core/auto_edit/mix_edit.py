@@ -1,7 +1,6 @@
 """混剪：多素材分级编排 + 原声/全静音两大模式。"""
 from __future__ import annotations
 
-import random
 import uuid
 from typing import Any, Literal, Sequence
 
@@ -25,7 +24,9 @@ from app.core.auto_edit.voiceover_quick_cut import (
     _merge_contiguous_asr_rows,
     _parse_asr_segments,
     apply_voiceover_source_timeline_dedupe,
+    detect_voice_ranges_by_silencedetect,
 )
+from app.utils.paths import resolve_stored_path
 
 ClipTier = Literal["asr_vlm", "asr_only", "vlm_only", "none"]
 MixAudioMode = Literal["keep_original", "mute_all_original"]
@@ -38,8 +39,17 @@ _TIER_PRIORITY: dict[ClipTier, int] = {
     "none": 3,
 }
 
-# 无 ASR 画面填充段默认时长（秒）
+# 无 ASR 画面填充段默认时长（秒）；仅 vlm_only 等无法做音量检测时回退
 _MUTE_FILLER_SEC = 1.2
+# 无标注素材：静音检测经验参数（与口播快剪 audio_activity_fast 一致）
+_MIX_AA_DEFAULTS: dict[str, float] = {
+    "db_threshold": -36.0,
+    "min_silence_sec": 0.25,
+    "min_keep_sec": 0.35,
+    "merge_gap_sec": 0.2,
+    "head_pad_sec": 0.08,
+    "tail_pad_sec": 0.12,
+}
 # 严格单路：人声段之间静音过渡（秒）
 _STRICT_GAP_SEC = 0.35
 
@@ -51,6 +61,8 @@ _SNAP_INSET_SEC = 0.15
 _EDGE_PAD_SEC = 0.1
 # 修正后片段最短时长（秒）
 _MIN_REFINED_SEGMENT_SEC = 0.25
+# 按目标时长裁剪时，最短可保留段落（秒）
+_MIN_TRIM_SEGMENT_SEC = 0.25
 
 
 def _row_vlm(row: Any) -> str | None:
@@ -87,7 +99,7 @@ def _arrange_strategy_label(tier: ClipTier) -> str:
         "asr_vlm": "语义智能混剪",
         "asr_only": "文本语义编排",
         "vlm_only": "画面语义匹配",
-        "none": "纯随机混剪",
+        "none": "音量活动混剪",
     }[tier]
 
 
@@ -525,7 +537,238 @@ def resolve_mix_clip_rows(
     return filtered, note
 
 
-def _sort_clips_by_tier(rows: Sequence[Any], *, shuffle_none: bool) -> list[Any]:
+
+
+def _extract_audio_activity_segments(
+    row: Any,
+    *,
+    audio_activity_cfg: dict[str, float] | None = None,
+) -> list[tuple[float, float]]:
+    """无 ASR/VLM 时按静音检测切出相对 clip 的语音活动区间 (st_rel, et_rel)。"""
+    cfg = {**_MIX_AA_DEFAULTS, **(audio_activity_cfg or {})}
+    try:
+        clip_path = resolve_stored_path(str(row["clip_path"] or ""))
+    except Exception:
+        clip_path = ""
+    if not clip_path:
+        return []
+    clip_dur = float(row["duration"] or 0.0)
+    return detect_voice_ranges_by_silencedetect(
+        clip_path=clip_path,
+        clip_dur=clip_dur,
+        noise_db=float(cfg["db_threshold"]),
+        min_silence_sec=float(cfg["min_silence_sec"]),
+        min_keep_sec=float(cfg["min_keep_sec"]),
+        merge_gap_sec=float(cfg["merge_gap_sec"]),
+        head_pad_sec=float(cfg["head_pad_sec"]),
+        tail_pad_sec=float(cfg["tail_pad_sec"]),
+    )
+
+
+def _segment_from_row_time_range(
+    *,
+    row: Any,
+    order: int,
+    st_rel: float,
+    et_rel: float,
+    audio_mode: Literal["original", "tts", "mute"],
+    subtitle_strategy: Literal["auto", "asr", "rewrite", "none"] = "asr",
+    subtitle_text: str | None = None,
+    subtitle_source: Literal["asr", "llm", "vlm", "user"] = "asr",
+) -> SegmentPlan | None:
+    """在 clip 内指定相对时间窗构建段落。"""
+    cid = str(row["id"])
+    vid = str(row["video_id"])
+    clip_base = float(row["start_time"] or 0.0)
+    dur = et_rel - st_rel
+    if dur <= 0:
+        return None
+    st_abs = clip_base + st_rel
+    et_abs = clip_base + et_rel
+    text = (subtitle_text or row["asr_text"] or "").strip()
+    if audio_mode == "mute":
+        text = text or "（画面填充）"
+        subtitle_strategy = "none"
+        subtitle_source = "vlm" if (_row_vlm(row) or "").strip() else "asr"
+    return SegmentPlan(
+        id=f"mix_{order:04d}_{cid[:8]}",
+        order=order,
+        clip_group=[ClipRef(clip_id=cid, video_id=vid, weight=1.0)],
+        selected_clip_ids=[cid],
+        start_time_sec=st_abs,
+        end_time_sec=et_abs,
+        override_duration_sec=dur,
+        clip_start_offset_sec=st_rel,
+        audio_mode=audio_mode,
+        subtitle=SubtitlePlan(
+            strategy=subtitle_strategy,
+            text=text or "（画面）",
+            source=subtitle_source,
+            timing_hint=TimingHint(start=st_abs, end=et_abs),
+        ),
+    )
+
+
+def _append_none_tier_segments(
+    *,
+    row: Any,
+    order: int,
+    segments: list[SegmentPlan],
+    mix_audio_mode: MixAudioMode,
+    mute_audio_track: MuteAudioTrack = "ai_tts_llm",
+    sub_strategy: Literal["auto", "asr", "rewrite", "none"] = "none",
+    sub_source: Literal["asr", "llm", "vlm", "user"] = "vlm",
+    sub_text: str | None = None,
+) -> int:
+    """无标注 tier：按音量活动切分，尽量在静音处断开以保持说话连贯。"""
+    voice_ranges = _extract_audio_activity_segments(row)
+    if mix_audio_mode == "keep_original":
+        if voice_ranges:
+            for st_rel, et_rel in voice_ranges:
+                st_abs = float(row["start_time"] or 0.0) + st_rel
+                et_abs = float(row["start_time"] or 0.0) + et_rel
+                segments.append(
+                    _build_voice_segment_from_range(
+                        row=row,
+                        order=order,
+                        st_abs=st_abs,
+                        et_abs=et_abs,
+                        text="（音量活动片段）",
+                        audio_mode="original",
+                    )
+                )
+                order += 1
+            return order
+        seg = _clip_row_to_segment(row=row, order=order, audio_mode="original")
+        if seg:
+            segments.append(seg)
+            return order + 1
+        return order
+
+    seg_audio: Literal["tts", "mute"] = (
+        "tts" if mute_audio_track in ("ai_tts_asr", "ai_tts_llm") else "mute"
+    )
+    if voice_ranges:
+        for st_rel, et_rel in voice_ranges:
+            seg = _segment_from_row_time_range(
+                row=row,
+                order=order,
+                st_rel=st_rel,
+                et_rel=et_rel,
+                audio_mode=seg_audio,
+                subtitle_strategy=sub_strategy,
+                subtitle_text=sub_text,
+                subtitle_source=sub_source,
+            )
+            if seg:
+                segments.append(seg)
+                order += 1
+        return order
+
+    seg = _clip_row_to_segment(
+        row=row,
+        order=order,
+        audio_mode=seg_audio,
+        subtitle_strategy=sub_strategy,
+        subtitle_text=sub_text,
+        subtitle_source=sub_source,
+    )
+    if seg:
+        segments.append(seg)
+        return order + 1
+    return order
+
+
+
+def _segment_playback_duration_sec(seg: SegmentPlan) -> float:
+    if seg.override_duration_sec is not None:
+        return max(0.0, float(seg.override_duration_sec))
+    return max(0.0, float(seg.end_time_sec) - float(seg.start_time_sec))
+
+
+def _shorten_segment_plan(seg: SegmentPlan, new_dur: float) -> SegmentPlan:
+    """将段落尾部裁到指定播放时长（保持起点与 clip 内偏移不变）。"""
+    new_dur = max(0.0, float(new_dur))
+    st_abs = float(seg.start_time_sec or 0.0)
+    st_rel = float(seg.clip_start_offset_sec or 0.0)
+    et_abs = st_abs + new_dur
+    updates: dict[str, Any] = {
+        "end_time_sec": et_abs,
+        "override_duration_sec": new_dur,
+        "clip_start_offset_sec": st_rel,
+    }
+    if seg.subtitle:
+        hint = seg.subtitle.timing_hint
+        new_hint = (
+            TimingHint(start=st_abs, end=et_abs)
+            if hint is None
+            else hint.model_copy(update={"start": st_abs, "end": et_abs})
+        )
+        updates["subtitle"] = seg.subtitle.model_copy(update={"timing_hint": new_hint})
+    return seg.model_copy(update=updates)
+
+
+def trim_mix_segments_to_target(
+    segments: list[SegmentPlan],
+    target_duration_sec: float,
+) -> tuple[list[SegmentPlan], str]:
+    """
+    按播放顺序截取段落，使总时长不超过目标值。
+    优先整段保留；最后一段可在句间切分点内截断尾部。
+    """
+    target = float(target_duration_sec)
+    if target <= 0 or not segments:
+        return segments, ""
+
+    active = [s for s in segments if not s.exclude_from_output]
+    total_before = sum(_segment_playback_duration_sec(s) for s in active)
+    if total_before <= target + 1e-6:
+        return segments, ""
+
+    out: list[SegmentPlan] = []
+    used = 0.0
+    kept_active = 0
+    for seg in segments:
+        if seg.exclude_from_output:
+            out.append(seg)
+            continue
+        dur = _segment_playback_duration_sec(seg)
+        if dur <= 0:
+            continue
+        remaining = target - used
+        if remaining < _MIN_TRIM_SEGMENT_SEC:
+            break
+        if dur <= remaining + 1e-6:
+            out.append(seg)
+            used += dur
+            kept_active += 1
+            continue
+        out.append(_shorten_segment_plan(seg, remaining))
+        used = target
+        kept_active += 1
+        break
+
+    dropped = len(active) - kept_active
+    note = (
+        f"已按目标时长 {target:.0f}s 裁剪：原约 {total_before:.1f}s → 保留 {kept_active} 段"
+        f"（约 {used:.1f}s）"
+    )
+    if dropped > 0:
+        note += f"，舍弃后续 {dropped} 段"
+    note += "。"
+
+    order = 0
+    renumbered: list[SegmentPlan] = []
+    for seg in out:
+        renumbered.append(seg.model_copy(update={"order": order}))
+        if not seg.exclude_from_output:
+            order += 1
+    return renumbered, note
+
+
+def _sort_clips_by_tier(rows: Sequence[Any], *, shuffle_none: bool = False) -> list[Any]:
+    """按 tier 优先级排序；无标注素材保持片内时间顺序，不再纯随机打乱。"""
+    del shuffle_none  # 保留参数以兼容旧调用，行为固定为按时间序
     tiered: dict[ClipTier, list[Any]] = {t: [] for t in _TIER_PRIORITY}
     for row in rows:
         tier = classify_clip_tier(
@@ -537,9 +780,7 @@ def _sort_clips_by_tier(rows: Sequence[Any], *, shuffle_none: bool) -> list[Any]
     ordered: list[Any] = []
     for tier in ("asr_vlm", "asr_only", "vlm_only", "none"):
         bucket = tiered[tier]
-        if tier == "none" and shuffle_none and len(bucket) > 1:
-            bucket = list(bucket)
-            random.shuffle(bucket)
+        bucket.sort(key=lambda r: (float(r["start_time"] or 0.0), str(r["id"])))
         ordered.extend(bucket)
     return ordered
 
@@ -588,7 +829,7 @@ def build_mix_edit_plan(
         )
         tier_counts[t] = tier_counts.get(t, 0) + 1
 
-    arranged = _sort_clips_by_tier(rows, shuffle_none=(mix_audio_mode == "mute_all_original"))
+    arranged = _sort_clips_by_tier(rows)
     mix_playlist_clip_ids = [str(r["id"]) for r in arranged]
     segments: list[SegmentPlan] = []
     order = 0
@@ -616,6 +857,18 @@ def build_mix_edit_plan(
                 sub_strategy = "none"
                 sub_source = "vlm"
                 sub_text = (_row_vlm(row) or "").strip()[:200] or "（画面）"
+            if tier == "none":
+                order = _append_none_tier_segments(
+                    row=row,
+                    order=order,
+                    segments=segments,
+                    mix_audio_mode=mix_audio_mode,
+                    mute_audio_track=mute_audio_track,
+                    sub_strategy=sub_strategy,
+                    sub_source=sub_source,
+                    sub_text=sub_text,
+                )
+                continue
             seg = _clip_row_to_segment(
                 row=row,
                 order=order,
@@ -677,6 +930,13 @@ def build_mix_edit_plan(
                     if seg:
                         segments.append(seg)
                         order += 1
+            elif tier == "none":
+                order = _append_none_tier_segments(
+                    row=row,
+                    order=order,
+                    segments=segments,
+                    mix_audio_mode=mix_audio_mode,
+                )
             else:
                 seg = _clip_row_to_segment(
                     row=row,
@@ -744,12 +1004,23 @@ def build_mix_edit_plan(
     if mix_audio_mode == "keep_original":
         plan = apply_voiceover_source_timeline_dedupe(plan, allow_overlaps=True)
 
-    if target_duration_sec and plan.estimated_duration_sec:
-        if plan.estimated_duration_sec > target_duration_sec * 1.5:
+    if target_duration_sec and float(target_duration_sec) > 0:
+        trimmed, trim_note = trim_mix_segments_to_target(
+            plan.segments, float(target_duration_sec)
+        )
+        if trim_note:
+            total_after = sum(
+                _segment_playback_duration_sec(s)
+                for s in trimmed
+                if not s.exclude_from_output
+            )
             plan = plan.model_copy(
                 update={
-                    "summary": plan.summary
-                    + f" 提示：预估 {plan.estimated_duration_sec:.0f}s，高于目标 {target_duration_sec:.0f}s，可删减素材后重试。"
+                    "segments": trimmed,
+                    "estimated_duration_sec": round(total_after, 2)
+                    if total_after > 0
+                    else None,
+                    "summary": f"{plan.summary} {trim_note}",
                 }
             )
 

@@ -72,7 +72,7 @@ const TIER_LEGEND = [
   { tier: 'ASR + VLM', arrange: '语义智能混剪' },
   { tier: '仅 ASR', arrange: '文本语义编排' },
   { tier: '仅 VLM', arrange: '画面语义匹配' },
-  { tier: '全无', arrange: '纯随机混剪' },
+  { tier: '全无', arrange: '音量活动混剪' },
 ]
 
 export function MixEditPanel({

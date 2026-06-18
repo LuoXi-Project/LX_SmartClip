@@ -118,7 +118,7 @@ def extract_video_raw(input_path: str, work_dir: str, *, fps: float) -> tuple[st
             "-c:v",
             "libx264",
             "-preset",
-            "veryfast",
+            "ultrafast",
             "-crf",
             "16",
             "-pix_fmt",
@@ -168,7 +168,8 @@ def mux_av(
     else:
         args += ["-map", "0:v:0"]
 
-    vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
+    # 防检测不依赖编码精度：用 veryfast（与全站默认对齐）提速，medium 过慢。
+    vcodec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
     if audio_path and os.path.isfile(audio_path):
         acodec = ["-c:a", "aac", "-b:a", "192k"]
     else:

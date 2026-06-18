@@ -87,6 +87,17 @@ def build_render_codec_args(render_opts: Optional[Dict[str, str]] = None) -> Lis
     return args
 
 
+def build_intermediate_codec_args(render_opts: Optional[Dict[str, str]] = None) -> List[str]:
+    """
+    中间产物（如 force_materialize 的材质化分段，必然被后续 concat/烧录再次重编码）使用最快 preset；
+    画质由最终成片编码保证。CRF 等其余参数沿用配置——同画质目标、仅切换 preset，故最终成片画质不变。
+    NVENC 经 _effective_encoder_preset 自动把 ultrafast 映射为 p1（最快档）。
+    """
+    opts = dict(render_opts or {})
+    opts["clip_preset"] = "ultrafast"
+    return build_render_codec_args(opts)
+
+
 def force_video_reencode(codec_args: List[str], render_opts: Optional[Dict[str, str]] = None) -> List[str]:
     """
     当存在视频滤镜（如 ass/subtitles）时，不能使用 -c:v copy。

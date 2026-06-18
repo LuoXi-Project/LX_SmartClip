@@ -79,9 +79,11 @@ from app.core.auto_edit.voiceover_quick_cut import (
 )
 from app.core.auto_edit.voiceover_semantic import build_semantic_voiceover_plan
 from app.core.auto_edit.mix_edit import (
+    _segment_playback_duration_sec,
     apply_shot_boundary_refine_to_plan,
     build_mix_edit_plan,
     resolve_mix_clip_rows,
+    trim_mix_segments_to_target,
 )
 from app.core.auto_edit.mix_edit_tts_balance import rebalance_mix_tts_voiceover_plan
 from app.core.auto_edit.mix_edit_llm_copy import apply_llm_scripts_to_mute_plan
@@ -749,16 +751,46 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
     return _finalize_plans_response(AutoEditPlanResponse(plans=[plan]))
 
 
-async def _load_mix_edit_clips(db: aiosqlite.Connection, video_ids: List[str]) -> list[aiosqlite.Row]:
-    """加载混剪所需 clip（含 vlm_description），按视频顺序 + 片内时间排序。"""
-    all_rows: list[aiosqlite.Row] = []
+async def _load_mix_edit_clips(
+    db: aiosqlite.Connection,
+    video_ids: List[str],
+) -> list[aiosqlite.Row | dict[str, object]]:
+    """加载混剪所需 clip（含 vlm_description），按视频顺序 + 片内时间排序。
+
+    未预处理（无 clips 表记录）时，回退为原视频单段虚拟 clip（raw_<video_id>），
+    供音量活动检测切分；成片侧已兼容 raw_ 片段 ID。
+    """
+    all_rows: list[aiosqlite.Row | dict[str, object]] = []
     for vid in video_ids:
         async with db.execute(
             "SELECT id, video_id, clip_path, start_time, duration, asr_text, asr_segments, vlm_description "
             "FROM clips WHERE video_id = ? ORDER BY start_time ASC, id ASC",
             (vid,),
         ) as cur:
-            all_rows.extend(await cur.fetchall())
+            rows = await cur.fetchall()
+        if rows:
+            all_rows.extend(rows)
+            continue
+
+        async with db.execute(
+            "SELECT id, file_path, duration FROM videos WHERE id = ?",
+            (vid,),
+        ) as cur:
+            vrow = await cur.fetchone()
+        if not vrow:
+            continue
+        all_rows.append(
+            {
+                "id": f"raw_{vid}",
+                "video_id": str(vrow["id"]),
+                "clip_path": str(vrow["file_path"] or ""),
+                "start_time": 0.0,
+                "duration": float(vrow["duration"] or 0.0),
+                "asr_text": None,
+                "asr_segments": None,
+                "vlm_description": None,
+            }
+        )
     return all_rows
 
 
@@ -766,7 +798,7 @@ async def _load_mix_edit_clips(db: aiosqlite.Connection, video_ids: List[str]) -
 async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
     """
     混剪方案：两大顶层模式（保留原声 / 关闭全部原声）。
-    素材按 ASR/VLM 四级分级编排，兼容仅有 ASR、仅有 VLM 或全无标注的 clip。
+    素材按 ASR/VLM 四级分级编排；未预处理视频无 clip 时回退整段原片并按音量活动切分。
     """
     if not req.video_ids:
         raise HTTPException(status_code=400, detail="请至少选择一个视频")
@@ -865,6 +897,29 @@ async def mix_edit_plan(req: MixEditPlanRequest) -> AutoEditPlanResponse:
             )
         }
     )
+
+    if req.target_duration_sec and float(req.target_duration_sec) > 0:
+        trimmed, trim_note = trim_mix_segments_to_target(
+            plan.segments, float(req.target_duration_sec)
+        )
+        if trim_note:
+            total_after = sum(
+                _segment_playback_duration_sec(s)
+                for s in trimmed
+                if not s.exclude_from_output
+            )
+            summary = plan.summary or ""
+            if "已按目标时长" not in summary:
+                summary = f"{summary} {trim_note}".strip()
+            plan = plan.model_copy(
+                update={
+                    "segments": trimmed,
+                    "estimated_duration_sec": round(total_after, 2)
+                    if total_after > 0
+                    else None,
+                    "summary": summary,
+                }
+            )
 
     if not plan.segments:
         raise HTTPException(

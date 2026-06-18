@@ -26,6 +26,7 @@ from app.core.auto_edit.mix_visual import build_segment_visual_filters
 
 from .render_opts import (
     build_extra_video_filters,
+    build_intermediate_codec_args,
     build_render_codec_args,
     force_video_reencode,
     sanitize_no_stream_copy,
@@ -260,9 +261,15 @@ def _materialize_one_encode(
     tw: int,
     th: int,
     render_opts: Optional[Dict[str, str]],
+    intermediate: bool = False,
 ) -> None:
     trim_opts = sanitize_no_stream_copy(dict(render_opts or {}))
-    seg_codec_args = build_render_codec_args(trim_opts)
+    # 中间产物（force_materialize，必被后续重编码）用最快 preset；最终质量由后续编码保证。
+    seg_codec_args = (
+        build_intermediate_codec_args(trim_opts)
+        if intermediate
+        else build_render_codec_args(trim_opts)
+    )
     if seg_filter_parts:
         seg_codec_args = force_video_reencode(seg_codec_args, render_opts=trim_opts)
     seg_codec_args = _force_audio_copy(seg_codec_args)
@@ -483,8 +490,10 @@ def materialize_clip_paths_for_group(
         else:
             tw, th = _explicit_norm_target_wh(scale_w, scale_h, w, h)
         need_norm = (w, h) != (tw, th)
+        # 中间材质化归一化：bicubic 为 FFmpeg 默认缩放，与 lanczos 对实拍素材肉眼无差且更快；
+        # 最终成片缩放（render_opts.build_extra_video_filters）仍保留 lanczos。
         norm_vf = (
-            [f"scale={tw}:{th}:flags=lanczos", "setsar=1"] if need_norm else []
+            [f"scale={tw}:{th}:flags=bicubic", "setsar=1"] if need_norm else []
         )
         visual_vf = build_segment_visual_filters(getattr(seg, "visual_effect", None))
         seg_filter_parts = [*norm_vf, *extra_filters, *visual_vf]
@@ -631,6 +640,7 @@ def materialize_clip_paths_for_group(
                     tw=int(r["tw"]),
                     th=int(r["th"]),
                     render_opts=render_opts,
+                    intermediate=force_materialize,
                 )
             need_trim = bool(r["need_trim"])
             span = float(r["span"])
@@ -667,7 +677,12 @@ def materialize_clip_paths_for_group(
             bi += 1
 
         trim_opts = sanitize_no_stream_copy(dict(render_opts or {}))
-        seg_codec_args0 = build_render_codec_args(trim_opts)
+        # force_materialize 的中间产物必被后续重编码：用最快 preset，仅提速不改画质目标。
+        seg_codec_args0 = (
+            build_intermediate_codec_args(trim_opts)
+            if force_materialize
+            else build_render_codec_args(trim_opts)
+        )
         sfp0 = list(r["seg_filter_parts"])
         if sfp0:
             seg_codec_args0 = force_video_reencode(seg_codec_args0, render_opts=trim_opts)
@@ -748,6 +763,7 @@ def materialize_clip_paths_for_group(
                 tw=int(x["tw"]),
                 th=int(x["th"]),
                 render_opts=render_opts,
+                intermediate=force_materialize,
             )
             need_trim = bool(x["need_trim"])
             span = float(x["span"])
@@ -1026,7 +1042,11 @@ def _cap_segment_to_duration(
     label: str,
     codec_args: List[str],
 ) -> str:
-    """容器时长超出配音上限时二次裁切（兜底，防止视频轨长于音轨）。"""
+    """容器时长超出配音上限时二次裁切（兜底，防止视频轨长于音轨）。
+
+    优先 stream copy（-c copy -t）：仅截断容器时长，不重编码、画质位级不变；
+    仅当 copy 失败（容器不支持精确截断等罕见情况）才回退到按 codec_args 重编码。
+    """
     probed = float(probe_duration(seg_path, log_on_failure=True) or 0.0)
     cap = max(0.05, float(cap_sec))
     if probed <= cap + 0.08:
@@ -1038,6 +1058,26 @@ def _cap_segment_to_duration(
         probed,
         cap,
     )
+    try:
+        run_ffmpeg(
+            [
+                "-i",
+                seg_path,
+                "-t",
+                f"{cap:.3f}",
+                "-c",
+                "copy",
+                "-avoid_negative_ts",
+                "make_zero",
+                "-movflags",
+                "+faststart",
+                capped,
+            ],
+            desc=f"cap segment {label} (copy)",
+        )
+        return capped
+    except Exception as e:
+        logger.warning("段 %s copy 裁切失败，回退重编码: %s", label, e)
     run_ffmpeg(
         [
             "-i",

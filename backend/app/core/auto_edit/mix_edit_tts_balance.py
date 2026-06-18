@@ -371,7 +371,7 @@ def rebalance_mix_tts_voiceover_plan(
     if not rows:
         return plan
 
-    arranged = _sort_clips_by_tier(rows, shuffle_none=True)
+    arranged = _sort_clips_by_tier(rows)
     row_by_id = {str(r["id"]): r for r in arranged}
     id_order = [str(r["id"]) for r in arranged]
 

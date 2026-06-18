@@ -14,6 +14,11 @@ from app.models.auto_edit import MixAntiDetectVideoConfig
 
 logger = logging.getLogger(__name__)
 
+# 像素噪声用模块级 Generator：比 legacy np.random.normal 快且线程安全，同为高斯分布（防检测效果一致）。
+_PIXEL_NOISE_RNG = np.random.default_rng()
+# 水印/字幕掩码帧间稳定：每 N 帧重新检测一次，中间帧复用，降低逐帧 Canny+Otsu 开销。
+_INPAINT_MASK_REFRESH_INTERVAL = 12
+
 
 def _detect_inpaint_mask(frame: np.ndarray, strength: float) -> np.ndarray:
     """检测字幕/水印常见区域（底部高对比 + 边角小块）。"""
@@ -86,12 +91,12 @@ def _apply_scale_jitter(frame: np.ndarray, jitter: float) -> np.ndarray:
     return canvas
 
 
-def _apply_pixel_noise(frame: np.ndarray, sigma: float, rng: random.Random) -> np.ndarray:
+def _apply_pixel_noise(frame: np.ndarray, sigma: float) -> np.ndarray:
     if sigma <= 0:
         return frame
-    noise = rng.normalvariate(0, sigma)
     arr = frame.astype(np.float32)
-    arr += np.random.normal(0, sigma, arr.shape).astype(np.float32)
+    # 模块级 Generator：同高斯分布，比 legacy np.random.normal 更快；并移除未使用的 normalvariate 死代码。
+    arr += _PIXEL_NOISE_RNG.normal(0.0, sigma, arr.shape)
     return np.clip(arr, 0, 255).astype(np.uint8)
 
 
@@ -123,6 +128,9 @@ def process_video_file(
     rng = random.Random(params.seed + ":video")
     frame_idx = 0
     crawl_by_idx = {k.frame_idx: k for k in params.crawl_path}
+    # inpaint 掩码缓存：水印/字幕位置帧间稳定，按间隔复用，避免逐帧 Canny+Otsu。
+    last_mask: Optional[np.ndarray] = None
+    last_mask_frame = -(10 ** 9)
 
     try:
         while True:
@@ -131,8 +139,13 @@ def process_video_file(
                 break
 
             if cfg.enable_inpaint:
-                mask = _detect_inpaint_mask(frame, float(cfg.inpaint_strength))
-                frame = _apply_inpaint(frame, mask, float(cfg.inpaint_strength))
+                if (
+                    last_mask is None
+                    or frame_idx - last_mask_frame >= _INPAINT_MASK_REFRESH_INTERVAL
+                ):
+                    last_mask = _detect_inpaint_mask(frame, float(cfg.inpaint_strength))
+                    last_mask_frame = frame_idx
+                frame = _apply_inpaint(frame, last_mask, float(cfg.inpaint_strength))
 
             crawl = crawl_by_idx.get(frame_idx)
             dx = params.displacement_px
@@ -150,7 +163,7 @@ def process_video_file(
                 frame = _apply_scale_jitter(frame, params.scale_jitter)
 
             if cfg.enable_pixel_noise:
-                frame = _apply_pixel_noise(frame, params.pixel_noise_sigma, rng)
+                frame = _apply_pixel_noise(frame, params.pixel_noise_sigma)
 
             write_frame = True
             if cfg.enable_frame_ops and rng.random() < float(cfg.frame_drop_probability):

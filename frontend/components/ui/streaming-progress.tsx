@@ -65,7 +65,7 @@ export interface StreamingProgressProps {
   /** inline（完整面板，默认）/ compact（toast、task-hub 紧凑卡）。*/
   variant?: 'inline' | 'compact'
   /** 主色：cyan（默认，对齐 confirm-dialog 主操作）/ emerald。*/
-  accent?: 'cyan' | 'emerald'
+  accent?: 'cyan' | 'emerald' | 'violet'
   /** compact 模式下是否默认展开日志。*/
   defaultLogOpen?: boolean
   className?: string
@@ -83,6 +83,12 @@ const ACCENT = {
     border: 'border-emerald-500/30',
     chipActive: 'border-emerald-400 bg-emerald-500/20 text-emerald-200',
     text: 'text-emerald-300',
+  },
+  violet: {
+    bar: 'bg-violet-500',
+    border: 'border-violet-500/30',
+    chipActive: 'border-violet-400 bg-violet-500/20 text-violet-200',
+    text: 'text-violet-300',
   },
 } as const
 

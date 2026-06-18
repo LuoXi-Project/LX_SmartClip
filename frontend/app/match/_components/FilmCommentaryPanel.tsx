@@ -14,6 +14,7 @@ import {
   type Video,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { StreamingProgress, type ProgressStatus } from '@/components/ui/streaming-progress'
 
 const STATUS_LABEL: Record<FilmJobStatus, string> = {
   pending: '排队中',
@@ -27,6 +28,45 @@ const STATUS_LABEL: Record<FilmJobStatus, string> = {
   cancelled: '已取消',
 }
 
+/** 影视解说方案生成阶段（按顺序，与 auto-edit 的 PLAN_STAGES chips 风格对齐） */
+const COMMENTARY_STAGES = [
+  { key: 'parsing', label: '理解原片' },
+  { key: 'scripting', label: '撰写剧本' },
+  { key: 'aligning', label: '匹配画面' },
+  { key: 'planning', label: '生成方案' },
+  { key: 'rendering', label: '配音出片' },
+]
+
+const ACTIVE_STAGES: FilmJobStatus[] = ['pending', 'parsing', 'scripting', 'aligning', 'planning', 'rendering']
+
+/** FilmJobStatus → StreamingProgress 的 stage key（高亮对应 chip） */
+function statusToStageKey(status: FilmJobStatus): string {
+  if (status === 'pending') return 'parsing'
+  if (ACTIVE_STAGES.includes(status)) return status
+  return 'rendering' // done/failed — 最后一个 stage
+}
+
+function statusToProgressStatus(status: FilmJobStatus): ProgressStatus {
+  if (status === 'done') return 'done'
+  if (status === 'failed') return 'error'
+  if (status === 'cancelled') return 'cancelled'
+  return 'running'
+}
+
+/** 从 FilmJobStatus 和 progress dict 推算百分比（基于阶段序号） */
+function derivePercent(status: FilmJobStatus, progress: Record<string, { status: string; message: string }>): number | null {
+  if (status === 'done') return 100
+  if (status === 'failed' || status === 'cancelled') return null
+  if (status === 'pending') return 0
+  const idx = ACTIVE_STAGES.indexOf(status)
+  const total = COMMENTARY_STAGES.length
+  if (idx < 0) return null
+  // 当前阶段内部有 progress 条目说明有产出，给阶段内 50%；否则 0%
+  const stepKeys = Object.keys(progress || {})
+  const inStepProgress = stepKeys.length > 0 ? 0.5 : 0
+  return Math.round(((idx + inStepProgress) / total) * 100)
+}
+
 const STYLE_OPTIONS: { id: FilmStyle; label: string }[] = [
   { id: 'suspense', label: '悬疑爆款' },
   { id: 'humor', label: '吐槽幽默' },
@@ -35,21 +75,8 @@ const STYLE_OPTIONS: { id: FilmStyle; label: string }[] = [
   { id: 'wilderness', label: '荒野作死' },
 ]
 
-const ACTIVE: FilmJobStatus[] = [
-  'pending',
-  'parsing',
-  'scripting',
-  'aligning',
-  'planning',
-  'rendering',
-]
-
 /** 模板默认成片时长（秒）；用户可在「解说编剧 · System」中自行修改时长与分句数 */
 const DEFAULT_TARGET_DURATION_SEC = 300
-
-function isActive(status: FilmJobStatus) {
-  return ACTIVE.includes(status)
-}
 
 type FilmCommentaryPanelProps = {
   selectedVideoIds: string[]
@@ -140,7 +167,7 @@ export function FilmCommentaryPanel({
 
   useEffect(() => {
     const tick = setInterval(() => {
-      if (jobs.some((j) => isActive(j.status))) {
+      if (jobs.some((j) => ACTIVE_STAGES.includes(j.status))) {
         loadJobs()
       }
     }, 2500)
@@ -358,50 +385,52 @@ export function FilmCommentaryPanel({
               ))}
             </div>
           )}
-          {selectedJob && (
-            <>
-              <p className="text-sm text-slate-300">{STATUS_LABEL[selectedJob.status]}</p>
-              {selectedJob.error_message && (
-                <div className="flex gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
-                  <XCircle className="w-3.5 h-3.5 shrink-0" />
-                  {selectedJob.error_message}
-                </div>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {Object.entries(selectedJob.progress || {}).map(([key, val]) => (
-                  <div key={key} className="rounded border border-slate-800 px-2 py-1 text-[10px]">
-                    <div className="text-slate-600">{key}</div>
-                    <div className="text-slate-400 truncate">{val.message || val.status}</div>
+          {selectedJob && (() => {
+            const elapsed = selectedJob.created_at
+              ? Math.max(0, Math.floor((Date.now() - Date.parse(selectedJob.created_at)) / 1000))
+              : 0
+            const derivedLogs = Object.entries(selectedJob.progress || {})
+              .filter(([, v]) => v.message)
+              .map(([k, v]) => `[${k}] ${v.message}`)
+            const st = selectedJob.status
+            return (
+              <>
+                <StreamingProgress
+                  status={statusToProgressStatus(st)}
+                  stage={statusToStageKey(st)}
+                  stages={COMMENTARY_STAGES}
+                  percent={derivePercent(st, selectedJob.progress || {})}
+                  elapsedSec={elapsed}
+                  logs={derivedLogs}
+                  accent="violet"
+                  hint={ACTIVE_STAGES.includes(st) ? `正在${STATUS_LABEL[st]}…` : undefined}
+                  onCancel={ACTIVE_STAGES.includes(st) ? () => handleCancel(selectedJob.id) : undefined}
+                />
+                {selectedJob.error_message && (
+                  <div className="flex gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
+                    <XCircle className="w-3.5 h-3.5 shrink-0" />
+                    {selectedJob.error_message}
                   </div>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                {isActive(selectedJob.status) && (
-                  <button
-                    type="button"
-                    onClick={() => handleCancel(selectedJob.id)}
-                    className="text-[11px] border border-slate-600 rounded-lg px-2.5 py-1 text-slate-400"
-                  >
-                    取消
-                  </button>
                 )}
-                {(selectedJob.status === 'failed' || selectedJob.status === 'cancelled') && (
-                  <button
-                    type="button"
-                    onClick={() => handleRetry(selectedJob.id)}
-                    className="text-[11px] border border-violet-600 rounded-lg px-2.5 py-1 text-violet-300"
-                  >
-                    重试
-                  </button>
+                <div className="flex gap-2">
+                  {(selectedJob.status === 'failed' || selectedJob.status === 'cancelled') && (
+                    <button
+                      type="button"
+                      onClick={() => handleRetry(selectedJob.id)}
+                      className="text-[11px] border border-violet-600 rounded-lg px-2.5 py-1 text-violet-300"
+                    >
+                      重试
+                    </button>
+                  )}
+                </div>
+                {selectedJob.plan && (
+                  <p className="text-[11px] text-emerald-400/90">
+                    方案已同步至下方预览区，请配置 BGM 后手动合成或导出剪映。
+                  </p>
                 )}
-              </div>
-              {selectedJob.plan && (
-                <p className="text-[11px] text-emerald-400/90">
-                  方案已同步至下方预览区，请配置 BGM 后手动合成或导出剪映。
-                </p>
-              )}
-            </>
-          )}
+              </>
+            )
+          })()}
         </div>
       )}
     </section>

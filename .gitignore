@@ -41,3 +41,4 @@ git-weekly-log.txt
 .agents/skills
 .claude/skills
 skills-lock.json
+tmp/

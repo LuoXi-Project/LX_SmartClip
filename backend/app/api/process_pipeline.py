@@ -379,12 +379,15 @@ async def run_pipeline(
 
     async def _inc_progress(step: str, message_prefix: str, total: int, success: int, done: int):
         _ensure_step_start(step)
-        if total > 0 and done >= total:
+        completed = total > 0 and done >= total
+        if completed:
             _ensure_step_end(step)
-        # done 表示“已处理数量”，success 表示“成功数量”；避免在失败/超时场景误以为已成功
+        # 全部处理完毕时立即发 status="done"，前端可以实时看到步骤完成
+        # （不必等 Queue.join() 收尾）
+        step_status = "done" if completed else "running"
         await reporter.send(
             step,
-            "running",
+            step_status,
             f"{message_prefix} {done}/{total} 已处理（成功 {success}）",
             {"current": done, "total": total, "processed": success, "metrics": _metrics_snapshot()},
         )
@@ -461,14 +464,18 @@ async def run_pipeline(
                 logger.warning("片段 %s 抽帧失败: %s", item["id"], e)
             finally:
                 item["frame_ready"].set()
-                if do_frames:
-                    async with progress_lock:
-                        frame_done += 1
-                        if ok:
-                            frame_success += 1
-                        await _inc_progress("extract_frames", "抽帧", total_clips, frame_success, frame_done)
-                await _maybe_enqueue_vlm(item)
-                frame_queue.task_done()
+                try:
+                    if do_frames:
+                        async with progress_lock:
+                            frame_done += 1
+                            if ok:
+                                frame_success += 1
+                            await _inc_progress("extract_frames", "抽帧", total_clips, frame_success, frame_done)
+                    await _maybe_enqueue_vlm(item)
+                except Exception:
+                    logger.exception("_frames_worker finally 异常，跳过进度更新以免 task_done 缺失")
+                finally:
+                    frame_queue.task_done()
 
     async def _asr_worker():
         nonlocal asr_done, asr_success
@@ -530,13 +537,17 @@ async def run_pipeline(
                 logger.warning("片段 %s ASR 失败: %s", item["id"], e)
             finally:
                 item["asr_ready"].set()
-                await _maybe_enqueue_vlm(item)
-                async with progress_lock:
-                    asr_done += 1
-                    if ok:
-                        asr_success += 1
-                    await _inc_progress("asr", "ASR", total_clips, asr_success, asr_done)
-                asr_queue.task_done()
+                try:
+                    await _maybe_enqueue_vlm(item)
+                    async with progress_lock:
+                        asr_done += 1
+                        if ok:
+                            asr_success += 1
+                        await _inc_progress("asr", "ASR", total_clips, asr_success, asr_done)
+                except Exception:
+                    logger.exception("_asr_worker finally 异常，跳过进度更新以免 task_done 缺失")
+                finally:
+                    asr_queue.task_done()
 
     async def _vlm_worker():
         nonlocal vlm_done, vlm_success
@@ -588,14 +599,20 @@ async def run_pipeline(
             except Exception as e:
                 logger.warning("片段 %s VLM 失败: %s", item["id"], e)
             finally:
-                if do_vlm:
-                    async with progress_lock:
-                        vlm_done += 1
-                        if ok:
-                            vlm_success += 1
-                        await _inc_progress("vlm", "VLM", total_clips, vlm_success, vlm_done)
-                await _put_with_timeout(embed_queue, item, f"embed:{item['id']}")
-                vlm_queue.task_done()
+                try:
+                    if do_vlm:
+                        async with progress_lock:
+                            vlm_done += 1
+                            if ok:
+                                vlm_success += 1
+                            await _inc_progress("vlm", "VLM", total_clips, vlm_success, vlm_done)
+                    await _put_with_timeout(embed_queue, item, f"embed:{item['id']}")
+                except ProcessCancelled:
+                    raise
+                except Exception:
+                    logger.exception("_vlm_worker finally 异常，跳过以免 task_done 缺失")
+                finally:
+                    vlm_queue.task_done()
 
     async def _embed_worker():
         nonlocal emb_done, emb_success
@@ -691,13 +708,17 @@ async def run_pipeline(
             except Exception as e:
                 logger.warning("片段 %s Embedding 失败: %s", item["id"], e)
             finally:
-                if do_embed:
-                    async with progress_lock:
-                        emb_done += 1
-                        if ok:
-                            emb_success += 1
-                        await _inc_progress("embed", "Embedding", total_clips, emb_success, emb_done)
-                embed_queue.task_done()
+                try:
+                    if do_embed:
+                        async with progress_lock:
+                            emb_done += 1
+                            if ok:
+                                emb_success += 1
+                            await _inc_progress("embed", "Embedding", total_clips, emb_success, emb_done)
+                except Exception:
+                    logger.exception("_embed_worker finally 异常，跳过进度更新以免 task_done 缺失")
+                finally:
+                    embed_queue.task_done()
 
     frames_workers = [asyncio.create_task(_frames_worker()) for _ in range(frames_worker_count)]
     vlm_workers = [asyncio.create_task(_vlm_worker()) for _ in range(vlm_worker_count)]

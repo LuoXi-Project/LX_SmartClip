@@ -341,14 +341,17 @@ class ProgressReporter:
         stage_log("预处理", f"{step_label} — {message}", status=status)
         logger.info("[%s] %s: %s", step, status, message)
         if self.task_id:
-            await update_task_from_progress(
-                self.task_id,
-                step=step,
-                status=status,
-                message=message,
-                detail=payload["detail"],
-            )
-            await broadcast_task_message(self.task_id, payload)
+            try:
+                await update_task_from_progress(
+                    self.task_id,
+                    step=step,
+                    status=status,
+                    message=message,
+                    detail=payload["detail"],
+                )
+                await broadcast_task_message(self.task_id, payload)
+            except Exception:
+                logger.exception("ProgressReporter: 写库/广播进度失败，跳过以免影响流水线")
         if self.ws:
             try:
                 await self.ws.send_json(payload)

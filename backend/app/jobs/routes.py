@@ -95,7 +95,7 @@ async def stream_job(job_id: str):
             # 直播推进
             while True:
                 try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    msg = await asyncio.wait_for(queue.get(), timeout=10.0)
                 except asyncio.TimeoutError:
                     yield sse_comment()
                     continue

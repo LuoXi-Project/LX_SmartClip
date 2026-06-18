@@ -53,6 +53,9 @@ apply_default_ffmpeg_environment()
 async def lifespan(app: FastAPI):
     await init_db()
     await reconcile_all_orphan_tasks_on_startup()
+    # 对齐 async_jobs 里卡住的 process 任务（队列 worker 已死），避免前端永久「处理中」
+    from app.jobs.store import reconcile_process_jobs_on_startup
+    await reconcile_process_jobs_on_startup()
     await init_blocking_pool()
     try:
         yield

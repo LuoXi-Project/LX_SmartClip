@@ -7,7 +7,7 @@ import {
   XCircle,
   Loader2,
   SkipForward,
-  X,
+  CircleStop,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react'
@@ -191,8 +191,8 @@ export function StreamingProgress({
               </button>
             )}
             {onCancel && isRunning && (
-              <button onClick={onCancel} className="text-slate-500 hover:text-red-400 transition-colors">
-                <X className="w-3.5 h-3.5" />
+              <button onClick={onCancel} title="停止" className="text-slate-500 hover:text-red-400 transition-colors">
+                <CircleStop className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
@@ -257,7 +257,7 @@ export function StreamingProgress({
               onClick={onCancel}
               className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-0.5 text-[11px] text-slate-400 hover:text-red-300 hover:border-red-500/50 transition-colors"
             >
-              <X className="w-3 h-3" /> 取消
+              <CircleStop className="w-3 h-3" /> 停止
             </button>
           )}
         </div>

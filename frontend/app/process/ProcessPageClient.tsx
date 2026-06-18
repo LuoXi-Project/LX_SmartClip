@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import apiClient, { clipsApi, connectProcessJobWebSocket, processJobsApi, videosApi, type ProcessMessage, type ProcessTaskSnapshot, type Video } from '@/lib/api'
+import apiClient, { clipsApi, jobsApi, processJobsApi, videosApi, type JobSnapshot, type Video } from '@/lib/api'
+import { fetchSSE } from '@/lib/stream'
+import { useTaskStore } from '@/lib/task-store'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { VoiceInputControl } from '@/components/ui/voice-input'
@@ -63,8 +65,7 @@ function resolveSplitProgress(detail: Record<string, unknown>) {
 }
 
 const PAGE_SIZE = 9
-const ACTIVE_TASK_KEY = 'smartclip:process:activeTask'
-/** WS 断线或漏消息时，轮询任务快照的间隔（毫秒） */
+/** SSE 断线或漏帧时，轮询 job 快照的间隔（毫秒） */
 const TASK_POLL_MS = 3000
 
 export default function ProcessPage() {
@@ -73,7 +74,6 @@ export default function ProcessPage() {
 
   const [videos, setVideos] = useState<Video[]>([])
   const [selId, setSelId] = useState('')
-  const [taskHydrated, setTaskHydrated] = useState(false)
   const appliedUrlVideoIdRef = useRef('')
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
@@ -90,14 +90,62 @@ export default function ProcessPage() {
   const [statusFixMsg, setStatusFixMsg] = useState('')
   /** 最近一次主入口任务模式：用于完成文案区分（恢复区重跑不改变此值） */
   const [runPreset, setRunPreset] = useState<'full' | 'asr_only'>('full')
-  const [activeTaskId, setActiveTaskId] = useState('')
-  const wsRef = useRef<WebSocket | null>(null)
+  /** 当前选中视频所展示的 process job id（来自 async_jobs，前端唯一追踪键）*/
+  const [selJobId, setSelJobId] = useState('')
+  /** SSE 连接的 AbortController（切视频/停止/卸载时中止，避免旧流污染新视图）*/
+  const sseAbortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const runningRef = useRef(running)
   const doneRef = useRef(done)
   runningRef.current = running
   doneRef.current = done
+
+  const taskStoreUpsert = useTaskStore((s) => s.upsert)
+  const taskStorePatch = useTaskStore((s) => s.patch)
+
+  /** 把 process job 同步到 TaskHub 的 task-store（带视频名 + 停止/删除回调）*/
+  const bridgeToTaskHub = (
+    created: { task_id?: string; job_id?: string; job_stream_url?: string; video_id?: string; video_name?: string },
+    baseTitle: string,
+  ) => {
+    const jid = created.job_id
+    const streamUrl = created.job_stream_url
+    if (!jid || !streamUrl) return
+    const videoName = created.video_name || ''
+    const title = videoName ? `${baseTitle} · ${videoName}` : baseTitle
+    const fullUrl = streamUrl.startsWith('/') ? `${window.location.origin}${streamUrl}` : streamUrl
+    taskStoreUpsert({
+      id: jid, title, kind: 'process', status: 'running',
+      percent: null, logs: [], elapsedSec: 0, createdAt: Date.now(),
+      videoName, videoId: created.video_id,
+      onCancel: () => { jobsApi.cancel(jid).catch(() => undefined) },
+      onRemove: () => { jobsApi.remove(jid).catch(() => undefined) },
+    })
+    // 用 SSE 订阅 async_job 进度，实时推入 task-store
+    fetchSSE(fullUrl, undefined, {
+      onEvent(event, data) {
+        if (event === 'progress') {
+          const m = data as { step?: string; message?: string; detail?: { percent?: number; current?: number; total?: number } }
+          let pct = typeof m?.detail?.percent === 'number' ? m.detail.percent : null
+          if (pct === null && typeof m?.detail?.current === 'number' && typeof m?.detail?.total === 'number' && m.detail.total > 0) {
+            pct = Math.round((m.detail.current / m.detail.total) * 100)
+          }
+          taskStorePatch(jid, { stage: m?.step, percent: pct })
+        }
+        if (event === 'result') {
+          taskStorePatch(jid, { status: 'done', percent: 100, resultLabel: '预处理完成' })
+        }
+        if (event === 'failed') {
+          const f = data as { message?: string; cancelled?: boolean }
+          taskStorePatch(jid, { status: f?.cancelled ? 'cancelled' : 'error', error: f?.message || '预处理失败' })
+        }
+      },
+      onError(err) {
+        taskStorePatch(jid, { status: 'error', error: err.message })
+      },
+    }).catch(() => undefined)
+  }
 
   const stopTaskPolling = () => {
     if (pollTimerRef.current) {
@@ -106,19 +154,12 @@ export default function ProcessPage() {
     }
   }
 
-  /** 关闭 WS 但不触发旧 handler（避免 replace/unmount 时 onclose 误把 running 置 false） */
-  const closeWsQuietly = () => {
-    const w = wsRef.current
-    if (!w) return
-    w.onmessage = null
-    w.onclose = null
-    w.onerror = null
-    try {
-      w.close()
-    } catch {
-      /* noop */
+  /** 中止当前 SSE 订阅（切视频/停止/卸载时调用，避免旧流把新视图污染）*/
+  const closeStreamQuietly = () => {
+    if (sseAbortRef.current) {
+      sseAbortRef.current.abort()
+      sseAbortRef.current = null
     }
-    wsRef.current = null
   }
 
   useEffect(() => {
@@ -177,12 +218,6 @@ export default function ProcessPage() {
     if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [steps])
 
-  const persistActiveTask = (taskId: string) => {
-    setActiveTaskId(taskId)
-    if (taskId) localStorage.setItem(ACTIVE_TASK_KEY, taskId)
-    else localStorage.removeItem(ACTIVE_TASK_KEY)
-  }
-
   const refreshVideoMeta = async (videoId: string, videoStatus?: Video['status']) => {
     if (!videoId) return
     try {
@@ -203,10 +238,13 @@ export default function ProcessPage() {
     }
   }
 
-  const applyTaskSnapshot = (snapshot: ProcessTaskSnapshot) => {
+  /** 当前展示的 job id（用于忽略切视频后旧 SSE/轮询的回调，避免污染新视图）*/
+  const activeJobRef = useRef('')
+
+  const applyJobSnapshot = (job: JobSnapshot) => {
     const next = blank()
     STEPS.forEach((s) => {
-      const val = snapshot.steps?.[s.key]
+      const val = job.steps?.[s.key]
       if (val) next[s.key] = {
         status: val.status as StepStatus,
         message: val.message || '',
@@ -214,16 +252,14 @@ export default function ProcessPage() {
       }
     })
     setSteps(next)
-    setFinalMetrics(snapshot.metrics || null)
-    setSelId(snapshot.video_id || '')
-    setDone(snapshot.status === 'done')
-    setRunning(snapshot.status === 'running' || snapshot.status === 'pending')
+    setFinalMetrics(job.metrics || null)
+    setDone(job.status === 'done')
+    setRunning(job.status === 'running' || job.status === 'pending')
   }
 
-  const finishTaskFromSnapshot = (snapshot: ProcessTaskSnapshot) => {
-    applyTaskSnapshot(snapshot)
-    const vid = snapshot.video_id || ''
-    if (snapshot.status === 'done') {
+  const finishJobFromSnapshot = (job: JobSnapshot, vid: string) => {
+    applyJobSnapshot(job)
+    if (job.status === 'done') {
       setRunning(false)
       setDone(true)
       setSteps((p) => {
@@ -234,125 +270,155 @@ export default function ProcessPage() {
         return n
       })
       stopTaskPolling()
-      persistActiveTask('')
+      closeStreamQuietly()
       void refreshVideoMeta(vid, 'done')
       return
     }
-    if (snapshot.status === 'cancelled') {
+    if (job.status === 'cancelled') {
       setRunning(false)
       setDone(false)
       normalizeRunningStepsAsStopped()
       stopTaskPolling()
-      persistActiveTask('')
+      closeStreamQuietly()
       void refreshVideoMeta(vid, 'pending')
       return
     }
-    if (snapshot.status === 'error') {
+    if (job.status === 'error') {
       setRunning(false)
       stopTaskPolling()
-      persistActiveTask('')
+      closeStreamQuietly()
       void refreshVideoMeta(vid, 'error')
     }
   }
 
-  const pollTaskOnce = async (taskId: string) => {
+  const pollJobOnce = async (jobId: string, vid: string) => {
+    if (activeJobRef.current !== jobId) return
     try {
-      const snapshot = await processJobsApi.get(taskId)
-      applyTaskSnapshot(snapshot)
-      if (snapshot.status === 'done' || snapshot.status === 'error' || snapshot.status === 'cancelled') {
-        finishTaskFromSnapshot(snapshot)
+      const job = await jobsApi.get(jobId)
+      if (activeJobRef.current !== jobId) return
+      applyJobSnapshot(job)
+      if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
+        finishJobFromSnapshot(job, vid)
       }
     } catch {
       stopTaskPolling()
-      persistActiveTask('')
       setRunning(false)
     }
   }
 
-  const startTaskPolling = (taskId: string) => {
+  const startJobPolling = (jobId: string, vid: string) => {
     stopTaskPolling()
-    void pollTaskOnce(taskId)
-    pollTimerRef.current = setInterval(() => {
-      void pollTaskOnce(taskId)
-    }, TASK_POLL_MS)
+    void pollJobOnce(jobId, vid)
+    pollTimerRef.current = setInterval(() => void pollJobOnce(jobId, vid), TASK_POLL_MS)
   }
 
-  const bindTaskSocket = (taskId: string) => {
-    closeWsQuietly()
-    startTaskPolling(taskId)
-    const ws = connectProcessJobWebSocket(taskId)
-    wsRef.current = ws
-    ws.onmessage = (e) => {
-      try {
-        const msg: ProcessMessage = JSON.parse(e.data)
-        applyMsg(msg)
-        if (msg.step === 'done') {
-          const cancelled = Boolean(msg.detail && typeof msg.detail === 'object' && 'cancelled' in msg.detail && (msg.detail as { cancelled?: boolean }).cancelled)
-          const m = (msg.detail && typeof msg.detail === 'object' && 'metrics' in msg.detail)
-            ? (msg.detail as { metrics?: Record<string, unknown> }).metrics
-            : null
-          if (m && typeof m === 'object') setFinalMetrics(m)
-          if (cancelled) {
-            setRunning(false)
-            setDone(false)
-            normalizeRunningStepsAsStopped()
-            stopTaskPolling()
-            persistActiveTask('')
-          } else {
-            setRunning(false)
-            setDone(true)
-            setSteps((p) => {
-              const n = { ...p }
-              STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
-              return n
-            })
-            stopTaskPolling()
-            persistActiveTask('')
-            void refreshVideoMeta(selId, 'done')
+  /** 订阅 job 的 SSE 流（async_jobs），实时推进步骤卡片 */
+  const openJobStream = (jobId: string, vid: string) => {
+    closeStreamQuietly()
+    const ctrl = new AbortController()
+    sseAbortRef.current = ctrl
+    const fullUrl = `${window.location.origin}${jobsApi.streamUrl(jobId)}`
+    fetchSSE(fullUrl, undefined, {
+      onEvent(event, data) {
+        if (activeJobRef.current !== jobId) return
+        if (event === 'progress') {
+          const m = data as { step?: string; status?: string; message?: string; detail?: Record<string, unknown> }
+          if (!m) return
+          // step 级 done/error 由 result/failed 终态事件统一收尾，这里不重复处理
+          if (m.step === 'done' || m.step === 'error') return
+          if (m.step) {
+            setSteps((p) => ({
+              ...p,
+              [m.step as StepKey]: {
+                status: (m.status || 'running') as StepStatus,
+                message: m.message || '',
+                detail: (m.detail || {}) as Record<string, unknown>,
+              },
+            }))
           }
-        }
-        if (msg.step === 'error') {
+          const met = (m.detail as { metrics?: Record<string, unknown> } | undefined)?.metrics
+          if (met && typeof met === 'object') setFinalMetrics(met)
+        } else if (event === 'result') {
           setRunning(false)
+          setDone(true)
+          setSteps((p) => {
+            const n = { ...p }
+            STEPS.forEach((s) => { if (n[s.key].status === 'idle') n[s.key] = { status: 'skip', message: '已跳过', detail: {} } })
+            return n
+          })
           stopTaskPolling()
-          persistActiveTask('')
+          closeStreamQuietly()
+          void refreshVideoMeta(vid, 'done')
+        } else if (event === 'failed') {
+          const f = data as { message?: string; cancelled?: boolean }
+          setRunning(false)
+          setDone(false)
+          if (f?.cancelled) normalizeRunningStepsAsStopped()
+          stopTaskPolling()
+          closeStreamQuietly()
+          void refreshVideoMeta(vid, f?.cancelled ? 'pending' : 'error')
         }
-      } catch {
-        // noop
+      },
+      onError() {
+        /* 轮询兜底继续，不打断 */
+      },
+    }, ctrl.signal).catch(() => undefined)
+  }
+
+  /** 接管一个 job：设为当前展示 + 轮询 + SSE */
+  const adoptJob = (jobId: string, vid: string) => {
+    activeJobRef.current = jobId
+    setSelJobId(jobId)
+    startJobPolling(jobId, vid)
+    openJobStream(jobId, vid)
+  }
+
+  const clearJobView = () => {
+    activeJobRef.current = ''
+    setSelJobId('')
+    setSteps(blank())
+    setRunning(false)
+    setDone(false)
+    setFinalMetrics(null)
+  }
+
+  /** 切换选中视频：加载该视频的活跃 process job（运行/排队），无则清空 */
+  const loadJobForSelectedVideo = async (videoId: string) => {
+    closeStreamQuietly()
+    stopTaskPolling()
+    if (!videoId) {
+      clearJobView()
+      return
+    }
+    try {
+      const res = await jobsApi.list({ kind: 'process', active: true, ref_id: videoId })
+      const job = res.items?.[0]
+      if (job) {
+        applyJobSnapshot(job)
+        adoptJob(job.id, videoId)
+      } else {
+        clearJobView()
       }
-    }
-    ws.onclose = () => {
-      wsRef.current = null
-      /* 轮询继续，直到 GET 返回终态 */
-    }
-    ws.onerror = () => {
-      wsRef.current = null
+    } catch {
+      clearJobView()
     }
   }
 
+  // 卸载时清理 SSE 与轮询
   useEffect(() => {
-    const taskId = localStorage.getItem(ACTIVE_TASK_KEY)
-    if (!taskId) {
-      setTaskHydrated(true)
-      return () => closeWsQuietly()
-    }
-    processJobsApi.get(taskId)
-      .then((snapshot) => {
-        persistActiveTask(snapshot.id)
-        if (snapshot.status === 'done' || snapshot.status === 'cancelled' || snapshot.status === 'error') {
-          finishTaskFromSnapshot(snapshot)
-          return
-        }
-        applyTaskSnapshot(snapshot)
-        if (snapshot.status === 'running' || snapshot.status === 'pending') bindTaskSocket(snapshot.id)
-      })
-      .catch(() => persistActiveTask(''))
-      .finally(() => setTaskHydrated(true))
     return () => {
-      closeWsQuietly()
+      activeJobRef.current = ''
+      closeStreamQuietly()
       stopTaskPolling()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 选中视频变化时，加载该视频的活跃 process job
+  useEffect(() => {
+    void loadJobForSelectedVideo(selId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId])
 
   useEffect(() => {
     appliedUrlVideoIdRef.current = ''
@@ -364,8 +430,7 @@ export default function ProcessPage() {
   }, [videos, search])
 
   useEffect(() => {
-    if (!taskHydrated || loading || !videoFromUrl || running) return
-    if (activeTaskId) return
+    if (loading || !videoFromUrl) return
     if (!videos.some((v) => v.id === videoFromUrl)) return
     if (appliedUrlVideoIdRef.current === videoFromUrl) return
 
@@ -373,7 +438,7 @@ export default function ProcessPage() {
     setSelId(videoFromUrl)
     const idx = filteredVideos.findIndex((v) => v.id === videoFromUrl)
     if (idx >= 0) setPage(Math.floor(idx / PAGE_SIZE) + 1)
-  }, [taskHydrated, loading, videoFromUrl, running, activeTaskId, videos, filteredVideos])
+  }, [loading, videoFromUrl, videos, filteredVideos])
 
   const totalPages = Math.max(1, Math.ceil(filteredVideos.length / PAGE_SIZE))
   const pagedVideos = filteredVideos.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -395,52 +460,56 @@ export default function ProcessPage() {
     })
   }
 
-  const applyMsg = (msg: ProcessMessage) => {
-    if (msg.step === 'done' || msg.step === 'error') return
-    setSteps((p) => ({ ...p, [msg.step as StepKey]: { status: msg.status as StepStatus, message: msg.message, detail: msg.detail } }))
-  }
-
   /** 口播快轨：只做切分（若尚无片段）+ ASR，跳过抽帧 / VLM / 向量，显著快于全流程 */
   const asrOnlySkipSteps = (hasExistingClips: boolean): string[] =>
     hasExistingClips
       ? ['split', 'extract_frames', 'vlm', 'embed']
       : ['extract_frames', 'vlm', 'embed']
 
-  const handleStart = async () => {
-    if (!selId || running || activeTaskId) return
-    setRunPreset('full')
-    setSteps(blank())
-    setRunning(true)
-    setDone(false)
-    setFinalMetrics(null)
+  /** 统一入口：启动/排队一个预处理任务。新 job 立即接管显示（排队/运行均展示）。*/
+  const submitProcessJob = async (
+    createFn: () => Promise<{ task_id?: string; job_id?: string; job_stream_url?: string; video_id?: string; video_name?: string; status: string }>,
+    title: string,
+  ) => {
+    if (!selId) return
     try {
-      const created = await processJobsApi.create(selId)
-      persistActiveTask(created.task_id)
-      const snapshot = await processJobsApi.get(created.task_id)
-      applyTaskSnapshot(snapshot)
-      bindTaskSocket(created.task_id)
+      const created = await createFn()
+      bridgeToTaskHub(created, title)
+      // 切换到新 job 的显示（无论立即执行还是排队）
+      setSteps(blank())
+      setRunning(true)
+      setDone(false)
+      setFinalMetrics(null)
+      setRunPreset('full')
+      const jid = created.job_id
+      if (jid) {
+        try {
+          const job = await jobsApi.get(jid)
+          applyJobSnapshot(job)
+        } catch {
+          /* 忽略：adoptJob 仍会订阅实时进度 */
+        }
+        adoptJob(jid, created.video_id || selId)
+      }
     } catch {
       setRunning(false)
     }
   }
 
+  const handleStart = async () => {
+    await submitProcessJob(
+      () => processJobsApi.create(selId),
+      '视频预处理',
+    )
+  }
+
   const handleStartAsrOnly = async () => {
-    if (!selId || running || activeTaskId) return
     const hasClips = (videos.find((v) => v.id === selId)?.total_clips ?? 0) > 0
     setRunPreset('asr_only')
-    setSteps(blank())
-    setRunning(true)
-    setDone(false)
-    setFinalMetrics(null)
-    try {
-      const created = await processJobsApi.create(selId, { skip_steps: asrOnlySkipSteps(hasClips) })
-      persistActiveTask(created.task_id)
-      const snapshot = await processJobsApi.get(created.task_id)
-      applyTaskSnapshot(snapshot)
-      bindTaskSocket(created.task_id)
-    } catch {
-      setRunning(false)
-    }
+    await submitProcessJob(
+      () => processJobsApi.create(selId, { skip_steps: asrOnlySkipSteps(hasClips) }),
+      '视频预处理(ASR)',
+    )
   }
 
   const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only'): string[] => {
@@ -456,26 +525,17 @@ export default function ProcessPage() {
   }
 
   const handleRecoverStart = async (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only') => {
-    if (!selId || running || activeTaskId) return
+    if (!selId) return
     const v = videos.find((x) => x.id === selId)
     if (!v || v.total_clips <= 0) return
-    setSteps(blank())
-    setRunning(true)
-    setDone(false)
-    setFinalMetrics(null)
-    try {
-      const created = await processJobsApi.create(selId, { skip_steps: recoverSkipSteps(preset) })
-      persistActiveTask(created.task_id)
-      const snapshot = await processJobsApi.get(created.task_id)
-      applyTaskSnapshot(snapshot)
-      bindTaskSocket(created.task_id)
-    } catch {
-      setRunning(false)
-    }
+    await submitProcessJob(
+      () => processJobsApi.create(selId, { skip_steps: recoverSkipSteps(preset) }),
+      '视频预处理(恢复)',
+    )
   }
 
   const handleManualStatusFix = async (status: Video['status']) => {
-    if (!selId || selectionLocked || statusUpdating) return
+    if (!selId || false || statusUpdating) return
     setStatusUpdating(true)
     setStatusFixMsg('')
     try {
@@ -508,19 +568,18 @@ export default function ProcessPage() {
   const getEmbedTotalTokens = (m: any) => m?.tokens?.embed?.total_tokens ?? 0
 
   const handleStop = () => {
-    if (!activeTaskId) return
-    void processJobsApi.cancel(activeTaskId).catch(() => {})
-    closeWsQuietly()
+    if (!selJobId) return
+    void jobsApi.cancel(selJobId).catch(() => {})
+    activeJobRef.current = ''
+    closeStreamQuietly()
     stopTaskPolling()
-    persistActiveTask('')
     setRunning(false)
     setDone(false)
     normalizeRunningStepsAsStopped()
     void refreshVideoMeta(selId, 'pending')
   }
   const selVideo = videos.find((v) => v.id === selId)
-  const selectionLocked = running || !!activeTaskId
-  const canRecover = Boolean(selId && selVideo && selVideo.total_clips > 0 && !selectionLocked && !activeTaskId)
+  const canRecover = Boolean(selId && selVideo && selVideo.total_clips > 0)
   const pct = Math.round(STEPS.filter((s) => ['done', 'skip'].includes(steps[s.key].status)).length / STEPS.length * 100)
 
   return (
@@ -540,7 +599,7 @@ export default function ProcessPage() {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">选择视频</h2>
-              {selectionLocked && (
+              {false && (
                 <p className="text-[11px] text-amber-500/90 mt-1">处理进行中，无法切换其它视频；请先停止任务后再选择。</p>
               )}
             </div>
@@ -569,7 +628,7 @@ export default function ProcessPage() {
                   value={search}
                   onTextChange={handleSearch}
                   merge="replace"
-                  disabled={selectionLocked}
+                  disabled={false}
                   className="relative"
                 />
                 {search ? (
@@ -595,7 +654,7 @@ export default function ProcessPage() {
             <>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {pagedVideos.map((v) => (
-                  <button key={v.id} disabled={selectionLocked} onClick={() => !selectionLocked && setSelId(v.id)}
+                  <button key={v.id} disabled={false} onClick={() => !false && setSelId(v.id)}
                     className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                       selId === v.id ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'border-slate-700 bg-slate-800/40 hover:border-slate-500'
                     }`}>
@@ -641,27 +700,27 @@ export default function ProcessPage() {
             type="button"
             data-tour="page-process-start"
             onClick={handleStart}
-            disabled={!selId || selectionLocked}
+            disabled={!selId || false}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            {selectionLocked ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
+            {false ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
           </button>
           <button
             type="button"
             onClick={() => void handleStartAsrOnly()}
-            disabled={!selId || selectionLocked}
+            disabled={!selId || false}
             title="跳过抽帧、视觉描述与向量入库；无现成片段时会先切分再识别。适合口播剪气口。"
             className="flex items-center gap-2 px-5 py-2.5 border border-amber-600/50 bg-amber-500/10 hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed text-amber-100 text-sm font-medium rounded-lg transition-colors"
           >
-            {selectionLocked ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
+            {false ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
             口播快轨（仅 ASR）
           </button>
-          {activeTaskId && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
-          {selVideo && selectionLocked && (
-            <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo.name}</span></span>
+          {selJobId && running && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
+          {selVideo && running && (
+            <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo!.name}</span></span>
           )}
-          {selVideo && !selectionLocked && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
-          {selVideo && !selectionLocked && (
+          {selVideo && !false && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
+          {selVideo && !false && (
             <span className="w-full sm:w-auto text-[11px] text-slate-500 leading-relaxed sm:ml-0 basis-full">
               全流程含抽帧与 VLM，较慢；若只依赖台词剪口播，优先用「口播快轨」。
               {selVideo.total_clips > 0
@@ -742,7 +801,7 @@ export default function ProcessPage() {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={!selId || selectionLocked || statusUpdating}
+                  disabled={!selId || false || statusUpdating}
                   onClick={() => void handleManualStatusFix('pending')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -750,7 +809,7 @@ export default function ProcessPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!selId || selectionLocked || statusUpdating}
+                  disabled={!selId || false || statusUpdating}
                   onClick={() => void handleManualStatusFix('processing')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-amber-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -758,7 +817,7 @@ export default function ProcessPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!selId || selectionLocked || statusUpdating}
+                  disabled={!selId || false || statusUpdating}
                   onClick={() => void handleManualStatusFix('done')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -766,7 +825,7 @@ export default function ProcessPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!selId || selectionLocked || statusUpdating}
+                  disabled={!selId || false || statusUpdating}
                   onClick={() => void handleManualStatusFix('error')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-red-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -781,13 +840,13 @@ export default function ProcessPage() {
             </div>
             {!canRecover && selId && (
               <p className="text-[11px] text-amber-500/90">
-                {selectionLocked ? '当前有任务进行中，请先停止后再试。' : (selVideo?.total_clips ?? 0) <= 0 ? '该视频尚无切片，请先「开始处理」完成切分，或使用已完成切片的素材。' : ''}
+                {false ? '当前有任务进行中，请先停止后再试。' : (selVideo?.total_clips ?? 0) <= 0 ? '该视频尚无切片，请先「开始处理」完成切分，或使用已完成切片的素材。' : ''}
               </p>
             )}
           </section>
         )}
 
-        {(running || done || !!activeTaskId) && (
+        {(running || done || !!selJobId) && (
           <section className="space-y-1.5">
             <div className="flex justify-between text-xs text-slate-400"><span>总进度</span><span>{pct}%</span></div>
             <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">

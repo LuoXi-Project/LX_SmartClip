@@ -24,6 +24,14 @@ _cancel_events: dict[str, asyncio.Event] = {}
 _job_tasks: dict[str, asyncio.Task] = {}
 _task_subscribers: dict[str, set[WebSocket]] = {}
 
+# 串行处理队列：同一时间只跑一个预处理任务，其余排队
+_pending_queue: asyncio.Queue = asyncio.Queue()
+_processing_now: bool = False
+_queue_worker_task: asyncio.Task | None = None
+# 已被用户取消/删除、尚在队列里未取出的 process job_id 集合：
+# 队列 worker 取出时会跳过这些，实现「从队列移除」而不真正执行。
+_pending_cancelled: set[str] = set()
+
 
 def now_iso() -> str:
     return datetime.utcnow().isoformat()

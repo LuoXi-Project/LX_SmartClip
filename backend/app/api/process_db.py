@@ -324,11 +324,15 @@ async def broadcast_task_message(task_id: str, payload: dict):
 
 
 class ProgressReporter:
-    """向 WebSocket 推送进度；无 WebSocket 时仅记录日志"""
+    """向 WebSocket 推送进度；无 WebSocket 时仅记录日志。
 
-    def __init__(self, ws: WebSocket = None, task_id: str | None = None):
+    当 job_id 不为空时，同步将进度写入 async_jobs 表，使 TaskHub 可实时显示。
+    """
+
+    def __init__(self, ws: WebSocket = None, task_id: str | None = None, job_id: str | None = None):
         self.ws = ws
         self.task_id = task_id
+        self.job_id = job_id
 
     async def send(self, step: str, status: str, message: str, detail: dict = None):
         payload = {
@@ -352,6 +356,14 @@ class ProgressReporter:
                 await broadcast_task_message(self.task_id, payload)
             except Exception:
                 logger.exception("ProgressReporter: 写库/广播进度失败，跳过以免影响流水线")
+        if self.job_id:
+            try:
+                from app.jobs.store import update_job_progress as _async_update
+                from app.jobs.runtime import broadcast as _job_broadcast
+                await _async_update(self.job_id, step=step, status=status, message=message, detail=payload["detail"])
+                await _job_broadcast(self.job_id, payload)
+            except Exception:
+                logger.exception("ProgressReporter: 同步 async_job 进度/广播失败，跳过")
         if self.ws:
             try:
                 await self.ws.send_json(payload)

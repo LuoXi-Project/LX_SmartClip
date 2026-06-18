@@ -1,11 +1,14 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import Link from 'next/link'
-import { Loader2, ChevronUp, ChevronDown, X, ListChecks, Download, GripHorizontal } from 'lucide-react'
+import { Loader2, ChevronUp, ChevronDown, Trash2, ListChecks, Download, GripHorizontal } from 'lucide-react'
 
+import { jobsApi, type JobSnapshot } from '@/lib/api'
+import { fetchSSE } from '@/lib/stream'
 import { useTaskStore } from '@/lib/task-store'
+import type { StreamStatus } from '@/lib/stream'
 import { StreamingProgress } from '@/components/ui/streaming-progress'
 
 /**
@@ -30,6 +33,46 @@ function ResetPositionBtn({ onClick, onPointerDown }: { onClick: () => void; onP
   )
 }
 
+const PROCESS_STEPS = ['split', 'extract_frames', 'asr', 'vlm', 'embed'] as const
+
+/** 从 process job 的 steps 推导百分比（与 ProcessPage 总进度口径一致）。*/
+function percentFromProcessJob(job: JobSnapshot): number {
+  const steps = job.steps || {}
+  const done = PROCESS_STEPS.filter((k) => {
+    const s = steps[k]
+    return s && (s.status === 'done' || s.status === 'skip')
+  }).length
+  return Math.round((done / PROCESS_STEPS.length) * 100)
+}
+
+/** 订阅一个 process job 的 SSE 流，实时把进度/终态推入 task-store（流自结束于终态，无需手动关闭）。*/
+function subscribeProcessJob(
+  jobId: string,
+  patch: (id: string, p: Partial<import('@/lib/task-store').TaskEntry>) => void,
+) {
+  const fullUrl = `${window.location.origin}${jobsApi.streamUrl(jobId)}`
+  fetchSSE(fullUrl, undefined, {
+    onEvent(event, data) {
+      if (event === 'progress') {
+        const m = data as { step?: string; detail?: { percent?: number; current?: number; total?: number } }
+        let pct = typeof m?.detail?.percent === 'number' ? m.detail.percent : null
+        if (pct === null && typeof m?.detail?.current === 'number' && typeof m?.detail?.total === 'number' && m.detail.total > 0) {
+          pct = Math.round((m.detail.current / m.detail.total) * 100)
+        }
+        patch(jobId, { stage: m?.step, percent: pct })
+      } else if (event === 'result') {
+        patch(jobId, { status: 'done', percent: 100, resultLabel: '预处理完成' })
+      } else if (event === 'failed') {
+        const f = data as { message?: string; cancelled?: boolean }
+        patch(jobId, { status: f?.cancelled ? 'cancelled' : 'error', error: f?.message || '预处理失败' })
+      }
+    },
+    onError() {
+      /* 下次 list 轮询兜底 */
+    },
+  }).catch(() => undefined)
+}
+
 export function TaskHub() {
   const tasks = useTaskStore((s) => s.tasks)
   const collapsed = useTaskStore((s) => s.collapsed)
@@ -37,9 +80,62 @@ export function TaskHub() {
   const clearFinished = useTaskStore((s) => s.clearFinished)
   const remove = useTaskStore((s) => s.remove)
   const patch = useTaskStore((s) => s.patch)
+  const upsert = useTaskStore((s) => s.upsert)
 
   const list = Object.values(tasks).sort((a, b) => b.createdAt - a.createdAt)
   const runningCount = list.filter((t) => t.status === 'running').length
+
+  // ── 重载：刷新后从后端恢复「运行/排队中」的 process 任务，并订阅其实时进度 ──
+  const subscribedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    let cancelled = false
+    const sync = async () => {
+      try {
+        const res = await jobsApi.list({ kind: 'process', active: true })
+        if (cancelled || !res?.items) return
+        const existing = useTaskStore.getState().tasks
+        for (const job of res.items) {
+          // 已由页面（bridgeToTaskHub）注入并实时订阅的，不覆盖其进度
+          if (existing[job.id]) {
+            patch(job.id, {
+              videoName: job.video_name || undefined,
+              videoId: job.ref_id || undefined,
+              queueIndex: job.queue_index,
+            })
+            continue
+          }
+          upsert({
+            id: job.id,
+            title: job.video_name ? `视频预处理 · ${job.video_name}` : '视频预处理',
+            kind: 'process',
+            status: job.status === 'pending' ? 'running' : (job.status as StreamStatus),
+            stage:
+              job.status === 'pending'
+                ? `排队中${typeof job.queue_index === 'number' ? `（第 ${job.queue_index} 位）` : ''}`
+                : (job.current_step || undefined),
+            percent: percentFromProcessJob(job),
+            videoName: job.video_name || undefined,
+            videoId: job.ref_id || undefined,
+            queueIndex: job.queue_index,
+            logs: [],
+            elapsedSec: 0,
+            createdAt: Date.now(),
+            onCancel: () => { jobsApi.cancel(job.id).catch(() => undefined) },
+            onRemove: () => { jobsApi.remove(job.id).catch(() => undefined) },
+          })
+          if (!subscribedRef.current.has(job.id)) {
+            subscribedRef.current.add(job.id)
+            void subscribeProcessJob(job.id, patch)
+          }
+        }
+      } catch {
+        /* 后端不可用时静默；下次轮询重试 */
+      }
+    }
+    void sync()
+    const timer = setInterval(() => void sync(), 4000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [upsert, patch])
 
   // ── 拖拽 ──────────────────────────────────────────────────────────────
   const [pos, setPos] = useState({ x: 0, y: 0 })
@@ -185,15 +281,17 @@ export function TaskHub() {
                     <KindDot kind={t.kind} />
                     {titleEl}
                   </div>
-                  {t.status !== 'running' && (
-                    <button
-                      onClick={() => remove(t.id)}
-                      className="shrink-0 text-slate-500 hover:text-slate-300 transition-colors"
-                      title="移除"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      // 删除=停止后移除：有后端 onRemove（停止+删行）则先调用，再从面板移除
+                      if (t.onRemove) void t.onRemove()
+                      remove(t.id)
+                    }}
+                    className="shrink-0 text-slate-500 hover:text-red-400 transition-colors"
+                    title={t.status === 'running' ? '停止并删除' : '删除'}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
 
                 <StreamingProgress
@@ -245,6 +343,7 @@ export function TaskHub() {
 function KindDot({ kind }: { kind: string }) {
   const color: Record<string, string> = {
     reencode: 'bg-violet-400',
+    process: 'bg-amber-400',
     burn: 'bg-cyan-400',
     export_original: 'bg-cyan-400',
     realize: 'bg-emerald-400',

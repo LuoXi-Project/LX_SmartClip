@@ -967,4 +967,4 @@ async def run_pipeline(
         await reporter.send("embed", "done", f"向量入库完成，成功 {emb_success}/{total_clips} 个（并发={embed_worker_count}，model={embedding_model}）", {"processed": emb_success, "total": total_clips, "concurrency": embed_worker_count, "model": embedding_model, "metrics": _metrics_snapshot()})
 
     await set_video_status(video_id, "done")
-    await reporter.send("done", "done", "全部处理完成！", {"metrics": _metrics_snapshot()})
+    # 注：最终 "done" 事件由 _run_task 在 update_job_status 之后发送，避免 TaskHub 竞态

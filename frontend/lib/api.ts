@@ -144,10 +144,20 @@ export function connectProcessJobWebSocket(taskId: string): WebSocket {
 
 export const processJobsApi = {
   create: (videoId: string, body?: ProcessJobCreateBody) =>
-    apiClient.post<unknown, { task_id: string; video_id: string; status: string; stream_url: string }>(
-      `/api/videos/${videoId}/process-jobs`,
-      body ?? {},
-    ),
+    apiClient.post<
+      unknown,
+      {
+        task_id: string
+        video_id: string
+        video_name?: string
+        job_id: string
+        status: string
+        queue_size?: number
+        queue_position?: number
+        stream_url: string
+        job_stream_url?: string
+      }
+    >(`/api/videos/${videoId}/process-jobs`, body ?? {}),
   get: (taskId: string) =>
     apiClient.get<unknown, ProcessTaskSnapshot>(`/api/process-jobs/${taskId}`),
   cancel: (taskId: string) =>
@@ -160,22 +170,34 @@ export interface JobSnapshot {
   kind: string
   ref_type: string | null
   ref_id: string | null
+  video_name?: string | null
   status: 'pending' | 'running' | 'done' | 'error' | 'cancelled'
   current_step: string | null
   steps: Record<string, { status: string; message: string; detail: Record<string, unknown> }>
   metrics: Record<string, unknown> | null
   result: Record<string, unknown> | null
   error_message: string | null
+  /** 活跃任务列表中的排队顺序（0=正在跑）*/
+  queue_index?: number
   created_at: string
   updated_at: string
   finished_at: string | null
 }
 
+export interface JobListResponse {
+  items: JobSnapshot[]
+  total: number
+}
+
 export const jobsApi = {
   get: (jobId: string) =>
     apiClient.get<unknown, JobSnapshot>(`/api/jobs/${jobId}`),
+  list: (params?: { kind?: string; active?: boolean; ref_id?: string; limit?: number }) =>
+    apiClient.get<unknown, JobListResponse>('/api/jobs', { params }),
   cancel: (jobId: string) =>
     apiClient.post<unknown, { ok: boolean; job_id: string }>(`/api/jobs/${jobId}/cancel`),
+  remove: (jobId: string) =>
+    apiClient.delete<unknown, { ok: boolean; job_id: string; deleted: boolean }>(`/api/jobs/${jobId}`),
   streamUrl: (jobId: string) => `/api/jobs/${jobId}/stream`,
 }
 

@@ -543,6 +543,14 @@ async def init_db():
         await db.execute(CREATE_VIDEO_SMART_OUTLINES)
         from app.jobs.store import CREATE_ASYNC_JOBS
         await db.execute(CREATE_ASYNC_JOBS)
+        # 兼容旧库：async_jobs 补 ref_name 列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）
+        try:
+            cur = await db.execute("PRAGMA table_info(async_jobs)")
+            aj_cols = [str(r[1]) for r in await cur.fetchall()]
+            if "ref_name" not in aj_cols:
+                await db.execute("ALTER TABLE async_jobs ADD COLUMN ref_name TEXT")
+        except Exception:
+            pass
         await db.execute(CREATE_FILM_COMMENTARY_JOBS)
         # 兼容旧库：film_commentary_jobs 补 prompt_overrides_json
         try:

@@ -27,10 +27,18 @@ export interface TaskEntry {
   result?: unknown
   /** 完成后的产物（下载链接等），便于在卡片上展示 */
   resultLabel?: string
+  /** 关联视频名（process 任务用于卡片标题展示具体视频）*/
+  videoName?: string
+  /** 关联视频 id */
+  videoId?: string
+  /** 排队顺序（0=正在跑）；仅 process 队列任务有意义 */
+  queueIndex?: number
   /** 跳回来源页 */
   href?: string
   /** 取消回调 */
   onCancel?: () => void
+  /** 删除回调（停止+移除）；缺省时仅前端移除 */
+  onRemove?: () => void
   createdAt: number
 }
 

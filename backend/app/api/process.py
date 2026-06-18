@@ -19,6 +19,7 @@ from .process_db import (
     update_task_status,
 )
 from .process_pipeline import run_pipeline
+from . import process_shared as ps
 from .process_shared import ProcessCancelled, _job_tasks, _task_subscribers, request_process_cancel
 from app.utils.logging_utils import stage_log
 
@@ -85,8 +86,16 @@ async def _run_task(
     video_id: str,
     skip_steps: list[str] | None = None,
     clip_ids_filter: frozenset[str] | None = None,
+    job_id: str | None = None,
 ):
-    reporter = ProgressReporter(ws=None, task_id=task_id)
+    reporter = ProgressReporter(ws=None, task_id=task_id, job_id=job_id)
+    # 标记 async_job 为 running（从 pending 切换）
+    if job_id:
+        from app.jobs.store import update_job_status as _async_status
+        from app.jobs.store import update_job_progress as _async_progress
+        await _async_status(job_id, "running")
+        await _async_progress(job_id, "split", "running", "开始处理...", {"percent": 0})
+
     stage_log("预处理", f"任务 {task_id[:8]}… 已启动 video_id={video_id}", status="running")
     try:
         await run_pipeline(
@@ -97,21 +106,61 @@ async def _run_task(
             clip_ids_filter=clip_ids_filter,
         )
         await update_task_status(task_id, "done")
+        if job_id:
+            await _async_status(job_id, "done", result={"video_id": video_id})
+        await reporter.send("done", "done", "全部处理完成！", {"metrics": {}})
         stage_log("预处理", f"任务 {task_id[:8]}… 全部完成", status="done")
     except asyncio.CancelledError:
         await set_video_status(video_id, "pending")
         await reporter.send("done", "done", "处理已停止", {"cancelled": True})
         await update_task_status(task_id, "cancelled")
+        if job_id:
+            await _async_status(job_id, "cancelled")
     except ProcessCancelled:
         await set_video_status(video_id, "pending")
         await reporter.send("done", "done", "处理已停止", {"cancelled": True})
         await update_task_status(task_id, "cancelled")
+        if job_id:
+            await _async_status(job_id, "cancelled")
     except Exception as e:
         await set_video_status(video_id, "error")
         await reporter.send("error", "error", f"处理异常: {str(e)}")
         await update_task_status(task_id, "error", error_message=str(e))
+        if job_id:
+            await _async_status(job_id, "error", error_message=str(e))
     finally:
         _job_tasks.pop(task_id, None)
+
+
+async def _process_queue_worker():
+    """串行处理队列：同一时间只跑一个预处理任务。"""
+    while True:
+        job_info = await ps._pending_queue.get()
+        if job_info is None:  # 停止信号
+            ps._pending_queue.task_done()
+            break
+        job_id = job_info.get("job_id") if isinstance(job_info, dict) else None
+        try:
+            # 已被用户取消/删除、尚在队列里的任务：跳过，不执行、不翻视频状态
+            if job_id and job_id in ps._pending_cancelled:
+                ps._pending_cancelled.discard(job_id)
+                logger.info("队列跳过已取消的 process job: %s", job_id)
+            else:
+                await _run_task(**job_info)
+        except Exception:
+            logger.exception("队列任务异常")
+        finally:
+            ps._pending_queue.task_done()
+            # 仅当队列已空时释放「正在处理」标志，保证排队期间新任务被正确判定为 queued
+            if ps._pending_queue.empty():
+                ps._processing_now = False
+
+
+def _ensure_queue_worker():
+    """懒启动队列 worker（只启动一次）。"""
+    if ps._queue_worker_task is None or ps._queue_worker_task.done():
+        ps._queue_worker_task = asyncio.create_task(_process_queue_worker())
+        logger.info("预处理队列 worker 已启动")
 
 
 @router.post("/{video_id}/process-cancel")
@@ -121,6 +170,15 @@ async def process_video_cancel(video_id: str):
         return {"ok": True, "video_id": video_id}
     request_process_cancel(video_id)
     return {"ok": True, "video_id": video_id, "task_id": running["id"]}
+
+
+@router.get("/process-queue-status")
+async def get_process_queue_status():
+    """返回队列状态：当前是否在跑、排队数量。"""
+    return {
+        "processing": ps._processing_now,
+        "queue_size": ps._pending_queue.qsize(),
+    }
 
 
 def _default_job_body() -> ProcessJobBody:
@@ -140,22 +198,50 @@ async def create_process_job(
     skip_steps, clip_ids_filter = await validate_process_job_options(video_id, body)
     task_payload = await create_task(video_id)
     task_id = task_payload["id"]
-    logger.info(
-        "create_process_job: video_id=%s task_id=%s skip_steps=%s clip_ids=%s",
-        video_id,
-        task_id,
-        skip_steps,
-        sorted(list(clip_ids_filter)) if clip_ids_filter else [],
+    video_name = (video.get("name") if isinstance(video, dict) else None) or ""
+
+    # 判断是立即执行还是排队（在创建 job 之前判定，决定初始状态）
+    is_queued = ps._processing_now
+
+    # 同步创建 async_job 供前端（TaskHub / ProcessPage）统一消费。
+    # 排队中初始 pending；队列 worker 接手时在 _run_task 内切换为 running。
+    from app.jobs.store import create_job as _async_create
+    async_job = await _async_create(
+        kind="process",
+        ref_type="video",
+        ref_id=video_id,
+        ref_name=video_name,
+        initial_step="split",
+        initial_status="pending" if is_queued else "running",
     )
-    if task_id not in _job_tasks:
-        _job_tasks[task_id] = asyncio.create_task(
-            _run_task(task_id, video_id, skip_steps=skip_steps, clip_ids_filter=clip_ids_filter),
-        )
+    job_id = async_job["id"]
+
+    # 入队列
+    job_info = {
+        "task_id": task_id,
+        "video_id": video_id,
+        "skip_steps": skip_steps,
+        "clip_ids_filter": clip_ids_filter,
+        "job_id": job_id,
+    }
+    await ps._pending_queue.put(job_info)
+    ps._processing_now = True
+    _ensure_queue_worker()
+
+    logger.info(
+        "create_process_job: video_id=%s task_id=%s job_id=%s queued=%s skip_steps=%s",
+        video_id, task_id, job_id, is_queued, skip_steps,
+    )
     return {
         "task_id": task_id,
         "video_id": video_id,
-        "status": task_payload["status"],
-        "stream_url": f"/api/process-jobs/{task_id}/ws",
+        "video_name": video_name,
+        "job_id": job_id,
+        "status": "queued" if is_queued else "running",
+        "queue_size": ps._pending_queue.qsize(),
+        "queue_position": ps._pending_queue.qsize(),
+        "stream_url": f"/api/jobs/{job_id}/stream",
+        "job_stream_url": f"/api/jobs/{job_id}/stream",
     }
 
 
@@ -264,17 +350,26 @@ async def process_video_ws(video_id: str, ws: WebSocket):
         return
     task_payload = await create_task(video_id)
     task_id = task_payload["id"]
+
+    # 同步创建 async_job 供 TaskHub 展示
+    from app.jobs.store import create_job as _async_create
+    async_job = await _async_create(kind="process", ref_type="video", ref_id=video_id, initial_step="split")
+    job_id = async_job["id"]
+
     logger.info(
-        "process_video_ws: video_id=%s task_id=%s skip_steps=%s clip_ids=%s",
-        video_id,
-        task_id,
-        skip_steps,
+        "process_video_ws: video_id=%s task_id=%s job_id=%s skip_steps=%s clip_ids=%s",
+        video_id, task_id, job_id, skip_steps,
         sorted(list(clip_ids_filter)) if clip_ids_filter else [],
     )
-    if task_id not in _job_tasks:
-        _job_tasks[task_id] = asyncio.create_task(
-            _run_task(task_id, video_id, skip_steps=skip_steps, clip_ids_filter=clip_ids_filter),
-        )
+    # 入队（串行处理）
+    await ps._pending_queue.put({
+        "task_id": task_id, "video_id": video_id,
+        "skip_steps": skip_steps, "clip_ids_filter": clip_ids_filter,
+        "job_id": job_id,
+    })
+    ps._processing_now = True
+    _ensure_queue_worker()
+
     _task_subscribers.setdefault(task_id, set()).add(ws)
     try:
         while True:

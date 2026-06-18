@@ -9,7 +9,17 @@
   5. 完成时：reporter.send(step, 'done', '...') + await update_job_status('done', result=...)
 """
 
-from .store import create_job, get_job, row_to_payload, update_job_progress, update_job_status, CREATE_ASYNC_JOBS
+from .store import (
+    create_job,
+    delete_job,
+    get_job,
+    list_jobs,
+    reconcile_process_jobs_on_startup,
+    row_to_payload,
+    update_job_progress,
+    update_job_status,
+    CREATE_ASYNC_JOBS,
+)
 from .runtime import JobReporter, launch_job, check_cancel, JobCancelled
 from .routes import router as jobs_router
 from .sse import sse_event

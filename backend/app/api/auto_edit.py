@@ -17,6 +17,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.core.blocking_pool import run_heavy
+from app.jobs import create_job, JobReporter, launch_job, update_job_status
 from app.db.database import DB_PATH
 from app.core.llm import LLMConfig
 from app.core.llm import LLMClient
@@ -1487,110 +1488,95 @@ async def _run_realize_postprocess(
     return final_filename, final_url
 
 
-@router.post("/realize", response_model=AutoEditRealizeResponse)
+@router.post("/realize")
 async def realize_auto_edit_plan(
     req: AutoEditRealizeRequest,
     request: Request,
-) -> AutoEditRealizeResponse:
-    """
-    将一个 Plan 实际转为成片：
-    - voiceover 模式：TTS + 字幕 + burn 管线
-    - original 模式：保留原声，按段落平均切字幕，调用 export_original
-    - Production Profile：转场 / 响度 / ducking / 字幕动效（Agent 或 realize 请求传入）
-    """
-    if await request.is_disconnected():
-        raise HTTPException(status_code=400, detail="客户端已断开连接")
+):
+    """将一个 Plan 实际转为成片 -> 后台任务，返回 job_id。"""
+    job = await create_job(kind="realize", initial_step="prepare")
+    job_id = job["id"]
+
     plan = req.plan
     profile = resolve_production_profile(
         explicit=req.production_profile,
         plan=plan,
     )
-    logger.info("realize production: %s", profile.human_summary())
+    align_cfg = req.tts_align
 
     seg_inputs, style, project_name, use_tts_branch = await _prepare_auto_edit_segments_from_plan(
         plan=plan,
         project_name=req.project_name,
         style=req.style,
         force_tts_pipeline=req.force_tts_pipeline,
-        tts_align=req.tts_align,
+        tts_align=align_cfg,
     )
     style = style_with_production(style, profile)
-    align_cfg = req.tts_align
 
-    if use_tts_branch:
-        from app.api.subtitle import generate_srt as generate_srt_route
+    async def _run():
+        reporter = JobReporter(job_id)
+        try:
+            if use_tts_branch:
+                from app.api.subtitle import generate_srt as generate_srt_route
+                fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
 
-        fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
+                await reporter.send("render", "running", "正在合成 TTS 成片...")
+                if req.include_subtitle:
+                    srt_req = GenerateSRTRequest(
+                        segments=seg_inputs, style=style, use_tts_timing=True,
+                        split_narration_by_sentence=fine_grain,
+                    )
+                    srt_res = await generate_srt_route(srt_req)
+                    burn_req = BurnSubtitleRequest(
+                        segments=seg_inputs, srt_content=srt_res.srt_content,
+                        style=style, project_name=project_name,
+                        tts_align=align_cfg, require_tts_audio=True,
+                        production_profile=profile,
+                    )
+                    burn_res = await execute_burn_subtitle(burn_req)
+                else:
+                    burn_req = BurnSubtitleRequest(
+                        segments=seg_inputs, srt_content="", style=style,
+                        project_name=project_name, tts_align=align_cfg,
+                        require_tts_audio=True, production_profile=profile,
+                    )
+                    burn_res = await execute_burn_subtitle(burn_req)
 
-        if req.include_subtitle:
-            if await request.is_disconnected():
-                raise HTTPException(status_code=400, detail="客户端已断开连接")
-            srt_req = GenerateSRTRequest(
-                segments=seg_inputs,
-                style=style,
-                use_tts_timing=True,
-                split_narration_by_sentence=fine_grain,
-            )
-            srt_res = await generate_srt_route(srt_req)
-            burn_req = BurnSubtitleRequest(
-                segments=seg_inputs,
-                srt_content=srt_res.srt_content,
-                style=style,
-                project_name=project_name,
-                tts_align=align_cfg,
-                require_tts_audio=True,
-                production_profile=profile,
-            )
-            burn_res = await execute_burn_subtitle(burn_req)
-        else:
-            if await request.is_disconnected():
-                raise HTTPException(status_code=400, detail="客户端已断开连接")
-            burn_req = BurnSubtitleRequest(
-                segments=seg_inputs,
-                srt_content="",
-                style=style,
-                project_name=project_name,
-                tts_align=align_cfg,
-                require_tts_audio=True,
-                production_profile=profile,
-            )
-            burn_res = await execute_burn_subtitle(burn_req)
-        if await request.is_disconnected():
-            raise HTTPException(status_code=400, detail="客户端已断开连接")
-        final_filename, final_url = burn_res["filename"], burn_res["url"]
-        final_filename, final_url = await _run_realize_postprocess(
-            plan, final_filename, final_url, profile
-        )
-        return AutoEditRealizeResponse(
-            mode="voiceover",
-            filename=final_filename,
-            url=final_url,
-        )
+                final_filename, final_url = burn_res["filename"], burn_res["url"]
+                await reporter.send("postprocess", "running", "正在后期处理...")
+                final_filename, final_url = await _run_realize_postprocess(
+                    plan, final_filename, final_url, profile
+                )
+            else:
+                await reporter.send("render", "running", "正在导出原声成片...")
+                export_req = ExportOriginalRequest(
+                    segments=seg_inputs, style=style, project_name=project_name,
+                    include_subtitle=req.include_subtitle, normalize_audio=True,
+                    production_profile=profile,
+                )
+                res = await execute_export_original(export_req)
+                final_filename = res.get("filename") or ""
+                final_url = res.get("url") or ""
 
-    export_req = ExportOriginalRequest(
-        segments=seg_inputs,
-        style=style,
-        project_name=project_name,
-        include_subtitle=req.include_subtitle,
-        normalize_audio=True,
-        production_profile=profile,
-    )
-    if await request.is_disconnected():
-        raise HTTPException(status_code=400, detail="客户端已断开连接")
-    res = await execute_export_original(export_req)
-    if await request.is_disconnected():
-        raise HTTPException(status_code=400, detail="客户端已断开连接")
-    final_filename, final_url = res.get("filename") or "", res.get("url") or ""
-    final_filename, final_url = await _run_realize_postprocess(
-        plan, final_filename, final_url, profile
-    )
-    return AutoEditRealizeResponse(
-        mode="original",
-        filename=final_filename,
-        url=final_url,
-    )
+                await reporter.send("postprocess", "running", "正在后期处理...")
+                final_filename, final_url = await _run_realize_postprocess(
+                    plan, final_filename, final_url, profile
+                )
 
+            result = {
+                "mode": "voiceover" if use_tts_branch else "original",
+                "filename": final_filename,
+                "url": final_url,
+            }
+            await update_job_status(job_id, "done", result=result)
+            await reporter.send("done", "done", "成片已就绪", {"result": result})
+        except Exception as e:
+            logger.exception("realize job %s failed", job_id)
+            await reporter.send("error", "error", f"成片落地失败: {e}")
+            await update_job_status(job_id, "error", error_message=str(e))
 
+    launch_job(job_id, _run())
+    return {"job_id": job_id, "status": "running", "stream_url": f"/api/jobs/{job_id}/stream", "ws_url": f"/api/jobs/{job_id}/ws"}
 @router.post("/export-jianying-draft", response_model=JianYingDraftExportResponse)
 async def export_jianying_draft_from_plan(
     req: AutoEditExportJianyingDraftRequest,

@@ -541,6 +541,8 @@ async def init_db():
         await db.execute(CREATE_VIDEO_SUMMARIES)
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
         await db.execute(CREATE_VIDEO_SMART_OUTLINES)
+        from app.jobs.store import CREATE_ASYNC_JOBS
+        await db.execute(CREATE_ASYNC_JOBS)
         await db.execute(CREATE_FILM_COMMENTARY_JOBS)
         # 兼容旧库：film_commentary_jobs 补 prompt_overrides_json
         try:

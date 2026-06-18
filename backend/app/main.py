@@ -23,6 +23,7 @@ from app.api.voice_input import router as voice_input_router
 from app.api.audio_match import router as audio_match_router
 from app.api.vlm import router as vlm_router
 from app.api.embed import router as embed_router
+from app.jobs import jobs_router
 from app.api.process import router as process_router, jobs_router as process_jobs_router
 from app.api.match import router as match_router
 from app.api.search import router as search_router
@@ -82,6 +83,7 @@ app.include_router(voice_input_router)
 app.include_router(audio_match_router)
 app.include_router(vlm_router)
 app.include_router(embed_router)
+app.include_router(jobs_router)
 app.include_router(process_router)
 app.include_router(process_jobs_router)
 app.include_router(match_router)

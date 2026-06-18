@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { X, Send, Trash2, Sparkles, ChevronDown, Copy, Check } from 'lucide-react'
+import { readSSE } from '@/lib/stream'
 
 interface Message {
   id: string
@@ -125,52 +126,40 @@ export default function AIChatPanel() {
         signal: ctrl.signal,
       })
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({ detail: res.statusText }))
-        throw new Error(errJson.detail || `HTTP ${res.status}`)
-      }
-
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
       let accumulated = ''
-
-      // replace thinking placeholder immediately on first chunk
       let firstChunk = true
+      // 用对象持有错误，避免 TS 把闭包内的赋值在 await 后收窄为 null
+      const failure = { err: null as Error | null }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-
-        // parse SSE lines
-        const lines = chunk.split('\n')
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (data === '[DONE]') continue
-          try {
-            const json = JSON.parse(data)
-            const delta = json?.choices?.[0]?.delta?.content
-            if (delta) {
-              accumulated += delta
-              if (firstChunk) {
-                firstChunk = false
-                setMessages(prev =>
-                  prev.map(m =>
-                    m.id === asstId ? { ...m, thinking: false, content: accumulated } : m
-                  )
+      await readSSE(res, {
+        onEvent: (_event, data) => {
+          if (data === '[DONE]') return
+          const json = data as { choices?: Array<{ delta?: { content?: string } }> }
+          const delta = json?.choices?.[0]?.delta?.content
+          if (delta) {
+            accumulated += delta
+            if (firstChunk) {
+              firstChunk = false
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === asstId ? { ...m, thinking: false, content: accumulated } : m
                 )
-              } else {
-                setMessages(prev =>
-                  prev.map(m =>
-                    m.id === asstId ? { ...m, content: accumulated } : m
-                  )
+              )
+            } else {
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === asstId ? { ...m, content: accumulated } : m
                 )
-              }
+              )
             }
-          } catch { /* skip parse errors */ }
-        }
-      }
+          }
+        },
+        onError: (err) => {
+          failure.err = err
+        },
+      }, ctrl.signal)
+
+      if (failure.err && failure.err.name !== 'AbortError') throw failure.err
 
       // ensure thinking is cleared even if no content came through
       setMessages(prev =>

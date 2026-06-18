@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.api.tts import TTS_AUDIO_DIR, synthesize
 from app.core.blocking_pool import run_heavy
+from app.jobs import create_job, JobReporter, launch_job, update_job_status
 from app.core.llm import LLMClient, LLMConfig
 from app.core.bgm.auto_bgm import apply_bgm_config_postprocess
 from app.core.script_stock.compose import compose_stock_video_sync
@@ -838,8 +839,8 @@ async def _resolve_compose_rows(
     return out
 
 
-@router.post("/compose", response_model=ScriptStockComposeResponse)
-async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeResponse:
+@router.post("/compose")
+async def compose_stock(req: ScriptStockComposeRequest):
     if not req.segments:
         raise HTTPException(400, "segments 不能为空")
 
@@ -860,88 +861,121 @@ async def compose_stock(req: ScriptStockComposeRequest) -> ScriptStockComposeRes
                         f"多段 {seg.kind} 素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条文件。",
                     )
 
-    tts_paths: List[Optional[str]] = []
-    if req.audio_mode in ("tts_only", "mix"):
-        for seg in req.segments:
-            txt = (seg.text or "").strip()
-            if not txt:
-                tts_paths.append(None)
-                continue
-            try:
-                res = await synthesize(
-                    SynthesizeRequest(
-                        text=txt,
-                        voice=req.tts_voice,
-                        rate=req.tts_rate,
-                        volume=req.tts_volume,
-                    )
-                )
-                tts_paths.append(os.path.join(TTS_AUDIO_DIR, res.filename))
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.exception("script-stock TTS failed")
-                raise HTTPException(500, detail=f"TTS 合成失败: {e}") from e
-    else:
-        tts_paths = [None] * len(req.segments)
-
     async with aiosqlite.connect(DB_PATH) as db:
         rows = await _resolve_compose_rows(db, req)
         export_opts = await _load_export_render_opts(db)
 
     base_name = (req.project_name or "stock_clip").replace(" ", "_")[:80]
     unique = f"{base_name}_{uuid.uuid4().hex[:10]}"
+    segments = list(req.segments)
 
-    def _sync() -> str:
-        texts = [(s.text or "") for s in req.segments]
-        return compose_stock_video_sync(
-            segment_rows=rows,
-            tts_paths=tts_paths,
-            audio_mode=req.audio_mode,
-            tts_volume_db=float(req.tts_volume_db),
-            original_volume_db=float(req.original_volume_db),
-            timeline_mode=req.timeline_mode,
-            video_extend_policy=req.video_extend_policy,
-            material_tts_fill=req.material_tts_fill,
-            material_tts_longer=req.material_tts_longer,
-            include_subtitle=bool(req.include_subtitle),
-            subtitle_style=req.subtitle_style,
-            segment_texts=texts,
-            export_render_opts=export_opts,
-            project_name=unique,
-        )
+    job = await create_job(kind="script_stock_compose", initial_step="prepare")
+    job_id = job["id"]
 
-    try:
-        final_abs = await run_heavy(_sync)
-    except ValueError as e:
-        raise HTTPException(400, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("compose_stock failed")
-        raise HTTPException(500, detail=f"成片失败: {e}") from e
-
-    filename = os.path.basename(final_abs)
-    public_url = storage_public_url_for_file(final_abs)
-    if req.bgm and req.bgm.enabled:
+    async def _run():
+        reporter = JobReporter(job_id)
         try:
-            mixed_filename, mixed_url = await run_heavy(
-                apply_bgm_config_postprocess,
-                filename,
-                public_url,
-                req.bgm.model_dump(),
-            )
-            filename = mixed_filename
-            public_url = mixed_url
-        except Exception as e:
-            logger.warning("script-stock BGM mix failed, using video without BGM: %s", e)
+            # TTS 合成
+            tts_paths: List[Optional[str]] = []
+            if req.audio_mode in ("tts_only", "mix"):
+                total = len(segments)
+                for i, seg in enumerate(segments):
+                    txt = (seg.text or "").strip()
+                    if not txt:
+                        tts_paths.append(None)
+                        continue
+                    await reporter.send("tts", "running",
+                        f"TTS 合成 {i+1}/{total}：{txt[:20]}...",
+                        {"percent": round((i / total) * 100) if total > 0 else 0})
+                    try:
+                        res = await synthesize(
+                            SynthesizeRequest(
+                                text=txt,
+                                voice=req.tts_voice,
+                                rate=req.tts_rate,
+                                volume=req.tts_volume,
+                            )
+                        )
+                        tts_paths.append(os.path.join(TTS_AUDIO_DIR, res.filename))
+                    except Exception as e:
+                        logger.exception("script-stock TTS failed")
+                        raise RuntimeError(f"TTS 合成失败 (段 {i+1}): {e}") from e
+                await reporter.send("tts", "running",
+                    "TTS 合成完成",
+                    {"percent": 100})
+            else:
+                tts_paths = [None] * len(segments)
 
-    rel = (public_url or "").lstrip("/")
-    if not rel.startswith("storage/"):
-        rel = to_stored_path(final_abs)
-    return ScriptStockComposeResponse(
-        filename=filename,
-        public_url=public_url,
-        stored_rel_path=rel,
-    )
+            # 视频合成
+            await reporter.send("compose", "running", "正在合成视频...")
+
+            def _sync() -> str:
+                texts = [(s.text or "") for s in segments]
+                return compose_stock_video_sync(
+                    segment_rows=rows,
+                    tts_paths=tts_paths,
+                    audio_mode=req.audio_mode,
+                    tts_volume_db=float(req.tts_volume_db),
+                    original_volume_db=float(req.original_volume_db),
+                    timeline_mode=req.timeline_mode,
+                    video_extend_policy=req.video_extend_policy,
+                    material_tts_fill=req.material_tts_fill,
+                    material_tts_longer=req.material_tts_longer,
+                    include_subtitle=bool(req.include_subtitle),
+                    subtitle_style=req.subtitle_style,
+                    segment_texts=texts,
+                    export_render_opts=export_opts,
+                    project_name=unique,
+                )
+
+            try:
+                final_abs = await run_heavy(_sync)
+            except ValueError as e:
+                raise RuntimeError(str(e)) from e
+            except Exception as e:
+                raise RuntimeError(f"成片失败: {e}") from e
+
+            filename = os.path.basename(final_abs)
+            public_url = storage_public_url_for_file(final_abs)
+
+            # BGM 混音
+            if req.bgm and req.bgm.enabled:
+                await reporter.send("bgm", "running", "正在混入背景音乐...")
+                try:
+                    mixed_filename, mixed_url = await run_heavy(
+                        apply_bgm_config_postprocess,
+                        filename,
+                        public_url,
+                        req.bgm.model_dump(),
+                    )
+                    filename = mixed_filename
+                    public_url = mixed_url
+                except Exception as e:
+                    logger.warning("script-stock BGM mix failed, using video without BGM: %s", e)
+
+            rel = (public_url or "").lstrip("/")
+            if not rel.startswith("storage/"):
+                rel = to_stored_path(final_abs)
+
+            result = {
+                "filename": filename,
+                "public_url": public_url,
+                "stored_rel_path": rel,
+            }
+            await update_job_status(job_id, "done", result=result)
+            await reporter.send("done", "done", "文案成片已就绪", {"result": result})
+        except Exception as e:
+            logger.exception("compose_stock job %s failed", job_id)
+            await update_job_status(job_id, "error", error_message=str(e))
+            await reporter.send("error", "error", f"成片失败: {e}")
+
+    launch_job(job_id, _run())
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "stream_url": f"/api/jobs/{job_id}/stream",
+        "ws_url": f"/api/jobs/{job_id}/ws",
+    }
 
 
 @router.post("/export-jianying-draft", response_model=JianYingDraftExportResponse)

@@ -6,6 +6,7 @@ import {
   ClipboardCopy, Loader2, Sparkles, Wand2, RefreshCw, X,
 } from 'lucide-react'
 import { copyGenApi } from '@/lib/api'
+import { readSSE } from '@/lib/stream'
 import { VoiceInputControl } from '@/components/ui/voice-input'
 
 interface CopyTemplate { id: string; label: string; emoji: string; prompt: string; style: string }
@@ -231,40 +232,39 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateG
     setGenerating(true); setGenerated(''); setError(''); setCopied(false)
     const ctrl = new AbortController()
     abortRef.current = ctrl
+    let accumulated = ''
+    // 用对象持有错误，避免 TS 把闭包内的赋值在 await 后收窄为 null
+    const failure = { err: null as Error | null }
     try {
       const res = await copyGenApi.generateStream({
         video_ids: selectedVideoIds, user_prompt: prompt.trim(),
         style: style.trim() || undefined, max_segments: maxSegs, stream: true,
       })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }))
-        throw new Error(err.detail || `HTTP ${res.status}`)
-      }
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let accumulated = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (data === '[DONE]') continue
-          try {
-            const json = JSON.parse(data)
-            if (json.error) throw new Error(json.detail || json.error)
-            const delta = json?.choices?.[0]?.delta?.content ?? json?.content
-            if (delta) {
-              accumulated += delta
-              setGenerated(accumulated)
-              setTimeout(() => outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight, behavior: 'smooth' }), 0)
-            }
-          } catch (parseErr) {
-            if ((parseErr as Error).message && !(parseErr instanceof SyntaxError)) throw parseErr
+      await readSSE(res, {
+        onEvent: (_event, data) => {
+          if (data === '[DONE]') return
+          const json = data as {
+            error?: string
+            detail?: string
+            choices?: Array<{ delta?: { content?: string } }>
+            content?: string
           }
-        }
-      }
+          if (json?.error) {
+            failure.err = new Error(json.detail || json.error)
+            return
+          }
+          const delta = json?.choices?.[0]?.delta?.content ?? json?.content
+          if (delta) {
+            accumulated += delta
+            setGenerated(accumulated)
+            setTimeout(() => outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight, behavior: 'smooth' }), 0)
+          }
+        },
+        onError: (err) => {
+          failure.err = err
+        },
+      }, ctrl.signal)
+      if (failure.err && failure.err.name !== 'AbortError') throw failure.err
     } catch (e: unknown) {
       if ((e as Error).name !== 'AbortError') setError((e as Error).message || '生成失败，请重试')
     } finally {

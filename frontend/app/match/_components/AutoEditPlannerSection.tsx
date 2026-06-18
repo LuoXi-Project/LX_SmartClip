@@ -7,6 +7,30 @@ import type { AutoPlanStage } from './autoEditTypes'
 import { AutoEditBgmMixPanel } from './AutoEditBgmMixPanel'
 import { BgmCustomConfigPanel } from './BgmCustomConfigPanel'
 import { VoiceInputControl } from '@/components/ui/voice-input'
+import { StreamingProgress, type ProgressStatus } from '@/components/ui/streaming-progress'
+
+/** 自动成片方案的阶段 chips（与 autoPlanStage 的 rank 一一对应）*/
+const PLAN_STAGES = [
+  { key: 'init', label: '初始化' },
+  { key: 'context', label: '素材分析' },
+  { key: 'llm', label: '方案生成' },
+  { key: 'post', label: '结果整理' },
+] as const
+
+/** autoPlanStage → chips 的 key（rank 对齐：preparing=1/init, connecting=2/context, planning=3/llm, done=4/post）*/
+const STAGE_TO_CHIP: Record<string, string> = {
+  preparing: 'init',
+  connecting: 'context',
+  planning: 'llm',
+  done: 'post',
+}
+
+function planStageToStatus(stage: AutoPlanStage): ProgressStatus {
+  if (stage === 'done') return 'done'
+  if (stage === 'failed') return 'error'
+  if (stage === 'idle') return 'idle'
+  return 'running'
+}
 
 export type AutoEditPlannerSectionProps = {
   hideLlmPlannerUi?: boolean
@@ -194,6 +218,13 @@ export function AutoEditPlannerSection({
 }: AutoEditPlannerSectionProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const isFilmPlanner = plannerVariant === 'film'
+  // 仅当「真正的流式方案生成」进行中时才亮起进度面板；非流式 plan 变体
+  // （口播快剪 / 配音 / 混剪）虽复用 autoLoading 禁用按钮，但不在此伪造阶段进度。
+  const isPlanStreaming =
+    autoLoading &&
+    (autoPlanStage === 'preparing' ||
+      autoPlanStage === 'connecting' ||
+      autoPlanStage === 'planning')
 
   if (isFilmPlanner) {
     return (
@@ -573,106 +604,25 @@ export function AutoEditPlannerSection({
             )}
           </div>
 
-          {(autoLoading || autoPlanLogs.length > 0) && (
-            <div className="rounded-xl border border-emerald-500/30 bg-slate-950/60 px-4 py-3 space-y-2">
-              <div className="space-y-1 text-[11px]">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-300">
-                    当前阶段：
-                    {autoPlanStage === 'idle'
-                      ? '待开始'
-                      : autoPlanStage === 'preparing'
-                        ? '准备中'
-                        : autoPlanStage === 'connecting'
-                          ? '连接中'
-                          : autoPlanStage === 'planning'
-                            ? '规划中'
-                            : autoPlanStage === 'done'
-                              ? '已完成'
-                              : '失败'}
-                  </span>
-                  <span className={autoPlanStage === 'failed' ? 'text-red-400' : 'text-slate-400'}>
-                    {autoPlanStage === 'failed' ? '失败' : `${autoPlanStagePercent[autoPlanStage]}%`}
-                  </span>
-                </div>
-                <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-500 ${autoPlanStage === 'failed' ? 'bg-red-500' : 'bg-emerald-500'}`}
-                    style={{ width: `${autoPlanStagePercent[autoPlanStage]}%` }}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-emerald-300 flex items-center gap-1.5">
-                  {autoLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {autoLoading ? '实时生成进度' : '最近一次生成记录'}
-                </span>
-                <span className="text-slate-500">
-                  {autoLoading ? `已等待 ${autoPlanElapsedSec}s` : `总耗时约 ${autoPlanElapsedSec}s`}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {[
-                  { key: 'init', label: '初始化' },
-                  { key: 'context', label: '素材分析' },
-                  { key: 'llm', label: '方案生成' },
-                  { key: 'post', label: '结果整理' },
-                ].map((step, idx) => {
-                  const stepRankMap: Record<string, number> = { init: 1, context: 2, llm: 3, post: 4 }
-                  const stageRankMap: Record<AutoPlanStage, number> = {
-                    idle: 0,
-                    preparing: 1,
-                    connecting: 2,
-                    planning: 3,
-                    done: 4,
-                    failed: 0,
-                  }
-                  const currentRank = stageRankMap[autoPlanStage] ?? 0
-                  const stepRank = stepRankMap[step.key]
-                  const active = currentRank === stepRank && autoLoading
-                  const passed = currentRank > stepRank || autoPlanStage === 'done'
-                  return (
-                    <span
-                      key={step.key}
-                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
-                        active
-                          ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
-                          : passed
-                            ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-200'
-                            : 'border-slate-700 bg-slate-900/70 text-slate-500'
-                      }`}
-                    >
-                      {idx + 1}. {step.label}
-                    </span>
-                  )
-                })}
-                {autoPlanStage === 'failed' && (
-                  <span className="inline-flex items-center rounded-full border border-red-400/60 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300">
-                    失败
-                  </span>
-                )}
-              </div>
-              {autoLoading && (
-                <p className="text-[11px] text-slate-400">
-                  {autoPlanElapsedSec < 3
+          {(isPlanStreaming || autoPlanLogs.length > 0) && (
+            <StreamingProgress
+              status={planStageToStatus(autoPlanStage)}
+              stage={STAGE_TO_CHIP[autoPlanStage] ?? ''}
+              stages={[...PLAN_STAGES]}
+              percent={autoPlanStage === 'failed' ? null : autoPlanStagePercent[autoPlanStage]}
+              elapsedSec={autoPlanElapsedSec}
+              logs={autoPlanLogs}
+              accent="emerald"
+              hint={
+                isPlanStreaming
+                  ? autoPlanElapsedSec < 3
                     ? '正在初始化模型与策略...'
                     : autoPlanElapsedSec < 10
                       ? '正在分析提示词并筛选素材...'
-                      : '正在生成候选方案，请稍候...'}
-                </p>
-              )}
-              <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
-                {autoPlanLogs.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">等待日志...</p>
-                ) : (
-                  autoPlanLogs.map((line, idx) => (
-                    <p key={`${line}-${idx}`} className="text-[11px] text-slate-400 leading-5">
-                      {line}
-                    </p>
-                  ))
-                )}
-              </div>
-            </div>
+                      : '正在生成候选方案，请稍候...'
+                  : undefined
+              }
+            />
           )}
         </>
       )}

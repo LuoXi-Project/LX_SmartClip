@@ -6,6 +6,7 @@ import { videosApi, type Video, type VideoListParams } from '@/lib/api'
 import { Film, ListChecks, Trash2 } from 'lucide-react'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
+import { useJobStream } from '@/hooks/use-job-stream'
 
 import { UploadZone } from './_components/UploadZone'
 import { VideoCard } from './_components/VideoCard'
@@ -20,6 +21,7 @@ export default function LibraryPage() {
   const { addVideo, removeVideo } = useAppStore()
   const confirm = useConfirm()
   const toast = useToast()
+  const { startJob } = useJobStream()
 
   // Server-driven list state
   const [items, setItems] = useState<Video[]>([])
@@ -42,7 +44,6 @@ export default function LibraryPage() {
   const [previewVideo, setPreviewVideo] = useState<Video | null>(null)
   const [previewError, setPreviewError] = useState(false)
   const [reencodeTarget, setReencodeTarget] = useState<Video | null>(null)
-  const [reencoding, setReencoding] = useState(false)
   const [reencodePreset, setReencodePreset] = useState<ReencodePreset>('preview_compatible')
   const [reencodeOptions, setReencodeOptions] = useState<ReencodeOptions>({
     vcodec: 'libx264',
@@ -382,37 +383,33 @@ export default function LibraryPage() {
     setReencodePreset('custom')
   }
 
-  const handleSubmitReencode = async () => {
+  const handleSubmitReencode = () => {
     if (!reencodeTarget) return
-    setReencoding(true)
-    try {
-      await videosApi.reencode(reencodeTarget.id, {
-        vcodec: reencodeOptions.vcodec,
-        crf: reencodeOptions.crf,
-        preset: reencodeOptions.preset,
-        fps: reencodeOptions.fps ? Number(reencodeOptions.fps) : undefined,
-        max_height: reencodeOptions.maxHeight ? Number(reencodeOptions.maxHeight) : undefined,
-        acodec: 'aac',
-        audio_bitrate_k: reencodeOptions.audioBitrateK,
-      })
-      toast.success('重编码完成，可重新预览')
-      setReencodeTarget(null)
-      await fetchVideos({
-        q: debouncedQuery || undefined,
-        status: statusFilter !== 'all' ? statusFilter : undefined,
-        sort,
-        page,
-        page_size: pageSize,
-      })
-    } catch (error) {
-      console.error('Reencode failed:', error)
-      const detailRaw = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-      const detail = typeof detailRaw === 'string' ? detailRaw.trim() : ''
-      const prettyDetail = detail.length > 800 ? `${detail.slice(0, 800)}...` : detail
-      toast.error(prettyDetail ? `重编码失败：${prettyDetail}` : '重编码失败，请检查 ffmpeg 或调整参数')
-    } finally {
-      setReencoding(false)
-    }
+    const targetId = reencodeTarget.id
+    startJob({
+      create: () =>
+        videosApi.reencode(targetId, {
+          vcodec: reencodeOptions.vcodec,
+          crf: reencodeOptions.crf,
+          preset: reencodeOptions.preset,
+          fps: reencodeOptions.fps ? Number(reencodeOptions.fps) : undefined,
+          max_height: reencodeOptions.maxHeight ? Number(reencodeOptions.maxHeight) : undefined,
+          acodec: 'aac',
+          audio_bitrate_k: reencodeOptions.audioBitrateK,
+        }),
+      title: '重编码视频',
+      kind: 'reencode',
+      onDone: async () => {
+        await fetchVideos({
+          q: debouncedQuery || undefined,
+          status: statusFilter !== 'all' ? statusFilter : undefined,
+          sort,
+          page,
+          page_size: pageSize,
+        })
+      },
+    })
+    setReencodeTarget(null)
   }
 
   // Drag handlers
@@ -639,8 +636,8 @@ export default function LibraryPage() {
         videoName={reencodeTarget?.name || ''}
         preset={reencodePreset}
         options={reencodeOptions}
-        loading={reencoding}
-        onClose={() => !reencoding && setReencodeTarget(null)}
+        loading={false}
+        onClose={() => setReencodeTarget(null)}
         onPresetChange={applyReencodePreset}
         onOptionsChange={updateReencodeOptions}
         onSubmit={handleSubmitReencode}

@@ -1,4 +1,6 @@
+import asyncio
 import os
+import re
 import uuid
 import shutil
 import logging
@@ -10,6 +12,7 @@ from fastapi.responses import FileResponse
 from app.models.videos import ImportVideoByUrlPayload, ReencodeVideoPayload, UpdateVideoPayload
 
 from app.db.database import get_db_conn
+from app.jobs import create_job, JobReporter, launch_job, update_job_status
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.material_media_names import REENCODED_VIDEO_NAME, source_video_basename
 from app.utils.paths import ensure_storage_subpath, resolve_stored_path, to_stored_path
@@ -189,13 +192,12 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
 
 @router.post("/{video_id}/reencode")
 async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
+    # ── 前置校验 ──────────────────────────────────────────────────────────
     db = await get_db_conn()
-    old_path = ""
-    old_thumb = None
-    old_name = ""
     try:
         cursor = await db.execute(
-            "SELECT id, name, file_path, thumbnail_path FROM videos WHERE id = ?", (video_id,)
+            "SELECT id, name, file_path, thumbnail_path, duration FROM videos WHERE id = ?",
+            (video_id,),
         )
         row = await cursor.fetchone()
         if row is None:
@@ -203,6 +205,7 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
         old_path = resolve_stored_path(row["file_path"])
         old_thumb = resolve_stored_path(row["thumbnail_path"]) if row["thumbnail_path"] else None
         old_name = row["name"]
+        total_duration = float(row["duration"] or 0)
     finally:
         await db.close()
 
@@ -212,8 +215,6 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
     output_path = os.path.join(ensure_storage_subpath(video_id, "videos"), REENCODED_VIDEO_NAME)
     vf_parts = []
     if payload.max_height:
-        # 用 force_original_aspect_ratio=decrease 避免 min(...) 里的逗号被当作滤镜分隔符
-        # force_divisible_by=2: 保证输出宽高为偶数，兼容 libx264 编码约束
         vf_parts.append(
             f"scale=-2:{payload.max_height}:force_original_aspect_ratio=decrease:force_divisible_by=2"
         )
@@ -241,62 +242,146 @@ async def reencode_video(video_id: str, payload: ReencodeVideoPayload):
         f"{payload.audio_bitrate_k}k",
         "-movflags",
         "+faststart",
+        "-progress", "pipe:1",   # 向 stdout 输出结构化进度关键帧
+        "-nostats",               # 关闭 stderr 上默认统计，避免与进度混叠
         output_path,
     ]
-    try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=60 * 30,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=501, detail="未检测到 ffmpeg，请先安装 ffmpeg") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="重编码超时，请尝试更快预设或更低分辨率") from exc
 
-    if result.returncode != 0 or not os.path.exists(output_path):
-        stderr_text = (result.stderr or "").strip()
-        detail = stderr_text[-4000:] if stderr_text else "ffmpeg 重编码失败"
-        logger.error(
-            "视频重编码失败: video_id=%s returncode=%s cmd=%s stderr_tail=%s",
-            video_id,
-            result.returncode,
-            " ".join(cmd),
-            detail,
-        )
-        raise HTTPException(status_code=502, detail=detail)
+    # ── 创建任务 ──────────────────────────────────────────────────────────
+    job = await create_job(kind="reencode", ref_type="video", ref_id=video_id, initial_step="prepare")
+    job_id = job["id"]
 
-    thumbnail_path = generate_thumbnail(output_path, video_id)
-
-    db = await get_db_conn()
-    try:
-        await db.execute(
-            "UPDATE videos SET file_path = ?, thumbnail_path = ? WHERE id = ?",
-            (to_stored_path(output_path), to_stored_path(thumbnail_path), video_id),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-    if old_path != output_path and os.path.exists(old_path):
+    async def _run():
+        reporter = JobReporter(job_id)
+        await reporter.send("prepare", "running", "正在准备重编码参数…")
         try:
-            os.remove(old_path)
-        except Exception:
-            pass
-    if old_thumb and thumbnail_path and old_thumb != thumbnail_path and os.path.exists(old_thumb):
-        try:
-            os.remove(old_thumb)
-        except Exception:
-            pass
+            await reporter.send("encode", "running", "启动转码…", {"percent": 0})
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                # 逐行读 stdout → 解析 out_time_ms / out_time 计算百分比
+                time_re = re.compile(r"out_time(?:_ms)?=(\S+)")
+                last_pct = 0
+                while True:
+                    line = await asyncio.wait_for(
+                        proc.stdout.readline(), timeout=600
+                    )
+                    if not line:
+                        break
+                    line_str = line.decode("utf-8", errors="replace").strip()
+                    m = time_re.search(line_str)
+                    if not m:
+                        continue
+                    time_val = m.group(1)
+                    # out_time_ms → 微秒
+                    try:
+                        cur_sec = float(time_val) / 1_000_000.0 if time_val.isdigit() else _parse_ffmpeg_time(time_val)
+                    except Exception:
+                        continue
+                    if total_duration > 0:
+                        pct = min(99, round(cur_sec / total_duration * 100))
+                        if pct > last_pct:
+                            last_pct = pct
+                            await reporter.send(
+                                "encode", "running",
+                                f"转码中 {pct}%",
+                                {"percent": pct, "current": round(cur_sec, 1), "total": round(total_duration, 1)},
+                            )
+                # 等待进程结束
+                return_code = await proc.wait()
+            except asyncio.CancelledError:
+                proc.terminate()
+                await proc.wait()
+                raise
+            finally:
+                # 安全清理未读完的 stdout
+                try:
+                    proc.stdout._transport.close()
+                except Exception:
+                    pass
 
+            if return_code != 0:
+                stderr_data = await proc.stderr.read()
+                stderr_text = stderr_data.decode("utf-8", errors="replace")[-4000:]
+                logger.error(
+                    "视频重编码失败: video_id=%s returncode=%s stderr_tail=%s",
+                    video_id, return_code, stderr_text,
+                )
+                await reporter.send("encode", "error", "转码失败", {"error": stderr_text})
+                await update_job_status(job_id, "error", error_message=stderr_text or "ffmpeg 重编码失败")
+                return
+
+            if not os.path.exists(output_path):
+                await reporter.send("encode", "error", "转码输出丢失")
+                await update_job_status(job_id, "error", error_message="转码完成后未找到输出文件")
+                return
+
+            await reporter.send("encode", "running", "转码完成，100%", {"percent": 100})
+
+            # 缩略图
+            await reporter.send("thumbnail", "running", "正在生成新缩略图…")
+            thumbnail_path = generate_thumbnail(output_path, video_id)
+
+            # 更新数据库
+            db2 = await get_db_conn()
+            try:
+                await db2.execute(
+                    "UPDATE videos SET file_path = ?, thumbnail_path = ? WHERE id = ?",
+                    (to_stored_path(output_path), to_stored_path(thumbnail_path), video_id),
+                )
+                await db2.commit()
+            finally:
+                await db2.close()
+
+            # 清理旧文件
+            if old_path != output_path and os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except Exception:
+                    pass
+            if old_thumb and thumbnail_path and old_thumb != thumbnail_path and os.path.exists(old_thumb):
+                try:
+                    os.remove(old_thumb)
+                except Exception:
+                    pass
+
+            result_info = {
+                "video_id": video_id,
+                "name": old_name,
+                "file_path": output_path,
+                "thumbnail_path": thumbnail_path,
+            }
+            await update_job_status(job_id, "done", result=result_info)
+            await reporter.send("done", "done", "重编码完成", {"percent": 100, "result": result_info})
+        except Exception as e:
+            logger.exception("reencode job %s failed", job_id)
+            await reporter.send("encode", "error", f"重编码异常: {e}")
+            await update_job_status(job_id, "error", error_message=str(e))
+
+    launch_job(job_id, _run())
     return {
-        "id": video_id,
-        "name": old_name,
-        "file_path": output_path,
-        "thumbnail_path": thumbnail_path,
+        "job_id": job_id,
+        "status": "running",
+        "stream_url": f"/api/jobs/{job_id}/stream",
+        "ws_url": f"/api/jobs/{job_id}/ws",
+        "video_id": video_id,
     }
+
+
+def _parse_ffmpeg_time(hhmmss: str) -> float:
+    """把 ffmpeg 的 HH:MM:SS.ms 转为秒数。"""
+    parts = hhmmss.strip().split(":")
+    if len(parts) == 3:
+        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+    if len(parts) == 2:
+        return float(parts[0]) * 60 + float(parts[1])
+    try:
+        return float(hhmmss)
+    except Exception:
+        return 0.0
 
 
 @router.get("")

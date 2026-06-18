@@ -20,6 +20,7 @@ import {
   type SummaryAskSource,
   type Video,
 } from '@/lib/api'
+import { readSSE } from '@/lib/stream'
 
 type ChatMessage = SummaryAskMessage & { id: string; thinking?: boolean }
 
@@ -189,37 +190,22 @@ export function SummaryAskPanel({
 
       try {
         const res = await summaryApi.askStream(videoId, { question, source, history })
-        if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({ detail: res.statusText }))
-          throw new Error(err.detail || `HTTP ${res.status}`)
-        }
 
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder('utf-8')
-        let buffer = ''
         let accumulated = ''
         let firstChunk = true
+        // 用对象持有错误，避免 TS 把闭包内的赋值在 await 后收窄为 null
+        const failure = { err: null as Error | null }
 
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const events = buffer.split('\n\n')
-          buffer = events.pop() || ''
-          for (const evt of events) {
-            const line = evt.split('\n').find((x) => x.startsWith('data: '))
-            if (!line) continue
-            const raw = line.slice(6).trim()
-            if (!raw || raw === '[DONE]') continue
-            let data: { type?: string; content?: string; detail?: string }
-            try {
-              data = JSON.parse(raw)
-            } catch {
-              continue
+        await readSSE(res, {
+          onEvent: (_event, data) => {
+            if (data === '[DONE]') return
+            const d = data as { type?: string; content?: string; detail?: string }
+            if (d.type === 'error') {
+              failure.err = new Error(d.detail || '问答失败')
+              return
             }
-            if (data.type === 'error') throw new Error(data.detail || '问答失败')
-            if (data.type === 'content' && data.content != null) {
-              accumulated = data.content
+            if (d.type === 'content' && d.content != null) {
+              accumulated = d.content
               if (firstChunk) {
                 firstChunk = false
                 setMessages((prev) =>
@@ -231,8 +217,13 @@ export function SummaryAskPanel({
                 )
               }
             }
-          }
-        }
+          },
+          onError: (err) => {
+            failure.err = err
+          },
+        })
+
+        if (failure.err && failure.err.name !== 'AbortError') throw failure.err
 
         setMessages((prev) =>
           prev.map((m) =>

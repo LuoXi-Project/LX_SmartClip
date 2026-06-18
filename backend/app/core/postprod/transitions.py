@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, Literal, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence
 
+from app.core.subtitle.render_opts import build_render_codec_args
 from app.models.production import ProductionProfile, TransitionPolicy
 from app.utils.ffprobe_utils import probe_audio_sample_rate, probe_duration, probe_video_dimensions
 from app.utils.ffmpeg_utils import run_ffmpeg
@@ -106,8 +107,9 @@ def compose_with_transitions(
     dissolve_sec: float = 0.35,
     segment_fade_ms: int = 80,
     out_path: str,
+    render_opts: Optional[Dict[str, str]] = None,
 ) -> str:
-    """将多段视频按 transitions 合成；需要重编码。"""
+    """将多段视频按 transitions 合成；需要重编码。编码器优先走配置（如 h264_nvenc），未配则 libx264。"""
     paths = list(seg_paths)
     if not paths:
         raise ValueError("seg_paths 为空")
@@ -224,6 +226,7 @@ def compose_with_transitions(
     cmd: List[str] = []
     for p in paths:
         cmd += ["-i", p]
+    codec_args = build_render_codec_args(render_opts)
     cmd += [
         "-filter_complex",
         fc,
@@ -231,16 +234,7 @@ def compose_with_transitions(
         "[vout]",
         "-map",
         "[aout]",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "ultrafast",
-        "-crf",
-        "20",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
+        *codec_args,
         "-movflags",
         "+faststart",
         out_path,

@@ -10,6 +10,7 @@ import {
   type VideoSummary,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { readSSE } from '@/lib/stream'
 import type { NoteLayoutOptions } from '../_lib/types'
 import {
   formatStageAProgressMarkdown,
@@ -131,29 +132,11 @@ export function useSummaryPage() {
         },
       }
       const resp = await summaryApi.generateStream(payload)
-      if (!resp.ok || !resp.body) {
-        throw new Error(`流式请求失败: ${resp.status}`)
-      }
-      const reader = resp.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const events = buffer.split('\n\n')
-        buffer = events.pop() || ''
-        for (const evt of events) {
-          const line = evt.split('\n').find((x) => x.startsWith('data: '))
-          if (!line) continue
-          const raw = line.slice(6).trim()
-          if (!raw || raw === '[DONE]') continue
-          let data: unknown = null
-          try {
-            data = JSON.parse(raw)
-          } catch {
-            continue
-          }
+      let failed = false
+      let failMsg = '生成失败'
+      await readSSE(resp, {
+        onEvent: (_event, data) => {
+          if (data === '[DONE]') return
           const d = data as {
             type?: string
             message?: string
@@ -163,6 +146,11 @@ export function useSummaryPage() {
             idx?: number
             total?: number
             segment?: StageASegment
+          }
+          if (d?.type === 'error') {
+            failed = true
+            failMsg = d.detail || '生成失败'
+            return
           }
           if (d?.type === 'status') {
             const msg = String(d.message || '生成中...')
@@ -218,11 +206,13 @@ export function useSummaryPage() {
             stageSegmentsRef.current = []
             notePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
-          if (d?.type === 'error') {
-            throw new Error(d.detail || '生成失败')
-          }
-        }
-      }
+        },
+        onError: (err) => {
+          failed = true
+          failMsg = err.message
+        },
+      })
+      if (failed) throw new Error(failMsg)
       toast.success('总结已生成')
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string }

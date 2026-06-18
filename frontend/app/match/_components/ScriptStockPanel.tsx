@@ -43,6 +43,8 @@ import {
   type ScriptStockVideoExtendPolicy,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { useTaskStore } from '@/lib/task-store'
+import { fetchSSE } from '@/lib/stream'
 import { VoiceInputControl } from '@/components/ui/voice-input'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { useConfirm } from '@/hooks/use-confirm'
@@ -111,6 +113,8 @@ export function ScriptStockPanel({
 }) {
   const toast = useToast()
   const confirm = useConfirm()
+  const taskStoreUpsert = useTaskStore((s) => s.upsert)
+  const taskStorePatch = useTaskStore((s) => s.patch)
   const { bgmTracks, bgmListError } = useAutoEditBgmTracks()
   const [stockBgmEnabled, setStockBgmEnabled] = useState(false)
   const [stockBgmTrackId, setStockBgmTrackId] = useState('')
@@ -666,8 +670,10 @@ export function ScriptStockPanel({
       return
     }
     setComposing(true)
+    const taskHandle = toast.task('正在合成文案成片...')
+    let jobId = ''
     try {
-      const res = await scriptStockApi.compose({
+      const created = await scriptStockApi.compose({
         segments: payload,
         project_name: projectName.trim() || 'stock_clip',
         audio_mode: audioMode,
@@ -681,16 +687,64 @@ export function ScriptStockPanel({
         subtitle_style: subtitleEnabled ? (subtitleStyle ?? DEFAULT_SUBTITLE_STYLE) : undefined,
         bgm: buildStockBgmPayload(),
       })
-      const base = API_BASE_URL.replace(/\/$/, '')
-      const path = (res.public_url || '').startsWith('/') ? res.public_url : `/${res.public_url || ''}`
-      const fullUrl = `${base}${path}`
-      setLastComposeUrl(fullUrl)
-      setLastComposeFilename(res.filename || null)
-      toast.success('配音成片已完成，链接已显示在下方')
-      window.open(fullUrl, '_blank', 'noopener,noreferrer')
+      jobId = created.job_id
+      const streamUrl = (created.stream_url || '').startsWith('/')
+        ? `${API_BASE_URL}${created.stream_url}`
+        : created.stream_url || `/api/jobs/${jobId}/stream`
+
+      taskStoreUpsert({
+        id: jobId, title: '文案成片', kind: 'script_stock_compose', status: 'running',
+        percent: null, logs: [], elapsedSec: 0, createdAt: Date.now(),
+      })
+
+      await fetchSSE(streamUrl, undefined, {
+        onEvent(event, data) {
+          if (event === 'result') {
+            const r = data as { filename?: string; public_url?: string }
+            let fullUrl = ''
+            if (r?.public_url) {
+              const base = API_BASE_URL.replace(/\/$/, '')
+              const path = r.public_url.startsWith('/') ? r.public_url : `/${r.public_url}`
+              fullUrl = `${base}${path}`
+              setLastComposeUrl(fullUrl)
+              setLastComposeFilename(r.filename || null)
+            }
+            taskHandle.done('文案成片已完成')
+            taskStorePatch(jobId, {
+              status: 'done',
+              percent: 100,
+              resultLabel: r?.filename || '文案成片已完成',
+              result: fullUrl ? { filename: r.filename, url: fullUrl } : (data as Record<string, unknown>),
+            })
+            setComposing(false)
+          }
+          if (event === 'failed') {
+            const f = data as { message?: string }
+            const msg = f?.message || '文案成片失败'
+            toast.error(msg)
+            taskHandle.fail(msg)
+            taskStorePatch(jobId, { status: 'error', error: msg })
+            setComposing(false)
+          }
+          if (event === 'progress') {
+            const m = data as { step?: string; message?: string; detail?: { percent?: number } }
+            const pct = typeof m?.detail?.percent === 'number' ? m.detail.percent : null
+            taskStorePatch(jobId, { stage: m?.step, percent: pct })
+            taskHandle.update({ message: `文案成片${pct !== null ? ` · ${pct}%` : ''}`, percent: pct, stage: m?.message })
+          }
+        },
+        onError(err) {
+          toast.error(err.message)
+          taskHandle.fail(err.message)
+          taskStorePatch(jobId, { status: 'error', error: err.message })
+          setComposing(false)
+        },
+      })
     } catch (e) {
-      toast.error(formatFastApiDetail(e))
-    } finally {
+      const msg = formatFastApiDetail(e) || (e as Error)?.message || '文案成片启动失败'
+      toast.error(msg)
+      taskHandle.fail(msg)
+      if (jobId) taskStorePatch(jobId, { status: 'error', error: msg })
       setComposing(false)
     }
   }

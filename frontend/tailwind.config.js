@@ -24,6 +24,16 @@ module.exports = {
           '0%': { transform: 'translateX(0)' },
           '100%': { transform: 'translateX(-50%)' },
         },
+        // 流式进度的不确定条：一段亮带从左滑到右循环
+        'hf-indeterminate': {
+          '0%': { left: '-40%', width: '40%' },
+          '50%': { width: '60%' },
+          '100%': { left: '100%', width: '40%' },
+        },
+        'hf-shimmer': {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
       },
       animation: {
         blob: 'blob 9s ease-in-out infinite',
@@ -31,6 +41,8 @@ module.exports = {
         'blob-slower': 'blob 20s ease-in-out infinite',
         'about-in': 'about-in 0.65s ease-out forwards',
         'home-marquee': 'home-marquee 28s linear infinite',
+        'hf-indeterminate': 'hf-indeterminate 1.4s ease-in-out infinite',
+        'hf-shimmer': 'hf-shimmer 2s linear infinite',
       },
     },
   },

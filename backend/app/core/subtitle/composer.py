@@ -80,6 +80,7 @@ def _maybe_merge_segments_with_transitions(
     segment_transition_ins: Optional[Sequence[Optional[str]]],
     transition_dissolve_sec: float,
     segment_fade_ms: int,
+    final_render_opts: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     if len(seg_paths) <= 1 or not segment_transition_ins:
         return seg_paths
@@ -110,6 +111,7 @@ def _maybe_merge_segments_with_transitions(
             dissolve_sec=transition_dissolve_sec,
             segment_fade_ms=segment_fade_ms,
             out_path=merged,
+            render_opts=final_render_opts,
         )
         logger.info("段间转场合成完成: %s", merged)
         return [merged]
@@ -140,6 +142,7 @@ def compose_final_video(
         segment_transition_ins=segment_transition_ins,
         transition_dissolve_sec=transition_dissolve_sec,
         segment_fade_ms=segment_fade_ms,
+        final_render_opts=final_render_opts,
     )
     out_path = os.path.join(tmp, f"{project_name}.mp4")
     target_w, target_h = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)

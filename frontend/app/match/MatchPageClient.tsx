@@ -45,6 +45,8 @@ import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { useToast } from '@/components/ui/toast-provider'
+import { fetchSSE } from '@/lib/stream'
+import { useTaskStore } from '@/lib/task-store'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { ReplicaTemplateWizard } from './_components/ReplicaTemplateWizard'
 import { ReplicaTemplateLibrary } from './_components/ReplicaTemplateLibrary'
@@ -180,6 +182,9 @@ export default function MatchPage() {
 
   
   const toast = useToast()
+  const taskStoreUpsert = useTaskStore((s) => s.upsert)
+  const taskStorePatch = useTaskStore((s) => s.patch)
+  const taskStoreAppendLog = useTaskStore((s) => s.appendLog)
   const setSelectedVideoIds = (fn: string[] | ((prev: string[]) => string[])) =>
     setMatchSelectedVideoIds(typeof fn === 'function' ? fn(useMatchStore.getState().selectedVideoIds) : fn)
   const setGlobalQuery = setMatchGlobalQuery
@@ -961,7 +966,7 @@ export default function MatchPage() {
             }
           })
           .filter((s) => s.clip_id)
-        const res = await subtitleApi.burn({
+        const burnJob = await subtitleApi.burn({
           segments: segsInput,
           srt_content: currentSrt,
           style: subtitleStyle,
@@ -976,11 +981,53 @@ export default function MatchPage() {
               }
             : {}),
         })
-        const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
-        const a = document.createElement('a')
-        a.href = downloadUrl
-        a.download = res.filename
-        a.click()
+        const burnJid = burnJob.job_id
+        const burnStreamUrl = (burnJob.stream_url || '').startsWith('/')
+          ? `${API_BASE_URL}${burnJob.stream_url}`
+          : burnJob.stream_url || `/api/jobs/${burnJid}/stream`
+        taskStoreUpsert({
+          id: burnJid, title: '字幕烧录', kind: 'burn', status: 'running',
+          percent: null, logs: [], elapsedSec: 0, createdAt: Date.now(),
+        })
+        const burnTask = toast.task('正在渲染字幕成片...')
+        let burnDone = false
+        await fetchSSE(burnStreamUrl, undefined, {
+          onEvent(event, data) {
+            if (event === 'result' && !burnDone) {
+              burnDone = true
+              const r = data as { filename?: string }
+              if (r?.filename) {
+                const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${r.filename}`
+                const a = document.createElement('a')
+                a.href = downloadUrl
+                a.download = r.filename
+                a.click()
+                burnTask.done('字幕成片已下载')
+                taskStorePatch(burnJid, { status: 'done', percent: 100, resultLabel: r.filename, result: { filename: r.filename, url: downloadUrl } })
+              } else {
+                burnTask.fail('导出未返回文件')
+                setExportError('导出未返回文件')
+                taskStorePatch(burnJid, { status: 'error', error: '导出未返回文件' })
+              }
+            }
+            if (event === 'failed') {
+              burnDone = true
+              const f = data as { message?: string }
+              const msg = f?.message || '字幕渲染失败'
+              toast.error(msg)
+              burnTask.fail(msg)
+              setExportError(msg)
+              taskStorePatch(burnJid, { status: 'error', error: msg })
+            }
+          },
+          onError(err) {
+            burnDone = true
+            toast.error(err.message)
+            burnTask.fail(err.message)
+            setExportError(err.message)
+            taskStorePatch(burnJid, { status: 'error', error: err.message })
+          },
+        })
       } else if (exportMode === 'jianying_tts') {
         if (exportSegs.length === 0) {
           toast.info(
@@ -1042,7 +1089,7 @@ export default function MatchPage() {
             }
           })
           .filter((s) => s.clip_id)
-        const res = await subtitleApi.exportOriginal({
+        const exportJob = await subtitleApi.exportOriginal({
           segments: segsInput,
           style: subtitleStyle,
           project_name: projectName,
@@ -1051,11 +1098,53 @@ export default function MatchPage() {
           export_backend: exportBackend,
           bgm: buildManualBgmPayload(),
         })
-        const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${res.filename}`
-        const a = document.createElement('a')
-        a.href = downloadUrl
-        a.download = res.filename
-        a.click()
+        const exportJid = exportJob.job_id
+        const exportStreamUrl = (exportJob.stream_url || '').startsWith('/')
+          ? `${API_BASE_URL}${exportJob.stream_url}`
+          : exportJob.stream_url || `/api/jobs/${exportJid}/stream`
+        taskStoreUpsert({
+          id: exportJid, title: '原声导出', kind: 'export_original', status: 'running',
+          percent: null, logs: [], elapsedSec: 0, createdAt: Date.now(),
+        })
+        const exportTask = toast.task('正在导出原声成片...')
+        let exportDone = false
+        await fetchSSE(exportStreamUrl, undefined, {
+          onEvent(event, data) {
+            if (event === 'result' && !exportDone) {
+              exportDone = true
+              const r = data as { filename?: string }
+              if (r?.filename) {
+                const downloadUrl = `${API_BASE_URL}/api/subtitle/download/${r.filename}`
+                const a = document.createElement('a')
+                a.href = downloadUrl
+                a.download = r.filename
+                a.click()
+                exportTask.done('原声成片已下载')
+                taskStorePatch(exportJid, { status: 'done', percent: 100, resultLabel: r.filename, result: { filename: r.filename, url: downloadUrl } })
+              } else {
+                exportTask.fail('导出未返回文件')
+                setExportError('导出未返回文件')
+                taskStorePatch(exportJid, { status: 'error', error: '导出未返回文件' })
+              }
+            }
+            if (event === 'failed') {
+              exportDone = true
+              const f = data as { message?: string }
+              const msg = f?.message || '原声导出失败'
+              toast.error(msg)
+              exportTask.fail(msg)
+              setExportError(msg)
+              taskStorePatch(exportJid, { status: 'error', error: msg })
+            }
+          },
+          onError(err) {
+            exportDone = true
+            toast.error(err.message)
+            exportTask.fail(err.message)
+            setExportError(err.message)
+            taskStorePatch(exportJid, { status: 'error', error: err.message })
+          },
+        })
       } else if (exportMode === 'jianying_original') {
         const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
         if (exportSegs.length === 0) return
@@ -1416,6 +1505,7 @@ export default function MatchPage() {
   }) {
     setAutoError('')
     setAutoLoading(true)
+    const task = toast.task('正在生成快剪方案…')
     try {
       const res = await autoEditApi.voiceoverQuickCut({
         video_ids: payload.videoIds,
@@ -1436,7 +1526,7 @@ export default function MatchPage() {
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
-      toast.success(plans.length ? `快剪方案已生成（${plans.length} 个）` : '快剪方案已生成')
+      task.done(plans.length ? `快剪方案已生成（${plans.length} 个）` : '快剪方案已生成')
     } catch (e: unknown) {
       const raw = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
       let msg: string
@@ -1448,6 +1538,7 @@ export default function MatchPage() {
         msg = (e as Error)?.message || '快剪方案生成失败'
       }
       setAutoError(msg)
+      task.fail(msg)
     } finally {
       setAutoLoading(false)
     }
@@ -1456,6 +1547,7 @@ export default function MatchPage() {
   async function handleVideoDubPlan(payload: VideoDubGeneratePayload) {
     setAutoError('')
     setAutoLoading(true)
+    const task = toast.task('正在生成配音方案…')
     try {
       const res = await autoEditApi.videoDubPlan({
         video_ids: payload.videoIds,
@@ -1466,10 +1558,11 @@ export default function MatchPage() {
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
-      toast.success(plans.length ? `配音方案已生成（${plans.length} 个）` : '配音方案已生成')
+      task.done(plans.length ? `配音方案已生成（${plans.length} 个）` : '配音方案已生成')
     } catch (e: unknown) {
       const msg = formatFastApiDetail(e) || (e as Error)?.message || '配音方案生成失败'
       setAutoError(msg)
+      task.fail(msg)
     } finally {
       setAutoLoading(false)
     }
@@ -1478,6 +1571,7 @@ export default function MatchPage() {
   async function handleMixEditPlan(payload: MixEditGeneratePayload) {
     setAutoError('')
     setAutoLoading(true)
+    const task = toast.task('正在生成混剪方案…')
     try {
       const useTtsTrack =
         payload.mixAudioMode === 'mute_all_original' &&
@@ -1502,10 +1596,11 @@ export default function MatchPage() {
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
-      toast.success(plans.length ? `混剪方案已生成（${plans.length} 个）` : '混剪方案已生成')
+      task.done(plans.length ? `混剪方案已生成（${plans.length} 个）` : '混剪方案已生成')
     } catch (e: unknown) {
       const msg = formatFastApiDetail(e) || (e as Error)?.message || '混剪方案生成失败'
       setAutoError(msg)
+      task.fail(msg)
     } finally {
       setAutoLoading(false)
     }
@@ -1514,73 +1609,155 @@ export default function MatchPage() {
   async function handleAutoRealizePlan(plan: AutoEditPlanApi, index: number) {
     setAutoRealizeMsg('')
     setAutoRealizingId(plan.plan_id)
+    let planForRealize = plan
+    let forceTtsPipeline = false
+    let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
+    if (mode === 'film_commentary') {
+      forceTtsPipeline = true
+      const voBgm = buildVoiceoverBgmPlanPayload()
+      if (voBgm) {
+        planForRealize = { ...planForRealize, bgm: voBgm }
+      }
+    } else if (mode === 'voiceover') {
+      if (voiceoverRedubEnabled) {
+        if (!voiceoverPlanSupportsRedub(planForRealize)) {
+          const msg =
+            '重复配音要求每一段成片均有 ASR 文案。当前方案含有非 ASR 段（例如音频粗剪占位），请改用极速/智能快剪或完成语音识别后再试。'
+          setAutoRealizeMsg(msg)
+          toast.error(msg)
+          setAutoRealizingId(null)
+          return
+        }
+        planForRealize = buildVoiceoverRedubPlan(planForRealize)
+        forceTtsPipeline = true
+        ttsAlignPayload = { ...voiceoverTtsAlign }
+      }
+      const voBgm = buildVoiceoverBgmPlanPayload()
+      if (voBgm) {
+        planForRealize = { ...planForRealize, bgm: voBgm }
+      }
+    }
+    if (mode === 'mix_edit' && planForRealize.mode === 'voiceover') {
+      forceTtsPipeline = true
+      ttsAlignPayload = {
+        ...mixEditTtsAlign,
+        split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
+      }
+    }
+    if (mode === 'video_dub') {
+      forceTtsPipeline = true
+      ttsAlignPayload = { ...videoDubTtsAlign }
+    }
+    if (mode === 'mix_edit' || mode === 'auto') {
+      const customBgm = buildAutoCustomBgmPlanPayload()
+      if (customBgm) {
+        planForRealize = { ...planForRealize, bgm: customBgm }
+      }
+    }
+    planForRealize = applyAutoBgmRealizeOptions(planForRealize)
+
+    const title = '成片落地: ' + (plan.title || '方案' + (index + 1))
+    let jobId = ''
+    const taskHandle = toast.task(title)
+
     try {
-      let planForRealize = plan
-      let forceTtsPipeline = false
-      let ttsAlignPayload: TtsVideoAlignConfigApi | undefined
-      if (mode === 'film_commentary') {
-        forceTtsPipeline = true
-        const voBgm = buildVoiceoverBgmPlanPayload()
-        if (voBgm) {
-          planForRealize = { ...planForRealize, bgm: voBgm }
-        }
-      } else if (mode === 'voiceover') {
-        if (voiceoverRedubEnabled) {
-          if (!voiceoverPlanSupportsRedub(planForRealize)) {
-            const msg =
-              '重新配音要求每一段成片均有 ASR 文案。当前方案含有非 ASR 段（例如音频粗剪占位），请改用极速/智能快剪或完成语音识别后再试。'
-            setAutoRealizeMsg(msg)
-            toast.error(msg)
-            return
-          }
-          planForRealize = buildVoiceoverRedubPlan(planForRealize)
-          forceTtsPipeline = true
-          ttsAlignPayload = { ...voiceoverTtsAlign }
-        }
-        const voBgm = buildVoiceoverBgmPlanPayload()
-        if (voBgm) {
-          planForRealize = { ...planForRealize, bgm: voBgm }
-        }
-      }
-      if (mode === 'mix_edit' && planForRealize.mode === 'voiceover') {
-        forceTtsPipeline = true
-        ttsAlignPayload = {
-          ...mixEditTtsAlign,
-          split_narration_by_sentence: mixEditTtsAlign.split_narration_by_sentence === true,
-        }
-      }
-      if (mode === 'video_dub') {
-        forceTtsPipeline = true
-        ttsAlignPayload = { ...videoDubTtsAlign }
-      }
-      if (mode === 'mix_edit' || mode === 'auto') {
-        const customBgm = buildAutoCustomBgmPlanPayload()
-        if (customBgm) {
-          planForRealize = { ...planForRealize, bgm: customBgm }
-        }
-      }
-      planForRealize = applyAutoBgmRealizeOptions(planForRealize)
-      const res = await autoEditApi.realize({
+      const created = await autoEditApi.realize({
         plan: planForRealize,
-        project_name: `autoedit_${(plan.title || `plan_${index + 1}`).slice(0, 20)}`,
+        project_name: 'autoedit_' + (plan.title || 'plan_' + (index + 1)).slice(0, 20),
         include_subtitle: subtitleEnabled,
         style: subtitleStyle,
         ...(forceTtsPipeline ? { force_tts_pipeline: true, tts_align: ttsAlignPayload } : {}),
       })
-      const downloadUrl = `${API_BASE_URL}${res.url}`
-      setAutoRealizeDownloads((prev) => ({
-        ...prev,
-        [plan.plan_id]: {
-          filename: res.filename,
-          url: downloadUrl,
+      jobId = created.job_id
+      const streamUrl = (created.stream_url || '').startsWith('/')
+        ? API_BASE_URL + created.stream_url
+        : created.stream_url || '/api/jobs/' + jobId + '/stream'
+
+      taskStoreUpsert({
+        id: jobId,
+        title,
+        kind: 'realize',
+        status: 'running',
+        percent: null,
+        logs: [],
+        elapsedSec: 0,
+        createdAt: Date.now(),
+        onCancel: function() {
+          apiClient.post('/api/jobs/' + jobId + '/cancel').catch(function() {})
         },
-      }))
-      setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
+      })
+
+      await fetchSSE(
+        streamUrl,
+        undefined,
+        {
+          onEvent(event, data) {
+            if (event === 'result') {
+              const r = data as { filename?: string; url?: string; mode?: string }
+              if (r?.filename && r?.url) {
+                const downloadUrl = API_BASE_URL + (r.url as string)
+                setAutoRealizeDownloads((prev) => ({
+                  ...prev,
+                  [plan.plan_id]: {
+                    filename: r.filename as string,
+                    url: downloadUrl,
+                  },
+                }))
+                setAutoRealizeMsg('成片已生成，请点击下方下载链接。')
+                taskHandle.done('成片已就绪')
+                taskStorePatch(jobId, {
+                  status: 'done',
+                  percent: 100,
+                  resultLabel: r.filename as string,
+                  result: { filename: r.filename, url: downloadUrl },
+                })
+              } else {
+                const errMsg = '成片完成但未获取到下载地址，请重试'
+                setAutoRealizeMsg(errMsg)
+                toast.error(errMsg)
+                taskHandle.fail(errMsg)
+                taskStorePatch(jobId, { status: 'error', error: errMsg })
+              }
+              setAutoRealizingId(null)
+            }
+            if (event === 'failed') {
+              const f = data as { message?: string; cancelled?: boolean }
+              const errMsg = f?.message || '成片落地失败'
+              const cancelled = !!f?.cancelled
+              setAutoRealizeMsg(errMsg)
+              toast.error(errMsg)
+              if (cancelled) taskHandle.done('已取消')
+              else taskHandle.fail(errMsg)
+              taskStorePatch(jobId, { status: cancelled ? 'cancelled' : 'error', error: errMsg })
+              setAutoRealizingId(null)
+            }
+            if (event === 'progress') {
+              const m = data as { step?: string; message?: string; detail?: { percent?: number } }
+              const pct = typeof m?.detail?.percent === 'number' ? m.detail.percent : null
+              taskStorePatch(jobId, { stage: m?.step, percent: pct })
+              if (m?.message) taskStoreAppendLog(jobId, m.message)
+              taskHandle.update({
+                message: title + (pct !== null ? ' · ' + pct + '%' : ''),
+                percent: pct,
+                stage: m?.message,
+              })
+            }
+          },
+          onError(err) {
+            setAutoRealizeMsg(err.message)
+            toast.error(err.message)
+            taskHandle.fail(err.message)
+            taskStorePatch(jobId, { status: 'error', error: err.message })
+            setAutoRealizingId(null)
+          },
+        },
+      )
     } catch (e: unknown) {
-      const msg = formatFastApiDetail(e)
+      const msg = formatFastApiDetail(e) || (e as Error)?.message || '启动成片失败'
       setAutoRealizeMsg(msg)
       toast.error(msg)
-    } finally {
+      taskHandle.fail(msg)
+      if (jobId) taskStorePatch(jobId, { status: 'error', error: msg })
       setAutoRealizingId(null)
     }
   }

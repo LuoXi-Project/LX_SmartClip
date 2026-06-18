@@ -4,6 +4,7 @@ import './globals.css'
 import { LicenseGate } from './_components/LicenseGate'
 import { ToastProvider } from '@/components/ui/toast-provider'
 import { ConfirmProvider } from '@/hooks/use-confirm'
+import { TaskHub } from '@/components/ui/task-hub'
 import TopNav from './_components/TopNav'
 import { OnboardingGuide } from './_components/OnboardingGuide'
 
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </nav>
         <ToastProvider>
           <ConfirmProvider>
+            <TaskHub />
             <div className="pt-12 flex-1">
               <LicenseGate>{children}</LicenseGate>
               <OnboardingGuide />

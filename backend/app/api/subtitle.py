@@ -26,6 +26,7 @@ from app.models.subtitle import (
 )
 
 from app.core.blocking_pool import run_heavy
+from app.jobs import create_job, JobReporter, launch_job, update_job_status
 from app.db.database import DB_PATH
 from app.utils.ffprobe_utils import probe_duration
 from app.utils.paths import ensure_storage_subpath, get_fonts_dir, get_storage_root, resolve_stored_path, storage_public_url_for_file
@@ -603,16 +604,35 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
 
 @router.post("/burn")
 async def burn_subtitle(req: BurnSubtitleRequest, request: Request):
-    """合并视频 + 替换TTS音轨 + 硬烧字幕，保存到静态目录，返回可访问的 URL。"""
-    if await request.is_disconnected():
-        raise HTTPException(400, "客户端已断开连接")
-    return await execute_burn_subtitle(req)
+    """合并视频 + 替换TTS音轨 + 硬烧字幕 -> 后台任务，返回 job_id。"""
+    job = await create_job(kind="burn", initial_step="render")
+    job_id = job["id"]
+
+    async def _run():
+        reporter = JobReporter(job_id)
+        await reporter.send("render", "running", "正在渲染成片...")
+        try:
+            result = await execute_burn_subtitle(req)
+            await update_job_status(job_id, "done", result=result)
+            await reporter.send("done", "done", "成片渲染完成", {"result": result})
+        except Exception as e:
+            logger.exception("burn job %s failed", job_id)
+            await reporter.send("error", "error", f"成片渲染失败: {e}")
+            await update_job_status(job_id, "error", error_message=str(e))
+
+    launch_job(job_id, _run())
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "stream_url": f"/api/jobs/{job_id}/stream",
+        "ws_url": f"/api/jobs/{job_id}/ws",
+    }
 
 
 # ---------------------------------------------------------------------------
 # Route: 原声导出（保留原音 + 可选字幕）
 # ---------------------------------------------------------------------------
-@router.post("/export_original", response_model=BurnSubtitleResponse)
+@router.post("/export_original")
 async def export_original(req: ExportOriginalRequest, request: Request):
     """
     根据原始素材（不使用 TTS）拼接视频：
@@ -621,7 +641,28 @@ async def export_original(req: ExportOriginalRequest, request: Request):
     """
     if await request.is_disconnected():
         raise HTTPException(400, "客户端已断开连接")
-    return await execute_export_original(req)
+    job = await create_job(kind="export_original", initial_step="render")
+    job_id = job["id"]
+
+    async def _run():
+        reporter = JobReporter(job_id)
+        await reporter.send("render", "running", "正在导出原声成片...")
+        try:
+            result = await execute_export_original(req)
+            await update_job_status(job_id, "done", result=result)
+            await reporter.send("done", "done", "原声导出完成", {"result": result})
+        except Exception as e:
+            logger.exception("export_original job %s failed", job_id)
+            await update_job_status(job_id, "error", error_message=str(e))
+            await reporter.send("error", "error", "原声导出失败: " + str(e))
+
+    launch_job(job_id, _run())
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "stream_url": "/api/jobs/" + job_id + "/stream",
+        "ws_url": "/api/jobs/" + job_id + "/ws",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -5,8 +5,11 @@ import { Download, Film, Loader2, Mic, Scissors, Volume2 } from 'lucide-react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import { resolveStorageUrl } from '@/lib/studio-media-url'
 import { autoEditApi, formatFastApiDetail } from '@/lib/api'
+import { API_BASE_URL } from '@/lib/api'
+import { fetchSSE } from '@/lib/stream'
 import { patchAgentWorkspace } from '@/lib/agent-api'
 import { useToast } from '@/components/ui/toast-provider'
+import { useTaskStore } from '@/lib/task-store'
 import { useConfirm } from '@/hooks/use-confirm'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
 import { useStudioStore } from '@/lib/studio-store'
@@ -25,6 +28,8 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
   const toast = useToast()
   const confirm = useConfirm()
   const { sessionId, workspace, setWorkspace, setSelectedArtifact } = useStudioStore()
+  const taskStoreUpsert = useTaskStore((s) => s.upsert)
+  const taskStorePatch = useTaskStore((s) => s.patch)
   const { media } = useStudioMediaConfig()
   const [realizing, setRealizing] = useState(false)
   const [exportingJY, setExportingJY] = useState(false)
@@ -84,32 +89,94 @@ export function StudioPlanActions({ plan }: StudioPlanActionsProps) {
     if (!ok) return
 
     setRealizing(true)
+    const taskHandle = toast.task('成片渲染中...')
+    let jobId = ''
     try {
-      const res = await autoEditApi.realize(buildRealizePayload(forceTts))
-      const url = resolveStorageUrl(res.url)
-      setLastVideoUrl(url)
-      toast.success(res.mode === 'original' ? '原声成片已生成' : '配音成片已生成')
-      setSelectedArtifact({
-        type: 'export',
-        id: res.filename,
-        payload: {
-          kind: 'video',
-          filename: res.filename,
-          url,
-          mode: res.mode,
-          plan_id: plan.plan_id,
+      const created = await autoEditApi.realize(buildRealizePayload(forceTts))
+      jobId = created.job_id
+      const streamUrl = (created.stream_url || '').startsWith('/')
+        ? API_BASE_URL + created.stream_url
+        : created.stream_url || '/api/jobs/' + jobId + '/stream'
+
+      taskStoreUpsert({
+        id: jobId,
+        title: '成片渲染',
+        kind: 'realize',
+        status: 'running',
+        percent: null,
+        logs: [],
+        elapsedSec: 0,
+        createdAt: Date.now(),
+      })
+
+      await fetchSSE(streamUrl, undefined, {
+        onEvent(event, data) {
+          if (event === 'result') {
+            const r = data as { filename?: string; url?: string; mode?: string }
+            if (r?.filename && r?.url) {
+              const filename = r.filename
+              const url = resolveStorageUrl(r.url)
+              setLastVideoUrl(url)
+              taskHandle.done(r.mode === 'original' ? '原声成片已生成' : '配音成片已生成')
+              setSelectedArtifact({
+                type: 'export',
+                id: filename,
+                payload: {
+                  kind: 'video',
+                  filename,
+                  url,
+                  mode: r.mode || '',
+                  plan_id: plan.plan_id,
+                },
+              })
+              persistExport({
+                kind: 'video',
+                filename,
+                url,
+                mode: r.mode || '',
+                plan_id: plan.plan_id,
+              })
+              taskStorePatch(jobId, {
+                status: 'done',
+                percent: 100,
+                resultLabel: filename,
+                result: { filename, url, mode: r.mode },
+              })
+            } else {
+              toast.error('成片完成但未获取到下载地址，请重试')
+              taskHandle.fail('成片失败')
+              taskStorePatch(jobId, { status: 'error', error: '未获取到下载地址' })
+            }
+            setRealizing(false)
+          }
+          if (event === 'failed') {
+            const f = data as { message?: string; cancelled?: boolean }
+            const errMsg = f?.message || '成片失败'
+            toast.error(errMsg)
+            if (f?.cancelled) taskHandle.done('已取消')
+            else taskHandle.fail(errMsg)
+            taskStorePatch(jobId, { status: 'error', error: errMsg })
+            setRealizing(false)
+          }
+          if (event === 'progress') {
+            const m = data as { step?: string; message?: string; detail?: { percent?: number } }
+            const pct = typeof m?.detail?.percent === 'number' ? m.detail.percent : null
+            taskStorePatch(jobId, { stage: m?.step, percent: pct })
+            taskHandle.update({ message: '成片渲染中...' + (pct !== null ? ' · ' + pct + '%' : ''), percent: pct, stage: m?.message })
+          }
+        },
+        onError(err) {
+          toast.error(err.message)
+          taskHandle.fail(err.message)
+          taskStorePatch(jobId, { status: 'error', error: err.message })
+          setRealizing(false)
         },
       })
-      await persistExport({
-        kind: 'video',
-        filename: res.filename,
-        url,
-        mode: res.mode,
-        plan_id: plan.plan_id,
-      })
     } catch (e: unknown) {
-      toast.error(formatFastApiDetail(e) || (e as Error)?.message || '成片失败')
-    } finally {
+      const msg = formatFastApiDetail(e) || (e as Error)?.message || '成片失败'
+      toast.error(msg)
+      taskHandle.fail(msg)
+      if (jobId) taskStorePatch(jobId, { status: 'error', error: msg })
       setRealizing(false)
     }
   }

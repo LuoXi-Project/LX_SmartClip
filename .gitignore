@@ -38,3 +38,6 @@ ffmpeg
 git-weekly-log.txt
 .history/
 .codegraph/
+.agents/skills
+.claude/skills
+skills-lock.json

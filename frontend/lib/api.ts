@@ -154,6 +154,31 @@ export const processJobsApi = {
     apiClient.post<unknown, { ok: boolean; task_id: string; video_id: string }>(`/api/process-jobs/${taskId}/cancel`),
 }
 
+// ── 通用后台任务（async_jobs）────────────────────────────────────────────────
+export interface JobSnapshot {
+  id: string
+  kind: string
+  ref_type: string | null
+  ref_id: string | null
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled'
+  current_step: string | null
+  steps: Record<string, { status: string; message: string; detail: Record<string, unknown> }>
+  metrics: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  finished_at: string | null
+}
+
+export const jobsApi = {
+  get: (jobId: string) =>
+    apiClient.get<unknown, JobSnapshot>(`/api/jobs/${jobId}`),
+  cancel: (jobId: string) =>
+    apiClient.post<unknown, { ok: boolean; job_id: string }>(`/api/jobs/${jobId}/cancel`),
+  streamUrl: (jobId: string) => `/api/jobs/${jobId}/stream`,
+}
+
 export interface VideoListParams {
   q?: string
   status?: string
@@ -279,7 +304,7 @@ export const videosApi = {
     max_height?: number
     acodec: 'aac'
     audio_bitrate_k: number
-  }) => apiClient.post<unknown, { id: string; name: string; file_path: string; thumbnail_path: string | null }>(`/api/videos/${id}/reencode`, payload),
+  }) => apiClient.post<unknown, { job_id: string; status: string; stream_url: string; ws_url: string; video_id: string }>(`/api/videos/${id}/reencode`, payload),
   delete: (id: string) => apiClient.delete(`/api/videos/${id}`),
   rename: (id: string, name: string) => apiClient.patch<unknown, { id: string; name: string }>(`/api/videos/${id}`, { name }),
   updateStatus: (id: string, status: Video['status']) =>
@@ -497,9 +522,9 @@ export const subtitleApi = {
   generate: (payload: GenerateSRTRequest) =>
     apiClient.post<unknown, GenerateSRTResponse>('/api/subtitle/generate', payload),
   burn: (payload: BurnSubtitleRequest) =>
-    apiClient.post<unknown, BurnSubtitleResponse>('/api/subtitle/burn', payload),
+    apiClient.post<unknown, { job_id: string; status: string; stream_url: string; ws_url: string }>('/api/subtitle/burn', payload),
   exportOriginal: (payload: ExportOriginalRequest) =>
-    apiClient.post<unknown, BurnSubtitleResponse>('/api/subtitle/export_original', payload),
+    apiClient.post<unknown, { job_id: string; status: string; stream_url: string; ws_url: string }>('/api/subtitle/export_original', payload),
   exportJianyingDraft: (payload: JianYingDraftExportRequestApi) =>
     apiClient.post<unknown, JianYingDraftExportResponseApi>('/api/subtitle/export_jianying_draft', payload),
 }
@@ -1157,7 +1182,7 @@ export const autoEditApi = {
   }) =>
     apiClient.post<
       unknown,
-      { mode: 'voiceover' | 'original'; filename: string; url: string }
+      { job_id: string; status: string; stream_url: string; ws_url: string }
     >('/api/auto-edit/realize', payload),
   exportJianyingDraft: (payload: {
     plan: AutoEditPlanApi
@@ -1384,11 +1409,10 @@ export const scriptStockApi = {
     material_tts_fill?: ScriptStockMaterialTtsFill
     material_tts_longer?: ScriptStockMaterialTtsLonger
     include_subtitle?: boolean
-    /** 与侧栏字幕样式一致；include_subtitle 为 true 时建议传入 */
     subtitle_style?: SubtitleStyle
     bgm?: BgmMixConfigApi
   }) =>
-    apiClient.post<unknown, { filename: string; public_url: string; stored_rel_path: string }>(
+    apiClient.post<unknown, { job_id: string; status: string; stream_url: string; ws_url: string }>(
       '/api/script-stock/compose',
       body,
     ),

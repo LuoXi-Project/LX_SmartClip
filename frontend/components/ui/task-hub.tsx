@@ -1,19 +1,35 @@
 'use client'
 
+import { useCallback, useRef, useState } from 'react'
 import clsx from 'clsx'
 import Link from 'next/link'
-import { Loader2, ChevronUp, ChevronDown, X, ListChecks, Download } from 'lucide-react'
+import { Loader2, ChevronUp, ChevronDown, X, ListChecks, Download, GripHorizontal } from 'lucide-react'
 
 import { useTaskStore } from '@/lib/task-store'
 import { StreamingProgress } from '@/components/ui/streaming-progress'
 
 /**
- * 全局后台任务面板。
+ * 全局后台任务面板（可拖拽）。
  *
  * 挂载在 app/layout.tsx（ToastProvider 内）。订阅 lib/task-store，把所有后台 job 的
  * 实时进度集中展示在右下角：支持多任务并行、折叠为角标、展开看流式日志、终止/清除。
- * 无任务时不渲染。
+ * 无任务时不渲染。面板和角标均可拖拽移动，避免遮挡页面按钮。
  */
+
+/** 回正按钮：回到默认右下角位置 */
+function ResetPositionBtn({ onClick, onPointerDown }: { onClick: () => void; onPointerDown?: (e: React.PointerEvent) => void }) {
+  return (
+    <button
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+      className="rounded-md p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 transition-colors"
+      title="回到右下角"
+    >
+      <ChevronDown className="w-3.5 h-3.5 rotate-[-135deg]" />
+    </button>
+  )
+}
+
 export function TaskHub() {
   const tasks = useTaskStore((s) => s.tasks)
   const collapsed = useTaskStore((s) => s.collapsed)
@@ -25,16 +41,70 @@ export function TaskHub() {
   const list = Object.values(tasks).sort((a, b) => b.createdAt - a.createdAt)
   const runningCount = list.filter((t) => t.status === 'running').length
 
+  // ── 拖拽 ──────────────────────────────────────────────────────────────
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const origin = useRef({ x: 0, y: 0 })
+  const offset = useRef({ x: 0, y: 0 })
+  const containerRef = useRef<HTMLDivElement>(null)
+  const DRAG_THRESHOLD = 4
+
+  const resetPos = useCallback(() => setPos({ x: 0, y: 0 }), [])
+
+  const onPointerDown = useCallback((e: React.PointerEvent, onClick?: () => void) => {
+    const el = containerRef.current
+    if (!el) return
+    el.setPointerCapture(e.pointerId)
+    const rect = el.getBoundingClientRect()
+    origin.current = { x: e.clientX, y: e.clientY }
+    offset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+
+    let dragging = false
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - origin.current.x) > DRAG_THRESHOLD || Math.abs(ev.clientY - origin.current.y) > DRAG_THRESHOLD) {
+          dragging = true
+        } else {
+          return
+        }
+      }
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const w = el.offsetWidth || 340
+      const h = el.offsetHeight || 60
+      const x = vw - (ev.clientX - offset.current.x) - w
+      const y = vh - (ev.clientY - offset.current.y) - h
+      setPos({ x: Math.max(0, Math.min(vw - w, x)), y: Math.max(0, Math.min(vh - h, y)) })
+    }
+
+    const onUp = () => {
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      if (!dragging && onClick) onClick()
+    }
+
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+  }, [])
+
+  /** 阻止按钮上的事件冒泡到拖拽把手 */
+  const stopDrag = useCallback((e: React.PointerEvent) => { e.stopPropagation() }, [])
+
+  const expand = useCallback(() => setCollapsed(false), [setCollapsed])
+
   if (list.length === 0) return null
 
-  // 折叠态：右下角角标
+  // ── 折叠态：可拖拽角标（无移动 = 点击展开）────────────────────────────
   if (collapsed) {
     return (
-      <div className="fixed bottom-6 right-6 z-[1000]">
-        <button
-          onClick={() => setCollapsed(false)}
-          className="group flex items-center gap-2 rounded-full border border-cyan-500/40 bg-[#161922]/95 px-3.5 py-2 text-sm text-cyan-200 shadow-xl shadow-black/40 backdrop-blur-md hover:border-cyan-400 transition-colors"
-          title="展开任务面板"
+      <div
+        ref={containerRef}
+        className="fixed z-[1000] select-none touch-none"
+        style={{ right: `${pos.x}px`, bottom: `${pos.y}px` }}
+        onPointerDown={(e) => onPointerDown(e, expand)}
+      >
+        <div
+          className="group flex items-center gap-2 rounded-full border border-cyan-500/40 bg-[#161922]/95 px-3.5 py-2 text-sm text-cyan-200 shadow-xl shadow-black/40 backdrop-blur-md hover:border-cyan-400 transition-colors cursor-grab active:cursor-grabbing pointer-events-none"
         >
           {runningCount > 0 ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -45,25 +115,35 @@ export function TaskHub() {
             {runningCount > 0 ? `${runningCount} 个任务进行中` : `${list.length} 个任务`}
           </span>
           <ChevronUp className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100" />
-        </button>
+        </div>
       </div>
     )
   }
 
-  // 展开态：面板
+  // ── 展开态：可拖拽面板 ────────────────────────────────────────────────
   return (
-    <div className="fixed bottom-6 right-6 z-[1000] w-[340px] max-w-[calc(100vw-3rem)]">
+    <div
+      ref={containerRef}
+      className="fixed z-[1000] w-[340px] max-w-[calc(100vw-3rem)] select-none"
+      style={{ right: `${pos.x}px`, bottom: `${pos.y}px` }}
+    >
       <div className="rounded-2xl border border-slate-700/60 bg-[#161922]/95 shadow-2xl shadow-black/60 backdrop-blur-md overflow-hidden">
-        {/* 头部 */}
-        <div className="flex items-center justify-between gap-2 border-b border-slate-700/50 px-3.5 py-2.5">
+        {/* 头部（拖拽把手） */}
+        <div
+          className="flex items-center justify-between gap-2 border-b border-slate-700/50 px-3.5 py-2.5 cursor-grab active:cursor-grabbing"
+          onPointerDown={onPointerDown}
+        >
           <div className="flex items-center gap-2 text-sm text-slate-200">
             {runningCount > 0 && <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />}
             <span className="font-medium">
               {runningCount > 0 ? `后台任务 · ${runningCount} 进行中` : '后台任务'}
             </span>
+            <GripHorizontal className="w-3 h-3 text-slate-600" />
           </div>
           <div className="flex items-center gap-1">
+            <ResetPositionBtn onClick={resetPos} onPointerDown={stopDrag} />
             <button
+              onPointerDown={stopDrag}
               onClick={clearFinished}
               disabled={runningCount === list.length}
               className="rounded-md px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
@@ -72,6 +152,7 @@ export function TaskHub() {
               清除已完成
             </button>
             <button
+              onPointerDown={stopDrag}
               onClick={() => setCollapsed(true)}
               className="rounded-md p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
               title="折叠"
@@ -171,6 +252,7 @@ function KindDot({ kind }: { kind: string }) {
     transcribe: 'bg-sky-400',
     slice: 'bg-sky-400',
     tts: 'bg-pink-400',
+    script_stock_compose: 'bg-cyan-400',
   }
   return <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', color[kind] ?? 'bg-slate-400')} />
 }

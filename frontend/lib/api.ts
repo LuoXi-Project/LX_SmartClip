@@ -1169,6 +1169,10 @@ export interface VoiceoverQuickCutRequestApi {
   activity_tail_pad_sec?: number
   /** strategy=audio_activity_fast 时可选：前端预计算的“保留区间”（绝对时间秒） */
   activity_keep_ranges?: Array<{ video_id: string; start: number; end: number }>
+  /** 口播快剪（asr_fast/standard/semantic）：每段句头多保留秒数，保留说话间隙；默认 0 */
+  asr_head_pad_sec?: number
+  /** 口播快剪（asr_fast/standard/semantic）：每段句尾多保留秒数；默认 0 */
+  asr_tail_pad_sec?: number
 }
 
 export const autoEditApi = {

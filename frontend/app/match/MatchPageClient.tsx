@@ -1502,6 +1502,8 @@ export default function MatchPage() {
       activityTailPadSec: number
       activityKeepRanges?: Array<{ video_id: string; start: number; end: number }>
     }
+    asrHeadPadSec?: number
+    asrTailPadSec?: number
   }) {
     setAutoError('')
     setAutoLoading(true)
@@ -1523,6 +1525,8 @@ export default function MatchPage() {
         activity_head_pad_sec: payload.audioActivityConfig?.activityHeadPadSec,
         activity_tail_pad_sec: payload.audioActivityConfig?.activityTailPadSec,
         activity_keep_ranges: payload.audioActivityConfig?.activityKeepRanges,
+        asr_head_pad_sec: payload.asrHeadPadSec,
+        asr_tail_pad_sec: payload.asrTailPadSec,
       })
       const plans = res.plans || []
       setAutoPlans(plans.map((p) => applyAutoBgmRealizeOptions(p)))
@@ -2305,6 +2309,7 @@ export default function MatchPage() {
                 selectedVideoIds={selectedVideoIds}
                 doneVideos={scopeVideos}
                 onGenerate={handleVoiceoverQuickCut}
+                generatedPlanSegments={autoPlans[0]?.segments}
                 redubEnabled={voiceoverRedubEnabled}
                 onRedubEnabledChange={setVoiceoverRedubEnabled}
                 ttsAlign={voiceoverTtsAlign}

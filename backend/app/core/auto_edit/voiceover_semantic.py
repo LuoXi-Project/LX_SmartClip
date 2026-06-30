@@ -568,12 +568,17 @@ def _merge_units_to_segments(
     return [tuple(g) for g in groups]
 
 
-def _apply_buffer(group: tuple[SentenceUnit, ...]) -> tuple[float, float, str]:
+def _apply_buffer(
+    group: tuple[SentenceUnit, ...],
+    *,
+    head_pad_sec: float = BUFFER_SEC,
+    tail_pad_sec: float = BUFFER_SEC,
+) -> tuple[float, float, str]:
     u0 = group[0]
     u1 = group[-1]
     clip_dur = u0.clip_dur
-    st = max(0.0, u0.st_rel - BUFFER_SEC)
-    et = min(clip_dur if clip_dur > 0 else u1.et_rel, u1.et_rel + BUFFER_SEC)
+    st = max(0.0, u0.st_rel - max(0.0, head_pad_sec))
+    et = min(clip_dur if clip_dur > 0 else u1.et_rel, u1.et_rel + max(0.0, tail_pad_sec))
     if et <= st:
         et = u1.et_rel
     texts = "\n".join(x.text.strip() for x in group if x.text.strip())
@@ -666,6 +671,9 @@ async def build_semantic_voiceover_plan(
     tokens_per_char = _cfg_float("tokens_per_char", DEFAULT_TOKENS_PER_CHAR)
     input_safety_tokens = max(1, _cfg_int("input_safety_tokens", LLM_INPUT_SAFETY_TOKENS))
     chapter_anchor_min = max(0, _cfg_int("chapter_anchor_min", 1))
+    # 口播快剪句头/句尾补偿（保留说话间隙）；未配置时沿用默认 BUFFER_SEC
+    semantic_head_pad = max(0.0, _cfg_float("head_pad_sec", BUFFER_SEC))
+    semantic_tail_pad = max(0.0, _cfg_float("tail_pad_sec", BUFFER_SEC))
     memory_style = _resolve_memory_style(cfg)
 
     target_cap: Optional[float] = None
@@ -898,7 +906,9 @@ async def build_semantic_voiceover_plan(
     segments: List[SegmentPlan] = []
     total_sec = 0.0
     for order, group in enumerate(merged_groups):
-        st_rel, et_rel, text = _apply_buffer(group)
+        st_rel, et_rel, text = _apply_buffer(
+            group, head_pad_sec=semantic_head_pad, tail_pad_sec=semantic_tail_pad
+        )
         u0 = group[0]
         cid = u0.clip_id
         vid = u0.video_id

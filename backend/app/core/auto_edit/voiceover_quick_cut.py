@@ -466,7 +466,12 @@ def _build_standard_plan(
     clip_groups: Sequence[Sequence[aiosqlite.Row | dict[str, Any]]],
     video_title_hint: str | None,
     target_duration_sec: float | None,
+    head_pad_sec: float = 0.0,
+    tail_pad_sec: float = 0.0,
 ) -> Plan:
+    # 句头/句尾补偿：用户显式设置 pad 时以 pad 为准；未设置时沿用历史默认 buffer（0.06s）保留原行为。
+    effective_head = max(float(head_pad_sec or 0.0), _STANDARD_BUFFER_SEC)
+    effective_tail = max(float(tail_pad_sec or 0.0), _STANDARD_BUFFER_SEC)
     sentences = _collect_standard_sentences(clip_groups)
     selected, stats = _select_standard_sentences(sentences, target_duration_sec=target_duration_sec)
     groups = _merge_standard_sentences_to_segments(selected)
@@ -477,8 +482,8 @@ def _build_standard_plan(
         first = group[0]
         last = group[-1]
         clip_dur = first.clip_dur
-        st_rel = max(0.0, first.st_rel - _STANDARD_BUFFER_SEC)
-        et_rel = min(clip_dur if clip_dur > 0 else last.et_rel, last.et_rel + _STANDARD_BUFFER_SEC)
+        st_rel = max(0.0, first.st_rel - effective_head)
+        et_rel = min(clip_dur if clip_dur > 0 else last.et_rel, last.et_rel + effective_tail)
         if et_rel <= st_rel:
             et_rel = last.et_rel
         dur = max(0.0, et_rel - st_rel)
@@ -825,6 +830,8 @@ def build_plan_from_clip_groups(
     video_title_hint: str | None,
     audio_activity_cfg: dict[str, float] | None = None,
     target_duration_sec: float | None = None,
+    head_pad_sec: float = 0.0,
+    tail_pad_sec: float = 0.0,
 ) -> Plan:
     if strategy not in ("asr_fast", "standard", "audio_activity_fast"):
         raise ValueError(f"unsupported strategy: {strategy}")
@@ -834,6 +841,8 @@ def build_plan_from_clip_groups(
             clip_groups=clip_groups,
             video_title_hint=video_title_hint,
             target_duration_sec=target_duration_sec,
+            head_pad_sec=head_pad_sec,
+            tail_pad_sec=tail_pad_sec,
         )
 
     if strategy == "asr_fast":
@@ -1018,13 +1027,18 @@ def build_plan_from_clip_groups(
 
             raw_rows.sort(key=lambda r: r[0])
             for idx, (st_rel, et_rel, text) in enumerate(_merge_contiguous_asr_rows(raw_rows)):
-                dur = et_rel - st_rel
+                # 句头/句尾补偿：保留说话间隙，避免吃掉首字/尾音；约束在 clip 内（不越界）。
+                pad_st = max(0.0, st_rel - max(0.0, head_pad_sec))
+                pad_et = min(clip_dur if clip_dur > 0 else et_rel, et_rel + max(0.0, tail_pad_sec))
+                if pad_et <= pad_st:
+                    pad_et = et_rel
+                dur = pad_et - pad_st
                 if dur <= 0:
                     continue
                 total_sec += dur
 
-                st_abs = clip_base + st_rel
-                et_abs = clip_base + et_rel
+                st_abs = clip_base + pad_st
+                et_abs = clip_base + pad_et
                 segments.append(
                     SegmentPlan(
                         id=f"vq_{order:04d}_{cid[:6]}_{idx:03d}",
@@ -1035,7 +1049,7 @@ def build_plan_from_clip_groups(
                         start_time_sec=st_abs,
                         end_time_sec=et_abs,
                         override_duration_sec=dur,
-                        clip_start_offset_sec=st_rel,
+                        clip_start_offset_sec=pad_st,
                         audio_mode="original",
                         subtitle=SubtitlePlan(
                             strategy="asr",

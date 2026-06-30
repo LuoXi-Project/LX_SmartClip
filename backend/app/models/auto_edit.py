@@ -477,6 +477,18 @@ class VoiceoverQuickCutRequest(BaseModel):
         None,
         description="audio_activity_fast: 可选，前端预计算的“保留区间”（绝对时间秒）。格式：[{\"video_id\":\"...\",\"start\":0.0,\"end\":1.0}]。提供时优先使用该区间生成方案（用于 pitch 轨调参）。",
     )
+    asr_head_pad_sec: float = Field(
+        0.0,
+        ge=0.0,
+        le=3.0,
+        description="口播快剪（asr_fast/standard/semantic）：每段句头多保留的秒数，用于保留说话间隙、避免吃掉首字。默认 0=不补偿。",
+    )
+    asr_tail_pad_sec: float = Field(
+        0.0,
+        ge=0.0,
+        le=3.0,
+        description="口播快剪（asr_fast/standard/semantic）：每段句尾多保留的秒数，用于保留说话间隙、避免吃掉尾音。默认 0=不补偿。",
+    )
 
 
 class VideoDubPlanRequest(BaseModel):

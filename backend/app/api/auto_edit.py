@@ -675,6 +675,9 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
                                 )
                         except Exception:
                             logger.warning("llm_memory_style JSON 解析失败，忽略该配置")
+                    # 口播快剪句头/句尾补偿（保留说话间隙）
+                    llm_cfg["head_pad_sec"] = float(req.asr_head_pad_sec)
+                    llm_cfg["tail_pad_sec"] = float(req.asr_tail_pad_sec)
                 except ValueError as ve:
                     raise HTTPException(
                         status_code=400,
@@ -731,6 +734,8 @@ async def voiceover_quick_cut_plan(req: VoiceoverQuickCutRequest) -> AutoEditPla
                 "tail_pad_sec": float(req.activity_tail_pad_sec),
                 "keep_ranges": req.activity_keep_ranges,
             },
+            "head_pad_sec": float(req.asr_head_pad_sec),
+            "tail_pad_sec": float(req.asr_tail_pad_sec),
         }
         if req.strategy == "audio_activity_fast":
             plan = await run_heavy(build_plan_from_clip_groups, **build_kwargs)

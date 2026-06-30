@@ -5,7 +5,7 @@ import { MessageSquare, Mic2, Pause, Play, Scissors, Sparkles, Video } from 'luc
 import type { Video as VideoModel } from '@/lib/api'
 import { Switch } from '@/components/ui/switch'
 import { VoiceInputControl } from '@/components/ui/voice-input'
-import type { TtsVideoAlignConfigApi, TtsVideoAlignPolicyApi } from '@/lib/api'
+import { clipsApi, type AutoEditSegmentPlanApi, type TtsVideoAlignConfigApi, type TtsVideoAlignPolicyApi } from '@/lib/api'
 import { fmt, videoAudioStreamUrl } from './types'
 
 export type VoiceoverQuickCutStrategy = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'
@@ -44,6 +44,8 @@ type VoiceoverQuickCutPanelProps = {
       targetDurationSec?: number
       allowOverlappingSourceTimeline?: boolean
       audioActivityConfig?: VoiceoverAudioActivityConfig
+      asrHeadPadSec?: number
+      asrTailPadSec?: number
     }
   ) => void | Promise<void>
   /** 成片使用系统 TTS 按 ASR 重新配音 */
@@ -51,6 +53,8 @@ type VoiceoverQuickCutPanelProps = {
   onRedubEnabledChange?: (v: boolean) => void
   ttsAlign?: TtsVideoAlignConfigApi
   onTtsAlignChange?: (patch: Partial<TtsVideoAlignConfigApi>) => void
+  /** 已生成的口播快剪方案片段，用于在频谱上叠加显示“选中保留段” */
+  generatedPlanSegments?: AutoEditSegmentPlanApi[]
 }
 
 const STRATEGY_OPTIONS = [
@@ -206,8 +210,18 @@ const PARAM_HELP_TEXT: Record<
   },
 }
 
-function HelpLabel({ text, help }: { text: string; help: ParamHelp }) {
-  return (
+const ASR_PAD_HELP: Record<'head' | 'tail', ParamHelp> = {
+  head: {
+    title: '句头多保留秒',
+    detail: '在每条 ASR 句子的起点前多保留 n 秒，保留说话间隙、避免切掉开头字。默认 0=严格按句子起点。',
+  },
+  tail: {
+    title: '句尾多保留秒',
+    detail: '在每条 ASR 句子的终点后多保留 n 秒，保留说话间隙、避免切掉尾音。默认 0=严格按句子终点。',
+  },
+}
+
+function HelpLabel({ text, help }: { text: string; help: ParamHelp }) {  return (
     <span className="inline-flex items-center gap-1">
       <span>{text}</span>
       <span
@@ -251,6 +265,7 @@ export function VoiceoverQuickCutPanel({
   selectedVideoIds,
   doneVideos,
   onGenerate,
+  generatedPlanSegments,
   redubEnabled = false,
   onRedubEnabledChange,
   ttsAlign,
@@ -272,6 +287,17 @@ export function VoiceoverQuickCutPanel({
   })
   const [audioPresetId, setAudioPresetId] = useState<VoiceoverAudioActivityPreset['id'] | 'custom'>('custom')
   const [denoiseStrength, setDenoiseStrength] = useState(0)
+  /** 口播快剪（asr_fast/standard/semantic）句头/句尾补偿秒，用于保留说话间隙 */
+  const [asrHeadPadSec, setAsrHeadPadSec] = useState(0)
+  const [asrTailPadSec, setAsrTailPadSec] = useState(0)
+  const [asrSentenceBlocks, setAsrSentenceBlocks] = useState<
+    Array<{ absStart: number; absEnd: number; text: string }>
+  >([])
+  const [asrBlocksLoading, setAsrBlocksLoading] = useState(false)
+  const [asrBlocksError, setAsrBlocksError] = useState<string | null>(null)
+  /** canvas 的 CSS 像素宽度（用于 HiDPI 自适应 backing store，避免文字因位图缩放发糊） */
+  const [canvasCssWidth, setCanvasCssWidth] = useState(900)
+  const canvasCssHeight = 140
   const [previewDurationSec, setPreviewDurationSec] = useState(0)
   const [previewCurrentSec, setPreviewCurrentSec] = useState(0)
   const [previewPlaying, setPreviewPlaying] = useState(false)
@@ -319,6 +345,10 @@ export function VoiceoverQuickCutPanel({
   )
   const previewVideoId = selectedVideos[0]?.id || ''
   const previewSrc = previewVideoId ? videoAudioStreamUrl(previewVideoId) : ''
+  const isAsrStrategy = strategy === 'asr_fast' || strategy === 'standard' || strategy === 'semantic'
+  const isAudioActivityStrategy = strategy === 'audio_activity_fast'
+  /** 波形预览在“音频粗剪”和“ASR 口播剪”下都需要；其中 ASR 口播剪用于叠加查看分段 */
+  const showWaveform = isAudioActivityStrategy || isAsrStrategy
   const effectiveAudioConfig = useMemo(
     () => applyDenoiseStrength(audioActivityConfig, denoiseStrength),
     [audioActivityConfig, denoiseStrength],
@@ -503,6 +533,8 @@ export function VoiceoverQuickCutPanel({
                   activityKeepRanges: pitchGateEnabled ? (pitchKeepRanges ?? []) : undefined,
                 }
               : undefined,
+          asrHeadPadSec: isAsrStrategy ? asrHeadPadSec : undefined,
+          asrTailPadSec: isAsrStrategy ? asrTailPadSec : undefined,
         })
       } finally {
         setGenerating(false)
@@ -551,7 +583,7 @@ export function VoiceoverQuickCutPanel({
   useEffect(() => {
     let cancelled = false
     async function buildWave() {
-      if (strategy !== 'audio_activity_fast' || !previewSrc) {
+      if (!showWaveform || !previewSrc) {
         setWaveEnergy([])
         return
       }
@@ -588,7 +620,7 @@ export function VoiceoverQuickCutPanel({
     return () => {
       cancelled = true
     }
-  }, [strategy, previewSrc])
+  }, [showWaveform, previewSrc])
 
   useEffect(() => {
     let cancelled = false
@@ -655,26 +687,93 @@ export function VoiceoverQuickCutPanel({
     }
   }, [strategy, previewSrc])
 
+  // ASR 口播剪：拉取当前预览视频的 clips（含 asr_segments），解析为绝对时间句子块，用于频谱分段标注
+  useEffect(() => {
+    let cancelled = false
+    async function loadAsrBlocks() {
+      if (!isAsrStrategy || !previewVideoId) {
+        setAsrSentenceBlocks([])
+        setAsrBlocksError(null)
+        return
+      }
+      setAsrBlocksLoading(true)
+      setAsrBlocksError(null)
+      try {
+        const clips = await clipsApi.listByVideo(previewVideoId)
+        const blocks: Array<{ absStart: number; absEnd: number; text: string }> = []
+        for (const c of clips) {
+          const base = Number(c.start_time || 0)
+          let segs: Array<{ start: number; end: number; text?: string }> = []
+          if (c.asr_segments) {
+            try {
+              const parsed = JSON.parse(c.asr_segments)
+              if (Array.isArray(parsed)) segs = parsed
+            } catch {}
+          }
+          for (const s of segs) {
+            const st = Number(s.start ?? 0)
+            const et = Number(s.end ?? st)
+            const txt = (s.text || '').trim()
+            if (et <= st || !txt) continue
+            blocks.push({ absStart: base + st, absEnd: base + et, text: txt })
+          }
+        }
+        if (!cancelled) setAsrSentenceBlocks(blocks)
+      } catch (e) {
+        if (!cancelled) setAsrBlocksError((e as Error)?.message || 'ASR 句子加载失败')
+      } finally {
+        if (!cancelled) setAsrBlocksLoading(false)
+      }
+    }
+    void loadAsrBlocks()
+    return () => {
+      cancelled = true
+    }
+  }, [isAsrStrategy, previewVideoId])
+
   useEffect(() => {
     if (waveStartSec > maxStartSec) setWaveStartSec(maxStartSec)
   }, [maxStartSec, waveStartSec])
 
+  // 监听 canvas 容器实际 CSS 宽度，用于 HiDPI 自适应 backing store 尺寸
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || strategy !== 'audio_activity_fast') return
+    if (!canvas) return
+    const update = () => {
+      const rect = canvas.getBoundingClientRect()
+      if (rect.width > 0) setCanvasCssWidth(Math.round(rect.width))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(canvas)
+    return () => ro.disconnect()
+  }, [showWaveform])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !showWaveform) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const w = canvas.width
-    const h = canvas.height
+    // HiDPI 自适应：backing store 按 CSS 像素 × 设备像素比设置，避免位图缩放导致文字发糊
+    const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
+    const cssW = canvasCssWidth
+    const cssH = canvasCssHeight
+    if (canvas.width !== Math.round(cssW * dpr)) canvas.width = Math.round(cssW * dpr)
+    if (canvas.height !== Math.round(cssH * dpr)) canvas.height = Math.round(cssH * dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // 后续全部按 CSS 像素绘制（w=cssW, h=cssH）
+    const w = cssW
+    const h = cssH
     ctx.clearRect(0, 0, w, h)
     ctx.fillStyle = '#0b1020'
     ctx.fillRect(0, 0, w, h)
     if (!waveEnergy.length || previewDurationSec <= 0) return
 
     // Split lanes: top = pitch, bottom = waveform (and A/B selection)
+    // ASR 口播剪模式不使用音高/dB 门控，整幅 canvas 都给波形与分段标注
     const gap = 6
-    const pitchH = Math.round(h * 0.42)
-    const waveTop = pitchH + gap
+    const pitchH = isAudioActivityStrategy ? Math.round(h * 0.42) : 0
+    const waveTop = pitchH + (pitchH > 0 ? gap : 0)
     const waveH = h - waveTop
 
     const frameSec = previewDurationSec / waveEnergy.length
@@ -699,8 +798,8 @@ export function VoiceoverQuickCutPanel({
       ctx.stroke()
     }
 
-    // pitch curve (Hz) - cyan
-    if (pitchHz.length) {
+    // pitch curve (Hz) - cyan（仅音频粗剪模式）
+    if (isAudioActivityStrategy && pitchHz.length) {
       // pitch lane background
       ctx.fillStyle = 'rgba(2, 6, 23, 0.35)'
       ctx.fillRect(0, 0, w, pitchH)
@@ -738,8 +837,10 @@ export function VoiceoverQuickCutPanel({
       ctx.stroke()
       ctx.setLineDash([])
       ctx.fillStyle = 'rgba(34, 211, 238, 0.9)'
-      ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
-      ctx.fillText(`${pitchThresholdHz} Hz`, 8, Math.max(12, py - 6))
+      ctx.font = '500 10px ui-sans-serif, system-ui, -apple-system, sans-serif'
+      ctx.textBaseline = 'top'
+      ctx.textAlign = 'left'
+      ctx.fillText(`${pitchThresholdHz} Hz`, 8, Math.max(4, py - 14))
     }
 
     // selection / loop overlay
@@ -754,10 +855,12 @@ export function VoiceoverQuickCutPanel({
       ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)'
       ctx.lineWidth = 1
       ctx.strokeRect(left + 0.5, waveTop + 0.5, right - left - 1, waveH - 1)
-      ctx.fillStyle = 'rgba(16, 185, 129, 0.85)'
-      ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
-      ctx.fillText('A', left + 6, waveTop + 16)
-      ctx.fillText('B', Math.max(left + 18, right - 14), waveTop + 16)
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.9)'
+      ctx.font = '600 10px ui-sans-serif, system-ui, -apple-system, sans-serif'
+      ctx.textBaseline = 'top'
+      ctx.textAlign = 'left'
+      ctx.fillText('A', left + 5, waveTop + 4)
+      ctx.fillText('B', Math.max(left + 16, right - 11), waveTop + 4)
     }
     if (selectionPx) {
       const x1 = clampNum(selectionPx.x1, 0, w)
@@ -773,16 +876,74 @@ export function VoiceoverQuickCutPanel({
       drawSelection(loopRange.a, loopRange.b)
     }
 
-    const y = waveTop + dbToY(effectiveAudioConfig.activityDbThreshold, waveH)
-    ctx.strokeStyle = '#f59e0b'
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(w, y)
-    ctx.stroke()
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.9)'
-    ctx.font = '11px ui-sans-serif, system-ui, -apple-system'
-    ctx.fillText(`${effectiveAudioConfig.activityDbThreshold} dB`, 8, Math.max(12, y - 6))
+    // dB 阈值线（仅音频粗剪模式）
+    if (isAudioActivityStrategy) {
+      const y = waveTop + dbToY(effectiveAudioConfig.activityDbThreshold, waveH)
+      ctx.strokeStyle = '#f59e0b'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(w, y)
+      ctx.stroke()
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.9)'
+      ctx.font = '500 10px ui-sans-serif, system-ui, -apple-system, sans-serif'
+      ctx.textBaseline = 'top'
+      ctx.textAlign = 'left'
+      ctx.fillText(`${effectiveAudioConfig.activityDbThreshold} dB`, 8, Math.max(waveTop + 4, y - 14))
+    }
+
+    // ASR 口播剪：叠加句子分段 + 已生成方案选中段高亮
+    if (isAsrStrategy) {
+      // 1) 已生成方案的选中段（高亮），先画在底层，句子块覆盖之上
+      if (generatedPlanSegments && generatedPlanSegments.length) {
+        for (const seg of generatedPlanSegments) {
+          if (seg.exclude_from_output) continue
+          // 仅渲染当前预览视频的段
+          if (previewVideoId && seg.clip_group && !seg.clip_group.some((g) => g.video_id === previewVideoId)) continue
+          const xa = ((seg.start_time_sec - waveStartSec) / visibleDurationSec) * w
+          const xb = ((seg.end_time_sec - waveStartSec) / visibleDurationSec) * w
+          const left = clampNum(Math.min(xa, xb), 0, w)
+          const right = clampNum(Math.max(xa, xb), 0, w)
+          if (right - left < 1) continue
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.16)'
+          ctx.fillRect(left, waveTop, right - left, waveH)
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.9)'
+          ctx.lineWidth = 1.2
+          ctx.strokeRect(left + 0.5, waveTop + 0.5, right - left - 1, waveH - 1)
+        }
+      }
+      // 2) ASR 句子分段块（暗色）+ 首字文本
+      ctx.font = '500 9px ui-sans-serif, system-ui, -apple-system, sans-serif'
+      ctx.textBaseline = 'top'
+      ctx.textAlign = 'left'
+      for (const blk of asrSentenceBlocks) {
+        if (blk.absEnd < waveStartSec || blk.absStart > waveStartSec + visibleDurationSec) continue
+        const xa = ((blk.absStart - waveStartSec) / visibleDurationSec) * w
+        const xb = ((blk.absEnd - waveStartSec) / visibleDurationSec) * w
+        const left = clampNum(Math.min(xa, xb), 0, w)
+        const right = clampNum(Math.max(xa, xb), 0, w)
+        if (right - left < 1) continue
+        // 句子边界细线
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(Math.round(left) + 0.5, waveTop)
+        ctx.lineTo(Math.round(left) + 0.5, waveTop + waveH)
+        ctx.stroke()
+        // 文本（截断），画在波形上方
+        const head = blk.text.slice(0, 7)
+        if (right - left >= 12) {
+          // 裁剪到句子块宽度内，避免长文本溢出到相邻块
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(left + 2, waveTop, right - left - 3, 12)
+          ctx.clip()
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.92)'
+          ctx.fillText(head, left + 2, waveTop + 2)
+          ctx.restore()
+        }
+      }
+    }
 
     const playX = ((previewCurrentSec - waveStartSec) / visibleDurationSec) * w
     if (playX >= 0 && playX <= w) {
@@ -794,17 +955,23 @@ export function VoiceoverQuickCutPanel({
       ctx.stroke()
     }
   }, [
-    strategy,
+    showWaveform,
+    isAudioActivityStrategy,
+    isAsrStrategy,
+    canvasCssWidth,
     waveEnergy,
     previewDurationSec,
     waveStartSec,
     visibleDurationSec,
     effectiveAudioConfig.activityDbThreshold,
     previewCurrentSec,
+    previewVideoId,
     loopRange,
     selectionPx,
     pitchHz,
     pitchThresholdHz,
+    asrSentenceBlocks,
+    generatedPlanSegments,
   ])
 
   return (
@@ -1063,13 +1230,15 @@ export function VoiceoverQuickCutPanel({
           </div>
         )}
 
-        {strategy === 'audio_activity_fast' && (
+        {showWaveform && (
           <div className="space-y-3 rounded-xl border border-violet-500/20 bg-slate-950/40 px-4 py-3">
             <p className="text-[11px] font-medium text-violet-200/95">
-              音频粗剪参数（可微调）
+              {isAudioActivityStrategy ? '音频粗剪参数（可微调）' : '口播分段预览（波形 · 句子分段 · 选中段）'}
             </p>
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              该模式通过静音检测保留语音活动区间。阈值越高越容易判静音；头尾补偿用于避免切字。
+              {isAudioActivityStrategy
+                ? '该模式通过静音检测保留语音活动区间。阈值越高越容易判静音；头尾补偿用于避免切字。'
+                : '在波形上叠加 ASR 句子分段与已生成方案的选中段（绿色高亮=保留，其余=未选/被删）。可框选 A/B 试听、点击跳转；调整下方句头/句尾补偿后重新生成可查看分段变化。'}
             </p>
             <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
@@ -1097,18 +1266,32 @@ export function VoiceoverQuickCutPanel({
                 </span>
                 <span className="text-slate-500">预览源：{selectedVideos[0]?.name || '未选择'}</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                <button
-                  type="button"
-                  onClick={() => setPitchGateEnabled((v) => !v)}
-                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 hover:border-cyan-500/70"
-                >
-                  音高门控：{pitchGateEnabled ? '开' : '关'}
-                </button>
-                <span className="text-slate-500">
-                  阈值线：拖动青色虚线（Hz）选“说话音高下限”；生成方案会优先按该门控保留区间（对当前预览视频生效）。
-                </span>
-              </div>
+              {isAudioActivityStrategy && (
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                  <button
+                    type="button"
+                    onClick={() => setPitchGateEnabled((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 hover:border-cyan-500/70"
+                  >
+                    音高门控：{pitchGateEnabled ? '开' : '关'}
+                  </button>
+                  <span className="text-slate-500">
+                    阈值线：拖动青色虚线（Hz）选“说话音高下限”；生成方案会优先按该门控保留区间（对当前预览视频生效）。
+                  </span>
+                </div>
+              )}
+              {isAsrStrategy && (
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                  <span className="text-slate-500">
+                    句子分段 {asrSentenceBlocks.length} 条
+                    {generatedPlanSegments && generatedPlanSegments.length
+                      ? ` · 选中段 ${generatedPlanSegments.filter((s) => !s.exclude_from_output).length} 段`
+                      : ''}
+                    {asrBlocksLoading ? '（加载中…）' : ''}
+                  </span>
+                  {asrBlocksError && <span className="text-amber-300">分段加载失败：{asrBlocksError}</span>}
+                </div>
+              )}
               <audio
                 ref={audioRef}
                 src={previewSrc}
@@ -1123,8 +1306,6 @@ export function VoiceoverQuickCutPanel({
               />
               <canvas
                 ref={canvasRef}
-                width={900}
-                height={140}
                 onPointerDown={(e) => {
                   if (!previewDurationSec) return
                   const canvas = e.currentTarget
@@ -1132,13 +1313,16 @@ export function VoiceoverQuickCutPanel({
                   const x = e.clientX - rect.left
                   const y = e.clientY - rect.top
                   const gap = 6
-                  const pitchH = Math.round(rect.height * 0.42)
-                  const waveTop = pitchH + gap
+                  const pitchH = isAudioActivityStrategy ? Math.round(rect.height * 0.42) : 0
+                  const waveTop = pitchH + (pitchH > 0 ? gap : 0)
                   const waveH = rect.height - waveTop
                   const nearDb =
+                    isAudioActivityStrategy &&
                     y >= waveTop - 6 &&
                     Math.abs(y - (waveTop + dbToY(effectiveAudioConfig.activityDbThreshold, waveH))) <= 10
                   const nearPitch =
+                    isAudioActivityStrategy &&
+                    pitchH > 0 &&
                     y <= pitchH + 6 &&
                     Math.abs(y - hzToY(pitchThresholdHz, pitchH)) <= 10
                   try {
@@ -1289,12 +1473,16 @@ export function VoiceoverQuickCutPanel({
               </div>
               {waveLoading && <p className="text-[10px] text-slate-500">正在解析音频波形...</p>}
               {waveError && <p className="text-[10px] text-amber-300">波形预览失败：{waveError}</p>}
-              {pitchLoading && <p className="text-[10px] text-slate-500">正在解析音高轨（Hz）...</p>}
-              {pitchError && <p className="text-[10px] text-amber-300">音高预览失败：{pitchError}</p>}
+              {isAudioActivityStrategy && pitchLoading && <p className="text-[10px] text-slate-500">正在解析音高轨（Hz）...</p>}
+              {isAudioActivityStrategy && pitchError && <p className="text-[10px] text-amber-300">音高预览失败：{pitchError}</p>}
               <p className="text-[10px] text-slate-500">
-                提示：拖拽橙色线可调阈值；在波形上拖拽框选可设置 A/B 循环试听；短拖拽视为跳转播放。
+                {isAudioActivityStrategy
+                  ? '提示：拖拽橙色线可调阈值；在波形上拖拽框选可设置 A/B 循环试听；短拖拽视为跳转播放。'
+                  : '提示：在波形上拖拽框选可设置 A/B 循环试听；短拖拽视为跳转播放。绿色高亮为已选中保留段。'}
               </p>
             </div>
+            {isAudioActivityStrategy && (
+              <>
             <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-300">降噪强度（快速轴）</span>
@@ -1457,6 +1645,39 @@ export function VoiceoverQuickCutPanel({
                 />
               </label>
             </div>
+              </>
+            )}
+            {isAsrStrategy && (
+              <div className="grid gap-3 sm:grid-cols-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-3">
+                <label className="text-[11px] text-slate-300 space-y-1">
+                  <HelpLabel text="句头多保留秒" help={ASR_PAD_HELP.head} />
+                  <input
+                    type="number"
+                    step={0.02}
+                    min={0}
+                    max={3}
+                    value={asrHeadPadSec}
+                    onChange={(e) => setAsrHeadPadSec(Number(e.target.value || 0))}
+                    className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                  />
+                </label>
+                <label className="text-[11px] text-slate-300 space-y-1">
+                  <HelpLabel text="句尾多保留秒" help={ASR_PAD_HELP.tail} />
+                  <input
+                    type="number"
+                    step={0.02}
+                    min={0}
+                    max={3}
+                    value={asrTailPadSec}
+                    onChange={(e) => setAsrTailPadSec(Number(e.target.value || 0))}
+                    className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
+                  />
+                </label>
+                <p className="sm:col-span-2 text-[10px] text-slate-500 leading-relaxed">
+                  在每条 ASR 句子的起点前/终点后多保留 n 秒，用于保留说话间隙、避免切到首字或尾音。默认 0=严格按句子边界裁剪。调大后重新生成可在上方频谱查看分段外扩。
+                </p>
+              </div>
+            )}
           </div>
         )}
 

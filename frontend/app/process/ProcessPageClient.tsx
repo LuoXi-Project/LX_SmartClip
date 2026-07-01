@@ -89,8 +89,6 @@ export default function ProcessPage() {
   const [syncVectorOnRecover, setSyncVectorOnRecover] = useState(true)
   const [statusUpdating, setStatusUpdating] = useState(false)
   const [statusFixMsg, setStatusFixMsg] = useState('')
-  const [enrichBusy, setEnrichBusy] = useState(false)
-  const [enrichMsg, setEnrichMsg] = useState('')
   /** 最近一次主入口任务模式：用于完成文案区分（恢复区重跑不改变此值） */
   const [runPreset, setRunPreset] = useState<'full' | 'asr_only'>('full')
   /** 当前选中视频所展示的 process job id（来自 async_jobs，前端唯一追踪键）*/
@@ -515,20 +513,21 @@ export default function ProcessPage() {
     )
   }
 
-  const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only'): string[] => {
+  const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only'): string[] => {
     let base: string[]
     if (preset === 'asr_only') base = ['split', 'extract_frames', 'vlm', 'enrich']                // 仅补 ASR：画面未变，跳过 enrich
     else if (preset === 'vlm_only') base = ['split', 'asr']                                        // 重跑 VLM：画面描述变了，需重跑 enrich 更新摘要
     else if (preset === 'asr_vlm') base = ['split']                                                // 重跑 ASR+VLM：画面描述变了，需重跑 enrich 更新摘要
     else if (preset === 'embed_only') base = ['split', 'extract_frames', 'asr', 'vlm', 'enrich']   // 仅重新入库：enrich 数据已存在，跳过
+    else if (preset === 'enrich_only') base = ['split', 'extract_frames', 'asr', 'vlm']            // 重跑智能标注：标注改了必须重算 embed（与旧 /process-enrich 链式语义一致）
     else base = ['split', 'enrich']                                                                 // 兜底：仅重跑 ASR 时跳过 enrich
-    // 约束：重跑 VLM 时必须同步更新向量，否则语义检索不一致；embed_only 也必须跑 embed。
-    if (preset === 'vlm_only' || preset === 'asr_vlm' || preset === 'embed_only') return base
+    // 约束：重跑 VLM / 智能标注 / 仅 embed 时必须同步更新向量，否则语义检索不一致。
+    if (preset === 'vlm_only' || preset === 'asr_vlm' || preset === 'embed_only' || preset === 'enrich_only') return base
     // 仅重跑 ASR 才允许选择是否 skip embed（高级选项）
     return syncVectorOnRecover ? base : [...base, 'embed']
   }
 
-  const handleRecoverStart = async (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only') => {
+  const handleRecoverStart = async (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only') => {
     if (!selId) return
     const v = videos.find((x) => x.id === selId)
     if (!v || v.total_clips <= 0) return
@@ -536,40 +535,6 @@ export default function ProcessPage() {
       () => processJobsApi.create(selId, { skip_steps: recoverSkipSteps(preset) }),
       '视频预处理(恢复)',
     )
-  }
-
-  const handleReEnrichStart = async () => {
-    if (!selId || enrichBusy) return
-    const v = videos.find((x) => x.id === selId)
-    if (!v || v.total_clips <= 0) return
-    setEnrichBusy(true)
-    setEnrichMsg('正在重新生成智能标注（全片段）并重算向量，请耐心等待…')
-    try {
-      const res = await clipsApi.processEnrich(selId)
-      const emb = res.embed
-      // 拼「标注 + 向量」两段结果文案
-      let enrichPart: string
-      if (res.failed > 0 && res.processed === 0) {
-        setEnrichMsg(`智能标注全部失败（${res.failed}/${res.total_clips}）。请检查 LLM Key 配置或重试。`)
-        return
-      } else if (res.failed > 0) {
-        enrichPart = `智能标注部分完成 ${res.processed}/${res.total_clips}（失败 ${res.failed}）`
-      } else {
-        enrichPart = `智能标注完成 ${res.processed}/${res.total_clips}`
-      }
-      let embedPart: string
-      if (emb?.skipped) {
-        embedPart = '；未配置 Embed Key，跳过向量重算（标注对文本/纯LLM模式生效）'
-      } else {
-        embedPart = `；向量已自动重算 ${emb?.processed ?? 0}/${emb?.total ?? res.processed}${(emb?.failed ?? 0) > 0 ? `（失败 ${emb.failed}）` : ''}`
-      }
-      setEnrichMsg(enrichPart + embedPart)
-    } catch (e: unknown) {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setEnrichMsg(detail || '智能标注失败，请检查 LLM Key 配置或稍后重试。')
-    } finally {
-      setEnrichBusy(false)
-    }
   }
 
   const handleManualStatusFix = async (status: Video['status']) => {
@@ -826,12 +791,11 @@ export default function ProcessPage() {
               </button>
               <button
                 type="button"
-                disabled={!canRecover || enrichBusy}
-                onClick={() => void handleReEnrichStart()}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
-                title="用最新 LLM 为全部片段重新生成旁白适配摘要/关键词/情绪，并自动重算这些片段的向量（需配置 LLM Key；同步等待，全片段跑完才返回）"
+                disabled={!canRecover}
+                onClick={() => void handleRecoverStart('enrich_only')}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="用最新 LLM 为全部片段重新生成旁白适配摘要/关键词/情绪，并重算这些片段的向量（需配置 LLM Key）"
               >
-                {enrichBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 重跑智能标注 + 向量（全片段）
               </button>
               <button
@@ -842,11 +806,6 @@ export default function ProcessPage() {
               >
                 重跑向量（全片段）
               </button>
-              {enrichMsg && (
-                <span className={`text-[11px] self-center ${enrichMsg.includes('失败') ? 'text-red-400/90' : 'text-emerald-400/90'}`}>
-                  {enrichMsg}
-                </span>
-              )}
             </div>
             <div className="pt-2 border-t border-slate-800/80 space-y-2">
               <p className="text-xs text-slate-400">

@@ -141,7 +141,6 @@ export function VideoResultDrawer({
 
   const [editing, setEditing] = useState<Record<string, EditState>>({})
   const [reprocessBusyId, setReprocessBusyId] = useState<string | null>(null)
-  const [enrichBusyId, setEnrichBusyId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -421,18 +420,20 @@ export function VideoResultDrawer({
 
   const enqueueClipReprocess = async (
     clipId: string,
-    preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only',
+    preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only',
     navigateToProcess: boolean,
   ) => {
     if (!curVideoId || reprocessBusyId) return
     const skip_steps =
       preset === 'asr_only'
-        ? (['split', 'extract_frames', 'vlm'] as const)
+        ? (['split', 'extract_frames', 'vlm', 'enrich'] as const)
         : preset === 'vlm_only'
           ? (['split', 'asr'] as const)
           : preset === 'embed_only'
-            ? (['split', 'extract_frames', 'asr', 'vlm'] as const)
-            : (['split'] as const)
+            ? (['split', 'extract_frames', 'asr', 'vlm', 'enrich'] as const)
+            : preset === 'enrich_only'
+              ? (['split', 'extract_frames', 'asr', 'vlm'] as const)
+              : (['split'] as const)
     setReprocessBusyId(clipId)
     try {
       await processJobsApi.create(curVideoId, {
@@ -451,70 +452,6 @@ export function VideoResultDrawer({
       toast.error(apiDetailMessage(e))
     } finally {
       setReprocessBusyId(null)
-    }
-  }
-
-  /** 对单片段重新生成智能标注（abstract_summary/keywords/emotion_tags），用最新 LLM 覆盖旧标注 */
-  const reEnrichClip = async (clipId: string) => {
-    if (!curVideoId || enrichBusyId) return
-    setEnrichBusyId(clipId)
-    try {
-      const res = await clipsApi.processEnrich(curVideoId, [clipId])
-      const row = res.results?.[0]
-      if (row && row.status === 'success') {
-        const summary = row.abstract_summary ?? ''
-        const keywords = row.keywords ?? []
-        const emotionTags = row.emotion_tags ?? []
-        // 同步本地缓存（clips + editing），避免刷新即可看到新标注
-        const keywordsJson = keywords.length ? JSON.stringify(keywords) : null
-        const emotionJson = emotionTags.length ? JSON.stringify(emotionTags) : null
-        setClips((prev) =>
-          prev.map((c) =>
-            c.id === clipId
-              ? { ...c, abstract_summary: summary, keywords: keywordsJson, emotion_tags: emotionJson }
-              : c
-          )
-        )
-        setEditing((prev) => ({
-          ...prev,
-          [clipId]: {
-            ...(prev[clipId] || {
-              asr_text: '',
-              asr_segments: [],
-              asrSegmentsDirty: false,
-              vlm_description: '',
-              abstract_summary: '',
-              keywords: [],
-              emotion_tags: [],
-              tagsDirty: false,
-              dirty: false,
-              saving: false,
-              error: '',
-            }),
-            abstract_summary: summary,
-            keywords,
-            emotion_tags: emotionTags,
-            tagsDirty: false,
-            dirty: false,
-            error: '',
-          },
-        }))
-        const emb = res.embed
-        let msg = `智能标注完成（${res.processed}/${res.total_clips}）`
-        if (emb?.skipped) {
-          msg += '；未配置 Embed Key，跳过向量重算（标注对文本/纯LLM模式生效）'
-        } else {
-          msg += `，向量已自动重算（${emb?.processed ?? 0}/${emb?.total ?? res.processed}）`
-        }
-        toast.success(msg)
-      } else {
-        const reason = row?.error || row?.status || '未知原因'
-        toast.error(`智能标注失败：${reason}`)
-      }
-    } catch (e: unknown) {
-      toast.error(apiDetailMessage(e))
-    } finally {
-      setEnrichBusyId(null)
     }
   }
 
@@ -850,12 +787,12 @@ export function VideoResultDrawer({
                                 </button>
                                 <button
                                   type="button"
-                                  title="对本片段重新生成智能标注（旁白适配摘要/关键词/情绪，需配置 LLM Key）。标注成功后自动重算该片段向量，无需再手动重跑 Embed"
-                                  disabled={!!enrichBusyId || !!reprocessBusyId || !curVideoId}
-                                  onClick={() => void reEnrichClip(c.id)}
+                                  title="对本片段重新生成智能标注（旁白适配摘要/关键词/情绪，需配置 LLM Key）。标注后重算该片段向量"
+                                  disabled={!!reprocessBusyId || !curVideoId}
+                                  onClick={() => void enqueueClipReprocess(c.id, 'enrich_only', false)}
                                   className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
                                 >
-                                  {enrichBusyId === c.id ? (
+                                  {reprocessBusyId === c.id ? (
                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />

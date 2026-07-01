@@ -7,6 +7,7 @@ import { ConfirmProvider } from '@/hooks/use-confirm'
 import { TaskHub } from '@/components/ui/task-hub'
 import TopNav from './_components/TopNav'
 import { OnboardingGuide } from './_components/OnboardingGuide'
+import FontsLoader from './_components/FontsLoader'
 
 export const metadata: Metadata = {
   title: '洛曦智剪 - AI智能剪辑工具',
@@ -17,12 +18,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN">
       <head>
-        {/* Google Fonts via 国内 CDN 镜像（fonts.loli.net），避免 next/font/google 编译阶段被墙 */}
-        <link rel="preconnect" href="https://fonts.loli.net" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.loli.net/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap"
-        />
+        {/*
+          非阻塞字体加载（见 FontsLoader）：fonts.loli.net 卡死/超时/失败时不再
+          阻塞首屏渲染，页面继续用系统字体，绝不白屏；CDN 正常时字体静默替换。
+        */}
+        <FontsLoader />
       </head>
       <body className="min-h-screen flex flex-col" suppressHydrationWarning>
         <nav className="fixed top-0 inset-x-0 z-50 border-b border-slate-800 bg-[#0d0f14]/90 backdrop-blur-md">

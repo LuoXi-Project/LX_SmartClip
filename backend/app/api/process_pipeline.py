@@ -626,41 +626,42 @@ async def run_pipeline(
                             await update_clip_field(item["id"], "vlm_description", item["vlm_description"])
                             ok = True
 
-                            # enrich：基于台词+画面生成旁白适配摘要/关键词/情绪（抹平表征鸿沟）。
-                            # 失败不阻断 pipeline，三字段留空即可。
-                            if do_enrich and llm_instance is not None:
-                                t_enrich0 = time.perf_counter()
+                # enrich：基于台词+画面生成旁白适配摘要/关键词/情绪（抹平表征鸿沟）。
+                # 与 do_vlm 解耦——enrich_only 重跑时 VLM 被 skip，但 asr_text/vlm_description
+                # 已由 _make_item 从 DB 预加载，可独立跑。失败不阻断 pipeline，三字段留空即可。
+                if do_enrich and llm_instance is not None:
+                    t_enrich0 = time.perf_counter()
 
-                                async def _run_enrich():
-                                    await check_cancel(video_id)
-                                    return await enrich_clip(
-                                        llm_instance,
-                                        asr_text=item["asr_text"],
-                                        vlm_description=item["vlm_description"],
-                                    )
+                    async def _run_enrich():
+                        await check_cancel(video_id)
+                        return await enrich_clip(
+                            llm_instance,
+                            asr_text=item["asr_text"],
+                            vlm_description=item["vlm_description"],
+                        )
 
-                                enriched = await _step_with_timeout_retries(item["id"], "智能标注", _run_enrich)
-                                t_enrich_ms = int((time.perf_counter() - t_enrich0) * 1000)
-                                if enriched:
-                                    item["abstract_summary"] = enriched.get("abstract_summary", "")
-                                    item["keywords"] = enriched.get("keywords", [])
-                                    item["emotion_tags"] = enriched.get("emotion_tags", [])
-                                    if item["abstract_summary"]:
-                                        await update_clip_field(item["id"], "abstract_summary", item["abstract_summary"])
-                                    if item["keywords"]:
-                                        await update_clip_field(item["id"], "keywords", json.dumps(item["keywords"], ensure_ascii=False))
-                                    if item["emotion_tags"]:
-                                        await update_clip_field(item["id"], "emotion_tags", json.dumps(item["emotion_tags"], ensure_ascii=False))
-                                    enrich_success += 1
-                                    logger.info("片段 %s 智能标注完成：%dms（kw=%d, em=%d）", item["id"], t_enrich_ms, len(item["keywords"]), len(item["emotion_tags"]))
-                                else:
-                                    logger.warning("片段 %s 智能标注失败/超时：%dms", item["id"], t_enrich_ms)
-                                enrich_done += 1
-                                try:
-                                    async with progress_lock:
-                                        await _inc_progress("enrich", "智能标注", total_clips, enrich_success, enrich_done)
-                                except Exception:
-                                    logger.exception("enrich 进度更新异常")
+                    enriched = await _step_with_timeout_retries(item["id"], "智能标注", _run_enrich)
+                    t_enrich_ms = int((time.perf_counter() - t_enrich0) * 1000)
+                    if enriched:
+                        item["abstract_summary"] = enriched.get("abstract_summary", "")
+                        item["keywords"] = enriched.get("keywords", [])
+                        item["emotion_tags"] = enriched.get("emotion_tags", [])
+                        if item["abstract_summary"]:
+                            await update_clip_field(item["id"], "abstract_summary", item["abstract_summary"])
+                        if item["keywords"]:
+                            await update_clip_field(item["id"], "keywords", json.dumps(item["keywords"], ensure_ascii=False))
+                        if item["emotion_tags"]:
+                            await update_clip_field(item["id"], "emotion_tags", json.dumps(item["emotion_tags"], ensure_ascii=False))
+                        enrich_success += 1
+                        logger.info("片段 %s 智能标注完成：%dms（kw=%d, em=%d）", item["id"], t_enrich_ms, len(item["keywords"]), len(item["emotion_tags"]))
+                    else:
+                        logger.warning("片段 %s 智能标注失败/超时：%dms", item["id"], t_enrich_ms)
+                    enrich_done += 1
+                    try:
+                        async with progress_lock:
+                            await _inc_progress("enrich", "智能标注", total_clips, enrich_success, enrich_done)
+                    except Exception:
+                        logger.exception("enrich 进度更新异常")
             except ProcessCancelled:
                 raise
             except Exception as e:

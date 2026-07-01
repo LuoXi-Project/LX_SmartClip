@@ -499,7 +499,14 @@ export function VideoResultDrawer({
             error: '',
           },
         }))
-        toast.success(`智能标注完成（${res.processed}/${res.total_clips}）`)
+        const emb = res.embed
+        let msg = `智能标注完成（${res.processed}/${res.total_clips}）`
+        if (emb?.skipped) {
+          msg += '；未配置 Embed Key，跳过向量重算（标注对文本/纯LLM模式生效）'
+        } else {
+          msg += `，向量已自动重算（${emb?.processed ?? 0}/${emb?.total ?? res.processed}）`
+        }
+        toast.success(msg)
       } else {
         const reason = row?.error || row?.status || '未知原因'
         toast.error(`智能标注失败：${reason}`)
@@ -797,11 +804,11 @@ export function VideoResultDrawer({
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />
                                   )}
-                                  重跑 ASR+Embed
+                                  重跑 ASR+向量
                                 </button>
                                 <button
                                   type="button"
-                                  title="对本片段重跑 VLM + Embed（不切分，保证检索一致）"
+                                  title="对本片段重跑 VLM + 向量（不切分，保证检索一致）"
                                   disabled={!!reprocessBusyId || !curVideoId}
                                   onClick={() => void enqueueClipReprocess(c.id, 'vlm_only', false)}
                                   className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-cyan-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
@@ -811,11 +818,11 @@ export function VideoResultDrawer({
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />
                                   )}
-                                  重跑 VLM+Embed
+                                  重跑 VLM+向量
                                 </button>
                                 <button
                                   type="button"
-                                  title="本片段 ASR + VLM + Embed 重跑（不切分）"
+                                  title="本片段 ASR + VLM + 向量 重跑（不切分）"
                                   disabled={!!reprocessBusyId || !curVideoId}
                                   onClick={() => void enqueueClipReprocess(c.id, 'asr_vlm', false)}
                                   className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-indigo-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
@@ -825,11 +832,11 @@ export function VideoResultDrawer({
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />
                                   )}
-                                  ASR+VLM+Embed
+                                  ASR+VLM+向量
                                 </button>
                                 <button
                                   type="button"
-                                  title="仅对本片段重跑 Embed（不切分）"
+                                  title="仅对本片段重跑向量（不切分）"
                                   disabled={!!reprocessBusyId || !curVideoId}
                                   onClick={() => void enqueueClipReprocess(c.id, 'embed_only', false)}
                                   className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-emerald-600/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
@@ -839,11 +846,11 @@ export function VideoResultDrawer({
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />
                                   )}
-                                  重跑 Embed
+                                  重跑向量
                                 </button>
                                 <button
                                   type="button"
-                                  title="对本片段重新生成智能标注（旁白适配摘要/关键词/情绪，需配置 LLM Key）。用最新 LLM 结果覆盖旧标注；改完如需更新检索向量请再点「重跑 Embed」"
+                                  title="对本片段重新生成智能标注（旁白适配摘要/关键词/情绪，需配置 LLM Key）。标注成功后自动重算该片段向量，无需再手动重跑 Embed"
                                   disabled={!!enrichBusyId || !!reprocessBusyId || !curVideoId}
                                   onClick={() => void reEnrichClip(c.id)}
                                   className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
@@ -853,7 +860,7 @@ export function VideoResultDrawer({
                                   ) : (
                                     <RotateCcw className="w-3.5 h-3.5" />
                                   )}
-                                  重跑智能标注
+                                  重跑智能标注+向量
                                 </button>
                                 
                                 <button

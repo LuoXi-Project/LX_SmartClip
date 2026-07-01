@@ -543,16 +543,27 @@ export default function ProcessPage() {
     const v = videos.find((x) => x.id === selId)
     if (!v || v.total_clips <= 0) return
     setEnrichBusy(true)
-    setEnrichMsg('正在重新生成智能标注（全片段），请耐心等待…')
+    setEnrichMsg('正在重新生成智能标注（全片段）并重算向量，请耐心等待…')
     try {
       const res = await clipsApi.processEnrich(selId)
+      const emb = res.embed
+      // 拼「标注 + 向量」两段结果文案
+      let enrichPart: string
       if (res.failed > 0 && res.processed === 0) {
         setEnrichMsg(`智能标注全部失败（${res.failed}/${res.total_clips}）。请检查 LLM Key 配置或重试。`)
+        return
       } else if (res.failed > 0) {
-        setEnrichMsg(`智能标注部分完成：成功 ${res.processed}/${res.total_clips}，失败 ${res.failed}。提示：标注更新后建议再点「重跑 Embed」让新标注进入检索向量。`)
+        enrichPart = `智能标注部分完成 ${res.processed}/${res.total_clips}（失败 ${res.failed}）`
       } else {
-        setEnrichMsg(`智能标注完成：成功 ${res.processed}/${res.total_clips}。提示：标注更新后建议再点「重跑 Embed」让新标注进入检索向量。`)
+        enrichPart = `智能标注完成 ${res.processed}/${res.total_clips}`
       }
+      let embedPart: string
+      if (emb?.skipped) {
+        embedPart = '；未配置 Embed Key，跳过向量重算（标注对文本/纯LLM模式生效）'
+      } else {
+        embedPart = `；向量已自动重算 ${emb?.processed ?? 0}/${emb?.total ?? res.processed}${(emb?.failed ?? 0) > 0 ? `（失败 ${emb.failed}）` : ''}`
+      }
+      setEnrichMsg(enrichPart + embedPart)
     } catch (e: unknown) {
       const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setEnrichMsg(detail || '智能标注失败，请检查 LLM Key 配置或稍后重试。')
@@ -795,7 +806,7 @@ export default function ProcessPage() {
                 onClick={() => void handleRecoverStart('asr_only')}
                 className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-amber-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                重跑 ASR + Embed（全片段）
+                重跑 ASR + 向量（全片段）
               </button>
               <button
                 type="button"
@@ -803,7 +814,7 @@ export default function ProcessPage() {
                 onClick={() => void handleRecoverStart('vlm_only')}
                 className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-cyan-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                重跑 VLM + Embed（全片段）
+                重跑 VLM + 向量（全片段）
               </button>
               <button
                 type="button"
@@ -811,7 +822,17 @@ export default function ProcessPage() {
                 onClick={() => void handleRecoverStart('asr_vlm')}
                 className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                重跑 ASR + VLM + Embed（不切分）
+                重跑 ASR + VLM + 向量（不切分）
+              </button>
+              <button
+                type="button"
+                disabled={!canRecover || enrichBusy}
+                onClick={() => void handleReEnrichStart()}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+                title="用最新 LLM 为全部片段重新生成旁白适配摘要/关键词/情绪，并自动重算这些片段的向量（需配置 LLM Key；同步等待，全片段跑完才返回）"
+              >
+                {enrichBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                重跑智能标注 + 向量（全片段）
               </button>
               <button
                 type="button"
@@ -819,17 +840,7 @@ export default function ProcessPage() {
                 onClick={() => void handleRecoverStart('embed_only')}
                 className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                重跑 Embed（全片段）
-              </button>
-              <button
-                type="button"
-                disabled={!canRecover || enrichBusy}
-                onClick={() => void handleReEnrichStart()}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
-                title="用最新 LLM 为全部片段重新生成旁白适配摘要/关键词/情绪（需配置 LLM Key；同步等待，全片段跑完才返回）"
-              >
-                {enrichBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                重跑智能标注（全片段）
+                重跑向量（全片段）
               </button>
               {enrichMsg && (
                 <span className={`text-[11px] self-center ${enrichMsg.includes('失败') ? 'text-red-400/90' : 'text-emerald-400/90'}`}>

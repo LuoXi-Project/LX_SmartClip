@@ -385,7 +385,8 @@ export const clipsApi = {
     },
   ) =>
     apiClient.patch<unknown, { ok: boolean; clip_id: string }>(`/api/videos/clips/${clipId}`, payload),
-  /** 重新生成智能标注（abstract_summary/keywords/emotion_tags）；clip_ids 为空则重跑整段视频 */
+  /** 重新生成智能标注（abstract_summary/keywords/emotion_tags）；clip_ids 为空则重跑整段视频。
+   *  标注成功后后端会自动链式重算这些片段的向量（embed），保证新标注立即对向量匹配生效。 */
   processEnrich: (
     videoId: string,
     clipIds?: string[] | null,
@@ -398,6 +399,7 @@ export const clipsApi = {
         processed: number
         skipped: number
         failed: number
+        embed: { skipped: boolean; reason?: string; processed: number; failed: number; total?: number }
         results: { clip_id: string; status: string; error?: string; abstract_summary?: string; keywords?: string[]; emotion_tags?: string[] }[]
       }
     >(`/api/videos/${videoId}/process-enrich`, clipIds && clipIds.length > 0 ? { clip_ids: clipIds } : {}),

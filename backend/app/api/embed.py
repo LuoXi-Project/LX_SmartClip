@@ -216,12 +216,73 @@ async def _get_enrich_llm():
     return _llm_client
 
 
+async def _reembed_clips(clip_ids: List[str]) -> dict:
+    """对指定 clip 重新生成向量并入库（五路文本，与 pipeline/process-embed 一致）。
+
+    供 process-enrich 链式调用：标注更新后必须重算向量，否则向量匹配仍用旧文本，
+    新标注无法生效。无 embedding_key 时返回 {"skipped": True} 由调用方优雅处理。
+    """
+    if not clip_ids:
+        return {"skipped": True, "reason": "无待重算片段", "processed": 0, "failed": 0}
+
+    try:
+        embedder, vector_db, concurrency = await _get_embedder_and_db()
+    except HTTPException:
+        # 未配置 embedding_api_key：向量匹配本就不可用，标注仍对 text/llm_only 模式生效
+        return {"skipped": True, "reason": "Embedding API Key 未配置，跳过向量重算", "processed": 0, "failed": 0}
+
+    db = await get_db_conn()
+    try:
+        placeholders = ",".join("?" * len(clip_ids))
+        cursor = await db.execute(
+            f"SELECT id, asr_text, vlm_description, abstract_summary, keywords, emotion_tags "
+            f"FROM clips WHERE id IN ({placeholders})",
+            clip_ids,
+        )
+        clips = await cursor.fetchall()
+    finally:
+        await db.close()
+
+    sem = asyncio.Semaphore(concurrency)
+    add_lock = asyncio.Lock()
+
+    async def _embed_one(clip_row):
+        clip_id = clip_row["id"]
+        parts = [
+            clip_row["asr_text"] or "",
+            clip_row["vlm_description"] or "",
+            clip_row["abstract_summary"] or "",
+            " ".join(_parse_json_list(clip_row["keywords"])),
+            " ".join(_parse_json_list(clip_row["emotion_tags"])),
+        ]
+        text = " ".join(p for p in parts if p and p.strip()).strip()
+        if not text:
+            return {"clip_id": clip_id, "status": "skipped"}
+        try:
+            async with sem:
+                embedding = await asyncio.to_thread(embedder.embed, text)
+            async with add_lock:
+                await asyncio.to_thread(vector_db.add_embedding, clip_id, embedding)
+            return {"clip_id": clip_id, "status": "success"}
+        except Exception as e:
+            logger.error("片段 %s 链式 Embedding 失败: %s", clip_id, e)
+            return {"clip_id": clip_id, "status": "error", "error": str(e)}
+
+    emb_results = await asyncio.gather(*[_embed_one(c) for c in clips])
+    processed = sum(1 for r in emb_results if r["status"] == "success")
+    failed = sum(1 for r in emb_results if r["status"] == "error")
+    return {"skipped": False, "processed": processed, "failed": failed, "total": len(clips)}
+
+
 @router.post("/{video_id}/process-enrich")
 async def process_enrich(video_id: str, clip_ids: Optional[List[str]] = Body(default=None, embed=True)):
     """
     为视频（或指定片段）重新生成智能标注（abstract_summary / keywords / emotion_tags）。
     输入 = asr_text + vlm_description；复用 pipeline 同款 enrich_clip。
     与 /process-embed 同构：同步并发、不依赖 pipeline。
+
+    标注成功后会自动链式重算这些片段的向量（embed），保证新标注立即对向量匹配生效；
+    未配置 Embedding Key 时跳过向量重算（标注仍对 text/llm_only 模式生效）。
 
     请求体可选：{"clip_ids": ["id1", "id2"]}，为空则重跑该视频全部片段。
     """
@@ -312,11 +373,28 @@ async def process_enrich(video_id: str, clip_ids: Optional[List[str]] = Body(def
         f"智能标注完成：成功 {ok}/{len(clips)}，跳过 {skipped}，失败 {fail}",
         status="done",
     )
+
+    # 链式重算向量：只重算标注成功的片段，保证新标注立即对向量匹配生效。
+    # （标注改了但不重算 embed → FAISS 仍是旧文本向量，vector/auto 模式匹配不到新标注）
+    enriched_ids = [r["clip_id"] for r in results if r["status"] == "success"]
+    embed_stats: dict = {"skipped": True, "reason": "无标注成功的片段", "processed": 0, "failed": 0}
+    if enriched_ids:
+        stage_log("预处理", f"链式重算向量（{len(enriched_ids)} 个已标注片段）…", status="running")
+        logger.info("标注完成后链式重算 %d 个片段的向量", len(enriched_ids))
+        embed_stats = await _reembed_clips(enriched_ids)
+        if not embed_stats.get("skipped"):
+            stage_log(
+                "预处理",
+                f"向量重算完成：成功 {embed_stats['processed']}/{len(enriched_ids)}，失败 {embed_stats.get('failed', 0)}",
+                status="done",
+            )
+
     return {
         "video_id": video_id,
         "total_clips": len(clips),
         "processed": ok,
         "skipped": skipped,
         "failed": fail,
+        "embed": embed_stats,
         "results": results,
     }

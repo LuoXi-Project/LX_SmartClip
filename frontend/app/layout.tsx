@@ -16,6 +16,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
+      <head>
+        {/* Google Fonts via 国内 CDN 镜像（fonts.loli.net），避免 next/font/google 编译阶段被墙 */}
+        <link rel="preconnect" href="https://fonts.loli.net" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.loli.net/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap"
+        />
+      </head>
       <body className="min-h-screen flex flex-col" suppressHydrationWarning>
         <nav className="fixed top-0 inset-x-0 z-50 border-b border-slate-800 bg-[#0d0f14]/90 backdrop-blur-md">
           <div className="w-full px-4 sm:px-6 h-12 flex items-center gap-3 sm:gap-4">

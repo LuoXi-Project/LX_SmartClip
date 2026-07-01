@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Noto_Sans_SC, JetBrains_Mono } from 'next/font/google'
+// 字体已通过 layout.tsx 中的 <link> 从国内 CDN 加载，这里仅声明 className 常量
+const noto = { className: 'font-sans-sc' } as const
+const mono = { className: 'font-mono-jetbrains' } as const
 import {
   Activity,
   AlertCircle,
   ArrowRight,
   Brain,
-  CheckCircle,
   Film,
   Mic,
   Package,
@@ -22,18 +23,6 @@ import apiClient from '@/lib/api'
 import { HomeCosmosBackground } from './_components/home/HomeCosmosBackground'
 import { useHomeGsap } from './_components/home/useHomeGsap'
 import './_components/home/home.css'
-
-const noto = Noto_Sans_SC({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '700', '900'],
-  display: 'swap',
-})
-
-const mono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
-  display: 'swap',
-})
 
 const TITLE = '洛曦智剪'
 
@@ -147,7 +136,10 @@ export default function Home() {
 
       <div className="home-vignette absolute inset-0 z-[2]" aria-hidden />
 
-      <div className="relative z-10">
+      {/* z-10 内容层整体 pointer-events-none，仅真正的交互元素（按钮/链接）
+          单独 pointer-events-auto —— 这样首页星球背景的空白区域可接收点击，
+          让太阳系画布（位于下方 z-[3]）能拾取到「点击星球」事件。 */}
+      <div className="relative z-10 pointer-events-none">
         <section className="relative flex min-h-[min(92vh,860px)] flex-col items-center justify-center px-4 pb-8 pt-20 sm:pt-24">
           <div data-hero="logo" className="mb-8 flex justify-center">
             <div className="home-logo-ring relative rounded-full p-1">
@@ -210,7 +202,7 @@ export default function Home() {
               href="/studio"
               data-hero="cta"
               data-magnetic
-              className="home-cta-primary group inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-600 via-violet-600 to-indigo-600 px-8 py-3.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 transition-shadow hover:shadow-cyan-500/35"
+              className="home-cta-primary pointer-events-auto group inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-600 via-violet-600 to-indigo-600 px-8 py-3.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 transition-shadow hover:shadow-cyan-500/35"
             >
               <Sparkles className="h-4 w-4" />
               开始智剪
@@ -220,7 +212,7 @@ export default function Home() {
               href="/library"
               data-hero="cta"
               data-magnetic
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-8 py-3.5 text-sm font-medium text-slate-200 backdrop-blur-md transition-all hover:border-cyan-500/40 hover:bg-white/10"
+              className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-8 py-3.5 text-sm font-medium text-slate-200 backdrop-blur-md transition-all hover:border-cyan-500/40 hover:bg-white/10"
             >
               <Film className="h-4 w-4 text-cyan-400/80" />
               素材库
@@ -257,44 +249,31 @@ export default function Home() {
           </div>
         </section>
 
-        <section data-section="status" className="mx-auto max-w-md px-4 pb-14">
-          <div className="home-status-border rounded-2xl p-[1px]">
-            <div className="rounded-2xl bg-slate-950/80 p-6 backdrop-blur-xl">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-                  系统状态
-                </h2>
-                <Activity className="h-4 w-4 text-cyan-400" />
-              </div>
+        {!loading && backendStatus !== 'connected' && (
+          <section data-section="status" className="pointer-events-auto mx-auto max-w-md px-4 pb-14">
+            <div className="home-status-border rounded-2xl p-[1px]">
+              <div className="rounded-2xl bg-slate-950/80 p-6 backdrop-blur-xl">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
+                    系统状态
+                  </h2>
+                  <Activity className="h-4 w-4 text-rose-400" />
+                </div>
 
-              {loading ? (
-                <div className="flex items-center gap-3 text-slate-400">
-                  <span className="relative flex h-3 w-3">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60" />
-                    <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-400" />
-                  </span>
-                  <span>检查中...</span>
-                </div>
-              ) : backendStatus === 'connected' ? (
-                <div className="flex items-center gap-3 text-emerald-400">
-                  <CheckCircle className="h-5 w-5" />
-                  <span className="font-medium">后端已连接</span>
-                </div>
-              ) : (
                 <div className="flex items-center gap-3 text-rose-400">
                   <AlertCircle className="h-5 w-5" />
                   <span className="font-medium">后端未连接</span>
                 </div>
-              )}
 
-              <p className={`${mono.className} mt-4 text-xs text-slate-500`}>
-                API · 同域（当前站点）
-              </p>
+                <p className={`${mono.className} mt-4 text-xs text-slate-500`}>
+                  API · 同域（当前站点）
+                </p>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
-        <section data-section="features" className="mx-auto max-w-6xl px-4 pb-24">
+        <section data-section="features" className="pointer-events-auto mx-auto max-w-6xl px-4 pb-24">
           <div data-section="features-header" className="mb-10 text-center">
             <p className={`${mono.className} text-xs uppercase tracking-[0.3em] text-slate-500`}>
               Capabilities · Universe
@@ -336,7 +315,7 @@ export default function Home() {
 
         <section
           data-section="cta-bottom"
-          className="border-t border-white/[0.04] bg-slate-950/50 py-16 backdrop-blur-sm"
+          className="pointer-events-auto border-t border-white/[0.04] bg-slate-950/50 py-16 backdrop-blur-sm"
         >
           <div className="mx-auto max-w-3xl px-4 text-center">
             <p className="text-slate-400">准备好把素材变成成片？</p>

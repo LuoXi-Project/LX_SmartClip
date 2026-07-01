@@ -72,3 +72,12 @@ code {
 .styled-scrollbar::-webkit-scrollbar-thumb:active {
   background-color: rgba(167, 139, 250, 0.85);
 }
+
+/* ===== 字体（由 layout.tsx 中的 <link> 从国内 CDN 加载）===== */
+.font-sans-sc {
+  font-family: 'Noto Sans SC', ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+.font-mono-jetbrains {
+  font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+}

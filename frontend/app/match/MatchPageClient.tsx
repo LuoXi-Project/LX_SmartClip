@@ -722,9 +722,13 @@ export default function MatchPage() {
     }
     patchSeg(id, { matchLoading: true, matchError: '' })
     try {
+      // 旁白/解说场景：文案是抽象层叙述，与画面的词面几乎不重叠，
+      // 走纯 LLM 跨层语义对齐（llm_only）命中率显著高于向量匹配；非旁白场景不传，用全局配置。
+      const isNarrationMode = mode === 'film_commentary' || mode === 'voiceover'
       const data = await apiClient.post<unknown, { recommended: MatchClip[]; candidates: MatchClip[] }>('/api/match', {
         query: seg.text.trim(), top_k: topK, top_n: topN,
         video_ids: videoIds,
+        ...(isNarrationMode ? { match_mode: 'llm_only' as const } : {}),
       })
       const clips = data.recommended?.length ? data.recommended : data.candidates
       // 匹配后默认把最高分 clip 设为唯一选中（保留用户之前手动勾选的逻辑由 toggleClipSelected 管理）

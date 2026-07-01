@@ -1,4 +1,5 @@
 import difflib
+import json
 import logging
 from typing import List, Literal, Optional, Tuple
 
@@ -14,6 +15,30 @@ _TEXT_RECALL_FLOOR = 0.01
 _LLM_MAX_CANDIDATES = 40
 
 VALID_MATCH_MODES = frozenset({"auto", "vector", "text", "llm_only"})
+
+
+def _parse_json_list(raw: Optional[str]) -> List[str]:
+    """把 clips.keywords / emotion_tags 的 JSON 字符串解析为 list[str]，失败返回 []。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if isinstance(data, list):
+        return [str(x).strip() for x in data if str(x).strip()]
+    return []
+
+
+def _normalize_clip_rows(rows) -> List[dict]:
+    """把 DB 行 dict 标准化：解析 keywords/emotion_tags 的 JSON 字符串为 list。"""
+    out: List[dict] = []
+    for r in rows:
+        d = dict(r)
+        d["keywords"] = _parse_json_list(d.get("keywords"))
+        d["emotion_tags"] = _parse_json_list(d.get("emotion_tags"))
+        out.append(d)
+    return out
 
 
 def resolve_match_mode(
@@ -61,11 +86,11 @@ def _load_clips_for_videos(db_conn, video_ids: List[str]) -> List[dict]:
     placeholders = ",".join("?" * len(video_ids))
     rows = db_conn.execute(
         f"SELECT id AS clip_id, video_id, clip_path, start_time, end_time, "
-        f"duration, asr_text, vlm_description "
+        f"duration, asr_text, vlm_description, abstract_summary, keywords, emotion_tags "
         f"FROM clips WHERE video_id IN ({placeholders}) ORDER BY video_id, start_time",
         video_ids,
     ).fetchall()
-    return [dict(r) for r in rows]
+    return _normalize_clip_rows(rows)
 
 
 def _load_clips(db_conn, video_ids: Optional[List[str]] = None) -> List[dict]:
@@ -73,10 +98,10 @@ def _load_clips(db_conn, video_ids: Optional[List[str]] = None) -> List[dict]:
         return _load_clips_for_videos(db_conn, video_ids)
     rows = db_conn.execute(
         "SELECT id AS clip_id, video_id, clip_path, start_time, end_time, "
-        "duration, asr_text, vlm_description "
+        "duration, asr_text, vlm_description, abstract_summary, keywords, emotion_tags "
         "FROM clips ORDER BY video_id, start_time"
     ).fetchall()
-    return [dict(r) for r in rows]
+    return _normalize_clip_rows(rows)
 
 
 def _fetch_clips_by_ids(db_conn, clip_ids: List[str]) -> List[dict]:
@@ -85,12 +110,20 @@ def _fetch_clips_by_ids(db_conn, clip_ids: List[str]) -> List[dict]:
     placeholders = ",".join("?" * len(clip_ids))
     rows = db_conn.execute(
         f"SELECT id AS clip_id, video_id, clip_path, start_time, end_time, "
-        f"duration, asr_text, vlm_description "
+        f"duration, asr_text, vlm_description, abstract_summary, keywords, emotion_tags "
         f"FROM clips WHERE id IN ({placeholders})",
         clip_ids,
     ).fetchall()
-    row_map = {r["clip_id"]: dict(r) for r in rows}
+    row_map = {r["clip_id"]: _norm_one(r) for r in rows}
     return [row_map[cid] for cid in clip_ids if cid in row_map]
+
+
+def _norm_one(row) -> dict:
+    """单个行的标准化（用于保持顺序的 _fetch_clips_by_ids）。"""
+    d = dict(row)
+    d["keywords"] = _parse_json_list(d.get("keywords"))
+    d["emotion_tags"] = _parse_json_list(d.get("emotion_tags"))
+    return d
 
 
 def _text_sim(query: str, text: str) -> float:
@@ -132,11 +165,23 @@ def _clip_text_score(
     query: str,
     clip: dict,
     *,
-    weight_asr: float = 0.55,
-    weight_vlm: float = 0.45,
+    weight_asr: float = 0.30,
+    weight_vlm: float = 0.25,
+    weight_summary: float = 0.30,
+    weight_tags: float = 0.15,
 ) -> float:
+    """ASR / VLM / 旁白适配摘要 / 关键词+情绪 四路加权文本相似度。
+
+    abstract_summary 给较高权重，因为它由 LLM 专门为「对齐旁白抽象层」生成，
+    是抹平「旁白 ↔ 画面」表征鸿沟的关键信号；无 enrich 数据时自动退化为原两路。
+    """
     asr = (clip.get("asr_text") or "").strip()
     vlm = (clip.get("vlm_description") or "").strip()
+    summary = (clip.get("abstract_summary") or "").strip()
+    tags_text = " ".join(
+        (clip.get("keywords") or []) + (clip.get("emotion_tags") or [])
+    ).strip()
+
     scores: List[float] = []
     weights: List[float] = []
     if asr:
@@ -145,6 +190,12 @@ def _clip_text_score(
     if vlm:
         scores.append(_text_sim(query, vlm))
         weights.append(weight_vlm)
+    if summary:
+        scores.append(_text_sim(query, summary))
+        weights.append(weight_summary)
+    if tags_text:
+        scores.append(_text_sim(query, tags_text))
+        weights.append(weight_tags)
     if not scores:
         return 0.0
     total_w = sum(weights)
@@ -158,10 +209,12 @@ def _text_similarity_candidates(
     video_ids: Optional[List[str]],
     top_k: int,
     *,
-    weight_asr: float = 0.55,
-    weight_vlm: float = 0.45,
+    weight_asr: float = 0.30,
+    weight_vlm: float = 0.25,
+    weight_summary: float = 0.30,
+    weight_tags: float = 0.15,
 ) -> List[dict]:
-    """ASR + VLM 文本相似度初筛（不依赖向量库）。"""
+    """ASR + VLM + 旁白适配摘要 + 关键词/情绪 四路文本相似度初筛（不依赖向量库）。"""
     clips = _load_clips(db_conn, video_ids)
     if not clips:
         return []
@@ -171,7 +224,14 @@ def _text_similarity_candidates(
 
     rated: List[tuple[float, dict]] = []
     for c in clips:
-        r = _clip_text_score(q, c, weight_asr=weight_asr, weight_vlm=weight_vlm)
+        r = _clip_text_score(
+            q,
+            c,
+            weight_asr=weight_asr,
+            weight_vlm=weight_vlm,
+            weight_summary=weight_summary,
+            weight_tags=weight_tags,
+        )
         if r > 0:
             rated.append((r, c))
     rated.sort(key=lambda x: x[0], reverse=True)
@@ -183,7 +243,7 @@ def _text_similarity_candidates(
     for r, c in rated[:top_k]:
         mc = dict(c)
         mc["score"] = round(float(r) * 10.0, 3)
-        mc["reason"] = "ASR/VLM 文本相似度（无向量检索）"
+        mc["reason"] = "ASR/VLM/摘要/标签 文本相似度（无向量检索）"
         out.append(mc)
     return out
 
@@ -219,14 +279,18 @@ class Matcher:
         vector_db=None,
         llm=None,
         *,
-        text_weight_asr: float = 0.55,
-        text_weight_vlm: float = 0.45,
+        text_weight_asr: float = 0.30,
+        text_weight_vlm: float = 0.25,
+        text_weight_summary: float = 0.30,
+        text_weight_tags: float = 0.15,
     ):
         self.embedder = embedder
         self.vector_db = vector_db
         self.llm = llm
         self.text_weight_asr = text_weight_asr
         self.text_weight_vlm = text_weight_vlm
+        self.text_weight_summary = text_weight_summary
+        self.text_weight_tags = text_weight_tags
 
     def _recall_on_vector_failure(
         self,
@@ -289,6 +353,29 @@ class Matcher:
         candidates = _fetch_clips_by_ids(db_conn, candidate_ids) if candidate_ids else []
         used_full_fallback = False
 
+        # 混合召回（P2）：向量召回对「旁白↔画面」跨层匹配可能漏，
+        # 追加 enrich 后的文本命中作为补充，按 clip_id 去重后合并送 LLM 精排。
+        if candidates and (video_ids is not None):
+            existing_ids = {c["clip_id"] for c in candidates}
+            text_extra = _text_similarity_candidates(
+                db_conn,
+                query,
+                video_ids,
+                top_k,
+                weight_asr=self.text_weight_asr,
+                weight_vlm=self.text_weight_vlm,
+                weight_summary=self.text_weight_summary,
+                weight_tags=self.text_weight_tags,
+            )
+            added = 0
+            for c in text_extra:
+                if c["clip_id"] not in existing_ids:
+                    candidates.append(c)
+                    existing_ids.add(c["clip_id"])
+                    added += 1
+            if added:
+                logger.info("[Matcher] 混合召回：文本补充 %d 个候选（合并后 %d 个）", added, len(candidates))
+
         if not candidates and video_ids:
             logger.warning("[Matcher] 向量初筛无可用候选，尝试文本相似度兜底")
             candidates = _text_similarity_candidates(
@@ -298,6 +385,8 @@ class Matcher:
                 top_k,
                 weight_asr=self.text_weight_asr,
                 weight_vlm=self.text_weight_vlm,
+                weight_summary=self.text_weight_summary,
+                weight_tags=self.text_weight_tags,
             )
             if candidates:
                 logger.info("[Matcher] 文本相似度候选: %d 个", len(candidates))
@@ -326,6 +415,8 @@ class Matcher:
             top_k,
             weight_asr=self.text_weight_asr,
             weight_vlm=self.text_weight_vlm,
+            weight_summary=self.text_weight_summary,
+            weight_tags=self.text_weight_tags,
         )
         used_full_fallback = False
         if not candidates and video_ids:
@@ -364,6 +455,8 @@ class Matcher:
             top_k,
             weight_asr=self.text_weight_asr,
             weight_vlm=self.text_weight_vlm,
+            weight_summary=self.text_weight_summary,
+            weight_tags=self.text_weight_tags,
         )
         if narrowed:
             return narrowed, False
@@ -380,6 +473,8 @@ class Matcher:
         video_ids: Optional[List[str]] = None,
         api_base_url: str = "",
         mode: MatchMode = "vector",
+        min_llm_score: float = 0.0,
+        min_similarity: float = 0.0,
     ) -> dict:
         video_ids = [v for v in (video_ids or []) if v]
         scoped_ids = video_ids or None
@@ -434,6 +529,25 @@ class Matcher:
                 c.setdefault("reason", default_reason)
 
         _attach_media_urls(candidates, api_base_url)
+
+        # 阈值过滤（P2 宁缺毋滥）：仅作用于「推荐」列表，candidates 仍全量返回供手动选用。
+        # 同时低于 LLM 评分阈值与文本相似度阈值才剔除，避免误杀单一信号不佳但整体相关的片段。
+        # text_sim 用四路（含 enrich）相似度，作为向量模式 L2 之外的可解释补充信号。
+        if not used_full_fallback and (min_llm_score > 0 or min_similarity > 0):
+            q = (query or "").strip()
+            for c in candidates:
+                ts = _clip_text_score(q, c) if q else 0.0
+                c["text_sim"] = round(ts, 3)
+            kept = []
+            for c in candidates:
+                llm_ok = c.get("score", 0) >= min_llm_score if min_llm_score > 0 else True
+                sim_ok = c.get("text_sim", 0) >= min_similarity if min_similarity > 0 else True
+                if llm_ok or sim_ok:
+                    kept.append(c)
+            if kept:
+                candidates = kept
+            else:
+                logger.info("[Matcher] 阈值过滤后全部被剔除，保留原候选以免推荐为空")
 
         recommended = candidates if used_full_fallback else candidates[:top_n]
         logger.info(

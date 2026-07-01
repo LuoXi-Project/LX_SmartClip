@@ -15,6 +15,7 @@ const STEPS = [
   { key: 'extract_frames', label: '图帧提取',       desc: '抽帧后立即进入后续视觉分析' },
   { key: 'asr',            label: '语音识别',       desc: '与抽帧并行转写台词文本' },
   { key: 'vlm',            label: '视觉描述 (VLM)', desc: '按片段流水线生成画面描述' },
+  { key: 'enrich',         label: '智能标注',       desc: '生成旁白适配摘要/关键词/情绪，提升旁白检索命中率（需 LLM Key）' },
   { key: 'embed',          label: '向量入库',       desc: '描述产出后立即向量化入库' },
 ] as const
 
@@ -88,6 +89,8 @@ export default function ProcessPage() {
   const [syncVectorOnRecover, setSyncVectorOnRecover] = useState(true)
   const [statusUpdating, setStatusUpdating] = useState(false)
   const [statusFixMsg, setStatusFixMsg] = useState('')
+  const [enrichBusy, setEnrichBusy] = useState(false)
+  const [enrichMsg, setEnrichMsg] = useState('')
   /** 最近一次主入口任务模式：用于完成文案区分（恢复区重跑不改变此值） */
   const [runPreset, setRunPreset] = useState<'full' | 'asr_only'>('full')
   /** 当前选中视频所展示的 process job id（来自 async_jobs，前端唯一追踪键）*/
@@ -460,11 +463,11 @@ export default function ProcessPage() {
     })
   }
 
-  /** 口播快轨：只做切分（若尚无片段）+ ASR，跳过抽帧 / VLM / 向量，显著快于全流程 */
+  /** 口播快轨：只做切分（若尚无片段）+ ASR，跳过抽帧 / VLM / 智能标注 / 向量，显著快于全流程 */
   const asrOnlySkipSteps = (hasExistingClips: boolean): string[] =>
     hasExistingClips
-      ? ['split', 'extract_frames', 'vlm', 'embed']
-      : ['extract_frames', 'vlm', 'embed']
+      ? ['split', 'extract_frames', 'vlm', 'enrich', 'embed']
+      : ['extract_frames', 'vlm', 'enrich', 'embed']
 
   /** 统一入口：启动/排队一个预处理任务。新 job 立即接管显示（排队/运行均展示）。*/
   const submitProcessJob = async (
@@ -514,10 +517,11 @@ export default function ProcessPage() {
 
   const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only'): string[] => {
     let base: string[]
-    if (preset === 'asr_only') base = ['split', 'extract_frames', 'vlm']
-    else if (preset === 'vlm_only') base = ['split', 'asr']
-    else if (preset === 'embed_only') base = ['split', 'extract_frames', 'asr', 'vlm']
-    else base = ['split']
+    if (preset === 'asr_only') base = ['split', 'extract_frames', 'vlm', 'enrich']                // 仅补 ASR：画面未变，跳过 enrich
+    else if (preset === 'vlm_only') base = ['split', 'asr']                                        // 重跑 VLM：画面描述变了，需重跑 enrich 更新摘要
+    else if (preset === 'asr_vlm') base = ['split']                                                // 重跑 ASR+VLM：画面描述变了，需重跑 enrich 更新摘要
+    else if (preset === 'embed_only') base = ['split', 'extract_frames', 'asr', 'vlm', 'enrich']   // 仅重新入库：enrich 数据已存在，跳过
+    else base = ['split', 'enrich']                                                                 // 兜底：仅重跑 ASR 时跳过 enrich
     // 约束：重跑 VLM 时必须同步更新向量，否则语义检索不一致；embed_only 也必须跑 embed。
     if (preset === 'vlm_only' || preset === 'asr_vlm' || preset === 'embed_only') return base
     // 仅重跑 ASR 才允许选择是否 skip embed（高级选项）
@@ -532,6 +536,29 @@ export default function ProcessPage() {
       () => processJobsApi.create(selId, { skip_steps: recoverSkipSteps(preset) }),
       '视频预处理(恢复)',
     )
+  }
+
+  const handleReEnrichStart = async () => {
+    if (!selId || enrichBusy) return
+    const v = videos.find((x) => x.id === selId)
+    if (!v || v.total_clips <= 0) return
+    setEnrichBusy(true)
+    setEnrichMsg('正在重新生成智能标注（全片段），请耐心等待…')
+    try {
+      const res = await clipsApi.processEnrich(selId)
+      if (res.failed > 0 && res.processed === 0) {
+        setEnrichMsg(`智能标注全部失败（${res.failed}/${res.total_clips}）。请检查 LLM Key 配置或重试。`)
+      } else if (res.failed > 0) {
+        setEnrichMsg(`智能标注部分完成：成功 ${res.processed}/${res.total_clips}，失败 ${res.failed}。提示：标注更新后建议再点「重跑 Embed」让新标注进入检索向量。`)
+      } else {
+        setEnrichMsg(`智能标注完成：成功 ${res.processed}/${res.total_clips}。提示：标注更新后建议再点「重跑 Embed」让新标注进入检索向量。`)
+      }
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setEnrichMsg(detail || '智能标注失败，请检查 LLM Key 配置或稍后重试。')
+    } finally {
+      setEnrichBusy(false)
+    }
   }
 
   const handleManualStatusFix = async (status: Video['status']) => {
@@ -566,6 +593,7 @@ export default function ProcessPage() {
   const getVlmTotalTokens = (m: any) => m?.tokens?.vlm?.total_tokens ?? 0
   const getVlmEstimatedTokens = (m: any) => m?.tokens?.vlm?.estimated_total_tokens ?? 0
   const getEmbedTotalTokens = (m: any) => m?.tokens?.embed?.total_tokens ?? 0
+  const getLlmTotalTokens = (m: any) => m?.tokens?.llm?.total_tokens ?? 0
 
   const handleStop = () => {
     if (!selJobId) return
@@ -793,6 +821,21 @@ export default function ProcessPage() {
               >
                 重跑 Embed（全片段）
               </button>
+              <button
+                type="button"
+                disabled={!canRecover || enrichBusy}
+                onClick={() => void handleReEnrichStart()}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+                title="用最新 LLM 为全部片段重新生成旁白适配摘要/关键词/情绪（需配置 LLM Key；同步等待，全片段跑完才返回）"
+              >
+                {enrichBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                重跑智能标注（全片段）
+              </button>
+              {enrichMsg && (
+                <span className={`text-[11px] self-center ${enrichMsg.includes('失败') ? 'text-red-400/90' : 'text-emerald-400/90'}`}>
+                  {enrichMsg}
+                </span>
+              )}
             </div>
             <div className="pt-2 border-t border-slate-800/80 space-y-2">
               <p className="text-xs text-slate-400">
@@ -872,9 +915,12 @@ export default function ProcessPage() {
             const vlmTok = getVlmTotalTokens(metrics)
             const vlmEst = getVlmEstimatedTokens(metrics)
             const embTok = getEmbedTotalTokens(metrics)
+            const llmTok = getLlmTotalTokens(metrics)
             let stepMetricText = `耗时: ${fmtMs(tStep)}`
             if (step.key === 'vlm') {
               stepMetricText += ` · VLM tokens: ${vlmTok}${vlmEst > 0 ? ` (估算+${vlmEst})` : ''}`
+            } else if (step.key === 'enrich') {
+              stepMetricText += llmTok > 0 ? ` · LLM tokens: ${llmTok}` : ' · LLM 不统计 token'
             } else if (step.key === 'embed') {
               stepMetricText += ` · Embedding tokens: ${embTok}`
             } else if (step.key === 'asr') {

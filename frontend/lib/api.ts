@@ -362,6 +362,12 @@ export interface ClipResult {
   /** JSON 字符串：AsrSegmentJson[]，时间相对片段内音频 */
   asr_segments: string | null
   vlm_description: string | null
+  /** 智能标注：旁白适配摘要 */
+  abstract_summary: string | null
+  /** 智能标注：JSON 字符串 string[]，关键词 */
+  keywords: string | null
+  /** 智能标注：JSON 字符串 string[]，情绪标签 */
+  emotion_tags: string | null
 }
 
 export const clipsApi = {
@@ -369,9 +375,32 @@ export const clipsApi = {
     apiClient.get<unknown, ClipResult[]>(`/api/videos/${videoId}/clips`),
   update: (
     clipId: string,
-    payload: { asr_text?: string | null; asr_segments?: string | null; vlm_description?: string | null },
+    payload: {
+      asr_text?: string | null
+      asr_segments?: string | null
+      vlm_description?: string | null
+      abstract_summary?: string | null
+      keywords?: string | null
+      emotion_tags?: string | null
+    },
   ) =>
     apiClient.patch<unknown, { ok: boolean; clip_id: string }>(`/api/videos/clips/${clipId}`, payload),
+  /** 重新生成智能标注（abstract_summary/keywords/emotion_tags）；clip_ids 为空则重跑整段视频 */
+  processEnrich: (
+    videoId: string,
+    clipIds?: string[] | null,
+  ) =>
+    apiClient.post<
+      unknown,
+      {
+        video_id: string
+        total_clips: number
+        processed: number
+        skipped: number
+        failed: number
+        results: { clip_id: string; status: string; error?: string; abstract_summary?: string; keywords?: string[]; emotion_tags?: string[] }[]
+      }
+    >(`/api/videos/${videoId}/process-enrich`, clipIds && clipIds.length > 0 ? { clip_ids: clipIds } : {}),
 }
 
 export const exportApi = {
@@ -819,17 +848,25 @@ export interface Video {
 }
 
 export interface ProcessMessage {
-  step: 'split' | 'extract_frames' | 'asr' | 'vlm' | 'embed' | 'done' | 'error'
+  step: 'split' | 'extract_frames' | 'asr' | 'vlm' | 'enrich' | 'embed' | 'done' | 'error'
   status: 'running' | 'done' | 'error' | 'skip'
   message: string
   detail: Record<string, unknown>
 }
+
+export type MatchMode = 'auto' | 'vector' | 'text' | 'llm_only'
 
 export interface MatchRequest {
   query: string
   top_k?: number
   top_n?: number
   video_ids?: string[] | null
+  /**
+   * 单次匹配模式覆盖（auto/vector/text/llm_only）。
+   * 不传则用后端全局 match_mode 配置。
+   * 旁白/解说场景前端会自动传 llm_only（跨层语义对齐，命中率更高）。
+   */
+  match_mode?: MatchMode
 }
 
 export interface MatchClip {

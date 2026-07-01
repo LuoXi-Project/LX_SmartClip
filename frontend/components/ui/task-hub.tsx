@@ -33,7 +33,7 @@ function ResetPositionBtn({ onClick, onPointerDown }: { onClick: () => void; onP
   )
 }
 
-const PROCESS_STEPS = ['split', 'extract_frames', 'asr', 'vlm', 'embed'] as const
+const PROCESS_STEPS = ['split', 'extract_frames', 'asr', 'vlm', 'enrich', 'embed'] as const
 
 /** 从 process job 的 steps 推导百分比（与 ProcessPage 总进度口径一致）。*/
 function percentFromProcessJob(job: JobSnapshot): number {

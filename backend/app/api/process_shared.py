@@ -71,5 +71,6 @@ STEP_LABELS = {
     "extract_frames": "图帧提取",
     "asr": "语音识别 (ASR)",
     "vlm": "视觉描述 (VLM)",
+    "enrich": "智能标注",
     "embed": "向量入库",
 }

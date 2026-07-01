@@ -64,7 +64,8 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
         raise MatchPipelineError(500, f"数据库连接失败: {e}") from e
 
     try:
-        match_mode_cfg = _read_cfg(conn, "match_mode", "auto")
+        # 优先用请求级覆盖，其次全局配置
+        match_mode_cfg = (req.match_mode or "").strip().lower() or _read_cfg(conn, "match_mode", "auto")
 
         embed_base_url = _read_cfg(conn, "embedding_base_url", "https://api.openai.com/v1")
         embed_api_key = _read_cfg(conn, "embedding_api_key", "")
@@ -80,6 +81,16 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
 
         top_k = req.top_k if req.top_k is not None else top_k_cfg
         top_n = req.top_n if req.top_n is not None else top_n_cfg
+
+        # P2 阈值过滤：低于阈值的候选不进「推荐」（candidates 仍全量返回）。0 = 不过滤。
+        try:
+            min_llm_score = float(_read_cfg(conn, "match_min_llm_score", "0"))
+        except (TypeError, ValueError):
+            min_llm_score = 0.0
+        try:
+            min_similarity = float(_read_cfg(conn, "match_min_similarity", "0"))
+        except (TypeError, ValueError):
+            min_similarity = 0.0
 
         embedder = None
         vector_db = None
@@ -139,6 +150,8 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
             video_ids=req.video_ids,
             api_base_url=api_base_url,
             mode=effective_mode,
+            min_llm_score=min_llm_score,
+            min_similarity=min_similarity,
         )
 
         return MatchResponse(

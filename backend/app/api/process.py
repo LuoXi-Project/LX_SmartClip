@@ -23,7 +23,7 @@ from . import process_shared as ps
 from .process_shared import ProcessCancelled, _job_tasks, _task_subscribers, request_process_cancel
 from app.utils.logging_utils import stage_log
 
-ALLOWED_SKIP_STEPS = frozenset({"split", "extract_frames", "asr", "vlm", "embed"})
+ALLOWED_SKIP_STEPS = frozenset({"split", "extract_frames", "asr", "vlm", "enrich", "embed"})
 
 router = APIRouter(prefix="/api/videos", tags=["process"])
 jobs_router = APIRouter(prefix="/api/process-jobs", tags=["process"])

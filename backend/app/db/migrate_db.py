@@ -54,6 +54,16 @@ async def migrate():
         except Exception:
             pass
 
+        # 兼容旧库：clips 补齐 enrich 富化三列（abstract_summary / keywords / emotion_tags）
+        # 用于抹平「旁白文案（抽象层）↔ 画面/台词（具体层）」的表征鸿沟
+        for col in ("abstract_summary", "keywords", "emotion_tags"):
+            try:
+                await db.execute(f"ALTER TABLE clips ADD COLUMN {col} TEXT")
+                await db.commit()
+                print(f"  [迁移] clips 表新增 {col} 列")
+            except Exception:
+                pass  # 列已存在，忽略
+
         added = 0
         updated = 0
 

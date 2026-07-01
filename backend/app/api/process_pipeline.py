@@ -7,7 +7,10 @@ from typing import Any, TypeVar
 from fastapi import HTTPException
 from app.core.asr.types import ASRSegment, ASRTranscript
 from app.core.embedder import Embedder
+from app.core.enricher import enrich_clip
 from app.core.killable_subprocess import run_killable_target
+from app.core.llm import LLMClient
+from app.core.llm.config import LLMConfig
 from app.core.metrics.token_usage import TokenAccumulator, TokenUsage
 from app.core.splitter import StopRequested
 from app.core.vector_db.faiss_db import FaissVectorDB
@@ -200,6 +203,7 @@ async def run_pipeline(
         embedding_timeout_sec = float(await read_config(db, "embedding_timeout_sec", "120"))
         if embedding_timeout_sec <= 0:
             embedding_timeout_sec = 120.0
+        enrich_enabled_cfg = (await read_config(db, "enrich_enabled", "true")).strip().lower() in ("1", "true", "yes")
     finally:
         await db.close()
 
@@ -229,7 +233,7 @@ async def run_pipeline(
 
     def _timing_ms_snapshot() -> dict:
         out: dict[str, int] = {}
-        for s in ("split", "extract_frames", "asr", "vlm", "embed"):
+        for s in ("split", "extract_frames", "asr", "vlm", "enrich", "embed"):
             st = step_start_ts.get(s)
             ed = step_end_ts.get(s)
             out[s] = 0 if st is None else int(((ed or _now()) - st) * 1000)
@@ -278,6 +282,7 @@ async def run_pipeline(
     do_asr = "asr" not in skip_steps
     do_vlm = "vlm" not in skip_steps
     do_embed = "embed" not in skip_steps
+    do_enrich = enrich_enabled_cfg and "enrich" not in skip_steps
 
     if do_frames:
         msg = f"开始流式抽帧（{frame_fps} 帧/秒）" if do_split else f"开始为 {total_clips} 个片段抽帧（{frame_fps} 帧/秒）"
@@ -366,6 +371,31 @@ async def run_pipeline(
     else:
         await reporter.send("embed", "skip", "跳过向量入库")
 
+    # enrich：用 LLM 给每个片段生成「旁白适配摘要 + 关键词 + 情绪标签」，
+    # 抹平「旁白文案（抽象层）↔ 画面/台词（具体层）」的表征鸿沟，提升旁白检索命中率。
+    llm_instance = None
+    if do_enrich:
+        try:
+            db = await get_db_conn()
+            try:
+                llm_params = await LLMConfig.get_llm_params_with_defaults(db, default_temperature=0.3)
+            finally:
+                await db.close()
+            llm_instance = LLMClient(
+                base_url=llm_params["base_url"],
+                api_key=llm_params["api_key"],
+                model=llm_params["model"],
+                temperature=llm_params["temperature"],
+                max_tokens=llm_params["max_tokens"],
+            )
+            await reporter.send("enrich", "running", f"智能标注开启（model={llm_params['model']}）：为每个片段生成旁白适配摘要/关键词/情绪…")
+        except Exception as e:
+            do_enrich = False
+            llm_instance = None
+            await reporter.send("enrich", "skip", f"智能标注跳过：LLM 未配置或初始化失败（{e}）")
+    else:
+        await reporter.send("enrich", "skip", "跳过智能标注（未启用或已 skip）")
+
     frames_worker_count = max(1, frame_concurrency)
     asr_worker_count = max(1, asr_concurrency)
     vlm_worker_count = max(1, vlm_concurrency)
@@ -376,6 +406,7 @@ async def run_pipeline(
     progress_lock = asyncio.Lock()
     vlm_enqueue_lock = asyncio.Lock()
     frame_done = frame_success = asr_done = asr_success = vlm_done = vlm_success = emb_done = emb_success = 0
+    enrich_done = enrich_success = 0
 
     async def _inc_progress(step: str, message_prefix: str, total: int, success: int, done: int):
         _ensure_step_start(step)
@@ -405,7 +436,7 @@ async def run_pipeline(
     embed_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
 
     def _make_item(clip_id: str, clip_path: str, asr_text: str = "", vlm_description: str = "") -> dict:
-        item = {"id": clip_id, "clip_path": clip_path, "asr_text": (asr_text or "").strip(), "vlm_description": (vlm_description or "").strip(), "frame_paths": None, "frame_ready": asyncio.Event(), "asr_ready": asyncio.Event(), "vlm_enqueued": False}
+        item = {"id": clip_id, "clip_path": clip_path, "asr_text": (asr_text or "").strip(), "vlm_description": (vlm_description or "").strip(), "frame_paths": None, "frame_ready": asyncio.Event(), "asr_ready": asyncio.Event(), "vlm_enqueued": False, "abstract_summary": "", "keywords": [], "emotion_tags": []}
         if not do_asr:
             item["asr_ready"].set()
         return item
@@ -550,7 +581,7 @@ async def run_pipeline(
                     asr_queue.task_done()
 
     async def _vlm_worker():
-        nonlocal vlm_done, vlm_success
+        nonlocal vlm_done, vlm_success, enrich_done, enrich_success
         while True:
             item = await vlm_queue.get()
             if item is None:
@@ -594,6 +625,42 @@ async def run_pipeline(
                             item["vlm_description"] = description.strip()
                             await update_clip_field(item["id"], "vlm_description", item["vlm_description"])
                             ok = True
+
+                            # enrich：基于台词+画面生成旁白适配摘要/关键词/情绪（抹平表征鸿沟）。
+                            # 失败不阻断 pipeline，三字段留空即可。
+                            if do_enrich and llm_instance is not None:
+                                t_enrich0 = time.perf_counter()
+
+                                async def _run_enrich():
+                                    await check_cancel(video_id)
+                                    return await enrich_clip(
+                                        llm_instance,
+                                        asr_text=item["asr_text"],
+                                        vlm_description=item["vlm_description"],
+                                    )
+
+                                enriched = await _step_with_timeout_retries(item["id"], "智能标注", _run_enrich)
+                                t_enrich_ms = int((time.perf_counter() - t_enrich0) * 1000)
+                                if enriched:
+                                    item["abstract_summary"] = enriched.get("abstract_summary", "")
+                                    item["keywords"] = enriched.get("keywords", [])
+                                    item["emotion_tags"] = enriched.get("emotion_tags", [])
+                                    if item["abstract_summary"]:
+                                        await update_clip_field(item["id"], "abstract_summary", item["abstract_summary"])
+                                    if item["keywords"]:
+                                        await update_clip_field(item["id"], "keywords", json.dumps(item["keywords"], ensure_ascii=False))
+                                    if item["emotion_tags"]:
+                                        await update_clip_field(item["id"], "emotion_tags", json.dumps(item["emotion_tags"], ensure_ascii=False))
+                                    enrich_success += 1
+                                    logger.info("片段 %s 智能标注完成：%dms（kw=%d, em=%d）", item["id"], t_enrich_ms, len(item["keywords"]), len(item["emotion_tags"]))
+                                else:
+                                    logger.warning("片段 %s 智能标注失败/超时：%dms", item["id"], t_enrich_ms)
+                                enrich_done += 1
+                                try:
+                                    async with progress_lock:
+                                        await _inc_progress("enrich", "智能标注", total_clips, enrich_success, enrich_done)
+                                except Exception:
+                                    logger.exception("enrich 进度更新异常")
             except ProcessCancelled:
                 raise
             except Exception as e:
@@ -628,7 +695,17 @@ async def run_pipeline(
                     if do_asr:
                         logger.info("片段 %s Embedding 等待 ASR 完成...", item["id"])
                         await item["asr_ready"].wait()
-                    text = f'{item["asr_text"]} {item["vlm_description"]}'.strip()
+                    # 五路文本拼接：台词 + 画面 + 旁白适配摘要 + 关键词 + 情绪标签。
+                    # 后三者来自 enrich，用于抹平「旁白文案（抽象层）↔ 画面/台词（具体层）」的表征鸿沟，
+                    # 让旁白能从抽象层命中索引。无 enrich 数据时自动退化为原来的两路拼接。
+                    parts = [
+                        item["asr_text"],
+                        item["vlm_description"],
+                        item.get("abstract_summary", ""),
+                        " ".join(item.get("keywords", []) or []),
+                        " ".join(item.get("emotion_tags", []) or []),
+                    ]
+                    text = " ".join(p for p in parts if p and p.strip()).strip()
                     if text:
                         # 该日志与 WS 进度用于判断：是否已进入 embedding 外部调用、卡在哪个 clip
                         try:
@@ -962,6 +1039,9 @@ async def run_pipeline(
     if do_vlm:
         _ensure_step_end("vlm")
         await reporter.send("vlm", "done", f"视觉描述完成，成功 {vlm_success}/{total_clips} 个（并发={vlm_worker_count}）", {"processed": vlm_success, "total": total_clips, "concurrency": vlm_worker_count, "metrics": _metrics_snapshot()})
+    if do_enrich:
+        _ensure_step_end("enrich")
+        await reporter.send("enrich", "done", f"智能标注完成，成功 {enrich_success}/{total_clips} 个（生成旁白适配摘要/关键词/情绪）", {"processed": enrich_success, "total": total_clips, "errors": total_clips - enrich_success, "metrics": _metrics_snapshot()})
     if do_embed:
         _ensure_step_end("embed")
         await reporter.send("embed", "done", f"向量入库完成，成功 {emb_success}/{total_clips} 个（并发={embed_worker_count}，model={embedding_model}）", {"processed": emb_success, "total": total_clips, "concurrency": embed_worker_count, "model": embedding_model, "metrics": _metrics_snapshot()})

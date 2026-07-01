@@ -47,28 +47,63 @@ class OpenAILLM(ILLM):
         for i, c in enumerate(candidates):
             asr = (c.get("asr_text") or "").strip()
             vlm = (c.get("vlm_description") or "").strip()
+            summary = (c.get("abstract_summary") or "").strip()
+            kw = c.get("keywords")
+            if isinstance(kw, str):
+                kw = kw.strip()
+            elif isinstance(kw, list):
+                kw = "、".join(str(x).strip() for x in kw if str(x).strip())
+            else:
+                kw = ""
+            em = c.get("emotion_tags")
+            if isinstance(em, str):
+                em = em.strip()
+            elif isinstance(em, list):
+                em = "、".join(str(x).strip() for x in em if str(x).strip())
+            else:
+                em = ""
+            extra = ""
+            if summary or kw or em:
+                parts = []
+                if summary:
+                    parts.append(f"适配旁白摘要: {summary}")
+                if kw:
+                    parts.append(f"关键词: {kw}")
+                if em:
+                    parts.append(f"情绪: {em}")
+                extra = "\n    " + "；".join(parts)
             cand_lines.append(
                 f"[{i+1}] clip_id={c['clip_id']}\n"
                 f"    台词: {asr or '（无）'}\n"
-                f"    画面: {vlm or '（无）'}"
+                f"    画面: {vlm or '（无）'}{extra}"
             )
         cand_text = "\n".join(cand_lines)
 
         system_prompt = (
-            "你是一位专业的视频剪辑顾问。"
-            "用户提供了一段文案，你需要从候选视频片段中挑选最匹配的片段并给出评分。\n"
-            "评分标准：\n"
-            "  - 内容相关性（文案与台词/画面的语义匹配程度）\n"
-            "  - 情感一致性（视频情绪与文案情感的契合度）\n"
-            "  - 视觉适配性（画面内容是否适合配合文案呈现）\n"
-            "请以 JSON 数组格式返回结果，每项包含 clip_id、score（0-10浮点数）、reason（中文简短理由）。"
-            "只返回 JSON，不要任何额外文字。"
+            "你是一位资深的影视解说剪辑师。用户提供的是「旁白解说文案」——"
+            "这是创作者视角的抽象叙述（如「相恋多年的感情终究敌不过现实重压」），"
+            "候选片段提供的是「原片台词」和「画面描述」——这是场景视角的具体内容"
+            "（如「女人愤怒摔门离开」），并附带「适配旁白摘要/关键词/情绪」标注。\n"
+            "你的核心任务：判断每段旁白在语义上适合配合哪个画面。"
+            "重点注意——文案与画面常常处于不同抽象层级、用词几乎不重叠，"
+            "你必须做「跨层语义对齐」，而不是字面匹配：\n"
+            "  - 情节/主题吻合度：旁白描述的情节、主题、事件是否与画面内容呼应"
+            "（抽象表述可对应具体场景，如「决然离去」对应「摔门离开」）；\n"
+            "  - 情绪/氛围契合度：旁白的情感基调是否与画面的情绪/情绪标签一致；\n"
+            "  - 解说适配性：该画面是否适合作为这段旁白的解说画面（视觉信息量、相关性）。\n"
+            "评分范围 0-10（保留一位小数）：\n"
+            "  - 9-10 几乎完美匹配（情节+情绪双吻合，是理想解说画面）；\n"
+            "  - 6-8 较好匹配（主题或情绪其一吻合，可用）；\n"
+            "  - 3-5 弱相关（勉强沾边但不够贴切）；\n"
+            "  - 0-2 不相关。\n"
+            "请以 JSON 数组格式返回结果，每项包含 clip_id、score（0-10 浮点数）、"
+            "reason（中文简短理由，说明对齐依据）。按分数从高到低排列。只返回 JSON 数组，不要任何额外文字。"
         )
 
         user_prompt = (
-            f"用户文案：\n{query}\n\n"
+            f"旁白解说文案：\n{query}\n\n"
             f"候选片段（共 {len(candidates)} 个）：\n{cand_text}\n\n"
-            "请对所有片段评分并按分数从高到低排列，返回 JSON 数组。"
+            "请基于「跨层语义对齐」原则对所有片段评分，返回按分数降序排列的 JSON 数组。"
         )
 
         try:

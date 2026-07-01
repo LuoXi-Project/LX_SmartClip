@@ -164,12 +164,35 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
             </div>
           </div>
         )}
+        {config['enrich_enabled'] && (
+          <div className="rounded-xl border border-slate-800 bg-slate-800/30 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <label className="text-xs text-slate-400">{config['enrich_enabled'].label || '智能标注 (enrich)'}</label>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  处理视频时为每个片段生成「旁白适配摘要/关键词/情绪」，抹平旁白与画面的语义鸿沟，提升旁白检索命中率（需配置 LLM Key，未配置会自动跳过）
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => onSet('enrich_enabled', v('enrich_enabled') === 'true' ? 'false' : 'true')}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${v('enrich_enabled') === 'true' ? 'bg-indigo-600' : 'bg-slate-700'}`}
+                  aria-label="切换智能标注开关"
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${v('enrich_enabled') === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                <SaveBtn dirty={isDirty('enrich_enabled')} saving={!!saving['enrich_enabled']} saved={!!saved['enrich_enabled']} onSave={() => onSave('enrich_enabled')} />
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
-          {(['vector_dimension', 'top_k', 'match_top_k', 'match_top_n'] as const).filter((k) => config[k]).map((key) => (
+          {(['vector_dimension', 'top_k', 'match_top_k', 'match_top_n', 'match_min_llm_score', 'match_min_similarity'] as const).filter((k) => config[k]).map((key) => (
             <div key={key} className="space-y-1.5">
               <label className="text-xs text-slate-400">{config[key].label || key}</label>
               <div className="flex gap-2">
-                <input type="number" value={v(key)} onChange={(e) => onSet(key, e.target.value)}
+                <input type="number" step="0.1" value={v(key)} onChange={(e) => onSet(key, e.target.value)}
                   className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors" />
                 <SaveBtn dirty={isDirty(key)} saving={!!saving[key]} saved={!!saved[key]} onSave={() => onSave(key)} />
               </div>

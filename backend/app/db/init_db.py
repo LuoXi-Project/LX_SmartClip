@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS clips (
     asr_segments TEXT,
     vlm_description TEXT,
     tags TEXT,
+    abstract_summary TEXT,
+    keywords TEXT,
+    emotion_tags TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (video_id) REFERENCES videos(id)
@@ -375,6 +378,27 @@ DEFAULT_CONFIG = [
         "素材匹配模式",
         '["auto","vector","text","llm_only"]',
     ),
+    (
+        "enrich_enabled",
+        "true",
+        "select",
+        "智能标注(enrich)：处理时为每个片段生成旁白适配摘要/关键词/情绪（抹平旁白-画面表征鸿沟，需 LLM Key）",
+        '["true","false"]',
+    ),
+    (
+        "match_min_llm_score",
+        "3",
+        "number",
+        "推荐过滤：LLM 评分(0-10)下限，低于此值不进推荐（宁缺毋滥，0=不过滤）",
+        None,
+    ),
+    (
+        "match_min_similarity",
+        "0.3",
+        "number",
+        "推荐过滤：向量相似度下限(0-1，由 L2 距离换算)，低于此值不进推荐（0=不过滤）",
+        None,
+    ),
     ("tts_voice", "zh-CN-XiaoxiaoNeural", "string", "TTS 语音角色", None),
     ("tts_rate", "+0%", "string", "TTS 语速 (如 +0%/-20%)", None),
     ("tts_volume", "+0%", "string", "TTS 音量 (如 +0%/+10%)", None),
@@ -586,6 +610,14 @@ async def init_db():
                 await db.execute("ALTER TABLE clips ADD COLUMN created_at TEXT")
             if "updated_at" not in cols:
                 await db.execute("ALTER TABLE clips ADD COLUMN updated_at TEXT")
+            # 兼容旧库：clips 补齐 enrich 富化三列（abstract_summary / keywords / emotion_tags）
+            # 用于抹平「旁白文案（抽象层）↔ 画面/台词（具体层）」的表征鸿沟
+            if "abstract_summary" not in cols:
+                await db.execute("ALTER TABLE clips ADD COLUMN abstract_summary TEXT")
+            if "keywords" not in cols:
+                await db.execute("ALTER TABLE clips ADD COLUMN keywords TEXT")
+            if "emotion_tags" not in cols:
+                await db.execute("ALTER TABLE clips ADD COLUMN emotion_tags TEXT")
             await db.execute(
                 "UPDATE clips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP), "
                 "updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)"

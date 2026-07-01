@@ -25,9 +25,38 @@ type EditState = {
   asr_segments: AsrSegmentJson[]
   asrSegmentsDirty: boolean
   vlm_description: string
+  abstract_summary: string
+  keywords: string[]
+  emotion_tags: string[]
+  /** 关键词/情绪是否有改动；未改动则保存不带上（避免误清） */
+  tagsDirty: boolean
   dirty: boolean
   saving: boolean
   error: string
+}
+
+function parseStrList(raw: string | null | undefined): string[] {
+  if (!raw || !String(raw).trim()) return []
+  try {
+    const data = JSON.parse(String(raw)) as unknown
+    if (!Array.isArray(data)) return []
+    return data
+      .map((x) => String(x ?? '').trim())
+      .filter((s) => !!s)
+  } catch {
+    return []
+  }
+}
+
+function tagsToInput(arr: string[]): string {
+  return arr.join('、')
+}
+
+function inputToTags(s: string): string[] {
+  return s
+    .split(/[、,，\n]/)
+    .map((t) => t.trim())
+    .filter((t) => !!t)
 }
 
 function parseAsrSegments(raw: string | null | undefined): AsrSegmentJson[] {
@@ -112,6 +141,7 @@ export function VideoResultDrawer({
 
   const [editing, setEditing] = useState<Record<string, EditState>>({})
   const [reprocessBusyId, setReprocessBusyId] = useState<string | null>(null)
+  const [enrichBusyId, setEnrichBusyId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -148,6 +178,10 @@ export function VideoResultDrawer({
             asr_segments: parseAsrSegments(c.asr_segments),
             asrSegmentsDirty: false,
             vlm_description: safeStr(c.vlm_description),
+            abstract_summary: safeStr(c.abstract_summary),
+            keywords: parseStrList(c.keywords),
+            emotion_tags: parseStrList(c.emotion_tags),
+            tagsDirty: false,
             dirty: false,
             saving: false,
             error: '',
@@ -169,10 +203,19 @@ export function VideoResultDrawer({
     return clips.filter((c) => {
       const a = safeStr(c.asr_text).toLowerCase()
       const v = safeStr(c.vlm_description).toLowerCase()
+      const summary = safeStr(c.abstract_summary).toLowerCase()
+      const tagsBlob = [...parseStrList(c.keywords), ...parseStrList(c.emotion_tags)].join(' ').toLowerCase()
       const stLocal = editing[c.id]
       const segs = stLocal?.asr_segments ?? parseAsrSegments(c.asr_segments)
       const segBlob = joinSegmentsText(segs).toLowerCase()
-      return a.includes(kw) || v.includes(kw) || segBlob.includes(kw) || c.id.toLowerCase().includes(kw)
+      return (
+        a.includes(kw) ||
+        v.includes(kw) ||
+        summary.includes(kw) ||
+        tagsBlob.includes(kw) ||
+        segBlob.includes(kw) ||
+        c.id.toLowerCase().includes(kw)
+      )
     })
   }, [clips, q, editing])
 
@@ -227,13 +270,17 @@ export function VideoResultDrawer({
     }
   }
 
-  const setEditField = (clipId: string, field: 'asr_text' | 'vlm_description', value: string) => {
+  const setEditField = (clipId: string, field: 'asr_text' | 'vlm_description' | 'abstract_summary', value: string) => {
     setEditing((prev) => {
       const cur = prev[clipId] || {
         asr_text: '',
         asr_segments: [],
         asrSegmentsDirty: false,
         vlm_description: '',
+        abstract_summary: '',
+        keywords: [],
+        emotion_tags: [],
+        tagsDirty: false,
         dirty: false,
         saving: false,
         error: '',
@@ -261,6 +308,10 @@ export function VideoResultDrawer({
         asr_segments: parseAsrSegments(clip.asr_segments),
         asrSegmentsDirty: false,
         vlm_description: safeStr(clip.vlm_description),
+        abstract_summary: safeStr(clip.abstract_summary),
+        keywords: parseStrList(clip.keywords),
+        emotion_tags: parseStrList(clip.emotion_tags),
+        tagsDirty: false,
         dirty: false,
         saving: false,
         error: '',
@@ -274,6 +325,24 @@ export function VideoResultDrawer({
           asr_segments: nextSegs,
           asrSegmentsDirty: true,
           asr_text: nextText,
+          dirty: true,
+          error: '',
+        },
+      }
+    })
+  }
+
+  /** 编辑智能标注的关键词 / 情绪（输入框以「、」分隔） */
+  const setTagsField = (clipId: string, field: 'keywords' | 'emotion_tags', value: string) => {
+    setEditing((prev) => {
+      const cur = prev[clipId]
+      if (!cur) return prev
+      return {
+        ...prev,
+        [clipId]: {
+          ...cur,
+          [field]: inputToTags(value),
+          tagsDirty: true,
           dirty: true,
           error: '',
         },
@@ -297,10 +366,21 @@ export function VideoResultDrawer({
       const payload: {
         asr_text: string
         vlm_description: string
+        abstract_summary: string
         asr_segments?: string | null
-      } = { asr_text: st.asr_text, vlm_description: st.vlm_description }
+        keywords?: string | null
+        emotion_tags?: string | null
+      } = {
+        asr_text: st.asr_text,
+        vlm_description: st.vlm_description,
+        abstract_summary: st.abstract_summary,
+      }
       if (st.asrSegmentsDirty) {
         payload.asr_segments = JSON.stringify(st.asr_segments)
+      }
+      if (st.tagsDirty) {
+        payload.keywords = JSON.stringify(st.keywords)
+        payload.emotion_tags = JSON.stringify(st.emotion_tags)
       }
       await clipsApi.update(clipId, payload)
       setClips((prev) =>
@@ -310,14 +390,28 @@ export function VideoResultDrawer({
                 ...c,
                 asr_text: st.asr_text,
                 vlm_description: st.vlm_description,
+                abstract_summary: st.abstract_summary,
                 ...(st.asrSegmentsDirty ? { asr_segments: payload.asr_segments ?? null } : {}),
+                ...(st.tagsDirty
+                  ? {
+                      keywords: payload.keywords ?? null,
+                      emotion_tags: payload.emotion_tags ?? null,
+                    }
+                  : {}),
               }
             : c
         )
       )
       setEditing((p) => ({
         ...p,
-        [clipId]: { ...p[clipId], saving: false, dirty: false, asrSegmentsDirty: false, error: '' },
+        [clipId]: {
+          ...p[clipId],
+          saving: false,
+          dirty: false,
+          asrSegmentsDirty: false,
+          tagsDirty: false,
+          error: '',
+        },
       }))
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '保存失败'
@@ -357,6 +451,63 @@ export function VideoResultDrawer({
       toast.error(apiDetailMessage(e))
     } finally {
       setReprocessBusyId(null)
+    }
+  }
+
+  /** 对单片段重新生成智能标注（abstract_summary/keywords/emotion_tags），用最新 LLM 覆盖旧标注 */
+  const reEnrichClip = async (clipId: string) => {
+    if (!curVideoId || enrichBusyId) return
+    setEnrichBusyId(clipId)
+    try {
+      const res = await clipsApi.processEnrich(curVideoId, [clipId])
+      const row = res.results?.[0]
+      if (row && row.status === 'success') {
+        const summary = row.abstract_summary ?? ''
+        const keywords = row.keywords ?? []
+        const emotionTags = row.emotion_tags ?? []
+        // 同步本地缓存（clips + editing），避免刷新即可看到新标注
+        const keywordsJson = keywords.length ? JSON.stringify(keywords) : null
+        const emotionJson = emotionTags.length ? JSON.stringify(emotionTags) : null
+        setClips((prev) =>
+          prev.map((c) =>
+            c.id === clipId
+              ? { ...c, abstract_summary: summary, keywords: keywordsJson, emotion_tags: emotionJson }
+              : c
+          )
+        )
+        setEditing((prev) => ({
+          ...prev,
+          [clipId]: {
+            ...(prev[clipId] || {
+              asr_text: '',
+              asr_segments: [],
+              asrSegmentsDirty: false,
+              vlm_description: '',
+              abstract_summary: '',
+              keywords: [],
+              emotion_tags: [],
+              tagsDirty: false,
+              dirty: false,
+              saving: false,
+              error: '',
+            }),
+            abstract_summary: summary,
+            keywords,
+            emotion_tags: emotionTags,
+            tagsDirty: false,
+            dirty: false,
+            error: '',
+          },
+        }))
+        toast.success(`智能标注完成（${res.processed}/${res.total_clips}）`)
+      } else {
+        const reason = row?.error || row?.status || '未知原因'
+        toast.error(`智能标注失败：${reason}`)
+      }
+    } catch (e: unknown) {
+      toast.error(apiDetailMessage(e))
+    } finally {
+      setEnrichBusyId(null)
     }
   }
 
@@ -488,7 +639,7 @@ export function VideoResultDrawer({
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="搜索 ASR / VLM ..."
+                  placeholder="搜索 ASR / VLM / 标注 ..."
                   className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-900/50 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
                 />
               </div>
@@ -690,6 +841,20 @@ export function VideoResultDrawer({
                                   )}
                                   重跑 Embed
                                 </button>
+                                <button
+                                  type="button"
+                                  title="对本片段重新生成智能标注（旁白适配摘要/关键词/情绪，需配置 LLM Key）。用最新 LLM 结果覆盖旧标注；改完如需更新检索向量请再点「重跑 Embed」"
+                                  disabled={!!enrichBusyId || !!reprocessBusyId || !curVideoId}
+                                  onClick={() => void reEnrichClip(c.id)}
+                                  className="text-xs px-2 py-1 rounded-md border border-slate-700 bg-slate-900/40 text-slate-300 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-0.5"
+                                >
+                                  {enrichBusyId === c.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  )}
+                                  重跑智能标注
+                                </button>
                                 
                                 <button
                                   onClick={() => saveClip(c.id)}
@@ -848,6 +1013,46 @@ export function VideoResultDrawer({
                                   rows={4}
                                   className="w-full px-3 py-2 rounded-lg bg-slate-900/50 border border-slate-800 text-xs text-slate-200 outline-none focus:border-indigo-500 transition-colors"
                                 />
+                              </div>
+
+                              <div className="rounded-lg border border-indigo-900/40 bg-indigo-950/10 p-2.5 space-y-2">
+                                <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                                  <ListTree className="w-3.5 h-3.5 text-indigo-400/90 shrink-0" />
+                                  <span>智能标注（enrich）</span>
+                                  <span className="text-slate-600">用于抹平旁白-画面语义鸿沟，提升旁白检索命中率；可手动修正</span>
+                                </div>
+                                <div>
+                                  <div className="text-[11px] text-slate-500 mb-1">旁白适配摘要（抽象层表述，如「离别与抉择」）</div>
+                                  <textarea
+                                    value={st?.abstract_summary ?? safeStr(c.abstract_summary)}
+                                    onChange={(e) => setEditField(c.id, 'abstract_summary', e.target.value)}
+                                    rows={2}
+                                    placeholder="无标注时留空；处理时若开启智能标注会自动生成"
+                                    className="w-full px-3 py-2 rounded-lg bg-slate-900/50 border border-slate-800 text-xs text-slate-200 outline-none focus:border-indigo-500 transition-colors"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  <div>
+                                    <div className="text-[11px] text-slate-500 mb-1">关键词（用「、」或逗号分隔）</div>
+                                    <input
+                                      type="text"
+                                      value={tagsToInput(st?.keywords ?? [])}
+                                      onChange={(e) => setTagsField(c.id, 'keywords', e.target.value)}
+                                      placeholder="如：离别、现实、争吵"
+                                      className="w-full px-3 py-2 rounded-lg bg-slate-900/50 border border-slate-800 text-xs text-slate-200 outline-none focus:border-indigo-500 transition-colors"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="text-[11px] text-slate-500 mb-1">情绪标签（用「、」或逗号分隔）</div>
+                                    <input
+                                      type="text"
+                                      value={tagsToInput(st?.emotion_tags ?? [])}
+                                      onChange={(e) => setTagsField(c.id, 'emotion_tags', e.target.value)}
+                                      placeholder="如：悲伤、压抑"
+                                      className="w-full px-3 py-2 rounded-lg bg-slate-900/50 border border-slate-800 text-xs text-slate-200 outline-none focus:border-indigo-500 transition-colors"
+                                    />
+                                  </div>
+                                </div>
                               </div>
                             </div>
 

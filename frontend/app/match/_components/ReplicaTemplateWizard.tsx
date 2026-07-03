@@ -5,7 +5,7 @@ import { Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import { createProcessWebSocket, replicaApi, videosApi, type ProcessMessage, type Video } from '@/lib/api'
 
 type Props = {
-  onConfirmed: (payload: { templateId: string; guide: string; replicaType: 'short_video' | 'film_commentary' | 'scene_story' }) => void
+  onConfirmed: (payload: { templateId: string; guide: string; replicaType: 'short_video' | 'film_commentary' | 'scene_story'; templatePresetId?: string }) => void
   initialGuide?: string
   onTemplateSaved?: () => void
 }
@@ -22,7 +22,7 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [selectedVideoId, setSelectedVideoId] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [skipVlm, setSkipVlm] = useState(true)
+  const [skipVlm, setSkipVlm] = useState(false)
   const [maxClips, setMaxClips] = useState(80)
 
   const [templateId, setTemplateId] = useState<string | null>(null)
@@ -116,13 +116,14 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
         sourceLabel = title.trim() || uploaded.name || uploadFile.name || '上传视频'
       }
 
-      // 进入处理：只保留 asr（跳过抽帧、VLM、embedding）
+      // 进入处理：默认跑完整多模态（含 vlm/enrich），保证复刻模板有画面/情绪/关键词数据。
+      // 后置 replica step 显式跳过——向导处理完会单独调 generateTemplate（它现在读全字段），
+      // 避免后置 step 与向导重复生成两份模板。
       setLoadingPhase('processing')
-      const skipSteps = ['extract_frames', 'vlm', 'embed']
-      if (!skipVlm) {
-        // 用户想开 VLM：只跳过 embedding，尽量让视觉描述辅助生成模板
-        const idx = skipSteps.indexOf('vlm')
-        if (idx !== -1) skipSteps.splice(idx, 1)
+      const skipSteps: string[] = ['embed', 'replica']
+      if (skipVlm) {
+        // 用户主动选择跳过视觉理解（更快但牺牲画面信息）：补跳抽帧+vlm
+        skipSteps.push('extract_frames', 'vlm')
       }
 
       const picked = sourceType === 'library' ? libraryVideos.find((v) => v.id === selectedVideoId) : null
@@ -214,7 +215,9 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
       await replicaApi.confirmTemplate(templateId, { name, template_guide: nextGuide, template_json: draftJson })
       setConfirmed(true)
       const rt = (draftJson?.replica_type as 'short_video' | 'film_commentary' | 'scene_story' | undefined) || replicaType
-      onConfirmed({ templateId, guide: nextGuide, replicaType: rt })
+      // 动态 preset id：复刻模板确认后已在后端注册为可消费 preset
+      const templatePresetId = templateId ? `replica_dyn_${templateId.slice(0, 8)}` : undefined
+      onConfirmed({ templateId, guide: nextGuide, replicaType: rt, templatePresetId })
       onTemplateSaved?.()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as any)?.message || '确认失败'
@@ -380,7 +383,7 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
                 onChange={(e) => setSkipVlm(e.target.checked)}
                 className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500/40"
               />
-              <span className="text-xs text-slate-200">默认跳过视觉理解（更快，MVP）</span>
+              <span className="text-xs text-slate-200">跳过视觉理解（更快，但模板不含画面信息，不推荐）</span>
             </label>
 
             <label className="flex items-center gap-2">

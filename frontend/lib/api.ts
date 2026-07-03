@@ -734,6 +734,8 @@ export interface ReplicaTemplateListItem {
     coherence?: number
     density_stability?: number
   } | null
+  template_preset_id?: string | null
+  has_slots?: boolean
 }
 
 export interface ReplicaTemplateListResponse {
@@ -782,6 +784,22 @@ export const replicaApi = {
 
   renameTemplate: (templateId: string, name: string) =>
     apiClient.patch<unknown, { ok: boolean; template_id: string; name: string }>(`/api/replica/template/${templateId}`, { name }),
+
+  /**
+   * 从库内已处理完成的视频直接生成复刻模板（跳过下载/处理阶段，复用 clips 全字段）。
+   * 等价于 generateTemplate，但语义上明确用于"库生成"入口。
+   */
+  generateFromExisting: (
+    videoId: string,
+    payload?: {
+      skip_vlm?: boolean
+      max_clips?: number
+      replica_type?: 'short_video' | 'film_commentary' | 'scene_story'
+      style_profile?: string
+      quality_mode?: 'balanced' | 'high_quality'
+    }
+  ) =>
+    apiClient.post<unknown, ReplicaTemplateDraftResponse>(`/api/replica/${videoId}/generate-template`, payload ?? {}),
 }
 
 export const ttsApi = {

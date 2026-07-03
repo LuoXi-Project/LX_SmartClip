@@ -73,4 +73,5 @@ STEP_LABELS = {
     "vlm": "视觉描述 (VLM)",
     "enrich": "智能标注",
     "embed": "向量入库",
+    "replica": "复刻模板",
 }

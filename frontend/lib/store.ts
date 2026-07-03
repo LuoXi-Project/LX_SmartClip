@@ -67,6 +67,8 @@ export interface MatchPageState {
   replicaTemplateGuide: string
   /** 链接复刻：模板类型，驱动一键成片模板预设 */
   replicaTemplateType: 'short_video' | 'film_commentary' | 'scene_story' | ''
+  /** 链接复刻：动态注册的 preset id（replica_dyn_xxxxxxxx），驱动下游 auto_edit 真实 slot 消费 */
+  replicaTemplatePresetId: string
   autoPlans: AutoEditPlanApi[]
   autoRealizeDownloads: Record<string, { filename: string; url: string }>
   autoExpandedPlanIds: string[]
@@ -101,6 +103,7 @@ export interface MatchPageState {
   setAutoEventsMaxBatches: (v: number | '') => void
   setReplicaTemplateGuide: (v: string) => void
   setReplicaTemplateType: (v: 'short_video' | 'film_commentary' | 'scene_story' | '') => void
+  setReplicaTemplatePresetId: (v: string) => void
   setAutoPlans: (plans: AutoEditPlanApi[]) => void
   setAutoRealizeDownloads: (
     fn:
@@ -145,6 +148,7 @@ export type MatchPersistedSlice = Pick<
   | 'autoEventsMaxBatches'
   | 'replicaTemplateGuide'
   | 'replicaTemplateType'
+  | 'replicaTemplatePresetId'
   | 'autoPlans'
   | 'autoRealizeDownloads'
   | 'autoExpandedPlanIds'
@@ -262,6 +266,7 @@ export const useMatchStore = create<MatchPageState>()(
       autoEventsMaxBatches: '',
       replicaTemplateGuide: '',
       replicaTemplateType: '',
+      replicaTemplatePresetId: '',
       autoPlans: [] as AutoEditPlanApi[],
       autoRealizeDownloads: {} as Record<string, { filename: string; url: string }>,
       autoExpandedPlanIds: [] as string[],
@@ -299,6 +304,7 @@ export const useMatchStore = create<MatchPageState>()(
       setAutoEventsMaxBatches: (autoEventsMaxBatches) => set({ autoEventsMaxBatches }),
       setReplicaTemplateGuide: (replicaTemplateGuide) => set({ replicaTemplateGuide }),
       setReplicaTemplateType: (replicaTemplateType) => set({ replicaTemplateType }),
+      setReplicaTemplatePresetId: (replicaTemplatePresetId: string) => set({ replicaTemplatePresetId }),
       setAutoPlans: (autoPlans) => set({ autoPlans }),
       setAutoRealizeDownloads: (fn) =>
         set((state) => ({
@@ -328,6 +334,7 @@ export const useMatchStore = create<MatchPageState>()(
           segmentCounter: 0,
           replicaTemplateGuide: '',
           replicaTemplateType: '',
+          replicaTemplatePresetId: '',
         }),
     }),
     {
@@ -365,6 +372,7 @@ export const useMatchStore = create<MatchPageState>()(
         autoEventsMaxBatches: state.autoEventsMaxBatches,
         replicaTemplateGuide: state.replicaTemplateGuide,
         replicaTemplateType: state.replicaTemplateType,
+        replicaTemplatePresetId: state.replicaTemplatePresetId,
         autoPlans: state.autoPlans,
         autoRealizeDownloads: state.autoRealizeDownloads,
         autoExpandedPlanIds: state.autoExpandedPlanIds,
@@ -457,6 +465,7 @@ export const useMatchStore = create<MatchPageState>()(
         if (typeof merged.autoEventsMaxBatches !== 'number' && merged.autoEventsMaxBatches !== '') merged.autoEventsMaxBatches = ''
         if (typeof merged.replicaTemplateGuide !== 'string') merged.replicaTemplateGuide = ''
         if (typeof (merged as any).replicaTemplateType !== 'string') (merged as any).replicaTemplateType = ''
+        if (typeof (merged as any).replicaTemplatePresetId !== 'string') (merged as any).replicaTemplatePresetId = ''
         return mergeLegacyAutoEditCache(merged) as MatchPersistedSlice
       },
       onRehydrateStorage: () => (state) => {
@@ -506,6 +515,7 @@ export const useMatchStore = create<MatchPageState>()(
           if (typeof state.autoEventsMaxBatches !== 'number' && state.autoEventsMaxBatches !== '') state.autoEventsMaxBatches = ''
           if (typeof state.replicaTemplateGuide !== 'string') state.replicaTemplateGuide = ''
           if (typeof (state as any).replicaTemplateType !== 'string') (state as any).replicaTemplateType = ''
+          if (typeof (state as any).replicaTemplatePresetId !== 'string') (state as any).replicaTemplatePresetId = ''
         }
       },
     }

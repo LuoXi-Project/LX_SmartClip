@@ -270,11 +270,14 @@ def _stable_seed(*parts: str) -> int:
     return int(zlib.crc32(s.encode("utf-8")) & 0xFFFFFFFF)
 
 
-def _weighted_shuffle(events: Sequence, rng: random.Random) -> List:
+def _weighted_shuffle(events: Sequence, rng: random.Random, *, diversity: float = 1.0) -> List:
     """
     稳定地制造“有差异但不会太离谱”的候选顺序：
     - 越靠前(rank 越小 / score 越高)的事件更容易在前面
     - 但不同 seed 会带来不同排列，从而生成多方案
+
+    diversity 放大噪声权重（默认 1.0），用于在多方案场景下制造更大差异，
+    避免去重后候选方案数量不足。
     """
     scored: List[Tuple[float, object]] = []
     for e in events:
@@ -285,8 +288,8 @@ def _weighted_shuffle(events: Sequence, rng: random.Random) -> List:
             base += float(gs) * 1.5
         if isinstance(gr, int) and gr > 0:
             base += 1.0 / (1.0 + float(gr))
-        # 噪声项让不同 seed 产生不同顺序；base 越大，越不容易被噪声拉走
-        noise = rng.random()
+        # 噪声项让不同 seed 产生不同顺序；diversity 越大噪声影响越强，越容易选出不同事件
+        noise = rng.random() * diversity
         key = -(base * 10.0 + noise)
         scored.append((key, e))
     scored.sort(key=lambda x: x[0])
@@ -325,6 +328,8 @@ def arrange_timeline_variants(
 
         for i in range(n):
             rng = random.Random(base_seed + i * 9973)
+            # 第 i 个方案用递增的 diversity，让后续方案更容易选出不同事件，避免去重后数量不足
+            cur_diversity = 1.0 + i * 8.0
             used_event_ids: Set[str] = set()
             clip_counts: dict[str, int] = {}
             max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
@@ -336,7 +341,7 @@ def arrange_timeline_variants(
                     for e in pool.events
                     if getattr(e, "role", None) == role and (e.text or "").strip()
                 ]
-                shuffled_role = _weighted_shuffle(role_events, rng)
+                shuffled_role = _weighted_shuffle(role_events, rng, diversity=cur_diversity)
 
                 pick = None
                 for e in shuffled_role:
@@ -358,7 +363,7 @@ def arrange_timeline_variants(
 
                 # slot 缺失兜底：取任意未使用高分事件
                 if pick is None:
-                    shuffled_any = _weighted_shuffle(pool.events, rng)
+                    shuffled_any = _weighted_shuffle(pool.events, rng, diversity=cur_diversity)
                     for e in shuffled_any:
                         eid = getattr(e, "event_id", None)
                         if not isinstance(eid, str) or not eid or eid in used_event_ids:
@@ -407,6 +412,85 @@ def arrange_timeline_variants(
             if sig and sig not in seen:
                 seen.add(sig)
                 uniq.append(tl)
+
+        # 去重后数量不足目标：用更大 diversity 追加编排，尽量凑够 num_plans 个差异方案。
+        # 仅当事件池足够丰富（每个 slot 有≥2 候选）时才可能造出差异；否则保留已有方案。
+        retry = 0
+        while len(uniq) < n and retry < n * 3:
+            retry += 1
+            rng = random.Random(base_seed + 99999 + retry * 7919)
+            big_div = 15.0 + retry * 10.0
+            used_event_ids: Set[str] = set()
+            clip_counts: dict[str, int] = {}
+            max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
+            items: List[TimelineItem] = []
+            for role in roles_sequence:
+                role_events = [
+                    e
+                    for e in pool.events
+                    if getattr(e, "role", None) == role and (e.text or "").strip()
+                ]
+                shuffled_role = _weighted_shuffle(role_events, rng, diversity=big_div)
+                pick = None
+                for e in shuffled_role:
+                    eid = getattr(e, "event_id", None)
+                    if not isinstance(eid, str) or not eid or eid in used_event_ids:
+                        continue
+                    clip_id = str(getattr(e, "clip_id", "") or "")
+                    if _exceed_clip_quota(
+                        clip_id=clip_id,
+                        clip_counts=clip_counts,
+                        max_events_per_clip=max_events_per_clip,
+                    ):
+                        continue
+                    text = (e.text or "").strip()
+                    if not text:
+                        continue
+                    pick = e
+                    break
+                if pick is None:
+                    shuffled_any = _weighted_shuffle(pool.events, rng, diversity=big_div)
+                    for e in shuffled_any:
+                        eid = getattr(e, "event_id", None)
+                        if not isinstance(eid, str) or not eid or eid in used_event_ids:
+                            continue
+                        clip_id = str(getattr(e, "clip_id", "") or "")
+                        if _exceed_clip_quota(
+                            clip_id=clip_id,
+                            clip_counts=clip_counts,
+                            max_events_per_clip=max_events_per_clip,
+                        ):
+                            continue
+                        text = (e.text or "").strip()
+                        if not text:
+                            continue
+                        pick = e
+                        break
+                if pick is None:
+                    continue
+                used_event_ids.add(pick.event_id)
+                _touch_clip_quota(clip_id=str(pick.clip_id), clip_counts=clip_counts)
+                text = (pick.text or "").strip()
+                dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
+                dur = max(0.5, min(per_slot, dur_est))
+                items.append(
+                    TimelineItem(
+                        event_id=pick.event_id,
+                        clip_id=pick.clip_id,
+                        subtitle_text=text,
+                        audio_mode="tts" if mode in ("auto", "voiceover") else "original",
+                        duration_budget_sec=dur,
+                    )
+                )
+            if not items:
+                continue
+            items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
+            sig = tuple(f"{it.clip_id}:{(it.subtitle_text or '').strip()}" for it in items)
+            if sig and sig not in seen:
+                seen.add(sig)
+                total = sum((it.duration_budget_sec or 0.0) for it in items)
+                uniq.append(FinalTimeline(items=items, total_duration_sec_est=total if total > 0 else None))
+
         return uniq if uniq else timelines[:1]
 
     # 非模板：保持旧 tier 预算 + 加权洗牌差异化逻辑

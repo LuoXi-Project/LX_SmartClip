@@ -170,6 +170,7 @@ export default function MatchPage() {
     replicaTemplateGuide,
     setReplicaTemplateGuide,
     setReplicaTemplateType,
+    setReplicaTemplatePresetId,
     autoPlans,
     setAutoPlans,
     autoRealizeDownloads,
@@ -322,8 +323,16 @@ export default function MatchPage() {
       return
     }
     setAutoPrompt(`【复刻模板约束】\n${g}\n\n【用户诉求】\n`)
-    setTemplatePreset(mapReplicaTypeToPreset(useMatchStore.getState().replicaTemplateType))
+    // 优先用动态注册的真实 preset（含参考视频 slot）；没有才回退到按 type 映射的写死 preset
+    const dynPreset = useMatchStore.getState().replicaTemplatePresetId.trim()
+    if (dynPreset) {
+      setTemplatePreset(dynPreset)
+    } else {
+      setTemplatePreset(mapReplicaTypeToPreset(useMatchStore.getState().replicaTemplateType))
+    }
     setTemplatePresetSource('replica')
+    // 必须开启模板模式，否则 template_preset 不会传给后端（会走自由剪辑）
+    setAutoTemplateEnabled(true)
     setMatchMode('auto')
     window.scrollTo({ top: 0, behavior: 'auto' })
     toast.success('已切换至「一键成片」：请在剪辑诉求中补充主题后生成方案')
@@ -1899,18 +1908,20 @@ export default function MatchPage() {
               </div>
               <ReplicaTemplateLibrary
                 refreshSignal={replicaTemplateRefreshSignal}
-                onUse={({ guide, replicaType }) => {
+                onUse={({ guide, replicaType, templatePresetId }) => {
                   setReplicaTemplateGuide(guide)
                   setReplicaTemplateType(replicaType)
+                  setReplicaTemplatePresetId(templatePresetId || '')
                   toast.success('已载入模板，请选择下方要进入的流水线')
                 }}
               />
               <ReplicaTemplateWizard
                 initialGuide={replicaTemplateGuide}
                 onTemplateSaved={() => setReplicaTemplateRefreshSignal((v) => v + 1)}
-                onConfirmed={({ guide, replicaType }) => {
+                onConfirmed={({ guide, replicaType, templatePresetId }) => {
                   setReplicaTemplateGuide(guide)
                   setReplicaTemplateType(replicaType)
+                  setReplicaTemplatePresetId(templatePresetId || '')
                   toast.success('模板已确认，请选择下方要进入的流水线')
                 }}
               />

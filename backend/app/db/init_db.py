@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS videos (
     total_clips INTEGER DEFAULT 0,
     split_mode TEXT DEFAULT 'scene',
     status TEXT DEFAULT 'pending',
+    is_replica_ref INTEGER DEFAULT 0,
     upload_at TEXT NOT NULL
 );
 """
@@ -576,7 +577,6 @@ async def init_db():
         except Exception:
             pass
         await db.execute(CREATE_FILM_COMMENTARY_JOBS)
-        # 兼容旧库：film_commentary_jobs 补 prompt_overrides_json
         try:
             cur = await db.execute("PRAGMA table_info(film_commentary_jobs)")
             film_cols = [str(r[1]) for r in await cur.fetchall()]
@@ -589,6 +589,15 @@ async def init_db():
         # 旧版分块表已废弃，启动时删除（若存在）
         try:
             await db.execute("DROP TABLE IF EXISTS video_summary_sections")
+        except Exception:
+            pass
+
+        # 兼容旧库：videos 补 is_replica_ref（标记复刻参考视频，pipeline 据此触发后置复刻 step）
+        try:
+            cur = await db.execute("PRAGMA table_info(videos)")
+            v_cols = [str(r[1]) for r in await cur.fetchall()]
+            if "is_replica_ref" not in v_cols:
+                await db.execute("ALTER TABLE videos ADD COLUMN is_replica_ref INTEGER DEFAULT 0")
         except Exception:
             pass
 

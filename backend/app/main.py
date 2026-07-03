@@ -55,6 +55,9 @@ async def lifespan(app: FastAPI):
     # 对齐 async_jobs 里卡住的 process 任务（队列 worker 已死），避免前端永久「处理中」
     from app.jobs.store import reconcile_process_jobs_on_startup
     await reconcile_process_jobs_on_startup()
+    # 恢复已确认的复刻模板为动态 preset（写入内存 TEMPLATES，供 auto_edit 消费）
+    from app.api.replica import register_replica_templates_from_db
+    await register_replica_templates_from_db()
     await init_blocking_pool()
     try:
         yield

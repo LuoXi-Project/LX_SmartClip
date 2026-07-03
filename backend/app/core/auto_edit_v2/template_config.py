@@ -126,6 +126,24 @@ def list_templates() -> List[Dict[str, str]]:
     return [{"id": tid, "label": tdef["label"]} for tid, tdef in TEMPLATES.items()]
 
 
+def register_template(tid: str, spec: TemplateDefSpec) -> None:
+    """
+    运行时注册动态模板（复刻模板专用）。
+
+    写入 TEMPLATES 后，list_templates / normalize_template_preset / get_template_slots
+    / get_template_style_hint 全部自动生效——下游 auto_edit 编排链路零改动即可消费。
+
+    注意：TEMPLATES 是模块级内存常量，进程重启即丢失；持久化由 replica_templates 表负责，
+    app 启动时调用 register_replica_templates_from_db 恢复。
+    """
+    TEMPLATES[tid] = spec
+
+
+def template_exists(tid: str) -> bool:
+    """判断模板 id 是否已注册（含动态注册的复刻模板）。"""
+    return bool(tid) and tid in TEMPLATES
+
+
 def normalize_template_preset(preset: Optional[str]) -> TemplatePresetId | None:
     """校验模板 id；不在注册表内的输入返回 None。"""
     if not preset or not isinstance(preset, str):
@@ -138,6 +156,10 @@ def normalize_template_preset(preset: Optional[str]) -> TemplatePresetId | None:
         s = "replica_film_commentary"
     if s in TEMPLATES:
         return s
+    # 动态复刻 preset 兜底：replica_dyn_xxxxxxxx 若未注册（draft 模板/重启未恢复），
+    # 映射到默认短视频复刻 preset，避免复刻约束完全丢失。调用方仍可拿到合法 slot。
+    if s.startswith("replica_dyn_"):
+        return "replica_short_video"
     return None
 
 

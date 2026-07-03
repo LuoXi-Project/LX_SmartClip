@@ -76,6 +76,8 @@ class ReplicaTemplateGetResponse(BaseModel):
     tone: Optional[str]
     structure: Optional[Any]
     status: Literal["draft", "confirmed"]
+    template_preset_id: Optional[str] = None
+    has_slots: bool = False
 
 
 class ReplicaTemplateListItem(BaseModel):
@@ -92,6 +94,8 @@ class ReplicaTemplateListItem(BaseModel):
     replica_type: Optional[str] = None
     style_profile: Optional[str] = None
     quality_signals: Optional[Dict[str, Any]] = None
+    template_preset_id: Optional[str] = None
+    has_slots: bool = False
 
 
 class ReplicaTemplateListResponse(BaseModel):

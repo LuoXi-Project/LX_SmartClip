@@ -16,9 +16,45 @@ from pydantic import BaseModel, Field, field_validator
 class StrategyStyle(BaseModel):
     pace: Literal["slow", "medium", "fast"] = "medium"
     tone: Literal["calm", "neutral", "energetic"] = "neutral"
-    structure: List[Literal["hook", "context", "highlight", "cta"]] = Field(
+    # 允许任意字符串（LLM 可能输出 demonstration/verification 等细粒度节拍），
+    # 由 _normalize_role 归一化到编排器可消费的 4 个标准 role。
+    structure: List[str] = Field(
         default_factory=lambda: ["hook", "context", "highlight", "cta"]
     )
+
+    @field_validator("structure", mode="before")
+    @classmethod
+    def _normalize_structure(cls, v):
+        if not isinstance(v, list):
+            return ["hook", "context", "highlight", "cta"]
+        out = []
+        for item in v:
+            out.append(_normalize_role(item))
+        return out or ["hook", "context", "highlight", "cta"]
+
+
+# LLM 可能输出的细粒度叙事节拍 → 编排器可消费的 4 个标准 role
+_ROLE_ALIASES: Dict[str, str] = {
+    "hook": "hook", "钩子": "hook", "开场": "hook", "opening": "hook", "intro": "hook", "引子": "hook",
+    "context": "context", "背景": "context", "铺垫": "context", "setting": "context",
+    "background": "context", "setup": "context", "problem": "context", "痛点": "context",
+    "highlight": "highlight", "亮点": "highlight", "冲突": "highlight", "高潮": "highlight",
+    "proof": "highlight", "证据": "highlight", "demonstration": "highlight", "demo": "highlight",
+    "演示": "highlight", "verification": "highlight", "验证": "highlight", "solution": "highlight",
+    "解决方案": "highlight", "turning_point": "highlight", "转折": "highlight", "climax": "highlight",
+    "cta": "cta", "行动": "cta", "收口": "cta", "结尾": "cta", "closing": "cta",
+    "emotional_close": "cta", "结尾情绪": "cta", "call_to_action": "cta",
+}
+
+
+def _normalize_role(raw: Any) -> str:
+    """把 LLM 输出的任意节拍名归一化到 {hook,context,highlight,cta}；无法识别的归入 highlight。"""
+    if not isinstance(raw, str):
+        return "highlight"
+    key = raw.strip().lower()
+    if not key:
+        return "highlight"
+    return _ROLE_ALIASES.get(key, "highlight")
 
 
 class StrategyPreferences(BaseModel):

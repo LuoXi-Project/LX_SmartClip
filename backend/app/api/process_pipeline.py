@@ -233,7 +233,7 @@ async def run_pipeline(
 
     def _timing_ms_snapshot() -> dict:
         out: dict[str, int] = {}
-        for s in ("split", "extract_frames", "asr", "vlm", "enrich", "embed"):
+        for s in ("split", "extract_frames", "asr", "vlm", "enrich", "embed", "replica"):
             st = step_start_ts.get(s)
             ed = step_end_ts.get(s)
             out[s] = 0 if st is None else int(((ed or _now()) - st) * 1000)
@@ -1046,6 +1046,53 @@ async def run_pipeline(
     if do_embed:
         _ensure_step_end("embed")
         await reporter.send("embed", "done", f"向量入库完成，成功 {emb_success}/{total_clips} 个（并发={embed_worker_count}，model={embedding_model}）", {"processed": emb_success, "total": total_clips, "concurrency": embed_worker_count, "model": embedding_model, "metrics": _metrics_snapshot()})
+
+    # 后置 step：复刻模板生成（仅 is_replica_ref=1 的参考视频触发；失败不阻断 pipeline）
+    do_replica = "replica" not in skip_steps
+    is_replica_ref = False
+    if do_replica:
+        try:
+            db = await get_db_conn()
+            try:
+                cur = await db.execute("SELECT is_replica_ref FROM videos WHERE id = ?", (video_id,))
+                vrow = await cur.fetchone()
+                is_replica_ref = bool(vrow and int(vrow["is_replica_ref"] or 0) == 1)
+            finally:
+                await db.close()
+        except Exception:
+            is_replica_ref = False
+
+    if do_replica and is_replica_ref:
+        _ensure_step_start("replica")
+        await reporter.send("replica", "running", "复刻模板生成中（基于多模态 clips）…")
+        try:
+            from app.api.replica import _generate_replica_template_core, ReplicaGenerateError, _REPLICA_TYPE_RULES, _REPLICA_TYPE_DEFAULT
+
+            # 推断复刻类型：优先用 films 视频自身的标记，否则按 clips 数量粗判
+            replica_type = _REPLICA_TYPE_DEFAULT
+            result = await _generate_replica_template_core(
+                video_id,
+                replica_type=replica_type,
+                style_profile="通用",
+                quality_mode="high_quality",
+                max_clips=min(160, max(20, total_clips or 80)),
+                auto_status="confirmed",
+            )
+            _ensure_step_end("replica")
+            await reporter.send(
+                "replica",
+                "done",
+                f"复刻模板已生成并入库（template_id={result['template_id'][:8]}…）",
+                {"template_id": result["template_id"], "metrics": _metrics_snapshot()},
+            )
+        except ReplicaGenerateError as e:
+            logger.warning("复刻模板后置 step 生成失败（不阻断）video_id=%s: %s", video_id, e.detail)
+            await reporter.send("replica", "error", f"复刻模板生成失败（不影响素材处理）: {e.detail}")
+        except Exception as e:
+            logger.exception("复刻模板后置 step 异常（不阻断）video_id=%s", video_id)
+            await reporter.send("replica", "error", f"复刻模板生成异常（不影响素材处理）: {e}")
+    else:
+        await reporter.send("replica", "skip", "跳过复刻模板生成（非复刻参考视频或已显式 skip）")
 
     await set_video_status(video_id, "done")
     # 注：最终 "done" 事件由 _run_task 在 update_job_status 之后发送，避免 TaskHub 竞态

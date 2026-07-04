@@ -259,7 +259,7 @@ export function TaskHub() {
         </div>
 
         {/* 任务列表 */}
-        <div className="max-h-[60vh] overflow-y-auto px-3 py-2.5 space-y-2.5">
+        <div className="max-h-[60vh] overflow-y-auto styled-scrollbar px-3 py-2.5 space-y-2.5">
           {list.map((t) => {
             const titleEl = t.href ? (
               <Link

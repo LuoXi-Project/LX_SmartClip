@@ -201,7 +201,7 @@ export function StreamingProgress({
           <ProgressBar percent={percent} failed={failed} accent={accent} />
         )}
         {logOpen && logs.length > 0 && (
-          <div className="max-h-24 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/70 px-2.5 py-1.5 space-y-0.5">
+          <div className="max-h-24 overflow-y-auto styled-scrollbar rounded-lg border border-slate-800 bg-slate-900/70 px-2.5 py-1.5 space-y-0.5">
             {logs.map((line, i) => (
               <p key={`${line}-${i}`} className="text-[11px] text-slate-400 leading-5 truncate">
                 {line}
@@ -305,7 +305,7 @@ export function StreamingProgress({
 
       {/* 流式日志盒 */}
       {logs.length > 0 && (
-        <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+        <div className="max-h-28 overflow-y-auto styled-scrollbar rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
           {logs.map((line, i) => (
             <p key={`${line}-${i}`} className="text-[11px] text-slate-400 leading-5">
               {line}

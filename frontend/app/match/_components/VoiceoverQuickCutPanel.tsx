@@ -995,7 +995,7 @@ export function VoiceoverQuickCutPanel({
           ) : selectedDoneCount === 0 ? (
             <p className="text-xs text-amber-400/90">你已选择 {selectedCount} 个，但当前不可用于口播快剪。</p>
           ) : (
-            <ul className="text-xs text-slate-400 space-y-1 max-h-28 overflow-y-auto">
+            <ul className="text-xs text-slate-400 space-y-1 max-h-28 overflow-y-auto styled-scrollbar">
               {selectedVideos.map((v) => (
                 <li key={v.id} className="truncate">
                   · {v.name || v.id}{' '}

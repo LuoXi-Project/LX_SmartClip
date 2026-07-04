@@ -185,8 +185,7 @@ function OutputSection({ generated, generating, copied, outputRef, onCopy, onReg
           </div>
         )}
       </div>
-      <div ref={outputRef} className="max-h-64 overflow-y-auto rounded-xl bg-slate-950/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-200 leading-relaxed whitespace-pre-wrap"
-        style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}>
+      <div ref={outputRef} className="max-h-64 overflow-y-auto styled-scrollbar rounded-xl bg-slate-950/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
         {generated || <span className="text-slate-600 animate-pulse">思考中...</span>}
       </div>
       {generated && !generating && (

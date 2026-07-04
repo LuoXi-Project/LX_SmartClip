@@ -27,7 +27,7 @@ export const markdownProseClassName =
 
 export const baseMarkdownComponents: Components = {
   table: ({ children, ...props }: ComponentPropsWithoutRef<'table'>) => (
-    <div className="my-3 w-full overflow-x-auto rounded-lg border border-slate-700/80 bg-slate-950/40">
+    <div className="my-3 w-full overflow-x-auto styled-scrollbar rounded-lg border border-slate-700/80 bg-slate-950/40">
       <table className="w-full min-w-full border-collapse text-xs" {...props}>
         {children}
       </table>
@@ -63,7 +63,7 @@ export const baseMarkdownComponents: Components = {
   ),
   pre: ({ children, ...props }: ComponentPropsWithoutRef<'pre'>) => (
     <pre
-      className="my-3 overflow-x-auto rounded-lg bg-slate-900 border border-slate-800 p-3 text-[13px] leading-relaxed"
+      className="my-3 overflow-x-auto styled-scrollbar rounded-lg bg-slate-900 border border-slate-800 p-3 text-[13px] leading-relaxed"
       {...props}
     >
       {children}

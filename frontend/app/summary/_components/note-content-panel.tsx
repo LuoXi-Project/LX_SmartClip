@@ -157,7 +157,7 @@ export function NoteContentPanel({
             <div className="text-[11px] uppercase tracking-wide text-slate-500 shrink-0">预览</div>
             <div
               ref={previewScrollRef}
-              className="flex-1 min-h-[160px] max-h-[min(36vh,380px)] overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3"
+              className="flex-1 min-h-[160px] max-h-[min(36vh,380px)] overflow-auto styled-scrollbar rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3"
             >
               <SummaryNotePreview
                 markdown={markdown}
@@ -179,7 +179,7 @@ export function NoteContentPanel({
         ) : noteView === 'preview' ? (
           <div
             ref={previewScrollRef}
-            className="flex-1 overflow-auto rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3 max-h-[min(70vh,720px)]"
+            className="flex-1 overflow-auto styled-scrollbar rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-3 max-h-[min(70vh,720px)]"
           >
             <SummaryNotePreview
               markdown={markdown}

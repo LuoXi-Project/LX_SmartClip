@@ -307,7 +307,7 @@ export function AudioMatchTimelineModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-3 min-h-0">
+        <div className="flex-1 overflow-y-auto styled-scrollbar px-4 py-3 min-h-0">
           <div className="flex flex-col gap-3 min-h-0">
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3 min-h-[200px]">
               <div className="flex flex-col gap-2 min-w-0">
@@ -374,7 +374,7 @@ export function AudioMatchTimelineModal({
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2 text-xs overflow-y-auto max-h-[42vh] lg:max-h-none">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2 text-xs overflow-y-auto styled-scrollbar max-h-[42vh] lg:max-h-none">
                 <p className="text-[11px] font-medium text-slate-400">段落属性</p>
                 {!selectedSeg || selectedIndex < 0 ? (
                   <p className="text-slate-500 text-[11px]">点击时间轴片段查看与编辑</p>

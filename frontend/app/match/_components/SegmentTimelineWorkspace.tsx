@@ -598,7 +598,7 @@ export function SegmentTimelineWorkspace({
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2 text-xs overflow-y-auto max-h-[48vh] xl:max-h-none">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2 text-xs overflow-y-auto styled-scrollbar max-h-[48vh] xl:max-h-none">
           <p className="text-[11px] font-medium text-slate-400">当前段落</p>
           {!selectedSegment ? (
             <p className="text-slate-500 text-[11px]">点击时间轴片段查看属性</p>

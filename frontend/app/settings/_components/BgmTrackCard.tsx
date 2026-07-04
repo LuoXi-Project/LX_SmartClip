@@ -101,7 +101,7 @@ export function BgmTrackCard({
                 {expandTags ? '收起' : `展开${hiddenTagCount > 0 ? ` +${hiddenTagCount}` : ''}`}
               </button>
             </div>
-            <div className={`flex flex-wrap gap-1.5 ${expandTags ? 'max-h-28 overflow-y-auto pr-1' : ''}`}>
+            <div className={`flex flex-wrap gap-1.5 ${expandTags ? 'max-h-28 overflow-y-auto styled-scrollbar pr-1' : ''}`}>
               {visibleTags.map((tag) => {
                 const selected = selectedTags.includes(tag)
                 return (

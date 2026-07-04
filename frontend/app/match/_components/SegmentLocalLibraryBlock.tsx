@@ -140,7 +140,7 @@ export function SegmentLocalLibraryBlock({
               : '暂无可用素材。请先上传或在素材处理中完成解析。'}
           </div>
         ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-0.5 px-0.5">
+          <div className="flex gap-3 overflow-x-auto styled-scrollbar pb-2 -mx-0.5 px-0.5">
             {items.map((v) => {
               const positions = orderPositionsForKey(localVideoIds, v.id)
               const thumb = `${API_BASE_URL}/api/videos/${v.id}/thumbnail`

@@ -232,7 +232,7 @@ export function SegmentRow({
                 — 点击勾选顺序；Shift+点击再叠同一条
               </span>
             </p>
-            <div className="flex gap-3 overflow-x-auto pb-2">
+            <div className="flex gap-3 overflow-x-auto styled-scrollbar pb-2">
               {seg.clips.map((clip) => {
                 const ordered = seg.selectedClipIds ?? []
                 const positions = orderPositionsForKey(ordered, clip.clip_id)

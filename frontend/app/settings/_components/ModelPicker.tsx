@@ -151,7 +151,7 @@ export function ModelPicker({ value, onChange, baseUrl, apiKey, placeholder }: P
         <span className="text-xs text-slate-500">{filtered.length}/{models.length}</span>
         <button onClick={() => setOpen(false)} className="text-xs text-slate-500 hover:text-slate-300 ml-1">✕</button>
       </div>
-      <div className="max-h-52 overflow-y-auto">
+      <div className="max-h-52 overflow-y-auto styled-scrollbar">
         {filtered.map((m) => (
           <button
             key={m}

@@ -344,7 +344,7 @@ export function StockLibraryTrimDialog({
           })}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto styled-scrollbar p-4 space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-black border border-slate-800 aspect-video">
             <video
               ref={videoRef}

@@ -94,7 +94,7 @@ export function BgmCustomConfigPanel(props: {
                     placeholder="搜索 BGM：名称 / 文件名 / 标签 / 心情 / BPM"
                     className="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
                   />
-                  <div className="space-y-1.5 max-h-72 overflow-auto pr-1">
+                  <div className="space-y-1.5 max-h-72 overflow-auto styled-scrollbar pr-1">
                     {filtered.map((t) => {
                       const picked = selectedTrackIds.includes(t.filename)
                       const isPreviewing = previewTrackId === t.id

@@ -198,7 +198,7 @@ export function BgmTrackPicker({
               ? `匹配 ${listTracks.length} / ${tracks.length} 首`
               : `共 ${tracks.length} 首，可搜索或按情绪筛选`}
           </p>
-          <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/40 divide-y divide-slate-800/80 pr-0.5">
+          <div className="max-h-44 overflow-y-auto styled-scrollbar rounded-lg border border-slate-800 bg-slate-950/40 divide-y divide-slate-800/80 pr-0.5">
             {listTracks.length === 0 ? (
               <p className="px-3 py-4 text-center text-xs text-slate-500">无匹配曲目，试试换个关键词或选「全部」</p>
             ) : (

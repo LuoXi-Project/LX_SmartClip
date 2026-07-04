@@ -214,7 +214,7 @@ export default function TTSPage() {
                           <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)} placeholder="搜索语音..."
                             className="w-full bg-slate-800 rounded-lg px-3 py-1.5 text-xs outline-none placeholder-slate-600" />
                         </div>
-                        <div className="max-h-48 overflow-y-auto py-1">
+                        <div className="max-h-48 overflow-y-auto styled-scrollbar py-1">
                           {filteredVoices.map((voice) => (
                             <button key={voice.name} onClick={() => { setSelectedVoice(voice.name); setShowVoiceDropdown(false) }}
                               className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-800 transition-colors ${voice.name===selectedVoice?'text-indigo-400':'text-slate-300'}`}>

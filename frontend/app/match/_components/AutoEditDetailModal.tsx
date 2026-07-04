@@ -65,7 +65,7 @@ export function AutoEditDetailModal({
             关闭 Esc
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-3 min-h-0">
+        <div className="flex-1 overflow-y-auto styled-scrollbar px-4 py-3 min-h-0">
           <AutoEditPlanWorkspace
             activePlan={detailPlan}
             detailEditMode={detailEditMode}

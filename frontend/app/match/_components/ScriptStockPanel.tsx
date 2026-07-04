@@ -1288,7 +1288,7 @@ export function ScriptStockPanel({
                           再叠同文件）；未缓存请先「下载」。
                         </p>
                       )}
-                      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+                      <div className="flex gap-3 overflow-x-auto styled-scrollbar pb-2 -mx-1 px-1">
                         {hits.map((hit) => {
                           const cachedRel = bestCachedRelForId(
                             provider,

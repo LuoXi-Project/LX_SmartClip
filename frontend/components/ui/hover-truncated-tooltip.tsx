@@ -137,7 +137,7 @@ export function HoverTruncatedTooltip({
           <div
             role="tooltip"
             className={[
-              'fixed z-[200] w-[min(18rem,calc(100vw-1.5rem))] max-h-[min(16rem,42vh)] overflow-y-auto rounded-xl',
+              'fixed z-[200] w-[min(18rem,calc(100vw-1.5rem))] max-h-[min(16rem,42vh)] overflow-y-auto styled-scrollbar rounded-xl',
               'border border-slate-600/80 bg-[#141721]/98 px-3 py-2.5 text-[11px] leading-relaxed',
               'text-slate-200 shadow-2xl shadow-black/40 backdrop-blur-md whitespace-pre-wrap',
               'break-words outline-none ring-1 ring-indigo-500/15',

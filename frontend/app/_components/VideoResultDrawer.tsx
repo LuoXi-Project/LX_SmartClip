@@ -613,7 +613,7 @@ export function VideoResultDrawer({
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto">
+            <div className="flex-1 min-h-0 overflow-auto styled-scrollbar">
               {loading ? (
                 <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />加载中...
@@ -646,7 +646,7 @@ export function VideoResultDrawer({
                     </div>
                   </div>
                   {asrPreviewMode === 'timeline' ? (
-                    <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800 bg-slate-900/30 divide-y divide-slate-800">
+                    <div className="flex-1 min-h-0 overflow-auto styled-scrollbar rounded-lg border border-slate-800 bg-slate-900/30 divide-y divide-slate-800">
                       {asrPreviewRows.length === 0 ? (
                         <div className="px-3 py-2 text-[11px] text-slate-500">暂无可预览内容</div>
                       ) : (
@@ -866,7 +866,7 @@ export function VideoResultDrawer({
                                   </p>
                                 )}
                                 {st && st.asr_segments.length > 0 && (
-                                  <div className="max-h-[220px] space-y-1.5 overflow-y-auto pr-0.5">
+                                  <div className="max-h-[220px] space-y-1.5 overflow-y-auto styled-scrollbar pr-0.5">
                                     {st.asr_segments.map((seg, si) => (
                                       <div
                                         key={si}

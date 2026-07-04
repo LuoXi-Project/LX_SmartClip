@@ -107,7 +107,7 @@ export function StockOnlineCachePanel({
           {onlineProviderLabel(tab)} 暂无已下载文件。搜索并下载后此处会列出；可单条删除或一键清空。
         </p>
       ) : (
-        <ul className="max-h-72 overflow-y-auto space-y-2 pr-1">
+        <ul className="max-h-72 overflow-y-auto styled-scrollbar space-y-2 pr-1">
           {items.map((it) => {
             const thumb = cacheThumb(tab, it).trim()
             const q = String((it as { search_query?: string }).search_query || '').trim()

@@ -252,7 +252,7 @@ function PlanDetailSegmentList({
       <p className="text-[11px] text-slate-400">
         段落列表 · {activeCount}/{segments.length} 段参与成片
       </p>
-      <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+      <div className="space-y-2 max-h-[50vh] overflow-y-auto styled-scrollbar">
         {segments.map((s, segIdx) => {
           const excluded = !!s.exclude_from_output
           const clipId = s.selected_clip_ids?.[0] || s.clip_group?.[0]?.clip_id || ''

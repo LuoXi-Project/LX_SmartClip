@@ -126,7 +126,7 @@ export function SubtitlePanel({
                 <span className="text-[10px] text-slate-500 uppercase tracking-widest">时间轴预览</span>
                 <span className="ml-auto text-[10px] text-slate-600">{entries.length} 条</span>
               </div>
-              <div className="max-h-36 overflow-y-auto">
+              <div className="max-h-36 overflow-y-auto styled-scrollbar">
                 {entries.slice(0, 20).map(e => (
                   <div key={e.index} className="flex items-baseline gap-3 px-3 py-1.5 border-b border-slate-900 hover:bg-slate-900/60">
                     <span className="text-[10px] text-slate-600 tabular-nums w-4 shrink-0">{e.index}</span>

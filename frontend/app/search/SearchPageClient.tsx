@@ -376,7 +376,7 @@ export default function AssetSearchPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="max-h-56 overflow-auto divide-y divide-slate-800">
+                  <div className="max-h-56 overflow-auto styled-scrollbar divide-y divide-slate-800">
                     {videos
                       .filter((v) => v.status === 'done')
                       .map((v) => {
@@ -513,7 +513,7 @@ export default function AssetSearchPage() {
                 <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
                   <span>按素材分组 · 点击片段在右侧预览</span>
                 </div>
-                <div className="flex-1 overflow-auto divide-y divide-slate-800">
+                <div className="flex-1 overflow-auto styled-scrollbar divide-y divide-slate-800">
                   {displayAssets.map((asset) => (
                     <div
                       key={asset.asset_id}
@@ -542,7 +542,7 @@ export default function AssetSearchPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="grid gap-1.5 mt-1 max-h-72 overflow-y-auto pr-1">
+                      <div className="grid gap-1.5 mt-1 max-h-72 overflow-y-auto styled-scrollbar pr-1">
                         {asset.segments.map((seg) => (
                           <button
                             key={seg.clip_id}
@@ -583,7 +583,7 @@ export default function AssetSearchPage() {
                 <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
                   <span>片段列表（按相关度降序）</span>
                 </div>
-                <div className="flex-1 overflow-auto divide-y divide-slate-800">
+                <div className="flex-1 overflow-auto styled-scrollbar divide-y divide-slate-800">
                   {displayAssets.flatMap((asset) =>
                     asset.segments.map((seg) => ({ asset, seg })),
                   ).map(({ asset, seg }) => (
@@ -632,7 +632,7 @@ export default function AssetSearchPage() {
 
           {/* Right: player & info — 外层撑满行高以便 sticky 在整页滚动时有效；内层卡片吸顶 */}
           <div className="min-h-0 h-full flex flex-col">
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-[260px] w-full sticky top-12 z-10 self-start max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-[260px] w-full sticky top-12 z-10 self-start max-h-[calc(100dvh-3rem)] overflow-y-auto styled-scrollbar overscroll-contain">
               <div className="px-4 py-2 border-b border-slate-800 text-xs text-slate-500 flex items-center justify-between">
                 <span>检索预览</span>
                 {effectiveAsset && (

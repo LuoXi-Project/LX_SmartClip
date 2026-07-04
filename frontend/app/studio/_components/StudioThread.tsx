@@ -376,7 +376,7 @@ export function StudioThread() {
         ) : null}
         <StudioPanelHeaderAction panelId="thread" />
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
+      <div className="flex-1 min-h-0 overflow-y-auto styled-scrollbar overscroll-contain px-4 py-4 space-y-3">
         {messages.length === 0 && (
           <div className="space-y-3 mr-2">
             <p className="text-xs text-slate-400 leading-relaxed">

@@ -191,7 +191,7 @@ export function AutoEditPlanCard({
           className={`mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-2 ${
             expandedPreviewPlanIds.includes(p.plan_id)
               ? 'max-h-none'
-              : 'max-h-24 overflow-y-auto'
+              : 'max-h-24 overflow-y-auto styled-scrollbar'
           }`}
         >
           {segs.map((s) => {

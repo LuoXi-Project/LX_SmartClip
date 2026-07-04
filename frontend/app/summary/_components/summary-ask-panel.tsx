@@ -343,10 +343,7 @@ export function SummaryAskPanel({
       </div>
 
       {/* Messages */}
-      <div
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0"
-        style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}
-      >
+      <div className="flex-1 overflow-y-auto styled-scrollbar px-4 py-4 space-y-4 min-h-0">
         {!videoId ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 py-12 text-center">
             <HelpCircle className="w-10 h-10 text-slate-700" />

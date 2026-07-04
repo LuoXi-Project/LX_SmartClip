@@ -264,9 +264,7 @@ export default function AIChatPanel() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0"
-          style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}
-        >
+        <div className="flex-1 overflow-y-auto styled-scrollbar px-4 py-4 space-y-4 min-h-0">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full gap-3 py-8">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-600/20 to-blue-600/20 border border-violet-500/20 flex items-center justify-center">

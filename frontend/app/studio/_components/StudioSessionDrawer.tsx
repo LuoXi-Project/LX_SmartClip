@@ -103,7 +103,7 @@ export function StudioSessionDrawer({
             新建会话
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 overflow-y-auto styled-scrollbar p-2 space-y-1">
           {loading ? (
             <div className="flex justify-center py-8 text-slate-500">
               <Loader2 className="w-5 h-5 animate-spin" />

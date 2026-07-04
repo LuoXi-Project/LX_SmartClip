@@ -427,7 +427,7 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
           {processLogs.length > 0 && (
             <div className="rounded-xl bg-slate-950/60 border border-slate-700/60 px-4 py-3">
               <p className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">处理进度</p>
-              <div className="mt-2 max-h-40 overflow-auto text-[11px] text-slate-300 whitespace-pre-wrap">
+              <div className="mt-2 max-h-40 overflow-auto styled-scrollbar text-[11px] text-slate-300 whitespace-pre-wrap">
                 {processLogs.join('\n')}
               </div>
             </div>
@@ -495,7 +495,7 @@ export function ReplicaTemplateWizard({ onConfirmed, initialGuide, onTemplateSav
               {draftJson && (
                 <details className="text-xs text-slate-300">
                   <summary className="cursor-pointer text-slate-400 hover:text-slate-200">查看模板 JSON（调试用）</summary>
-                  <pre className="mt-2 overflow-auto bg-slate-950/60 border border-slate-700/60 rounded-xl p-3 text-[11px] whitespace-pre-wrap">
+                  <pre className="mt-2 overflow-auto styled-scrollbar bg-slate-950/60 border border-slate-700/60 rounded-xl p-3 text-[11px] whitespace-pre-wrap">
                     {JSON.stringify(draftJson, null, 2)}
                   </pre>
                 </details>

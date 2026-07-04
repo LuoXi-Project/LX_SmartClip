@@ -152,7 +152,7 @@ export function InspectorPanel() {
         })}
       </div>
 
-      <div className="flex-1 overflow-auto p-4 text-xs text-slate-400 space-y-4">
+      <div className="flex-1 overflow-auto styled-scrollbar p-4 text-xs text-slate-400 space-y-4">
         {inspectorTab === 'production' && (
           <>
             {audioSummary ? (

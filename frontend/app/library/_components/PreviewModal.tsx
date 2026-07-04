@@ -130,7 +130,7 @@ export function PreviewModal({ video, hasError, onClose, onError }: PreviewModal
               暂无明显高光片段（可通过「匹配」页面结合文案进一步检索）。
             </p>
           ) : (
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-800/80 bg-slate-900/60 divide-y divide-slate-800/80">
+            <div className="max-h-40 overflow-y-auto styled-scrollbar rounded-lg border border-slate-800/80 bg-slate-900/60 divide-y divide-slate-800/80">
               {highlights.map((h) => (
                 <button
                   key={h.clip_id}

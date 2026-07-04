@@ -556,7 +556,7 @@ export function PlanEditWorkspace({
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2 text-xs overflow-y-auto max-h-[42vh] lg:max-h-none">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2 text-xs overflow-y-auto styled-scrollbar max-h-[42vh] lg:max-h-none">
           <p className="text-[11px] font-medium text-slate-400">片段属性</p>
           {!selectedSeg || !selectedLayout ? (
             <p className="text-slate-500 text-[11px]">点击时间轴片段查看与编辑</p>

@@ -25,6 +25,7 @@ from pathlib import Path
 # 确保能 import app.*（frozen 下 start_backend 已把 backend 根加入 sys.path）
 from app.core.publisher._progress import emit_error, emit_log, emit_progress
 from app.core.publisher.douyin import publish as douyin_publish, douyin_login as _douyin_login
+from app.core.publisher import generic as generic_publisher
 from app.core.publisher.types import (
     PublishResult,
     PublishTaskPayload,
@@ -39,8 +40,8 @@ def _run_login(platform: str, account: str) -> int:
         if platform == "douyin":
             ok = asyncio_run(_douyin_login(account))
         else:
-            emit_error(f"暂不支持的登录平台: {platform}")
-            return 3
+            # 其余平台走通用登录流程
+            ok = asyncio_run(generic_publisher.login(platform, account))
         return 0 if ok else 1
     except Exception:
         emit_error(f"登录异常:\n{traceback.format_exc()}")
@@ -95,11 +96,11 @@ def main(task_json_path: str) -> int:
 
         try:
             if platform == "douyin":
+                # 抖音用独立模块（DOM 适配最完整，已深度联调）
                 r = asyncio_run(douyin_publish(item, payload.video_path))
             else:
-                # 其余平台预留
-                r = TaskItemResult(platform=platform, account=item.account, status="skipped",
-                                   message=f"平台 {platform} 暂未实现")
+                # 其余平台走通用流程（generic.py + platform_registry 配置）
+                r = asyncio_run(generic_publisher.publish(item, payload.video_path))
             results.append(r)
         except Exception as exc:
             emit_error(f"平台 {platform} 执行异常:\n{traceback.format_exc()}")

@@ -141,20 +141,23 @@ async def check_account(platform: str, body: CheckLoginRequest):
     if not has_account(platform, account):
         return {"platform": platform, "account": account, "valid": False, "message": "未找到该账号 cookie"}
 
-    # 仅抖音实现了精确校验
-    if platform == "douyin":
-        from app.core.publisher.douyin import douyin_check_login
-        try:
+    # 各平台精确校验登录态
+    try:
+        if platform == "douyin":
+            from app.core.publisher.douyin import douyin_check_login
             valid = await douyin_check_login(account)
-        except Exception as exc:
-            logger.exception("校验登录态异常")
-            return {"platform": platform, "account": account, "valid": False, "message": f"校验异常: {exc}"}
-        await publish_db.upsert_account(
-            platform=platform, account=account,
-            login_status="logged_in" if valid else "expired",
-        )
-        return {"platform": platform, "account": account, "valid": valid}
-    return {"platform": platform, "account": account, "valid": True, "message": "该平台未实现精确校验"}
+        else:
+            # 其余平台走通用校验
+            from app.core.publisher import generic
+            valid = await generic.check_login(platform, account)
+    except Exception as exc:
+        logger.exception("校验登录态异常")
+        return {"platform": platform, "account": account, "valid": False, "message": f"校验异常: {exc}"}
+    await publish_db.upsert_account(
+        platform=platform, account=account,
+        login_status="logged_in" if valid else "expired",
+    )
+    return {"platform": platform, "account": account, "valid": valid}
 
 
 @router.delete("/accounts/{platform}/{account}")

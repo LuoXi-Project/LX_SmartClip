@@ -16,12 +16,12 @@ Platform = Literal["douyin", "xhs", "wxchannels", "bilibili", "kuaishou", "tikto
 # 平台元信息：label 中文名 + implemented 是否已内联实现
 PLATFORM_META: dict[str, dict[str, Any]] = {
     "douyin": {"label": "抖音", "implemented": True, "risk": "normal"},
-    "xhs": {"label": "小红书", "implemented": False, "risk": "strict"},  # 风控最严
-    "wxchannels": {"label": "视频号", "implemented": False, "risk": "normal"},
-    "bilibili": {"label": "哔哩哔哩", "implemented": False, "risk": "low"},
-    "kuaishou": {"label": "快手", "implemented": False, "risk": "normal"},
-    "tiktok": {"label": "TikTok", "implemented": False, "risk": "normal"},
-    "youtube": {"label": "YouTube", "implemented": False, "risk": "low"},
+    "xhs": {"label": "小红书", "implemented": True, "risk": "strict"},  # 风控最严
+    "wxchannels": {"label": "视频号", "implemented": True, "risk": "normal"},
+    "bilibili": {"label": "哔哩哔哩", "implemented": True, "risk": "low"},
+    "kuaishou": {"label": "快手", "implemented": True, "risk": "normal"},
+    "tiktok": {"label": "TikTok", "implemented": False, "risk": "normal"},  # 海外，需代理
+    "youtube": {"label": "YouTube", "implemented": False, "risk": "low"},  # 需代理，后续可叠加官方 API
 }
 
 PLATFORMS = list(PLATFORM_META.keys())

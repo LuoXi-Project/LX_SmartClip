@@ -127,14 +127,14 @@ export default function TopNav() {
         <Link href="/search" className={navLinkClass(isActive(pathname, '/search'))}>
           素材检索
         </Link>
+        <NavDropdown label="剪辑" items={editItems} active={groupActive(pathname, editItems)} />
+        <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />
         <Link
           href="/publish"
           className={navLinkClass(isActive(pathname, '/publish'), true)}
         >
           一键发布
         </Link>
-        <NavDropdown label="剪辑" items={editItems} active={groupActive(pathname, editItems)} />
-        <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />
 
         <div className="ml-auto flex items-center gap-1 pl-2">
           <button

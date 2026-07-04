@@ -1805,12 +1805,13 @@ export interface RenderItemResp {
 export interface RenderListResp {
   items: RenderItemResp[]
   total: number
-  limit: number
-  offset: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 export const rendersApi = {
-  list: (params?: { search?: string; source?: string; limit?: number; offset?: number }) =>
+  list: (params?: { search?: string; source?: string; page?: number; page_size?: number }) =>
     apiClient.get<unknown, RenderListResp>('/api/renders', { params }),
   sources: () =>
     apiClient.get<unknown, { sources: Array<{ value: string; label: string }> }>(

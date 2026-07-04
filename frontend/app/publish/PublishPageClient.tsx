@@ -57,10 +57,10 @@ export default function PublishPageClient() {
   }, [hasRunningTask, busyPlatform, loadStatus])
 
   // 登录
-  const handleLogin = async (platform: string) => {
+  const handleLogin = async (platform: string, account: string = 'main') => {
     setBusyPlatform((s) => ({ ...s, [platform]: 'login' }))
     try {
-      const r = await publishApi.login(platform)
+      const r = await publishApi.login(platform, account)
       toast.info(r.message || '已打开登录窗口，请在弹出的浏览器中扫码')
       setTimeout(() => loadStatus(true), 2000)
     } catch (e) {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Film, Loader2, Play, Search, Trash2, Video } from 'lucide-react'
 import clsx from 'clsx'
 import { rendersApi, formatFastApiDetail } from '@/lib/api'
+import { Pagination } from '@/app/library/_components/Pagination'
 import type { RenderItem, RenderSourceOption } from './types'
 import { RenderPreviewModal } from './RenderPreviewModal'
 
@@ -14,8 +15,6 @@ interface RenderGridProps {
   /** 删除后回调（供父组件刷新发布表单的选中态） */
   onDeleted?: (id: string) => void
 }
-
-const PAGE_SIZE = 24
 
 /** 格式化时长秒 → mm:ss。 */
 function fmtDuration(sec: number): string {
@@ -35,9 +34,11 @@ function fmtSize(bytes: number): string {
 export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps) {
   const [items, setItems] = useState<RenderItem[]>([])
   const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(12)
   const [sources, setSources] = useState<RenderSourceOption[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState<string>('')
@@ -49,61 +50,59 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
     rendersApi.sources().then((r) => setSources(r.sources)).catch(() => {})
   }, [])
 
-  const loadPage = useCallback(
-    async (reset: boolean) => {
-      if (reset) setLoading(true)
-      else setLoadingMore(true)
-      try {
-        const offset = reset ? 0 : items.length
-        const r = await rendersApi.list({
-          search: search.trim() || undefined,
-          source: sourceFilter || undefined,
-          limit: PAGE_SIZE,
-          offset,
-        })
-        setItems(reset ? r.items : [...items, ...r.items])
-        setTotal(r.total)
-        setError('')
-      } catch (e) {
-        setError(formatFastApiDetail(e))
-      } finally {
-        setLoading(false)
-        setLoadingMore(false)
-      }
-    },
-    [items.length, search, sourceFilter], // eslint-disable-line react-hooks/exhaustive-deps
-  )
+  const loadPage = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await rendersApi.list({
+        search: search.trim() || undefined,
+        source: sourceFilter || undefined,
+        page,
+        page_size: pageSize,
+      })
+      setItems(r.items)
+      setTotal(r.total)
+      setTotalPages(r.total_pages)
+      setError('')
+    } catch (e) {
+      setError(formatFastApiDetail(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [page, pageSize, search, sourceFilter])
 
-  // 首次加载 + 搜索/筛选变化时重新加载
+  // 分页/每页条数/来源变化 → 重新加载
   useEffect(() => {
-    loadPage(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceFilter])
+    loadPage()
+  }, [loadPage])
 
-  // 搜索防抖
+  // 搜索防抖（搜索时回到第一页）
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => loadPage(true), 350)
+    searchTimer.current = setTimeout(() => {
+      setPage(1)
+    }, 350)
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
+
+  // 来源变化时回到第一页
+  useEffect(() => {
+    setPage(1)
+  }, [sourceFilter, pageSize])
 
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation()
     if (!confirm(`确定删除成片「${name}」？文件将被永久删除。`)) return
     try {
       await rendersApi.delete(id)
-      setItems((prev) => prev.filter((it) => it.id !== id))
-      setTotal((t) => t - 1)
+      // 删除后重新加载当前页（若当前页删空了后端会自动返回上一页数据）
+      loadPage()
       onDeleted?.(id)
     } catch (e2) {
       alert(`删除失败：${formatFastApiDetail(e2)}`)
     }
   }
-
-  const hasMore = items.length < total
 
   return (
     <section className="flex flex-col h-full">
@@ -146,7 +145,7 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
       )}
 
       {/* 网格 */}
-      <div className="flex-1 overflow-y-auto pr-1">
+      <div className="flex-1 overflow-y-auto styled-scrollbar pr-1">
         {loading && items.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-slate-400">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />加载成片列表…
@@ -252,22 +251,17 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
           </div>
         )}
 
-        {/* 加载更多 */}
-        {hasMore && !loading && items.length > 0 && (
-          <button
-            type="button"
-            disabled={loadingMore}
-            onClick={() => loadPage(false)}
-            className="w-full py-2 mt-1 text-xs text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 rounded transition-colors disabled:opacity-50"
-          >
-            {loadingMore ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" />加载中…
-              </span>
-            ) : (
-              `加载更多（还有 ${total - items.length} 个）`
-            )}
-          </button>
+        {/* 分页（与素材库统一） */}
+        {!loading && items.length > 0 && (
+          <div className="pt-2">
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
+          </div>
         )}
       </div>
 

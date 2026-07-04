@@ -52,17 +52,21 @@ def _decorate(rec: dict) -> dict:
 async def list_renders(
     search: str | None = Query(None, description="搜索 filename/title"),
     source: str | None = Query(None, description="按来源过滤"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=100),
 ):
-    """成片列表（分页 + 搜索 + 来源过滤），按创建时间倒序。"""
-    items = await renders_db.list_renders(search=search, source=source, limit=limit, offset=offset)
+    """成片列表（页码分页 + 搜索 + 来源过滤），按创建时间倒序。与素材库分页方式一致。"""
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+    offset = (page - 1) * page_size
+    items = await renders_db.list_renders(search=search, source=source, limit=page_size, offset=offset)
     total = await renders_db.count_renders(search=search, source=source)
     return {
         "items": [_decorate(it) for it in items],
         "total": total,
-        "limit": limit,
-        "offset": offset,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, -(-total // page_size)),  # 向上取整
     }
 
 

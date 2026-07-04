@@ -542,3 +542,42 @@ export const useTtsStore = create<TtsPageState>()(
     { name: 'lx-tts-state' }
   )
 )
+
+// ── 一键发布：每平台的文案草稿（跨会话持久化，刷新不丢） ────────────────
+export interface PublishDraftPerPlatform {
+  title: string
+  description: string
+  tags: string[]
+}
+export interface PublishPageState {
+  /** keyed by platform，存每平台草稿；账号默认 main */
+  drafts: Record<string, PublishDraftPerPlatform>
+  selectedVideoPath: string
+  selectedPlatforms: string[]
+  setDraft: (platform: string, draft: Partial<PublishDraftPerPlatform>) => void
+  setSelectedVideoPath: (p: string) => void
+  setSelectedPlatforms: (platforms: string[]) => void
+  resetDrafts: () => void
+}
+export const usePublishStore = create<PublishPageState>()(
+  persist(
+    (set) => ({
+      drafts: {},
+      selectedVideoPath: '',
+      selectedPlatforms: ['douyin'],
+      setDraft: (platform, draft) =>
+        set((state) => ({
+          drafts: {
+            ...state.drafts,
+            [platform]: { ...defaultDraft, ...state.drafts[platform], ...draft },
+          },
+        })),
+      setSelectedVideoPath: (selectedVideoPath) => set({ selectedVideoPath }),
+      setSelectedPlatforms: (selectedPlatforms) => set({ selectedPlatforms }),
+      resetDrafts: () => set({ drafts: {} }),
+    }),
+    { name: 'lx-publish-state', version: 1 }
+  )
+)
+
+const defaultDraft: PublishDraftPerPlatform = { title: '', description: '', tags: [] }

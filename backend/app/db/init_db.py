@@ -202,6 +202,59 @@ CREATE TABLE IF NOT EXISTS video_smart_outlines (
 );
 """
 
+# 一键发布相关表
+CREATE_PUBLISH_TASKS = """
+CREATE TABLE IF NOT EXISTS publish_tasks (
+    id TEXT PRIMARY KEY,
+    video_path TEXT NOT NULL,
+    video_name TEXT,
+    items_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    pid INTEGER,
+    progress_json TEXT,
+    result_json TEXT,
+    log TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_PUBLISH_ACCOUNTS = """
+CREATE TABLE IF NOT EXISTS publish_accounts (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    account TEXT NOT NULL,
+    display_name TEXT,
+    login_status TEXT NOT NULL DEFAULT 'logged_out',
+    last_login_at TEXT,
+    last_used_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(platform, account)
+);
+"""
+
+# 成片（用户合成/导出的最终视频）追踪表
+# 双轨：渲染成功时主动写入（5 个产出点）+ 首次启动扫描历史文件入库
+CREATE_RENDERS = """
+CREATE TABLE IF NOT EXISTS renders (
+    id TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL,
+    public_url TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    title TEXT,
+    source TEXT NOT NULL,
+    material_id TEXT,
+    duration REAL DEFAULT 0,
+    thumbnail_path TEXT,
+    file_size INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(file_path)
+);
+"""
+
 DEFAULT_CONFIG = [
     ("split_mode", "scene", "select", "分割模式", '["scene","fixed","hybrid"]'),
     ("fixed_duration", "10", "number", "固定分割时长（秒）", None),
@@ -566,6 +619,9 @@ async def init_db():
         await db.execute(CREATE_VIDEO_SUMMARIES)
         await db.execute(CREATE_VIDEO_SUMMARY_VERSIONS)
         await db.execute(CREATE_VIDEO_SMART_OUTLINES)
+        await db.execute(CREATE_PUBLISH_TASKS)
+        await db.execute(CREATE_PUBLISH_ACCOUNTS)
+        await db.execute(CREATE_RENDERS)
         from app.jobs.store import CREATE_ASYNC_JOBS
         await db.execute(CREATE_ASYNC_JOBS)
         # 兼容旧库：async_jobs 补 ref_name 列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）

@@ -36,6 +36,7 @@ const mobileSections = [
       { href: '/library', label: '素材库', description: '上传、管理、预览', tour: TOUR_ANCHORS.navLibrary },
       { href: '/process', label: '素材处理', description: '切分与多模态分析', tour: TOUR_ANCHORS.navProcess },
       { href: '/search', label: '素材检索', description: '语义搜索片段' },
+      { href: '/publish', label: '一键发布', description: '多平台视频分发' },
       { href: '/settings', label: '设置', tour: TOUR_ANCHORS.navSettings },
       { href: '/license', label: '卡密' },
     ],
@@ -125,6 +126,12 @@ export default function TopNav() {
         </Link>
         <Link href="/search" className={navLinkClass(isActive(pathname, '/search'))}>
           素材检索
+        </Link>
+        <Link
+          href="/publish"
+          className={navLinkClass(isActive(pathname, '/publish'), true)}
+        >
+          一键发布
         </Link>
         <NavDropdown label="剪辑" items={editItems} active={groupActive(pathname, editItems)} />
         <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import uuid
 from datetime import datetime
@@ -458,6 +459,8 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         )
         result["filename"] = mixed_filename
         result["url"] = mixed_url
+    # 记录成片到 renders 表（异步，不阻塞返回）
+    asyncio.create_task(_record_burned_render(result["url"], "burn"))
     return result
 
 
@@ -595,6 +598,8 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         )
         result["filename"] = mixed_filename
         result["url"] = mixed_url
+    # 记录成片到 renders 表（异步，不阻塞返回）
+    asyncio.create_task(_record_burned_render(result["url"], "export_original"))
     return result
 
 

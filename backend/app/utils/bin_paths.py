@@ -88,6 +88,45 @@ def apply_default_ffmpeg_environment() -> None:
         os.environ.setdefault("FFPROBE_BIN", fp)
 
 
+def _bundled_dir_candidates(subdir: str) -> Iterable[str]:
+    """打包目录内某个子目录（如 ms-playwright）的候选路径，返回存在的目录。
+
+    与 _bundled_binary_candidates 类似，但针对"目录"而非单文件。
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        yield os.path.join(meipass, subdir)
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        yield os.path.join(exe_dir, subdir)
+        yield os.path.join(exe_dir, "_internal", subdir)
+
+
+def _first_existing_dir(subdir: str) -> str | None:
+    for p in _bundled_dir_candidates(subdir):
+        if p and os.path.isdir(p):
+            return os.path.abspath(p)
+    return None
+
+
+def apply_default_playwright_environment() -> None:
+    """将 PLAYWRIGHT_BROWSERS_PATH 默认指向打包内置 Chromium 目录（若存在且未显式设置）。
+
+    Playwright/patchright 启动时会查 PLAYWRIGHT_BROWSERS_PATH 下的 chromium-<rev> 目录。
+    设此环境变量后，包内 Chromium 即可被定位，无需用户额外 playwright install。
+
+    注：本地 Chrome/Edge（channel 模式）不依赖此变量，仅作兜底。
+    """
+    existing = (os.getenv("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
+    if existing and os.path.isdir(existing):
+        return  # 用户已显式指定且有效，尊重
+
+    bundled = _first_existing_dir("ms-playwright")
+    if bundled:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = bundled
+
+
 def _candidate_paths(name: str) -> Iterable[str]:
     is_windows = os.name == "nt"
     bin_name = f"{name}.exe" if is_windows else name

@@ -1684,3 +1684,142 @@ export const filmCommentaryApi = {
   retry: (jobId: string) =>
     apiClient.post<unknown, FilmCommentaryJob>(`/api/film/jobs/${jobId}/retry`),
 }
+
+// ── 一键发布 ─────────────────────────────────────────────────────────────
+export interface PublishStatusResp {
+  ready: boolean
+  browser: {
+    ready: boolean
+    kind: string
+    label: string
+    channel: string | null
+    has_local_chrome: boolean
+    has_local_edge: boolean
+    has_bundled_chromium: boolean
+  }
+  platforms: Array<{
+    platform: string
+    label: string
+    implemented: boolean
+    risk: string
+    has_account: boolean
+  }>
+  implemented_platforms: string[]
+}
+
+export interface PublishAccountResp {
+  platform: string
+  account: string
+  login_status: string
+  display_name: string | null
+  last_login_at: string | null
+  last_used_at: string | null
+  last_error: string | null
+}
+
+export interface PublishTaskResp {
+  id: string
+  video_path: string
+  video_name: string | null
+  status: string
+  pid: number | null
+  items_json: unknown
+  progress_json: unknown
+  result_json: unknown
+  log: string
+  running?: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePublishTaskBody {
+  video_path: string
+  items: Array<{
+    platform: string
+    account: string
+    title: string
+    description: string
+    tags: string[]
+    cover_path: string | null
+    publish_strategy: 'immediate' | 'scheduled'
+    publish_date: string | null
+  }>
+}
+
+export const publishApi = {
+  status: () => apiClient.get<unknown, PublishStatusResp>('/api/publish/status'),
+  listAccounts: (platform?: string) =>
+    apiClient.get<unknown, { accounts: PublishAccountResp[] }>('/api/publish/accounts', {
+      params: platform ? { platform } : undefined,
+    }),
+  login: (platform: string, account = 'main') =>
+    apiClient.post<unknown, { message: string; account: string }>(
+      `/api/publish/accounts/${platform}/login`,
+      { account },
+    ),
+  checkLogin: (platform: string, account = 'main') =>
+    apiClient.post<unknown, { platform: string; account: string; valid: boolean; message?: string }>(
+      `/api/publish/accounts/${platform}/check`,
+      { account },
+    ),
+  deleteAccount: (platform: string, account: string) =>
+    apiClient.delete<unknown, { removed: boolean; platform: string; account: string }>(
+      `/api/publish/accounts/${platform}/${account}`,
+    ),
+  createTask: (body: CreatePublishTaskBody) =>
+    apiClient.post<unknown, { task_id: string; status: string; message: string }>(
+      '/api/publish/tasks',
+      body,
+    ),
+  listTasks: (limit = 50, offset = 0) =>
+    apiClient.get<unknown, { tasks: PublishTaskResp[]; total: number }>('/api/publish/tasks', {
+      params: { limit, offset },
+    }),
+  getTask: (taskId: string) => apiClient.get<unknown, PublishTaskResp>(`/api/publish/tasks/${taskId}`),
+  cancelTask: (taskId: string) =>
+    apiClient.delete<unknown, { cancelled: boolean; message?: string }>(
+      `/api/publish/tasks/${taskId}`,
+    ),
+}
+
+// ── 成片管理 ──────────────────────────────────────────────────────────────
+export interface RenderItemResp {
+  id: string
+  file_path: string
+  public_url: string
+  filename: string
+  title: string | null
+  source: string
+  material_id: string | null
+  duration: number
+  thumbnail_path: string | null
+  thumbnail_url: string | null
+  thumbnail_api_url: string
+  source_label: string
+  video_url: string
+  file_size: number
+  created_at: string
+  recorded_at: string
+}
+
+export interface RenderListResp {
+  items: RenderItemResp[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export const rendersApi = {
+  list: (params?: { search?: string; source?: string; limit?: number; offset?: number }) =>
+    apiClient.get<unknown, RenderListResp>('/api/renders', { params }),
+  sources: () =>
+    apiClient.get<unknown, { sources: Array<{ value: string; label: string }> }>(
+      '/api/renders/sources',
+    ),
+  get: (id: string) => apiClient.get<unknown, RenderItemResp>(`/api/renders/${id}`),
+  thumbnailUrl: (id: string) => `${API_BASE_URL}/api/renders/${id}/thumbnail`,
+  videoUrl: (publicUrl: string) => `${API_BASE_URL}${publicUrl}`,
+  delete: (id: string) =>
+    apiClient.delete<unknown, { deleted: boolean; filename: string }>(`/api/renders/${id}`),
+  scan: () => apiClient.post<unknown, { stats: Record<string, number> }>('/api/renders/scan'),
+}

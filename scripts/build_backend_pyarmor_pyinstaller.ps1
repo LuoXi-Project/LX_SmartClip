@@ -58,6 +58,8 @@ $PyinstallerName = "lx_smartclip_backend"
 $LogoIco = Join-Path $Root "frontend\logo.ico"
 # 仓库根目录 ffmpeg\bin（含 ffmpeg.exe / ffprobe.exe，见 ffmpeg 官网 Windows builds）
 $FfmpegBinDir = Join-Path $Root "ffmpeg\bin"
+# 仓库根目录 playwright\ms-playwright（含 chromium-<rev>，由 prepare_playwright.ps1 准备）
+$PlaywrightBrowsersDir = Join-Path $Root "playwright\ms-playwright"
 
 $SecretPy = Join-Path $BackendDir "secret.py"
 $ConfigJson = Join-Path $BackendDir "config.json"
@@ -172,6 +174,14 @@ try {
             Write-Host "`[backend`] 警告: 未找到 $FfmpegBinDir ，请放置 ffmpeg.exe/ffprobe.exe 后重打包；否则依赖系统 PATH"
         }
 
+        # Playwright Chromium 浏览器引擎（一键发布功能兜底用；运行时优先用用户本地 Chrome/Edge）
+        if (Test-Path $PlaywrightBrowsersDir) {
+            Write-Host "`[backend`] 打入 Playwright 浏览器目录: $PlaywrightBrowsersDir -> _internal/ms-playwright"
+            $AddData += @("--add-data", "$PlaywrightBrowsersDir;ms-playwright")
+        } else {
+            Write-Host "`[backend`] 警告: 未找到 $PlaywrightBrowsersDir ，发布功能将仅依赖用户本地 Chrome/Edge（无包内兜底）"
+        }
+
         # MoviePy 依赖 imageio；frozen 环境下若缺少 imageio 的 dist-info，会报
         # "No package metadata was found for imageio"。需 collect + copy-metadata。
         $CollectSubmodules = @(
@@ -197,6 +207,8 @@ try {
             "faiss"
             "yt_dlp"
             "pyJianYingDraft"
+            "patchright"
+            "playwright"
         )
 
         $CollectAll = @(
@@ -218,6 +230,7 @@ try {
             "faiss"
             "yt_dlp"
             "pyJianYingDraft"
+            "patchright"
         )
 
         # PyInstaller：把 pip 包的元数据目录打进包，供 importlib.metadata 查询版本
@@ -225,6 +238,8 @@ try {
             "imageio"
             "imageio-ffmpeg"
             "moviepy"
+            "patchright"
+            "playwright"
         )
 
         $HiddenImports = @(

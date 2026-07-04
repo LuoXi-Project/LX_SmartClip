@@ -18,6 +18,12 @@ if exist "%~dp0_internal\bin\ffmpeg.exe" (
   set "FFPROBE_BIN=%~dp0bin\ffprobe.exe"
   set "IMAGEIO_FFMPEG_EXE=%~dp0bin\ffmpeg.exe"
 )
+REM bundled Playwright Chromium (publisher fallback; local Chrome/Edge preferred at runtime)
+if exist "%~dp0_internal\ms-playwright\." (
+  set "PLAYWRIGHT_BROWSERS_PATH=%~dp0_internal\ms-playwright"
+) else if exist "%~dp0ms-playwright\." (
+  set "PLAYWRIGHT_BROWSERS_PATH=%~dp0ms-playwright"
+)
 "%~dp0lx_smartclip_backend.exe" %*
 '@
 

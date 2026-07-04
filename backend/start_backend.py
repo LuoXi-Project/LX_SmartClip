@@ -6,6 +6,55 @@ import sys
 from pathlib import Path
 
 
+def _is_publisher_subprocess() -> bool:
+    """检测当前进程是否为发布/登录 worker 子进程。
+
+    调用约定：
+        --publisher-login  <platform> <account>
+        --publisher-worker <task.json>
+
+    在最早期（argparse 之前）检测，避免与 uvicorn 的 argparse 冲突。
+    frozen 下 sys.executable 即打包 exe 本身，子进程复用同一可执行文件。
+    """
+    return len(sys.argv) >= 3 and sys.argv[1] in ("--publisher-worker", "--publisher-login")
+
+
+def _run_publisher_subprocess() -> None:
+    """执行发布/登录 worker，结束后 sys.exit。"""
+    # Windows 控制台子进程默认用 GBK(CP936) 编码 stdout，但主进程 reader 用 UTF-8 解码，
+    # 会导致中文日志乱码。强制 stdout/stderr 用 UTF-8。
+    import io
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    else:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+    backend_root = _repo_backend_root()
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
+
+    # worker 同样需要环境注入（PLAYWRIGHT_BROWSERS_PATH 等）
+    from app.utils.frozen_metadata_shim import apply_frozen_metadata_shim
+    apply_frozen_metadata_shim()
+
+    from app.utils.bin_paths import apply_default_ffmpeg_environment, apply_default_playwright_environment
+    apply_default_ffmpeg_environment()
+    apply_default_playwright_environment()
+
+    # worker 自带日志（不走 uvicorn 配置）
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        stream=sys.stdout,
+    )
+
+    from app.core.publisher.worker import entry
+    sys.exit(entry())
+
+
 def _repo_backend_root() -> Path:
     # This file lives in backend/; ensure imports like "app.main" work no matter where we run from.
     return Path(__file__).resolve().parent
@@ -60,6 +109,11 @@ def main() -> None:
 
     apply_default_ffmpeg_environment()
 
+    # 打包内置 Chromium（patchright/playwright 浏览器引擎定位）
+    from app.utils.bin_paths import apply_default_playwright_environment
+
+    apply_default_playwright_environment()
+
     host = args.host
     port = args.port if args.port != 0 else find_free_port(host)
 
@@ -99,5 +153,11 @@ if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.freeze_support()
+
+    # 发布/登录 worker 子进程分流：必须在 main() 之前检测，
+    # 因为 worker 不走 uvicorn，且 argv 不兼容 uvicorn 的 argparse。
+    if _is_publisher_subprocess():
+        _run_publisher_subprocess()
+
     main()
 

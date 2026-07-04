@@ -1555,6 +1555,10 @@ async def realize_auto_edit_plan(
                 await reporter.send("postprocess", "running", "正在后期处理...")
                 final_filename, final_url = await _run_realize_postprocess(plan, final_filename, final_url, profile)
             result = {"mode": "voiceover" if use_tts_branch else "original", "filename": final_filename, "url": final_url}
+            # 记录成片到 renders 表（异步，不阻塞返回）
+            _vid = getattr(getattr(plan, "video_id", None), "__str__", lambda: None)()
+            asyncio.create_task(_record_realize(final_url, _vid))
+
             await update_job_status(job_id, "done", result=result)
             await reporter.send("done", "done", "成片已就绪", {"result": result})
         except Exception as e:
@@ -1563,6 +1567,18 @@ async def realize_auto_edit_plan(
             await update_job_status(job_id, "error", error_message=str(e))
     launch_job(job_id, _run())
     return {"job_id": job_id, "status": "running", "stream_url": f"/api/jobs/{job_id}/stream", "ws_url": f"/api/jobs/{job_id}/ws"}
+
+
+async def _record_realize(public_url: str, material_id: str | None) -> None:
+    """把 realize 成片记录到 renders 表。从 public_url 反解绝对路径。"""
+    try:
+        from app.api.renders_db import record_render_from_path
+        from app.utils.paths import resolve_stored_path
+        abs_path = resolve_stored_path(public_url)
+        await record_render_from_path(abs_path=abs_path, source="realize", material_id=material_id)
+    except Exception:
+        logger.debug("记录 realize 成片失败（忽略）", exc_info=True)
+
 
 @router.post("/export-jianying-draft", response_model=JianYingDraftExportResponse)
 async def export_jianying_draft_from_plan(

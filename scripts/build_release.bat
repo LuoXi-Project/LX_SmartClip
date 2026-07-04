@@ -67,6 +67,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo [准备] Playwright Chromium（一键发布功能；失败仅警告，不阻断构建）...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare_playwright.ps1"
+if errorlevel 1 (
+  echo [警告] Playwright Chromium 准备失败，发布功能将仅依赖用户本地 Chrome/Edge
+)
+
 echo [4/4] 构建后端并导出 dist/... （%BACKEND_BUILDER%）
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 if /I "%BACKEND_BUILDER%"=="pyarmor" (

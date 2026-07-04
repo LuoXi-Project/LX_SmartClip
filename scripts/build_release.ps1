@@ -68,6 +68,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Whisper 依赖准备失败"
 }
 
+Write-Host "[准备] Playwright Chromium（一键发布功能；失败仅警告，不阻断构建）..."
+& (Join-Path $PSScriptRoot "prepare_playwright.ps1")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[警告] Playwright Chromium 准备失败，发布功能将仅依赖用户本地 Chrome/Edge（无包内兜底）"
+}
+
 if ($Backend -eq "pyarmor") {
     Write-Host "[5/5] PyArmor 加密 + PyInstaller 构建后端并导出 dist/..."
     & (Join-Path $PSScriptRoot "build_backend_pyarmor_pyinstaller.ps1")

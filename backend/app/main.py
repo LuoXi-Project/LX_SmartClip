@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
+import asyncio
 import os
 import sys
 from app.db.init_db import init_db
@@ -41,6 +42,8 @@ from app.api.agent import router as agent_router
 from app.api.license import router as license_router
 from app.api.logs import router as logs_router
 from app.api.ui import router as ui_router
+from app.api.publish import router as publish_router
+from app.api.renders import router as renders_router
 from app.middleware.license_middleware import LicenseMiddleware
 
 
@@ -59,6 +62,15 @@ async def lifespan(app: FastAPI):
     from app.api.replica import register_replica_templates_from_db
     await register_replica_templates_from_db()
     await init_blocking_pool()
+    # 后台扫描补录历史成片到 renders 表（首次启动/升级后入库；不阻塞启动）
+    async def _scan_renders_background():
+        try:
+            from app.utils.render_scanner import scan_and_record
+            stats = await scan_and_record()
+            print(f"成片扫描入库: {stats}", flush=True)
+        except Exception as e:
+            print(f"成片扫描失败（忽略）: {e}", flush=True)
+    asyncio.create_task(_scan_renders_background())
     try:
         yield
     finally:
@@ -105,6 +117,8 @@ app.include_router(summary_router)
 app.include_router(script_stock_router)
 app.include_router(film_commentary_router)
 app.include_router(agent_router)
+app.include_router(publish_router)
+app.include_router(renders_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

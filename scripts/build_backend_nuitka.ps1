@@ -89,6 +89,7 @@ $FrontendStatic = Join-Path $BackendDir "app\static\frontend"
 $StorageDir = Join-Path $BackendDir "storage"
 $DataDir = Join-Path $BackendDir "data"
 $FfmpegBinDir = Join-Path $Root "ffmpeg\bin"
+$PlaywrightBrowsersDir = Join-Path $Root "playwright\ms-playwright"
 
 Write-Host "[backend] 去除 Python 源文件 UTF-8 BOM（避免编译/AST 解析失败）..."
 $StripBom = Join-Path $PSScriptRoot "strip_utf8_bom.py"
@@ -136,6 +137,12 @@ try {
         $Args += "--include-data-dir=$FfmpegBinDir=bin"
     } else {
         Write-Host "[backend] 警告: 未找到 $FfmpegBinDir ，请放置 ffmpeg.exe/ffprobe.exe 后重打包；否则依赖系统 PATH"
+    }
+    if (Test-Path $PlaywrightBrowsersDir) {
+        Write-Host "[backend] 打入 Playwright 浏览器目录: $PlaywrightBrowsersDir -> ms-playwright"
+        $Args += "--include-data-dir=$PlaywrightBrowsersDir=ms-playwright"
+    } else {
+        Write-Host "[backend] 警告: 未找到 $PlaywrightBrowsersDir ，发布功能将仅依赖用户本地 Chrome/Edge"
     }
     $Args += $Entry
 

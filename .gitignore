@@ -42,3 +42,6 @@ git-weekly-log.txt
 .claude/skills
 skills-lock.json
 tmp/
+start_dev.bat
+.gitignore
+playwright/ms-playwright/

@@ -962,6 +962,10 @@ async def compose_stock(req: ScriptStockComposeRequest):
                 "public_url": public_url,
                 "stored_rel_path": rel,
             }
+            # 记录成片到 renders 表（final_abs 是绝对路径，最直接）
+            asyncio.create_task(
+                _record_script_stock(final_abs) if final_abs else asyncio.sleep(0)
+            )
             await update_job_status(job_id, "done", result=result)
             await reporter.send("done", "done", "文案成片已就绪", {"result": result})
         except Exception as e:
@@ -976,6 +980,15 @@ async def compose_stock(req: ScriptStockComposeRequest):
         "stream_url": f"/api/jobs/{job_id}/stream",
         "ws_url": f"/api/jobs/{job_id}/ws",
     }
+
+
+async def _record_script_stock(final_abs: str) -> None:
+    """把文案素材成片记录到 renders 表。final_abs 是绝对路径。"""
+    try:
+        from app.api.renders_db import record_render_from_path
+        await record_render_from_path(abs_path=final_abs, source="script_stock_compose")
+    except Exception:
+        logger.debug("记录文案素材成片失败（忽略）", exc_info=True)
 
 
 @router.post("/export-jianying-draft", response_model=JianYingDraftExportResponse)

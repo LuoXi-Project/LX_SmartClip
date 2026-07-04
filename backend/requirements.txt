@@ -23,3 +23,5 @@ colorlog>=6.10.1
 yt-dlp[default]
 pyJianYingDraft==0.2.6
 librosa>=0.11.0
+# 一键发布：patchright 是 Playwright 反检测分支（stealth 能力，对风控更友好）
+patchright>=1.40.0

@@ -5,6 +5,7 @@ import { CheckCircle2, Film, Loader2, Play, Search, Trash2, Video } from 'lucide
 import clsx from 'clsx'
 import { rendersApi, formatFastApiDetail } from '@/lib/api'
 import { Pagination } from '@/app/library/_components/Pagination'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { RenderItem, RenderSourceOption } from './types'
 import { RenderPreviewModal } from './RenderPreviewModal'
 
@@ -43,6 +44,8 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState<string>('')
   const [previewItem, setPreviewItem] = useState<RenderItem | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)  // 删除等操作后强制刷新
+  const [pendingDelete, setPendingDelete] = useState<RenderItem | null>(null)  // 待删除确认
   const searchTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // 加载来源选项
@@ -68,9 +71,9 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, search, sourceFilter])
+  }, [page, pageSize, search, sourceFilter, refreshKey])
 
-  // 分页/每页条数/来源变化 → 重新加载
+  // 分页/每页条数/来源/强制刷新 变化 → 重新加载
   useEffect(() => {
     loadPage()
   }, [loadPage])
@@ -91,14 +94,26 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
     setPage(1)
   }, [sourceFilter, pageSize])
 
-  const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
+  // 点删除按钮 → 打开确认弹窗（不立即删）
+  const handleDeleteClick = (e: React.MouseEvent, item: RenderItem) => {
     e.stopPropagation()
-    if (!confirm(`确定删除成片「${name}」？文件将被永久删除。`)) return
+    setPendingDelete(item)
+  }
+
+  // 确认删除 → 真正执行
+  const handleDeleteConfirm = async () => {
+    const target = pendingDelete
+    setPendingDelete(null)
+    if (!target) return
     try {
-      await rendersApi.delete(id)
-      // 删除后重新加载当前页（若当前页删空了后端会自动返回上一页数据）
-      loadPage()
-      onDeleted?.(id)
+      await rendersApi.delete(target.id)
+      // 删除成功后强制刷新；若当前页删空了，回退到上一页
+      if (items.length <= 1 && page > 1) {
+        setPage(page - 1)
+      } else {
+        setRefreshKey((k) => k + 1)
+      }
+      onDeleted?.(target.id)
     } catch (e2) {
       alert(`删除失败：${formatFastApiDetail(e2)}`)
     }
@@ -183,8 +198,8 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
                     <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-slate-300">
                       {it.source_label}
                     </span>
-                    {/* 操作按钮组（hover 显示） */}
-                    <div className="absolute top-1 right-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* 操作按钮组（hover 显示，z-10 确保在中央播放按钮之上可点击） */}
+                    <div className="absolute top-1 right-1 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -198,7 +213,7 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => handleDelete(e, it.id, it.filename)}
+                        onClick={(e) => handleDeleteClick(e, it)}
                         className="p-1 rounded bg-black/60 text-slate-400 hover:text-red-300"
                         title="删除成片"
                       >
@@ -250,20 +265,20 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
             })}
           </div>
         )}
-
-        {/* 分页（与素材库统一） */}
-        {!loading && items.length > 0 && (
-          <div className="pt-2">
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              pageSize={pageSize}
-              onPageChange={setPage}
-              onPageSizeChange={setPageSize}
-            />
-          </div>
-        )}
       </div>
+
+      {/* 分页（固定在列表底部，不随网格滚动；与素材库统一） */}
+      {!loading && items.length > 0 && (
+        <div className="pt-2 shrink-0 border-t border-slate-800/60 mt-1">
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        </div>
+      )}
 
       {/* 预览 Modal */}
       {previewItem && (
@@ -278,6 +293,18 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
           }}
         />
       )}
+
+      {/* 删除确认弹窗 */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="删除成片"
+        description={`确定删除「${pendingDelete?.title || pendingDelete?.filename || ''}」？文件将被永久删除，无法恢复。`}
+        confirmLabel="删除"
+        cancelLabel="取消"
+        variant="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setPendingDelete(null)}
+      />
     </section>
   )
 }

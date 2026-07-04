@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, Clapperboard, Loader2, Rocket } from 'lucide-react'
 import { publishApi, formatFastApiDetail } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { RenderGrid } from './_components/RenderGrid'
 import { AccountPanel } from './_components/AccountPanel'
 import { PublishForm } from './_components/PublishForm'
@@ -21,6 +22,7 @@ export default function PublishPageClient() {
   const [busyPlatform, setBusyPlatform] = useState<Record<string, 'login' | 'check' | undefined>>({})
   const [submitting, setSubmitting] = useState(false)
   const [selectedRender, setSelectedRender] = useState<RenderItem | null>(null)
+  const [pendingDeleteAccount, setPendingDeleteAccount] = useState<{ platform: string; account: string } | null>(null)
 
   // 加载 status + accounts + tasks
   const loadStatus = useCallback(async (silent = false) => {
@@ -87,11 +89,19 @@ export default function PublishPageClient() {
     }
   }
 
-  const handleDelete = async (platform: string, account: string) => {
-    if (!confirm(`确定删除 ${platform} 账号「${account}」？本地 cookie 将被清除。`)) return
+  // 点删除 → 打开确认弹窗
+  const handleDelete = (platform: string, account: string) => {
+    setPendingDeleteAccount({ platform, account })
+  }
+
+  // 确认删除账号
+  const handleDeleteAccountConfirm = async () => {
+    const target = pendingDeleteAccount
+    setPendingDeleteAccount(null)
+    if (!target) return
     try {
-      await publishApi.deleteAccount(platform, account)
-      toast.success(`已删除 ${platform} 账号`)
+      await publishApi.deleteAccount(target.platform, target.account)
+      toast.success(`已删除 ${target.platform} 账号`)
       await loadStatus(true)
     } catch (e) {
       toast.error(`删除失败：${formatFastApiDetail(e)}`)
@@ -232,6 +242,18 @@ export default function PublishPageClient() {
           </ul>
         </div>
       </div>
+
+      {/* 删除账号确认弹窗 */}
+      <ConfirmDialog
+        open={pendingDeleteAccount !== null}
+        title="删除账号"
+        description={`确定删除 ${pendingDeleteAccount?.platform} 账号「${pendingDeleteAccount?.account}」？本地 cookie 将被清除。`}
+        confirmLabel="删除"
+        cancelLabel="取消"
+        variant="danger"
+        onConfirm={handleDeleteAccountConfirm}
+        onCancel={() => setPendingDeleteAccount(null)}
+      />
     </main>
   )
 }

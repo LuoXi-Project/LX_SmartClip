@@ -555,12 +555,14 @@ export interface PublishPageState {
   /** keyed by platform，存每平台草稿；账号默认 main */
   drafts: Record<string, PublishDraftPerPlatform>
   selectedVideoPath: string
-  selectedPlatforms: string[]
+  /** 选中的发布目标，粒度到账号：`${platform}:${account}`。
+   * 替代旧的 selectedPlatforms（平台粒度），支持多账号矩阵下逐账号勾选。 */
+  selectedTargets: string[]
   /** 发布时是否无头模式（true=后台；false=显示浏览器窗口便于排查/手动兜底）*/
   publishHeadless: boolean
   setDraft: (platform: string, draft: Partial<PublishDraftPerPlatform>) => void
   setSelectedVideoPath: (p: string) => void
-  setSelectedPlatforms: (platforms: string[]) => void
+  setSelectedTargets: (targets: string[]) => void
   setPublishHeadless: (v: boolean) => void
   resetDrafts: () => void
 }
@@ -570,7 +572,8 @@ export const usePublishStore = create<PublishPageState>()(
     (set) => ({
       drafts: {},
       selectedVideoPath: '',
-      selectedPlatforms: ['douyin'],
+      // 初始为空：运行时由 PublishForm 按"各平台已登录账号默认全选"补全
+      selectedTargets: [],
       publishHeadless: true,
       setDraft: (platform, draft) =>
         set((state) => ({
@@ -580,16 +583,18 @@ export const usePublishStore = create<PublishPageState>()(
           },
         })),
       setSelectedVideoPath: (selectedVideoPath) => set({ selectedVideoPath }),
-      setSelectedPlatforms: (selectedPlatforms) => set({ selectedPlatforms }),
+      setSelectedTargets: (selectedTargets) => set({ selectedTargets }),
       setPublishHeadless: (publishHeadless) => set({ publishHeadless }),
       resetDrafts: () => set({ drafts: {} }),
     }),
     {
       name: 'lx-publish-state',
-      version: 3,
-      // v1→v2 补 user_prompt；v2→v3 补 publishHeadless
-      migrate: (persisted: unknown) => {
-        const s = (persisted || {}) as Partial<PublishPageState>
+      version: 4,
+      // v1→v2 补 user_prompt；v2→v3 补 publishHeadless；v3→v4 selectedPlatforms→selectedTargets
+      migrate: (persisted: unknown, oldVersion: number) => {
+        const s = ((persisted || {}) as Record<string, unknown>) as Partial<PublishPageState> & {
+          selectedPlatforms?: string[]
+        }
         if (s.drafts) {
           for (const k of Object.keys(s.drafts)) {
             const d = s.drafts[k] as PublishDraftPerPlatform
@@ -597,6 +602,11 @@ export const usePublishStore = create<PublishPageState>()(
           }
         }
         if (typeof s.publishHeadless !== 'boolean') s.publishHeadless = true
+        // v3→v4：丢弃旧的平台粒度勾选，运行时按已登录账号默认全选补全
+        if (oldVersion < 4 && 'selectedPlatforms' in s) {
+          delete (s as Record<string, unknown>).selectedPlatforms
+        }
+        if (!Array.isArray(s.selectedTargets)) s.selectedTargets = []
         return s as PublishPageState
       },
     }

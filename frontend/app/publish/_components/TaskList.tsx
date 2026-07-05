@@ -35,9 +35,11 @@ function extractProgress(task: PublishTask): string {
   const p = prog as Record<string, unknown>
   const msg = typeof p.message === 'string' ? p.message : ''
   const platform = typeof p.platform === 'string' ? p.platform : ''
+  const account = typeof p.account === 'string' ? p.account : ''
   const pct = typeof p.pct === 'number' ? p.pct : null
   const parts: string[] = []
   if (platform) parts.push(platform)
+  if (account) parts.push(account)
   if (pct !== null) parts.push(`${pct}%`)
   if (msg) parts.push(msg)
   return parts.join(' · ')
@@ -64,13 +66,18 @@ export function TaskList({ tasks, onCancel }: TaskListProps) {
         const meta = STATUS_META[task.status] || STATUS_META.pending
         const isRunning = task.running || task.status === 'running' || task.status === 'pending'
         const progressText = extractProgress(task)
-        // 解析 result 各平台结果
+        // 解析 result 各账号结果（platform/account: ✓/⊘/✗）
         let resultSummary = ''
         if (task.result_json && typeof task.result_json === 'object') {
-          const r = task.result_json as { items?: Array<{ platform: string; status: string; message?: string }> }
+          const r = task.result_json as {
+            items?: Array<{ platform: string; account?: string; status: string; message?: string }>
+          }
           if (r.items?.length) {
             resultSummary = r.items
-              .map((it) => `${it.platform}: ${it.status === 'success' ? '✓' : it.status === 'skipped' ? '⊘' : '✗'}`)
+              .map((it) => {
+                const target = it.account ? `${it.platform}/${it.account}` : it.platform
+                return `${target}: ${it.status === 'success' ? '✓' : it.status === 'skipped' ? '⊘' : '✗'}`
+              })
               .join('  ')
           }
         }

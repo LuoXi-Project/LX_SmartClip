@@ -92,13 +92,17 @@ def main(task_json_path: str) -> int:
         emit_log(f"\n--- [{idx + 1}/{total}] 平台: {platform} 账号: {item.account} ---")
 
         if not is_implemented_platform(platform):
-            emit_progress(platform=platform, step="", status="skipped", pct=0,
+            emit_progress(platform=platform, account=item.account, step="", status="skipped", pct=0,
                           message=f"平台 {platform} 暂未实现，跳过")
             results.append(TaskItemResult(
                 platform=platform, account=item.account, status="skipped",
                 message=f"平台 {platform} 暂未实现",
             ))
             continue
+
+        # 账号任务边界进度：让前端知道"现在在发哪个账号（第几个/共几个）"
+        emit_progress(platform=platform, account=item.account, step="start", status="running", pct=0,
+                      message=f"[{idx + 1}/{total}] 开始发布")
 
         try:
             if platform == "douyin":

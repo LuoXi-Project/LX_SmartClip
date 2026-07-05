@@ -20,12 +20,16 @@ def emit_progress(
     status: str = "running",   # running | success | failed | skipped
     pct: int = 0,              # 0-100
     message: str = "",
+    account: str | None = None,
 ) -> None:
     """向 stdout 输出一行进度（立即 flush）。
 
     step 取值约定（各平台尽量统一）：
       login_check / login_qrcode / login_wait / upload_start / uploading /
       fill_meta / set_cover / publishing / publish_done / publish_failed
+
+    account：账号标识（多账号矩阵时区分"谁在发"）。各平台内部细粒度进度可不传，
+    由 worker 在每个账号任务的边界 emit 一条带 account 的进度。
     """
     payload = {
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -35,6 +39,8 @@ def emit_progress(
         "pct": max(0, min(100, int(pct))),
         "message": message,
     }
+    if account is not None:
+        payload["account"] = account
     line = "PROGRESS " + json.dumps(payload, ensure_ascii=False)
     print(line, flush=True)
 

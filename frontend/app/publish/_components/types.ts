@@ -86,6 +86,8 @@ export interface PublishTask {
 export interface PublishProgress {
   ts?: string
   platform: string
+  /** 账号标识（多账号矩阵时区分"谁在发"，worker 在账号任务边界 emit） */
+  account?: string
   step?: string
   status?: 'running' | 'success' | 'failed' | 'skipped'
   pct?: number

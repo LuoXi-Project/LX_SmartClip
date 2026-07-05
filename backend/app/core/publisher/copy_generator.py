@@ -53,11 +53,11 @@ _VLM_FRAME_TARGET_PX = 768
 _PLATFORM_SPECS: dict[str, dict] = {
     "douyin": {
         "lang": "zh-CN",
-        "title_max": 55, "desc_max": 500, "tags_max": 8, "tags_each_max": 20,
+        "title_max": 55, "desc_max": 500, "tags_max": 5, "tags_each_max": 20,
         "style": (
             "抖音风格：标题口语化、有悬念或情绪钩子（手机端通常只显示前 1-2 行，前 15 字最关键）；"
             "描述简短带 1-2 行正文，结尾引导互动（如「你怎么看？」）；"
-            "标签覆盖大词 + 长尾词，含 1-2 个泛流量 tag。"
+            "标签最多 5 个，覆盖大词 + 长尾词，含 1-2 个泛流量 tag。"
         ),
     },
     "xhs": {

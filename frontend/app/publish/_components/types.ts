@@ -110,7 +110,7 @@ export interface PlatformSpec {
   lang: 'zh-CN' | 'en'
 }
 export const PLATFORM_SPECS: Record<string, PlatformSpec> = {
-  douyin: { title_max: 55, desc_max: 500, tags_max: 8, lang: 'zh-CN' },
+  douyin: { title_max: 55, desc_max: 500, tags_max: 5, lang: 'zh-CN' },
   xhs: { title_max: 20, desc_max: 1000, tags_max: 10, lang: 'zh-CN' },
   bilibili: { title_max: 80, desc_max: 2000, tags_max: 10, lang: 'zh-CN' },
   wxchannels: { title_max: 1000, desc_max: 1000, tags_max: 6, lang: 'zh-CN' },

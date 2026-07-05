@@ -241,6 +241,7 @@ async def create_task(body: CreatePublishTaskRequest):
         video_path=video_path,
         items=items_for_payload,
         home_dir=str(get_writable_backend_root()),
+        headless=body.headless,
     )
 
     # 进度/完成回调

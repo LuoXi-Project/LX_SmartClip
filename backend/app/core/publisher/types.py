@@ -76,6 +76,8 @@ class PublishTaskPayload:
     video_path: str                     # 视频文件绝对路径
     items: list[PublishItem]            # 要发布的平台列表
     home_dir: str                       # LX_SMARTCLIP_HOME 绝对路径（子进程据此定位 cookie 目录）
+    # 是否无头模式（true=后台无界面，false=显示浏览器窗口便于排查/手动兜底）
+    headless: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +85,7 @@ class PublishTaskPayload:
             "video_path": self.video_path,
             "home_dir": self.home_dir,
             "items": [it.to_dict() for it in self.items],
+            "headless": self.headless,
         }
 
     @classmethod
@@ -92,6 +95,7 @@ class PublishTaskPayload:
             video_path=d["video_path"],
             home_dir=d["home_dir"],
             items=[PublishItem.from_dict(it) for it in d.get("items", [])],
+            headless=bool(d.get("headless", True)),
         )
 
 

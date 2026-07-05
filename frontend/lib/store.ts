@@ -556,9 +556,12 @@ export interface PublishPageState {
   drafts: Record<string, PublishDraftPerPlatform>
   selectedVideoPath: string
   selectedPlatforms: string[]
+  /** 发布时是否无头模式（true=后台；false=显示浏览器窗口便于排查/手动兜底）*/
+  publishHeadless: boolean
   setDraft: (platform: string, draft: Partial<PublishDraftPerPlatform>) => void
   setSelectedVideoPath: (p: string) => void
   setSelectedPlatforms: (platforms: string[]) => void
+  setPublishHeadless: (v: boolean) => void
   resetDrafts: () => void
 }
 const defaultDraft: PublishDraftPerPlatform = { title: '', description: '', tags: [], user_prompt: '' }
@@ -568,6 +571,7 @@ export const usePublishStore = create<PublishPageState>()(
       drafts: {},
       selectedVideoPath: '',
       selectedPlatforms: ['douyin'],
+      publishHeadless: true,
       setDraft: (platform, draft) =>
         set((state) => ({
           drafts: {
@@ -577,12 +581,13 @@ export const usePublishStore = create<PublishPageState>()(
         })),
       setSelectedVideoPath: (selectedVideoPath) => set({ selectedVideoPath }),
       setSelectedPlatforms: (selectedPlatforms) => set({ selectedPlatforms }),
+      setPublishHeadless: (publishHeadless) => set({ publishHeadless }),
       resetDrafts: () => set({ drafts: {} }),
     }),
     {
       name: 'lx-publish-state',
-      version: 2,
-      // v1 → v2：补齐老草稿的 user_prompt 字段
+      version: 3,
+      // v1→v2 补 user_prompt；v2→v3 补 publishHeadless
       migrate: (persisted: unknown) => {
         const s = (persisted || {}) as Partial<PublishPageState>
         if (s.drafts) {
@@ -591,6 +596,7 @@ export const usePublishStore = create<PublishPageState>()(
             if (d && typeof d.user_prompt !== 'string') d.user_prompt = ''
           }
         }
+        if (typeof s.publishHeadless !== 'boolean') s.publishHeadless = true
         return s as PublishPageState
       },
     }

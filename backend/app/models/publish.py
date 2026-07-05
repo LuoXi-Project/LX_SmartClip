@@ -27,6 +27,8 @@ class CreatePublishTaskRequest(BaseModel):
     """创建发布任务请求。"""
     video_path: str = Field(..., description="视频文件绝对路径（须为 storage 内文件）")
     items: list[PublishItemRequest] = Field(..., min_length=1, description="目标平台列表")
+    # 是否无头模式（true=后台无界面；false=显示浏览器窗口，便于排查/手动兜底）
+    headless: bool = Field(default=True, description="无头模式开关")
 
 
 class LoginRequest(BaseModel):

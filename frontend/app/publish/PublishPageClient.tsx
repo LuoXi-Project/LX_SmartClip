@@ -113,6 +113,7 @@ export default function PublishPageClient() {
   const handleSubmit = async (
     videoPath: string,
     items: Array<{ platform: string; account: string; title: string; description: string; tags: string[] }>,
+    headless: boolean,
   ) => {
     setSubmitting(true)
     try {
@@ -124,8 +125,11 @@ export default function PublishPageClient() {
           publish_strategy: 'immediate' as const,
           publish_date: null,
         })),
+        headless,
       })
-      toast.success(`任务已创建，正在发布到 ${items.length} 个平台`)
+      toast.success(
+        `任务已创建，正在发布到 ${items.length} 个平台${headless ? '' : '（有头模式，浏览器窗口已弹出）'}`,
+      )
       await loadStatus(true)
     } catch (e) {
       toast.error(`发布失败：${formatFastApiDetail(e)}`)

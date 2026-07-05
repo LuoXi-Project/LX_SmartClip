@@ -22,6 +22,7 @@ interface PublishFormProps {
       description: string
       tags: string[]
     }>,
+    headless: boolean,
   ) => void
   /** 触发 AI 生成文案（单平台）。父组件实现 toast 与 API 调用 */
   onGenerateCopy: (platform: string) => void
@@ -36,7 +37,7 @@ export function PublishForm({
   onSubmit,
   onGenerateCopy,
 }: PublishFormProps) {
-  const { drafts, selectedPlatforms, setDraft, setSelectedPlatforms } = usePublishStore()
+  const { drafts, selectedPlatforms, setDraft, setSelectedPlatforms, publishHeadless, setPublishHeadless } = usePublishStore()
 
   const implemented = platforms.filter((p) => p.implemented)
   const loggedInPlatforms = implemented.filter((p) =>
@@ -68,7 +69,7 @@ export function PublishForm({
       }
     })
     // 用成片的 file_path（storage/... 相对路径）传给后端，resolve_stored_path 能解析
-    onSubmit(selectedRender.file_path, items)
+    onSubmit(selectedRender.file_path, items, publishHeadless)
   }
 
   const disabled = !selectedRender
@@ -241,6 +242,38 @@ export function PublishForm({
               </div>
             )
           })}
+
+      {/* 有头/无头模式开关：失败时可开「有头」显示浏览器窗口手动兜底 */}
+      <label
+        className="flex items-center justify-between gap-2 text-xs text-slate-400 cursor-pointer select-none"
+        title={publishHeadless ? '当前后台运行（无界面）' : '当前显示浏览器窗口，可在失败时手动操作/排查'}
+      >
+        <span className="flex items-center gap-1">
+          {publishHeadless ? '后台无头模式' : '🖥️ 有头模式（显示浏览器）'}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!publishHeadless}
+          onClick={() => setPublishHeadless(!publishHeadless)}
+          className={clsx(
+            'relative w-9 h-5 rounded-full transition-colors shrink-0',
+            publishHeadless ? 'bg-slate-700' : 'bg-indigo-600',
+          )}
+        >
+          <span
+            className={clsx(
+              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+              !publishHeadless && 'translate-x-4',
+            )}
+          />
+        </button>
+      </label>
+      {!publishHeadless && (
+        <p className="text-[11px] text-amber-300/80 leading-relaxed -mt-2">
+          发布时将弹出浏览器窗口，可观察流程、失败时手动完成投稿。适合排查问题或处理 B站分区等需手动操作的场景。
+        </p>
+      )}
 
       <button
         type="button"

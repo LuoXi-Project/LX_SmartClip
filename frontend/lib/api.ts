@@ -1744,6 +1744,8 @@ export interface CreatePublishTaskBody {
     publish_strategy: 'immediate' | 'scheduled'
     publish_date: string | null
   }>
+  // 是否无头模式（true=后台无界面；false=显示浏览器窗口，便于排查/手动兜底）
+  headless?: boolean
 }
 
 export const publishApi = {

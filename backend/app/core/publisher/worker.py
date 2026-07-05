@@ -70,6 +70,12 @@ def main(task_json_path: str) -> int:
     emit_log(f"=== 发布任务开始 task_id={payload.task_id} ===")
     emit_log(f"视频: {payload.video_path}")
     emit_log(f"目标平台: {[it.platform for it in payload.items]}")
+    emit_log(f"浏览器模式: {'无头（后台）' if payload.headless else '有头（显示窗口，便于排查）'}")
+
+    # 把 headless 写入环境变量，供 generic.py / douyin.py 读取（两者用不同变量名，统一设置）
+    headless_env = "true" if payload.headless else "false"
+    os.environ["PUBLISH_HEADLESS"] = headless_env
+    os.environ["DOUYIN_PUBLISH_HEADLESS"] = headless_env
 
     # 视频文件校验
     if not Path(payload.video_path).is_file():

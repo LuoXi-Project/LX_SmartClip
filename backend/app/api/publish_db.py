@@ -210,3 +210,35 @@ async def touch_account_used(platform: str, account: str) -> None:
         await db.commit()
     finally:
         await db.close()
+
+
+async def get_account(platform: str, account: str) -> dict | None:
+    """精确查单个账号记录，不存在返回 None。"""
+    db = await get_db_conn()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM publish_accounts WHERE platform = ? AND account = ?",
+            (platform, account),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def update_display_name(platform: str, account: str, display_name: str | None) -> bool:
+    """更新账号自定义显示名称。
+
+    用户重命名专用：无条件 SET（区别于登录路径的"兜底自动命名"语义）。
+    传 None / 空串 → 清空自定义名（回退到自动命名）。返回是否命中。
+    """
+    db = await get_db_conn()
+    try:
+        cur = await db.execute(
+            "UPDATE publish_accounts SET display_name = ?, updated_at = ? WHERE platform = ? AND account = ?",
+            (display_name, _now_iso(), platform, account),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    finally:
+        await db.close()

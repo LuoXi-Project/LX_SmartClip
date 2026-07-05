@@ -25,6 +25,7 @@ export default function PublishPageClient() {
   const [generatingPlatform, setGeneratingPlatform] = useState<string | null>(null)
   const [selectedRender, setSelectedRender] = useState<RenderItem | null>(null)
   const [pendingDeleteAccount, setPendingDeleteAccount] = useState<{ platform: string; account: string } | null>(null)
+  const [renamingKey, setRenamingKey] = useState<string | null>(null)
 
   // 加载 status + accounts + tasks
   const loadStatus = useCallback(async (silent = false) => {
@@ -88,6 +89,21 @@ export default function PublishPageClient() {
       toast.error(`校验失败：${formatFastApiDetail(e)}`)
     } finally {
       setBusyPlatform((s) => ({ ...s, [platform]: undefined }))
+    }
+  }
+
+  // 重命名账号（设置/清除自定义备注名）
+  const handleRename = async (platform: string, account: string, displayName: string) => {
+    const key = `${platform}-${account}`
+    setRenamingKey(key)
+    try {
+      await publishApi.updateAccount(platform, account, { display_name: displayName })
+      toast.success(displayName ? `已将账号备注名设为「${displayName}」` : '已清除账号备注名')
+      await loadStatus(true)
+    } catch (e) {
+      toast.error(`重命名失败：${formatFastApiDetail(e)}`)
+    } finally {
+      setRenamingKey(null)
     }
   }
 
@@ -283,9 +299,11 @@ export default function PublishPageClient() {
                 platforms={platforms}
                 accounts={accounts}
                 busyPlatform={busyPlatform}
+                renamingKey={renamingKey}
                 onLogin={handleLogin}
                 onCheck={handleCheck}
                 onDelete={handleDelete}
+                onRename={handleRename}
               />
               <PublishForm
                 platforms={platforms}
@@ -316,7 +334,19 @@ export default function PublishPageClient() {
       <ConfirmDialog
         open={pendingDeleteAccount !== null}
         title="删除账号"
-        description={`确定删除 ${pendingDeleteAccount?.platform} 账号「${pendingDeleteAccount?.account}」？本地 cookie 将被清除。`}
+        description={
+          pendingDeleteAccount
+            ? (() => {
+                const acc = accounts.find(
+                  (a) =>
+                    a.platform === pendingDeleteAccount.platform &&
+                    a.account === pendingDeleteAccount.account,
+                )
+                const shown = acc?.display_name || pendingDeleteAccount.account
+                return `确定删除 ${pendingDeleteAccount.platform} 账号「${shown}」？本地 cookie 将被清除。`
+              })()
+            : ''
+        }
         confirmLabel="删除"
         cancelLabel="取消"
         variant="danger"

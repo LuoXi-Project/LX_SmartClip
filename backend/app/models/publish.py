@@ -41,6 +41,15 @@ class CheckLoginRequest(BaseModel):
     account: str = Field(default="main")
 
 
+class UpdateAccountRequest(BaseModel):
+    """更新账号信息（用户编辑）。
+
+    display_name：账号的自定义显示名称（备注/别名），便于多账号区分。
+    传空串 → 清除自定义名，回退到自动命名。
+    """
+    display_name: str = Field(default="", max_length=40, description="自定义显示名称，空串清除")
+
+
 class PublishTaskResponse(BaseModel):
     """任务详情响应。"""
     id: str

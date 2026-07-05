@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { AlertCircle, CheckCircle2, Loader2, LogIn, RefreshCw, Trash2, UserPlus } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Loader2, LogIn, Pencil, RefreshCw, Trash2, UserPlus } from 'lucide-react'
 import clsx from 'clsx'
 import type { PlatformInfo, PublishAccount } from './types'
 
@@ -10,9 +10,13 @@ interface AccountPanelProps {
   accounts: PublishAccount[]
   /** platform → 是否有登录中/校验中操作 */
   busyPlatform: Record<string, 'login' | 'check' | undefined>
+  /** 正在保存重命名的账号 key（`${platform}-${account}`），用于 loading 态 */
+  renamingKey: string | null
   onLogin: (platform: string, account: string) => void
   onCheck: (platform: string, account: string) => void
   onDelete: (platform: string, account: string) => void
+  /** 重命名账号；displayName 为空串表示清除自定义名 */
+  onRename: (platform: string, account: string, displayName: string) => void
 }
 
 /** 风控等级标签。 */
@@ -38,13 +42,19 @@ export function AccountPanel({
   platforms,
   accounts,
   busyPlatform,
+  renamingKey,
   onLogin,
   onCheck,
   onDelete,
+  onRename,
 }: AccountPanelProps) {
   // 每平台"添加账号"输入框的临时状态：platform → 输入的账号名
   const [addingPlatform, setAddingPlatform] = useState<string | null>(null)
   const [newAccountName, setNewAccountName] = useState('')
+
+  // 账号"重命名"内联编辑态：editingKey = `${platform}-${account}`
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
 
   // 按平台分组账号
   const accountsByPlatform = (platform: string) =>
@@ -55,6 +65,24 @@ export function AccountPanel({
     setAddingPlatform(null)
     setNewAccountName('')
     onLogin(platform, name)
+  }
+
+  // 进入重命名编辑态：用当前 display_name 作初值（无则用 account 标识）
+  const startRename = (platform: string, account: string, displayName: string | null) => {
+    setEditingKey(`${platform}-${account}`)
+    setEditValue(displayName || account)
+  }
+
+  const cancelRename = () => {
+    setEditingKey(null)
+    setEditValue('')
+  }
+
+  const commitRename = (platform: string, account: string) => {
+    const v = editValue.trim()
+    setEditingKey(null)
+    setEditValue('')
+    onRename(platform, account, v)
   }
 
   return (
@@ -105,79 +133,135 @@ export function AccountPanel({
                 <div className="space-y-1.5">
                   {platformAccounts.map((acc) => {
                     const loggedIn = acc.login_status === 'logged_in'
+                    const accKey = `${acc.platform}-${acc.account}`
+                    const isEditing = editingKey === accKey
+                    const isRenaming = renamingKey === accKey
+                    const showName = acc.display_name || acc.account
                     return (
                       <div
-                        key={`${acc.platform}-${acc.account}`}
-                        className="flex items-center gap-2 rounded bg-slate-950/30 px-2 py-1.5"
+                        key={accKey}
+                        className="rounded bg-slate-950/30 px-2 py-1.5"
                       >
-                        <span className="text-xs text-slate-300 font-medium min-w-[60px]">
-                          {acc.account}
-                        </span>
-                        {loggedIn ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
-                            <CheckCircle2 className="w-3 h-3" />已登录
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-amber-400/80">
-                            <AlertCircle className="w-3 h-3" />{acc.login_status === 'expired' ? '已失效' : '未登录'}
-                          </span>
-                        )}
-                        {acc.last_error && (
-                          <span className="text-[10px] text-red-400/70 truncate" title={acc.last_error}>
-                            {acc.last_error.slice(0, 30)}
-                          </span>
-                        )}
-
-                        <div className="ml-auto flex items-center gap-1 shrink-0">
-                          {loggedIn && (
-                            <>
+                        <div className="flex items-center gap-2">
+                          {/* 名称区（展示 / 内联编辑切换） */}
+                          {isEditing ? (
+                            <div className="flex items-center gap-1 flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitRename(p.platform, acc.account)
+                                  if (e.key === 'Escape') cancelRename()
+                                }}
+                                placeholder="账号备注名（如 大号、备用号）"
+                                maxLength={40}
+                                autoFocus
+                                className="flex-1 min-w-0 bg-slate-950/60 border border-indigo-500 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none"
+                              />
                               <button
                                 type="button"
-                                disabled={!!busy}
-                                onClick={() => onCheck(p.platform, acc.account)}
-                                className="p-1 rounded text-slate-400 hover:text-slate-200 disabled:opacity-40"
-                                title="校验登录态"
+                                disabled={isRenaming}
+                                onClick={() => commitRename(p.platform, acc.account)}
+                                className="text-xs px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
                               >
-                                {busy === 'check' ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-3 h-3" />
-                                )}
+                                {isRenaming ? <Loader2 className="w-3 h-3 animate-spin" /> : '确定'}
                               </button>
                               <button
                                 type="button"
-                                disabled={!!busy}
-                                onClick={() => onDelete(p.platform, acc.account)}
-                                className="p-1 rounded text-slate-400 hover:text-red-300 disabled:opacity-40"
-                                title="删除账号"
+                                disabled={isRenaming}
+                                onClick={cancelRename}
+                                className="text-xs px-2 py-1 rounded text-slate-400 hover:text-slate-200 disabled:opacity-40"
                               >
-                                <Trash2 className="w-3 h-3" />
+                                取消
                               </button>
-                              <button
-                                type="button"
-                                disabled={!!busy}
-                                onClick={() => onLogin(p.platform, acc.account)}
-                                className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 disabled:opacity-40"
-                                title="重新登录此账号"
-                              >
-                                重登
-                              </button>
-                            </>
-                          )}
-                          {!loggedIn && (
+                            </div>
+                          ) : (
                             <button
                               type="button"
+                              onClick={() => startRename(p.platform, acc.account, acc.display_name)}
                               disabled={!!busy}
-                              onClick={() => onLogin(p.platform, acc.account)}
-                              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/40 text-indigo-300 hover:border-indigo-400/60 disabled:opacity-40"
+                              className="group flex items-center gap-1 min-w-0 shrink-0 disabled:opacity-40"
+                              title="点击修改备注名"
                             >
-                              {busy === 'login' ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <LogIn className="w-3 h-3" />
+                              <span className="text-xs text-slate-200 font-medium truncate max-w-[140px]">
+                                {showName}
+                              </span>
+                              {acc.display_name && (
+                                <span className="text-[10px] text-slate-500 shrink-0">{acc.account}</span>
                               )}
-                              登录
+                              <Pencil className="w-3 h-3 text-slate-600 group-hover:text-indigo-300 shrink-0" />
                             </button>
+                          )}
+
+                          {loggedIn ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 shrink-0">
+                              <CheckCircle2 className="w-3 h-3" />已登录
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-amber-400/80 shrink-0">
+                              <AlertCircle className="w-3 h-3" />{acc.login_status === 'expired' ? '已失效' : '未登录'}
+                            </span>
+                          )}
+                          {acc.last_error && (
+                            <span className="text-[10px] text-red-400/70 truncate min-w-0" title={acc.last_error}>
+                              {acc.last_error.slice(0, 30)}
+                            </span>
+                          )}
+
+                          {!isEditing && (
+                            <div className="ml-auto flex items-center gap-1 shrink-0">
+                              {loggedIn && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={!!busy}
+                                    onClick={() => onCheck(p.platform, acc.account)}
+                                    className="p-1 rounded text-slate-400 hover:text-slate-200 disabled:opacity-40"
+                                    title="校验登录态"
+                                  >
+                                    {busy === 'check' ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="w-3 h-3" />
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!!busy}
+                                    onClick={() => onDelete(p.platform, acc.account)}
+                                    className="p-1 rounded text-slate-400 hover:text-red-300 disabled:opacity-40"
+                                    title="删除账号"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!!busy}
+                                    onClick={() => onLogin(p.platform, acc.account)}
+                                    className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 disabled:opacity-40"
+                                    title="重新登录此账号"
+                                  >
+                                    重登
+                                  </button>
+                                </>
+                              )}
+                              {!loggedIn && (
+                                <button
+                                  type="button"
+                                  disabled={!!busy}
+                                  onClick={() => onLogin(p.platform, acc.account)}
+                                  className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/40 text-indigo-300 hover:border-indigo-400/60 disabled:opacity-40"
+                                >
+                                  {busy === 'login' ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <LogIn className="w-3 h-3" />
+                                  )}
+                                  登录
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -258,7 +342,7 @@ export function AccountPanel({
 
       <p className="text-xs text-slate-500 leading-relaxed">
         点击「扫码登录」会打开对应平台，用手机 App 扫码完成登录。同一平台可登录多个账号（矩阵运营），
-        账号标识用于区分（如 main、backup）。登录态保存在本地。
+        账号标识用于内部区分（如 main、backup）。点击账号名称可设置备注名，方便多账号识别谁是谁。登录态保存在本地。
       </p>
     </section>
   )

@@ -1768,6 +1768,16 @@ export const publishApi = {
     apiClient.delete<unknown, { removed: boolean; platform: string; account: string }>(
       `/api/publish/accounts/${platform}/${account}`,
     ),
+  // 更新账号自定义显示名称（备注/别名）；空串清除自定义名
+  updateAccount: (
+    platform: string,
+    account: string,
+    body: { display_name: string },
+  ) =>
+    apiClient.patch<
+      unknown,
+      { platform: string; account: string; display_name: string | null; updated: boolean }
+    >(`/api/publish/accounts/${platform}/${account}`, body),
   createTask: (body: CreatePublishTaskBody) =>
     apiClient.post<unknown, { task_id: string; status: string; message: string }>(
       '/api/publish/tasks',

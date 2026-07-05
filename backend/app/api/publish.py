@@ -37,6 +37,7 @@ from app.models.publish import (
     CreatePublishTaskRequest,
     LoginRequest,
     PublishItemRequest,
+    UpdateAccountRequest,
 )
 from app.utils.paths import get_writable_backend_root, resolve_stored_path
 
@@ -116,9 +117,14 @@ async def login_account(platform: str, body: LoginRequest):
     # 异步拉起登录子进程（不阻塞响应）
     async def _on_complete(p, acc, success, log_tail):
         if success:
+            # 仅当用户未自定义过 display_name（记录不存在或为空）时，才自动命名兜底，
+            # 否则保留用户已设置的自定义名（重登不覆盖）
+            existing = await publish_db.get_account(p, acc)
+            existing_name = (existing or {}).get("display_name") if existing else None
+            display_name = existing_name or f"{PLATFORM_META.get(p, {}).get('label', p)}-{acc}"
             await publish_db.upsert_account(
                 platform=p, account=acc, login_status="logged_in",
-                display_name=f"{PLATFORM_META.get(p, {}).get('label', p)}-{acc}",
+                display_name=display_name,
                 last_error=None,  # 成功时清除历史错误
             )
         else:
@@ -166,6 +172,27 @@ async def delete_account(platform: str, account: str):
     removed = remove_account(platform, account)
     await publish_db.delete_account(platform, account)
     return {"removed": removed, "platform": platform, "account": account}
+
+
+@router.patch("/accounts/{platform}/{account}")
+async def update_account(platform: str, account: str, body: UpdateAccountRequest):
+    """更新账号信息（用户编辑自定义显示名称）。
+
+    用于多账号场景下区分"谁是谁"。空串清除自定义名，回退到自动命名。
+    """
+    # 规范化：trim；空串统一存 None，便于 _on_complete 的"为空才兜底命名"判断
+    name = body.display_name.strip()
+    if not name:
+        name = None
+    updated = await publish_db.update_display_name(platform, account, name)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"未找到账号 {platform}/{account}")
+    return {
+        "platform": platform,
+        "account": account,
+        "display_name": name,
+        "updated": True,
+    }
 
 
 # ── 任务 ──────────────────────────────────────────────────────────────────

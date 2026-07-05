@@ -62,6 +62,10 @@ class PlatformConfig:
     # 此 JS 在 page.evaluate 执行，返回 true 表示已触发点击。
     # 留空=走常规 DOM 点击逻辑。
     publish_click_js: str = ""
+    # 发布后二级确认弹窗：部分平台（视频号）点「发表」后会弹原创声明/确认对话框，
+    # 需再点「直接发表」等按钮才真正发布。留空=无二级确认。
+    confirm_dialog_selector: str = ""   # 确认弹窗容器选择器（出现即说明需要二次确认）
+    confirm_btn_selector: str = ""      # 确认弹窗里要点的目标按钮选择器（多候选逗号分隔）
     # 风控等级（前端展示用）
     risk: str = "normal"
     # 是否已联调验证（False = 代码就绪但未经真机测试，UI 标"测试版"）
@@ -133,12 +137,21 @@ PLATFORM_CONFIGS: dict[str, PlatformConfig] = {
         login_btn_text="扫码登录",
         upload_input_selector="input[type='file']",
         title_selector='input[placeholder*="标题"]',
-        desc_selector='div[contenteditable="true"], textarea',
+        # 视频号描述区是 div.input-editor[contenteditable]（contenteditable 无显式值）
+        desc_selector='div.input-editor[contenteditable], div[contenteditable], textarea',
         publish_btn_text="发表",
         publish_success_fragment="platform/post/list",
+        # 发布后二级确认弹窗：原创声明对话框，需点「直接发表」才真正发布
+        # DOM: .weui-desktop-dialog 内 .weui-desktop-btn_default:has-text("直接发表")
+        confirm_dialog_selector='.weui-desktop-dialog',
+        confirm_btn_selector=(
+            '.weui-desktop-dialog button.weui-desktop-btn_default:has-text("直接发表"),'
+            '.weui-desktop-dialog button:has-text("直接发表"),'
+            '.original-interceptor-footer .cancel-btn button'
+        ),
         risk="normal",
         verified=False,
-        note="视频号需微信扫码，登录态与微信绑定",
+        note="视频号需微信扫码；点「发表」后会弹原创声明对话框，需再点「直接发表」",
     ),
     "bilibili": PlatformConfig(
         name="bilibili",

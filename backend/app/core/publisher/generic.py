@@ -626,6 +626,28 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                     elif not clicked_once:
                         emit_log(f"未找到「{btn_text}」按钮，重试中…")
                     await page.wait_for_timeout(3000)
+                    # 二级确认弹窗（视频号等）：点「发表」后弹原创声明对话框，需再点「直接发表」
+                    if clicked_once and not published and cfg.confirm_dialog_selector and cfg.confirm_btn_selector:
+                        try:
+                            if await _any_visible(page, cfg.confirm_dialog_selector):
+                                emit_progress(platform=cfg.name, step="confirm_publish", status="running", pct=95,
+                                              message=f"检测到确认弹窗，点击二次确认按钮")
+                                confirmed = False
+                                for sel in [s.strip() for s in cfg.confirm_btn_selector.split(",") if s.strip()]:
+                                    try:
+                                        cbtn = page.locator(sel).first
+                                        if await cbtn.count():
+                                            await cbtn.click(force=True)
+                                            confirmed = True
+                                            emit_log(f"{cfg.label}已点击二次确认按钮")
+                                            await page.wait_for_timeout(2000)
+                                            break
+                                    except Exception:
+                                        continue
+                                if not confirmed:
+                                    emit_log(f"{cfg.label}确认弹窗出现但未找到目标按钮")
+                        except Exception as exc:
+                            emit_log(f"{cfg.label}确认弹窗处理异常: {exc}")
                     # 检测发布成功：1) URL 跳转（精确片段）2) URL 候选片段 3) 成功元素 4) URL 离开上传页
                     cur_url = page.url or ""
                     # 1) 精确片段

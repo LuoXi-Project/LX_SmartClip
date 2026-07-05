@@ -432,6 +432,13 @@ DEFAULT_CONFIG = [
         "剪映草稿解压目录（可选；见说明）",
         None,
     ),
+    (
+        "publish_browser_proxy",
+        "",
+        "string",
+        "一键发布·浏览器代理（留空=自动探测系统代理；填 http://127.0.0.1:7890 强制；填 none 直连）",
+        None,
+    ),
     ("match_top_k", "12", "number", "初筛数量 top_k", None),
     ("match_top_n", "5", "number", "推荐数量 top_n", None),
     (

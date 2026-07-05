@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from app.core.publisher._browser import build_launch_kwargs, resolve_browser
+from app.core.publisher._browser import build_launch_kwargs, read_publish_proxy_config, resolve_browser
 from app.core.publisher._cookie import cookie_file_for
 from app.core.publisher._progress import emit_error, emit_log, emit_progress
 from app.core.publisher._stealth import set_init_script
@@ -45,7 +45,8 @@ async def _cookie_auth(account_file: str) -> bool:
 
     resolved = resolve_browser()
     use_headless = os.environ.get("DOUYIN_COOKIE_AUTH_HEADLESS", "").lower() in ("1", "true", "yes")
-    launch_kwargs = build_launch_kwargs(resolved, headless=use_headless)
+    proxy = await read_publish_proxy_config()
+    launch_kwargs = build_launch_kwargs(resolved, headless=use_headless, proxy=proxy)
 
     for _attempt in range(3):
         try:
@@ -91,7 +92,10 @@ async def _do_login(account_file: str) -> bool:
     from patchright.async_api import async_playwright
 
     resolved = resolve_browser()
-    launch_kwargs = build_launch_kwargs(resolved, headless=False)
+    proxy = await read_publish_proxy_config()
+    if proxy:
+        emit_log(f"抖音登录使用代理: {proxy['server']}")
+    launch_kwargs = build_launch_kwargs(resolved, headless=False, proxy=proxy)
     emit_progress(platform="douyin", step="login_qrcode", status="running", pct=5,
                   message="已打开抖音登录页，请在弹出的浏览器中扫码")
 
@@ -323,7 +327,10 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
     resolved = resolve_browser()
     # 发布流程可无头（更快、不弹窗），但首次若风控严重可改有头调试
     publish_headless = os.environ.get("DOUYIN_PUBLISH_HEADLESS", "true").lower() in ("1", "true", "yes")
-    launch_kwargs = build_launch_kwargs(resolved, headless=publish_headless)
+    proxy = await read_publish_proxy_config()
+    if proxy:
+        emit_log(f"抖音发布使用代理: {proxy['server']}")
+    launch_kwargs = build_launch_kwargs(resolved, headless=publish_headless, proxy=proxy)
 
     try:
         async with async_playwright() as playwright:

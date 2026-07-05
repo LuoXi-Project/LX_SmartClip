@@ -120,11 +120,16 @@ def resolve_browser() -> ResolvedBrowser:
     return ResolvedBrowser(BrowserKind.BUNDLED_CHROMIUM, None, None, "内置 Chromium")
 
 
-def build_launch_kwargs(resolved: ResolvedBrowser, headless: bool) -> dict:
+def build_launch_kwargs(resolved: ResolvedBrowser, headless: bool, proxy: dict | None = None) -> dict:
     """根据解析结果生成 patchright.chromium.launch() 的 kwargs。
 
     patchright 在用 channel 模式时会自动定位本地安装的 Chrome/Edge，
     无需 executable_path；走包内 Chromium 时 channel=None 由 patchright 自行查找。
+
+    Args:
+        proxy: patchright 的 proxy 字典 {server, username?, password?}，None=不走代理。
+            用于解决本机开了代理（VPN）但自动化浏览器不继承系统代理、
+            导致目标站静态资源（如 B站 s1.hdslb.com 的 JS chunk）加载失败的问题。
     """
     kwargs: dict = {
         "headless": headless,
@@ -134,7 +139,82 @@ def build_launch_kwargs(resolved: ResolvedBrowser, headless: bool) -> dict:
         kwargs["channel"] = resolved.channel
     if resolved.executable_path:
         kwargs["executable_path"] = resolved.executable_path
+    if proxy and proxy.get("server"):
+        kwargs["proxy"] = proxy
     return kwargs
+
+
+def _detect_system_proxy() -> str | None:
+    """探测系统代理地址，返回形如 http://127.0.0.1:7890 的字符串，无则 None。
+
+    探测顺序：
+    1. 环境变量 HTTP_PROXY / HTTPS_PROXY（很多代理工具/CLI 会设置）
+    2. Windows 注册表 IE/系统代理设置（ProxyEnable + ProxyServer，覆盖系统级 GUI 代理）
+
+    用于自动化浏览器继承系统代理，避免目标站静态资源（B站 s1.hdslb.com 等）
+    因未走代理而 ChunkLoadError。
+    """
+    # 1) 环境变量
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        val = (os.environ.get(key) or "").strip()
+        if val:
+            return val
+
+    # 2) Windows 注册表：系统级代理（IE 选项 / Windows 设置里的代理）
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            ) as k:
+                enabled, _ = winreg.QueryValueEx(k, "ProxyEnable")
+                if not enabled:
+                    return None
+                server, _ = winreg.QueryValueEx(k, "ProxyServer")
+                server = (server or "").strip()
+                if not server:
+                    return None
+                # ProxyServer 可能是 "127.0.0.1:7890" 或 "http=...;https=..." 多协议格式
+                if "=" in server:
+                    # 取 https 优先，否则 http，否则第一个
+                    parts = dict(p.split("=", 1) for p in server.split(";") if "=" in p)
+                    for proto in ("https", "http"):
+                        if parts.get(proto):
+                            server = parts[proto]
+                            break
+                    else:
+                        server = next(iter(parts.values()))
+                # 补 scheme
+                if "://" not in server:
+                    server = "http://" + server
+                return server
+        except Exception:
+            return None
+    return None
+
+
+def get_publish_proxy(explicit: str | None = None) -> dict | None:
+    """获取发布浏览器要用的代理（patchright proxy 结构）。
+
+    Args:
+        explicit: 用户在设置页填的代理地址（publish_browser_proxy）。
+                  留空 → 自动探测系统代理；填 "none"/"off"/"direct" → 显式不走代理；
+                  填地址 → 强制用该地址。
+    Returns:
+        patchright proxy dict {server} 或 None（不走代理）。
+    """
+    raw = (explicit or "").strip()
+    if not raw:
+        # 留空：自动探测系统代理
+        server = _detect_system_proxy()
+        return {"server": server} if server else None
+    if raw.lower() in ("none", "off", "direct", "无", "禁用"):
+        return None
+    # 补 scheme
+    if "://" not in raw:
+        raw = "http://" + raw
+    return {"server": raw}
 
 
 def is_ready() -> bool:
@@ -172,4 +252,26 @@ def status_dict() -> dict:
             (os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "")
             and os.path.isdir(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
         ),
+        # 当前会探测到的代理（供前端展示，便于用户确认代理是否生效）
+        "detected_proxy": _detect_system_proxy(),
     }
+
+
+async def read_publish_proxy_config() -> dict | None:
+    """读 config 表的 publish_browser_proxy，返回 patchright proxy dict 或 None。
+
+    留空 → 自动探测系统代理；填 none → 直连；填地址 → 强制。
+    供 generic.py / douyin.py 在 launch 前统一调用。
+    """
+    try:
+        import aiosqlite
+        from app.db.database import DB_PATH
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT value FROM config WHERE key = ?", ("publish_browser_proxy",)
+            ) as cur:
+                row = await cur.fetchone()
+        explicit = (row[0] if row else "") or ""
+    except Exception:
+        explicit = ""
+    return get_publish_proxy(explicit)

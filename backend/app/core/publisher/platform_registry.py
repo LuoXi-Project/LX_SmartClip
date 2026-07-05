@@ -40,6 +40,23 @@ class PlatformConfig:
     publish_success_url_fragments: str = ""
     # 发布成功的页面元素选择器（逗号分隔，如「发布成功」弹窗/Toast），任一可见即成功
     publish_success_selector: str = ""
+    # 封面处理策略：
+    #   ""               = 不处理（平台不强制封面，或由其他逻辑处理）
+    #   "auto_cut"       = 点击「添加封面/选择封面」后应用视频自动截取的第一帧（B站等）
+    #   "upload_cover"   = 用 item.cover_path 上传自定义封面（无 cover_path 时回退 auto_cut）
+    # 封面是 B站等平台投稿的必填项，缺封面「立即投稿」会一直 disabled
+    cover_strategy: str = ""
+    # 封面入口选择器（逗号分隔多候选，如「添加封面」「选择封面」按钮）
+    cover_entry_selector: str = ""
+    # 封面确认选择器（逗号分隔，选完帧/上传后点「完成/确定」应用封面）
+    cover_confirm_selector: str = ""
+    # 创作声明处理：B站「创作声明」是必选下拉框（bcc-select），默认"内容无需标注"，
+    # 需改成目标声明（如"内容为自制：未经作者允许，禁止转载"）才能投稿。
+    # originality_selector = 创作声明下拉容器的选择器（多候选逗号分隔）
+    # originality_target_text = 要选的目标声明文案（逗号分隔多候选，命中第一个即选）
+    # 留空=不处理。
+    originality_selector: str = ""
+    originality_target_text: str = "内容为自制"
     # 风控等级（前端展示用）
     risk: str = "normal"
     # 是否已联调验证（False = 代码就绪但未经真机测试，UI 标"测试版"）
@@ -128,9 +145,32 @@ PLATFORM_CONFIGS: dict[str, PlatformConfig] = {
         publish_success_url_fragments="upload/report,upload/submitted",
         # B站投稿成功后可能出现「稿件投递成功」Toast
         publish_success_selector=':has-text("稿件投递成功"),:has-text("投稿成功")',
+        # 封面（必填）：auto_cut=点击「添加封面」后应用视频自动截帧；有 cover_path 则上传自定义封面
+        cover_strategy="upload_cover",
+        cover_entry_selector=(
+            '.video-cover-list .video-cover-upload-btn,'
+            '.video-cover-list .upload-trigger,'
+            'button:has-text("添加封面"),'
+            'button:has-text("选择封面"),'
+            '.video-cover:has-text("添加封面")'
+        ),
+        cover_confirm_selector=(
+            '.cover-cropper-wrap button:has-text("完成"),'
+            '.cover-upload-wrap button:has-text("完成"),'
+            'button:has-text("截取封面"),'
+            '.van-modal button:has-text("完成"),'
+            'button.btn:has-text("完成")'
+        ),
+        # 创作声明（B站必选下拉框）：点开 .bcc-select 下拉，选「内容为自制」授权声明
+        originality_selector=(
+            '.creation-statement-container,'
+            '.form-item:has(.creation-statement-container),'
+            '.bcc-select:has(input.bcc-select-input-inner[placeholder*="创作声明"])'
+        ),
+        originality_target_text="内容无需标注",
         risk="low",
         verified=False,
-        note="B站上传/转码较慢，已加完成检测；后续可叠加官方 API（更稳定）",
+        note="B站上传/转码较慢，已加完成检测；封面+原创声明为必填项；后续可叠加官方 API（更稳定）",
     ),
     "kuaishou": PlatformConfig(
         name="kuaishou",

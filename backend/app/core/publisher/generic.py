@@ -481,11 +481,20 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                 if await _try_selectors(page, cfg.desc_selector, "click"):
                     await page.keyboard.press("Control+KeyA")
                     await page.keyboard.press("Delete")
-                    desc = item.description or ""
-                    for tag in item.tags:
-                        desc += f" #{tag}"
+                    # 先输入描述正文（若有）
+                    desc = (item.description or "").strip()
                     if desc:
                         await page.keyboard.type(desc)
+                        # 描述与首个话题间确保有空格分隔，否则 # 不被识别为话题
+                        await page.keyboard.type(" ")
+                    # 逐个输入话题：每个话题前空格 + 文本 + 后置空格，
+                    # 这样平台（B站/小红书等 contenteditable）能识别 # 为话题触发符。
+                    for tag in item.tags:
+                        tag = (tag or "").strip().lstrip("#")
+                        if not tag:
+                            continue
+                        await page.keyboard.type("#" + tag)
+                        await page.keyboard.press("Space")
                     await page.keyboard.press("Escape")
 
             # 等视频上传/转码完成（带状态检测，替代旧的固定 8 秒粗等）
@@ -518,7 +527,49 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                     await page.evaluate(
                         "() => document.querySelectorAll('.shepherd-element, [class*=\"mention-wrapper\"]').forEach(e=>e.remove())"
                     )
-                    # 多策略找发布按钮：button role → 含文案的可点元素（span/div/a）
+                    # 优先：平台专用发布点击 JS（穿透 closed shadow DOM，如小红书 xhs-publish-btn）
+                    if cfg.publish_click_js:
+                        try:
+                            res = await page.evaluate(cfg.publish_click_js)
+                            if res is True:
+                                # JS 内部已触发点击（_onPublish / dispatchEvent）
+                                clicked_once = True
+                            elif isinstance(res, dict) and "x" in res and "y" in res:
+                                # JS 返回坐标（closed shadow DOM 无法内部点击），用 mouse 精确点击该坐标
+                                try:
+                                    await page.mouse.click(res["x"], res["y"])
+                                    clicked_once = True
+                                except Exception as exc2:
+                                    if not clicked_once:
+                                        emit_log(f"{btn_text}坐标点击失败: {exc2}")
+                            elif res is False and not clicked_once:
+                                emit_log(f"{btn_text}专用点击未触发（可能 submit-disabled/loading 或元素未就绪），等待中…")
+                        except Exception as exc:
+                            if not clicked_once:
+                                emit_log(f"{btn_text}专用点击异常，回退常规定位: {exc}")
+                            res = None
+                        # 专用 JS 路径成功触发则跳过常规定位（避免重复点击点到歪处）
+                        if clicked_once and cfg.publish_click_js:
+                            await page.wait_for_timeout(3000)
+                            cur_url = page.url or ""
+                            # 仍走成功检测
+                            if cfg.publish_success_fragment and cfg.publish_success_fragment in cur_url:
+                                published = True
+                                break
+                            if cfg.publish_success_url_fragments:
+                                hit = any(f.strip() and f.strip() in cur_url for f in cfg.publish_success_url_fragments.split(","))
+                                if hit:
+                                    published = True
+                                    break
+                            if cfg.publish_success_selector and await _any_visible(page, cfg.publish_success_selector):
+                                published = True
+                                break
+                            if cfg.upload_url not in cur_url and "login" not in cur_url:
+                                published = True
+                                break
+                            # 专用 JS 已触发但未跳转，继续循环等
+                            continue
+                    # 常规定位（标准 button / span / div 等）
                     btn = None
                     # 1) button role（标准按钮平台）
                     cand = page.get_by_role("button", name=btn_text, exact=False)
@@ -536,24 +587,34 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                             f'[class*="publish"]:has-text("{btn_text}")',
                         ):
                             try:
-                                loc = page.locator(sel).last  # 用 last：多个同名时取最具体的那个
+                                loc = page.locator(sel).last
                                 if await loc.count():
                                     btn = loc
                                     break
                             except Exception:
                                 continue
                     if btn is not None:
-                        # 检测是否可点：B站转码/封面/声明未完成时按钮 disabled 或父级带 disabled class
+                        # 检测是否可点：多种平台异构表达
                         disabled = False
+                        # a) 标准 button 的 disabled 属性
                         try:
                             disabled = await btn.is_disabled()
                         except Exception:
                             disabled = False
+                        # b) 自身/父级 class 含 disabled（B站 span 靠 class）
                         if not disabled:
-                            # 额外检测父级/自身 class 是否含 disabled（B站 span 无 disabled 属性，靠 class）
                             try:
                                 cls = await btn.get_attribute("class") or ""
                                 if "disabled" in cls or "is-disabled" in cls:
+                                    disabled = True
+                            except Exception:
+                                pass
+                        # c) 属性形式（小红书 xhs-publish-btn：submit-disabled / submit-loading）
+                        if not disabled:
+                            try:
+                                sd = (await btn.get_attribute("submit-disabled") or "").lower()
+                                sl = (await btn.get_attribute("submit-loading") or "").lower()
+                                if sd == "true" or sl == "true":
                                     disabled = True
                             except Exception:
                                 pass

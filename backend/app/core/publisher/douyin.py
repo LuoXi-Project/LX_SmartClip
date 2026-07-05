@@ -201,8 +201,17 @@ async def fill_title_and_description(page, title: str, description: str, tags: l
     await page.keyboard.press("Control+KeyA")
     await page.keyboard.press("Delete")
 
+    # 先输入描述正文（若有），与首个话题间用空格分隔，否则 # 不被识别为话题
+    desc_text = (description or "").strip()
+    if desc_text:
+        await page.keyboard.type(desc_text)
+        await page.keyboard.type(" ")
+    # 逐个输入话题：# + 文本 + 空格，触发平台话题联想
     for tag in tags or []:
-        await page.keyboard.type(" #" + tag)
+        tag = (tag or "").strip().lstrip("#")
+        if not tag:
+            continue
+        await page.keyboard.type("#" + tag)
         await page.keyboard.press("Space")
     await page.keyboard.press("Escape")  # 收起话题下拉，避免浮层拦截后续点击
 

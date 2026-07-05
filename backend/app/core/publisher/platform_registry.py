@@ -57,6 +57,11 @@ class PlatformConfig:
     # 留空=不处理。
     originality_selector: str = ""
     originality_target_text: str = "内容为自制"
+    # 平台专用的发布点击 JS（穿透 closed shadow DOM 等）。
+    # 小红书 <xhs-publish-btn> 是 closed shadow DOM，常规点击只命中外壳不触发内部发布。
+    # 此 JS 在 page.evaluate 执行，返回 true 表示已触发点击。
+    # 留空=走常规 DOM 点击逻辑。
+    publish_click_js: str = ""
     # 风控等级（前端展示用）
     risk: str = "normal"
     # 是否已联调验证（False = 代码就绪但未经真机测试，UI 标"测试版"）
@@ -95,6 +100,26 @@ PLATFORM_CONFIGS: dict[str, PlatformConfig] = {
         desc_selector='div#post-textarea, div[contenteditable="true"]',
         publish_btn_text="发布",
         publish_success_fragment="publish/success",
+        # 小红书发布按钮 <xhs-publish-btn> 是 closed shadow DOM，常规 querySelector 穿不透。
+        # 注意：has-text 是 Playwright 选择器，浏览器 querySelector 不支持，不能用。
+        # closed shadow DOM 的 el.shadowRoot 返回 null，所以无法从外部定位内部按钮。
+        # 可靠策略：1) 调组件实例方法 _onPublish/handlePublish 2) 外壳 dispatchEvent click。
+        # 此 JS 在 page.evaluate 执行，返回 true=已触发，false=未触发（disabled 或没找到）。
+        publish_click_js="""() => {
+  const el = document.querySelector('xhs-publish-btn');
+  if (!el) return false;
+  if (el.getAttribute('submit-disabled') === 'true') return false;
+  if (el.getAttribute('submit-loading') === 'true') return false;
+  // 策略1：调组件实例的发布方法
+  if (typeof el._onPublish === 'function') { try { el._onPublish(); return true; } catch(e){} }
+  if (typeof el.handlePublish === 'function') { try { el.handlePublish(); return true; } catch(e){} }
+  // 策略2：派发 click 事件到外壳（部分版本监听宿主 click）
+  try { el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); } catch(e){}
+  // 策略3：坐标点击外壳右半部分（XHS 内部布局：暂存在左、发布在右）
+  // 返回坐标供 Playwright 用 page.mouse.click 精确点击（evaluate 内无法直接点击）
+  const r = el.getBoundingClientRect();
+  return {x: Math.round(r.left + r.width * 0.75), y: Math.round(r.top + r.height / 2)};
+}""",
         risk="strict",  # 风控最严
         verified=False,
         note="小红书风控严格，建议小批量、低频率发布，优先用本地 Chrome",

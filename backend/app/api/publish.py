@@ -169,6 +169,31 @@ async def delete_account(platform: str, account: str):
 
 
 # ── 任务 ──────────────────────────────────────────────────────────────────
+@router.post("/renders/{render_id}/generate-copy")
+async def generate_copy(render_id: str, body: dict | None = None):
+    """为指定成片 AI 生成发布文案（标题/描述/标签）。
+
+    策略：ASR 优先 + VLM 兜底，结果缓存到 renders 表（asr_text/vlm_summary）。
+    body: {platform?: str, tone?: str, user_prompt?: str}，
+    platform 控制文案风格（默认 douyin）；user_prompt 为用户自定义提示词（语言/指引/修正/特定要求）。
+    """
+    from app.core.publisher.copy_generator import generate_publish_copy
+    body = body or {}
+    platform = str(body.get("platform") or "douyin")
+    tone = body.get("tone")
+    user_prompt = body.get("user_prompt")
+    try:
+        result = await generate_publish_copy(
+            render_id, platform=platform, tone=tone, user_prompt=user_prompt,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("生成发布文案失败")
+        raise HTTPException(status_code=500, detail=f"生成失败: {e}")
+
+
 @router.post("/tasks")
 async def create_task(body: CreatePublishTaskRequest):
     """创建发布任务并拉起 worker 子进程。"""

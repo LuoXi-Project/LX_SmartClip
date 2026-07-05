@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckCircle2, Film, Loader2, Play, Search, Trash2, Video } from 'lucide-react'
+import { Check, CheckCircle2, Film, ListChecks, Loader2, Play, Search, Trash2, Video } from 'lucide-react'
 import clsx from 'clsx'
 import { rendersApi, formatFastApiDetail } from '@/lib/api'
 import { Pagination } from '@/app/library/_components/Pagination'
@@ -46,6 +46,12 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
   const [previewItem, setPreviewItem] = useState<RenderItem | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)  // 删除等操作后强制刷新
   const [pendingDelete, setPendingDelete] = useState<RenderItem | null>(null)  // 待删除确认
+  // 多选批量删除
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [pendingBatchDelete, setPendingBatchDelete] = useState(false)  // 批量删除确认
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  const selectAllRef = useRef<HTMLInputElement>(null)
   const searchTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // 加载来源选项
@@ -94,6 +100,50 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
     setPage(1)
   }, [sourceFilter, pageSize])
 
+  // 翻页/搜索/筛选变化时清空勾选，避免选中项已不在当前列表
+  useEffect(() => {
+    setSelectedIds(new Set())
+  }, [page, search, sourceFilter, pageSize, refreshKey])
+
+  // 当前页全选 / 半选状态（驱动「全选本页」复选框）
+  const pageIds = items.map((it) => it.id)
+  const selectedOnPage = pageIds.filter((id) => selectedIds.has(id)).length
+  const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length
+  const someOnPageSelected = selectedOnPage > 0 && !allOnPageSelected
+
+  useEffect(() => {
+    const el = selectAllRef.current
+    if (!el) return
+    el.indeterminate = someOnPageSelected
+  }, [someOnPageSelected, allOnPageSelected, pageIds.length])
+
+  const toggleSelectId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllOnPage = () => {
+    setSelectedIds((prev) => {
+      if (pageIds.length === 0) return prev
+      const next = new Set(prev)
+      if (pageIds.every((id) => next.has(id))) {
+        for (const id of pageIds) next.delete(id)
+      } else {
+        for (const id of pageIds) next.add(id)
+      }
+      return next
+    })
+  }
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
   // 点删除按钮 → 打开确认弹窗（不立即删）
   const handleDeleteClick = (e: React.MouseEvent, item: RenderItem) => {
     e.stopPropagation()
@@ -116,6 +166,39 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
       onDeleted?.(target.id)
     } catch (e2) {
       alert(`删除失败：${formatFastApiDetail(e2)}`)
+    }
+  }
+
+  // 批量删除：并发删除已选项，按结果汇总；失败的保留勾选方便重试
+  const handleBatchDeleteConfirm = async () => {
+    setPendingBatchDelete(false)
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    setBatchDeleting(true)
+    try {
+      const results = await Promise.allSettled(ids.map((id) => rendersApi.delete(id)))
+      const failed: string[] = []
+      let okCount = 0
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          okCount += 1
+          onDeleted?.(ids[i])
+        } else {
+          failed.push(ids[i])
+        }
+      })
+      setSelectedIds(new Set(failed))
+      if (failed.length === 0) exitSelectMode()
+      // 删除后刷新当前页；若整页删空则回退
+      if (okCount > 0 && items.length - okCount <= 0 && page > 1) {
+        setPage(page - 1)
+      } else {
+        setRefreshKey((k) => k + 1)
+      }
+    } catch (e) {
+      alert(`批量删除失败：${formatFastApiDetail(e)}`)
+    } finally {
+      setBatchDeleting(false)
     }
   }
 
@@ -147,9 +230,62 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
         </select>
       </div>
 
-      {/* 状态栏 */}
-      <div className="text-xs text-slate-500 mb-2 px-1">
-        {loading ? '加载中…' : `共 ${total} 个成片${search || sourceFilter ? `（已筛选）` : ''}`}
+      {/* 状态栏 + 多选工具条 */}
+      <div className="flex flex-wrap items-center gap-2 mb-2 px-1">
+        <div className="text-xs text-slate-500">
+          {loading ? '加载中…' : `共 ${total} 个成片${search || sourceFilter ? `（已筛选）` : ''}`}
+        </div>
+        {!loading && items.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 ml-auto">
+            <button
+              type="button"
+              onClick={() => {
+                if (selectMode) exitSelectMode()
+                else setSelectMode(true)
+              }}
+              className={clsx(
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
+                selectMode
+                  ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200'
+                  : 'bg-slate-800/50 border-slate-600/60 text-slate-300 hover:border-slate-500',
+                batchDeleting && 'pointer-events-none opacity-60',
+              )}
+            >
+              <ListChecks className="w-3.5 h-3.5" />
+              {selectMode ? '退出多选' : '多选'}
+            </button>
+            {selectMode && (
+              <>
+                <label className="inline-flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleSelectAllOnPage}
+                    className="rounded border-slate-500 bg-slate-800 text-indigo-600 focus:ring-indigo-500/40"
+                  />
+                  全选本页
+                </label>
+                <span className="text-xs text-slate-500 tabular-nums">
+                  已选 <span className="text-slate-300">{selectedIds.size}</span> 项
+                </span>
+                <button
+                  type="button"
+                  disabled={selectedIds.size === 0 || batchDeleting}
+                  onClick={() => setPendingBatchDelete(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/35 hover:bg-red-500/25 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  {batchDeleting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                  批量删除
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 错误 */}
@@ -175,69 +311,108 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
           <div className="grid grid-cols-2 gap-2.5 pb-2">
             {items.map((it) => {
               const selected = it.id === selectedId
+              const checked = selectedIds.has(it.id)
               return (
                 <div
                   key={it.id}
                   className={clsx(
                     'group relative rounded-md border bg-slate-900/40 overflow-hidden transition-all',
-                    selected
+                    selectMode && checked
                       ? 'border-indigo-500 ring-1 ring-indigo-500/50'
-                      : 'border-slate-800 hover:border-slate-600',
+                      : selected
+                        ? 'border-indigo-500 ring-1 ring-indigo-500/50'
+                        : 'border-slate-800 hover:border-slate-600',
                   )}
                 >
-                  {/* 缩略图（点击预览） */}
+                  {/* 多选勾选框（仅多选模式显示） */}
+                  {selectMode && (
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={checked}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleSelectId(it.id)
+                      }}
+                      className={clsx(
+                        'absolute top-1 left-1 z-20 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors',
+                        checked
+                          ? 'bg-indigo-600 border-indigo-400 text-white'
+                          : 'bg-black/55 border-slate-400/80 text-transparent hover:border-indigo-400/70',
+                      )}
+                      title={checked ? '取消选择' : '选择'}
+                    >
+                      {checked && <Check className="w-3 h-3" />}
+                    </button>
+                  )}
+                  {/* 缩略图（多选模式下点击切换勾选，否则点击预览） */}
                   <div
-                    onClick={() => setPreviewItem(it)}
+                    onClick={() => {
+                      if (selectMode) toggleSelectId(it.id)
+                      else setPreviewItem(it)
+                    }}
                     className="aspect-video bg-slate-950 flex items-center justify-center relative cursor-pointer"
                   >
                     <Thumbnail id={it.id} hasCached={!!it.thumbnail_url} />
                     <span className="absolute bottom-1 right-1 text-[10px] px-1 py-0.5 rounded bg-black/70 text-slate-200">
                       {fmtDuration(it.duration)}
                     </span>
-                    {/* 来源标签 */}
-                    <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-slate-300">
+                    {/* 来源标签（多选模式下右移避开勾选框） */}
+                    <span
+                      className={clsx(
+                        'absolute top-1 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-slate-300',
+                        selectMode ? 'left-8' : 'left-1',
+                      )}
+                    >
                       {it.source_label}
                     </span>
-                    {/* 操作按钮组（hover 显示，z-10 确保在中央播放按钮之上可点击） */}
-                    <div className="absolute top-1 right-1 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* 操作按钮组（hover 显示，z-10 确保在中央播放按钮之上可点击；多选模式下隐藏） */}
+                    {!selectMode && (
+                      <div className="absolute top-1 right-1 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setPreviewItem(it)
+                          }}
+                          className="p-1 rounded bg-black/60 text-slate-300 hover:text-white"
+                          title="预览播放"
+                        >
+                          <Play className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteClick(e, it)}
+                          className="p-1 rounded bg-black/60 text-slate-400 hover:text-red-300"
+                          title="删除成片"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                    {/* 中央播放按钮（hover 显示，整个缩略图可点预览；多选模式下不显示） */}
+                    {!selectMode && (
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation()
                           setPreviewItem(it)
                         }}
-                        className="p-1 rounded bg-black/60 text-slate-300 hover:text-white"
-                        title="预览播放"
+                        className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="点击预览"
                       >
-                        <Play className="w-3 h-3" />
+                        <span className="w-9 h-9 rounded-full bg-black/70 flex items-center justify-center">
+                          <Play className="w-4 h-4 text-white ml-0.5" fill="currentColor" />
+                        </span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => handleDeleteClick(e, it)}
-                        className="p-1 rounded bg-black/60 text-slate-400 hover:text-red-300"
-                        title="删除成片"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                    {/* 中央播放按钮（hover 显示，整个缩略图可点预览） */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setPreviewItem(it)
-                      }}
-                      className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="点击预览"
-                    >
-                      <span className="w-9 h-9 rounded-full bg-black/70 flex items-center justify-center">
-                        <Play className="w-4 h-4 text-white ml-0.5" fill="currentColor" />
-                      </span>
-                    </button>
+                    )}
                   </div>
-                  {/* 文件名（点击选中用于发布） */}
+                    {/* 文件名（多选模式下点击切换勾选，否则点击选中用于发布） */}
                   <div
-                    onClick={() => onSelect(it)}
+                    onClick={() => {
+                      if (selectMode) toggleSelectId(it.id)
+                      else onSelect(it)
+                    }}
                     className="p-2 cursor-pointer hover:bg-slate-800/40 transition-colors"
                   >
                     <div
@@ -259,6 +434,15 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
                         </>
                       )}
                     </div>
+                    {/* 原素材标题（AI 文案生成时携带的上下文） */}
+                    {it.material_title && (
+                      <div
+                        className="text-[10px] text-slate-500 mt-0.5 truncate"
+                        title={`原素材：${it.material_title}`}
+                      >
+                        原素材：{it.material_title}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -304,6 +488,18 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
         variant="danger"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setPendingDelete(null)}
+      />
+
+      {/* 批量删除确认弹窗 */}
+      <ConfirmDialog
+        open={pendingBatchDelete}
+        title="批量删除"
+        description={`将永久删除已选的 ${selectedIds.size} 个成片文件，无法恢复。`}
+        confirmLabel="删除"
+        cancelLabel="取消"
+        variant="danger"
+        onConfirm={handleBatchDeleteConfirm}
+        onCancel={() => setPendingBatchDelete(false)}
       />
     </section>
   )

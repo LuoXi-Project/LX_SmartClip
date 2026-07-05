@@ -6,6 +6,7 @@ import { ArrowLeft, Clapperboard, Loader2, Rocket } from 'lucide-react'
 import { publishApi, formatFastApiDetail } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { usePublishStore } from '@/lib/store'
 import { RenderGrid } from './_components/RenderGrid'
 import { AccountPanel } from './_components/AccountPanel'
 import { PublishForm } from './_components/PublishForm'
@@ -21,6 +22,7 @@ export default function PublishPageClient() {
   const [error, setError] = useState('')
   const [busyPlatform, setBusyPlatform] = useState<Record<string, 'login' | 'check' | undefined>>({})
   const [submitting, setSubmitting] = useState(false)
+  const [generatingPlatform, setGeneratingPlatform] = useState<string | null>(null)
   const [selectedRender, setSelectedRender] = useState<RenderItem | null>(null)
   const [pendingDeleteAccount, setPendingDeleteAccount] = useState<{ platform: string; account: string } | null>(null)
 
@@ -142,6 +144,67 @@ export default function PublishPageClient() {
     }
   }
 
+  // AI 生成文案：先清空该平台的旧文案（保留 user_prompt），调后端生成，填回草稿
+  const { setDraft, drafts } = usePublishStore()
+  const handleGenerateCopy = async (platform: string) => {
+    if (!selectedRender) {
+      toast.error('请先选择一个成片')
+      return
+    }
+    // 先清空旧文案，避免新旧混淆；保留用户输入的提示词
+    setDraft(platform, { title: '', description: '', tags: [] })
+    setGeneratingPlatform(platform)
+    const handle = toast.task(`正在为「${platform}」生成文案…`, {
+      stage: '解析成片内容（ASR/VLM）并调用大模型',
+    })
+    try {
+      const userPrompt = (drafts[platform]?.user_prompt || '').trim()
+      const r = await publishApi.generateCopy(selectedRender.id, {
+        platform,
+        user_prompt: userPrompt || undefined,
+      })
+      setDraft(platform, {
+        title: r.title || '',
+        description: r.description || '',
+        tags: r.tags || [],
+      })
+      // 执行情况汇总：依据来源 + 缓存命中 + 字数达标情况
+      const used: string[] = []
+      if (r.source.material_title) used.push('原素材')
+      if (r.source.plan) used.push('方案')
+      if (r.source.asr) used.push('ASR')
+      if (r.source.vlm) used.push('VLM')
+      const cachedParts: string[] = []
+      if (r.cached.asr) cachedParts.push('ASR')
+      if (r.cached.vlm) cachedParts.push('VLM')
+      const lim = r.limits
+      const len = r.lengths
+      // 字数达标判断（标题/描述/标签数量都在平台上限内）
+      const over: string[] = []
+      if (lim && len) {
+        if (len.title > lim.title_max) over.push(`标题 ${len.title}/${lim.title_max}`)
+        if (len.description > lim.desc_max) over.push(`描述 ${len.description}/${lim.desc_max}`)
+        if (len.tags > lim.tags_max) over.push(`标签 ${len.tags}/${lim.tags_max}`)
+      }
+      const lines = [
+        `${platform} 文案已生成`,
+        used.length ? `依据：${used.join(' + ')}` : '依据：通用经验（未取到 ASR/方案等上下文）',
+        cachedParts.length ? `命中缓存：${cachedParts.join(' / ')}（未重复调用）` : '本次新解析（ASR/VLM）',
+        lim && len
+          ? `字数：标题 ${len.title}/${lim.title_max} · 描述 ${len.description}/${lim.desc_max} · 标签 ${len.tags}/${lim.tags_max}（${lim.lang === 'en' ? '字符' : '字'}）`
+          : '',
+        r.trimmed ? '⚠️ 内容超长已被自动截断，请复核' : '',
+        over.length ? `⚠️ 仍有超限：${over.join('、')}` : '',
+        userPrompt ? `用户提示词：${userPrompt}` : '',
+      ].filter(Boolean)
+      handle.done(lines.join('\n'))
+    } catch (e) {
+      handle.fail(`AI 生成失败：${formatFastApiDetail(e)}`)
+    } finally {
+      setGeneratingPlatform(null)
+    }
+  }
+
   // 选中成片被删除时清空选中态
   const handleRenderDeleted = (id: string) => {
     if (selectedRender?.id === id) setSelectedRender(null)
@@ -225,7 +288,9 @@ export default function PublishPageClient() {
                 accounts={accounts}
                 selectedRender={selectedRender}
                 submitting={submitting}
+                generatingPlatform={generatingPlatform}
                 onSubmit={handleSubmit}
+                onGenerateCopy={handleGenerateCopy}
               />
               <TaskList tasks={tasks} onCancel={handleCancel} />
             </div>

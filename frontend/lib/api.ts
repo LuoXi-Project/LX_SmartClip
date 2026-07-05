@@ -1780,6 +1780,42 @@ export const publishApi = {
     apiClient.delete<unknown, { cancelled: boolean; message?: string }>(
       `/api/publish/tasks/${taskId}`,
     ),
+  // AI 生成发布文案（标题/描述/标签）。ASR 优先 + VLM 兜底，结果缓存到 renders 表
+  // user_prompt：用户自定义提示词（语言/特定指引/修正/特定要求等），优先级最高，覆盖默认风格
+  generateCopy: (
+    renderId: string,
+    body: { platform?: string; tone?: string; user_prompt?: string },
+  ) =>
+    apiClient.post<unknown, GenerateCopyResp>(
+      `/api/publish/renders/${renderId}/generate-copy`,
+      body,
+    ),
+}
+
+// ── AI 生成文案响应 ───────────────────────────────────────────────────────
+export interface GenerateCopyResp {
+  title: string
+  description: string
+  tags: string[]
+  source: {
+    material_title: boolean
+    plan: boolean
+    asr: boolean
+    vlm: boolean
+    asr_note?: string | null
+  }
+  cached: { asr: boolean; vlm: boolean }
+  /** 平台字数硬约束（供前端展示「x/上限」）*/
+  limits?: {
+    title_max: number
+    desc_max: number
+    tags_max: number
+    lang: string
+  }
+  /** 实际字数（中文按汉字数、英文按字符数）*/
+  lengths?: { title: number; description: number; tags: number }
+  /** 是否触发了兜底截断（LLM 超长被截）*/
+  trimmed?: boolean
 }
 
 // ── 成片管理 ──────────────────────────────────────────────────────────────
@@ -1800,6 +1836,12 @@ export interface RenderItemResp {
   file_size: number
   created_at: string
   recorded_at: string
+  // AI 文案生成相关元数据（渲染时携带 + 缓存）
+  material_title?: string | null
+  plan_json?: string | null
+  asr_text?: string | null
+  vlm_summary?: string | null
+  ai_context_at?: string | null
 }
 
 export interface RenderListResp {

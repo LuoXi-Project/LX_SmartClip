@@ -1557,7 +1557,7 @@ async def realize_auto_edit_plan(
             result = {"mode": "voiceover" if use_tts_branch else "original", "filename": final_filename, "url": final_url}
             # 记录成片到 renders 表（异步，不阻塞返回）
             _vid = getattr(getattr(plan, "video_id", None), "__str__", lambda: None)()
-            asyncio.create_task(_record_realize(final_url, _vid))
+            asyncio.create_task(_record_realize(final_url, _vid, plan))
 
             await update_job_status(job_id, "done", result=result)
             await reporter.send("done", "done", "成片已就绪", {"result": result})
@@ -1569,13 +1569,40 @@ async def realize_auto_edit_plan(
     return {"job_id": job_id, "status": "running", "stream_url": f"/api/jobs/{job_id}/stream", "ws_url": f"/api/jobs/{job_id}/ws"}
 
 
-async def _record_realize(public_url: str, material_id: str | None) -> None:
-    """把 realize 成片记录到 renders 表。从 public_url 反解绝对路径。"""
+async def _record_realize(public_url: str, material_id: str | None, plan=None) -> None:
+    """把 realize 成片记录到 renders 表。从 public_url 反解绝对路径。
+
+    同时携带原素材标题（material_id → videos.name）与方案/方案内容快照（plan），
+    供「一键发布」AI 文案生成时无需回查原任务即可拿到上下文。
+    """
     try:
-        from app.api.renders_db import record_render_from_path
+        from app.api.renders_db import record_render_from_path, extract_plan_snapshot
         from app.utils.paths import resolve_stored_path
         abs_path = resolve_stored_path(public_url)
-        await record_render_from_path(abs_path=abs_path, source="realize", material_id=material_id)
+        # 取原素材标题
+        material_title = None
+        if material_id:
+            try:
+                from app.db.database import get_db_conn
+                db = await get_db_conn()
+                try:
+                    cur = await db.execute("SELECT name FROM videos WHERE id = ?", (material_id,))
+                    row = await cur.fetchone()
+                    if row:
+                        material_title = row["name"]
+                finally:
+                    await db.close()
+            except Exception:
+                logger.debug("查询原素材标题失败（忽略）", exc_info=True)
+        plan_json = None
+        snap = extract_plan_snapshot(plan)
+        if snap:
+            import json as _json
+            plan_json = _json.dumps(snap, ensure_ascii=False)
+        await record_render_from_path(
+            abs_path=abs_path, source="realize", material_id=material_id,
+            material_title=material_title, plan_json=plan_json,
+        )
     except Exception:
         logger.debug("记录 realize 成片失败（忽略）", exc_info=True)
 

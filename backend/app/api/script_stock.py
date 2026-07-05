@@ -963,8 +963,15 @@ async def compose_stock(req: ScriptStockComposeRequest):
                 "stored_rel_path": rel,
             }
             # 记录成片到 renders 表（final_abs 是绝对路径，最直接）
+            # 携带 project_name 作为原素材标题，分段文案作为方案快照
+            _seg_texts = [s.text for s in segments if s.text]
             asyncio.create_task(
-                _record_script_stock(final_abs) if final_abs else asyncio.sleep(0)
+                _record_script_stock(
+                    final_abs,
+                    material_title=req.project_name or None,
+                    seg_texts=_seg_texts,
+                    audio_mode=req.audio_mode,
+                ) if final_abs else asyncio.sleep(0)
             )
             await update_job_status(job_id, "done", result=result)
             await reporter.send("done", "done", "文案成片已就绪", {"result": result})
@@ -982,11 +989,32 @@ async def compose_stock(req: ScriptStockComposeRequest):
     }
 
 
-async def _record_script_stock(final_abs: str) -> None:
-    """把文案素材成片记录到 renders 表。final_abs 是绝对路径。"""
+async def _record_script_stock(
+    final_abs: str,
+    *,
+    material_title: str | None = None,
+    seg_texts: list[str] | None = None,
+    audio_mode: str | None = None,
+) -> None:
+    """把文案素材成片记录到 renders 表。final_abs 是绝对路径。
+
+    携带 project_name 作为原素材标题，分段文案作为方案/方案内容快照，
+    供「一键发布」AI 文案生成时无需回查原任务即可拿到上下文。
+    """
     try:
         from app.api.renders_db import record_render_from_path
-        await record_render_from_path(abs_path=final_abs, source="script_stock_compose")
+        plan_json = None
+        if seg_texts or audio_mode:
+            import json as _json
+            snap = {"script_text": "\n".join(seg_texts)[:2000]} if seg_texts else {}
+            if audio_mode:
+                snap["audio_mode"] = audio_mode
+            if snap:
+                plan_json = _json.dumps(snap, ensure_ascii=False)
+        await record_render_from_path(
+            abs_path=final_abs, source="script_stock_compose",
+            material_title=material_title, plan_json=plan_json,
+        )
     except Exception:
         logger.debug("记录文案素材成片失败（忽略）", exc_info=True)
 

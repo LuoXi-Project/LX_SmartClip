@@ -202,7 +202,7 @@ async def run_film_commentary_job(job_id: str) -> None:
         )
         # 记录成片到 renders 表（异步，不阻塞）
         if output_url:
-            asyncio.create_task(_record_film(output_url, video_id))
+            asyncio.create_task(_record_film(output_url, video_id, video.get("name"), job, plan))
         logger.info("影视解说任务完成: %s", job_id)
 
     except asyncio.CancelledError:
@@ -236,12 +236,33 @@ def schedule_job(job_id: str) -> None:
     _running_tasks[job_id] = task
 
 
-async def _record_film(public_url: str, material_id: str | None) -> None:
-    """把影视解说成片记录到 renders 表。"""
+async def _record_film(
+    public_url: str,
+    material_id: str | None,
+    material_title: str | None = None,
+    job=None,
+    plan=None,
+) -> None:
+    """把影视解说成片记录到 renders 表。
+
+    携带原素材标题（video.name）与方案/方案内容快照（job.mode/style/target_duration
+    + plan.storyline/sentences），供「一键发布」AI 文案生成时无需回查原任务即可拿到上下文。
+    """
     try:
-        from app.api.renders_db import record_render_from_path
+        from app.api.renders_db import record_render_from_path, extract_plan_snapshot
         from app.utils.paths import resolve_stored_path
         abs_path = resolve_stored_path(public_url)
-        await record_render_from_path(abs_path=abs_path, source="film_commentary", material_id=material_id)
+        # 合并 job（mode/style/target_duration）与 plan（storyline/sentences）快照
+        snap = extract_plan_snapshot(job) or {}
+        plan_snap = extract_plan_snapshot(plan) or {}
+        for k, v in plan_snap.items():
+            snap.setdefault(k, v)
+        plan_json = None
+        if snap:
+            plan_json = json.dumps(snap, ensure_ascii=False)
+        await record_render_from_path(
+            abs_path=abs_path, source="film_commentary", material_id=material_id,
+            material_title=material_title, plan_json=plan_json,
+        )
     except Exception:
         logger.debug("记录影视解说成片失败（忽略）", exc_info=True)

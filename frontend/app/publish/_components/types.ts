@@ -101,6 +101,33 @@ export type RenderSource =
   | 'film_commentary'
   | 'script_stock_compose'
 
+// ── 平台字数硬约束（与后端 copy_generator._PLATFORM_SPECS 对齐） ──────────
+// 用于前端输入框 maxLength + 字数计数器；权威值以后端返回的 limits 为准。
+export interface PlatformSpec {
+  title_max: number
+  desc_max: number
+  tags_max: number
+  lang: 'zh-CN' | 'en'
+}
+export const PLATFORM_SPECS: Record<string, PlatformSpec> = {
+  douyin: { title_max: 55, desc_max: 500, tags_max: 8, lang: 'zh-CN' },
+  xhs: { title_max: 20, desc_max: 1000, tags_max: 10, lang: 'zh-CN' },
+  bilibili: { title_max: 80, desc_max: 2000, tags_max: 10, lang: 'zh-CN' },
+  wxchannels: { title_max: 1000, desc_max: 1000, tags_max: 6, lang: 'zh-CN' },
+  kuaishou: { title_max: 100, desc_max: 500, tags_max: 8, lang: 'zh-CN' },
+  tiktok: { title_max: 150, desc_max: 4000, tags_max: 6, lang: 'en' },
+  youtube: { title_max: 100, desc_max: 5000, tags_max: 15, lang: 'en' },
+}
+const DEFAULT_SPEC: PlatformSpec = { title_max: 55, desc_max: 500, tags_max: 8, lang: 'zh-CN' }
+export const getPlatformSpec = (p: string): PlatformSpec => PLATFORM_SPECS[p] || DEFAULT_SPEC
+
+/** 按平台语言计字数：中文按汉字数（去空白）、英文按字符数。 */
+export function countByLang(s: string, lang: 'zh-CN' | 'en'): number {
+  if (!s) return 0
+  if (lang === 'en') return s.length
+  return s.replace(/\s+/g, '').length
+}
+
 /** 单个成片记录（/api/renders 响应项）。 */
 export interface RenderItem {
   id: string
@@ -119,6 +146,12 @@ export interface RenderItem {
   file_size: number
   created_at: string
   recorded_at: string
+  // AI 文案生成相关元数据（渲染时携带 + 缓存）
+  material_title?: string | null
+  plan_json?: string | null
+  asr_text?: string | null
+  vlm_summary?: string | null
+  ai_context_at?: string | null
 }
 
 /** /api/renders 列表响应。 */

@@ -237,6 +237,10 @@ CREATE TABLE IF NOT EXISTS publish_accounts (
 
 # 成片（用户合成/导出的最终视频）追踪表
 # 双轨：渲染成功时主动写入（5 个产出点）+ 首次启动扫描历史文件入库
+# material_title/plan_json：渲染时携带的原素材标题 + 方案/方案内容快照，
+#   供后续「一键发布」AI 生成文案时无需回查原任务即可拿到上下文
+# asr_text/vlm_summary/ai_context_at：发布文案生成时缓存的成片 ASR 文本、VLM 抽帧描述，
+#   重复生成只重跑 LLM，不重复花 ASR/VLM 费用
 CREATE_RENDERS = """
 CREATE TABLE IF NOT EXISTS renders (
     id TEXT PRIMARY KEY,
@@ -251,6 +255,11 @@ CREATE TABLE IF NOT EXISTS renders (
     file_size INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    material_title TEXT,
+    plan_json TEXT,
+    asr_text TEXT,
+    vlm_summary TEXT,
+    ai_context_at TEXT,
     UNIQUE(file_path)
 );
 """
@@ -622,6 +631,15 @@ async def init_db():
         await db.execute(CREATE_PUBLISH_TASKS)
         await db.execute(CREATE_PUBLISH_ACCOUNTS)
         await db.execute(CREATE_RENDERS)
+        # 兼容旧库：renders 补齐 AI 文案生成相关列
+        try:
+            cur = await db.execute("PRAGMA table_info(renders)")
+            r_cols = [str(r[1]) for r in await cur.fetchall()]
+            for col in ("material_title", "plan_json", "asr_text", "vlm_summary", "ai_context_at"):
+                if col not in r_cols:
+                    await db.execute(f"ALTER TABLE renders ADD COLUMN {col} TEXT")
+        except Exception:
+            pass
         from app.jobs.store import CREATE_ASYNC_JOBS
         await db.execute(CREATE_ASYNC_JOBS)
         # 兼容旧库：async_jobs 补 ref_name 列（SQLite 不支持 IF NOT EXISTS ADD COLUMN）

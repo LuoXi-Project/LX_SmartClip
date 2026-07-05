@@ -173,6 +173,51 @@ async def _try_selectors(page, selectors: str, action: str = "fill", value: str 
     return False
 
 
+async def _any_visible(page, selectors: str) -> bool:
+    """多候选选择器中任一可见即返回 True（用于状态检测）。
+
+    对每个候选用 count()>0 判断（比 is_visible 更稳，避免多元素/隐藏元素异常）。
+    """
+    for sel in [s.strip() for s in selectors.split(",") if s.strip()]:
+        try:
+            cnt = await page.locator(sel).count()
+            if cnt > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _wait_upload_done(page, cfg: PlatformConfig, timeout_sec: int = 600) -> bool:
+    """等待视频上传/转码完成。返回 True=完成，False=超时或失败。
+
+    优先用平台配置的 upload_done_selector 轮询检测（B站等）；
+    未配置则退化成固定等待 + 失败检测的粗等策略。
+    """
+    deadline = datetime.now().timestamp() + timeout_sec
+    # 先给平台一点反应时间（上传初始化）
+    await page.wait_for_timeout(3000)
+
+    while datetime.now().timestamp() < deadline:
+        # 失败检测：上传/转码失败直接返回
+        if cfg.upload_fail_selector and await _any_visible(page, cfg.upload_fail_selector):
+            emit_log(f"{cfg.label}检测到上传/转码失败标志")
+            return False
+        # 成功检测：配置了完成选择器则轮询，命中即返回
+        if cfg.upload_done_selector:
+            if await _any_visible(page, cfg.upload_done_selector):
+                return True
+        else:
+            # 未配置选择器：粗等（最多等 timeout_sec，但提早结束不太可能，这里保底）
+            # 退化策略：等待 timeout_sec 后返回 True（兼容旧行为）
+            await page.wait_for_timeout(8000)
+            return True
+        await asyncio.sleep(3)
+
+    emit_log(f"{cfg.label}等待上传完成超时（{timeout_sec}s）")
+    return False
+
+
 async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
     """通用发布流程。供 worker 调用。"""
     from patchright.async_api import async_playwright
@@ -251,16 +296,23 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                         await page.keyboard.type(desc)
                     await page.keyboard.press("Escape")
 
-            # 等视频上传完成（粗等，无统一检测标志）
+            # 等视频上传/转码完成（带状态检测，替代旧的固定 8 秒粗等）
             emit_progress(platform=cfg.name, step="uploading", status="running", pct=70,
-                          message="等待视频处理完成")
-            await page.wait_for_timeout(8000)
+                          message="等待视频上传/处理完成")
+            upload_ok = await _wait_upload_done(page, cfg, timeout_sec=600)
+            if not upload_ok:
+                emit_progress(platform=cfg.name, step="uploading", status="running", pct=70,
+                              message="上传完成检测未确认，仍尝试投稿（可能失败）")
+            else:
+                emit_progress(platform=cfg.name, step="uploading", status="success", pct=80,
+                              message="视频上传/处理完成")
 
-            # 点发布按钮
+            # 点发布按钮（等待按钮可点击：转码完成前通常 disabled）
             emit_progress(platform=cfg.name, step="publishing", status="running", pct=90,
                           message=f"点击{cfg.publish_btn_text}按钮")
             published = False
-            deadline = datetime.now().timestamp() + 120
+            deadline = datetime.now().timestamp() + 180
+            clicked_once = False
             while datetime.now().timestamp() < deadline:
                 try:
                     await page.evaluate(
@@ -268,14 +320,40 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                     )
                     btn = page.get_by_role("button", name=cfg.publish_btn_text, exact=False)
                     if await btn.count():
-                        await btn.first.click(force=True)
+                        btn_first = btn.first
+                        # 检测按钮是否可点（非 disabled）：B站转码未完成时按钮 disabled
+                        disabled = False
+                        try:
+                            disabled = await btn_first.is_disabled()
+                        except Exception:
+                            disabled = False
+                        if not disabled:
+                            await btn_first.click(force=True)
+                            clicked_once = True
+                        elif not clicked_once:
+                            # 首次点击尝试：按钮 disabled，记录日志继续等
+                            emit_log(f"{cfg.publish_btn_text}按钮暂不可点（可能转码未完成），等待中…")
                     await page.wait_for_timeout(3000)
-                    # 检测发布成功：URL 跳转
-                    if cfg.publish_success_fragment and cfg.publish_success_fragment in page.url:
+                    # 检测发布成功：1) URL 跳转（精确片段）2) URL 候选片段 3) 成功元素 4) URL 离开上传页
+                    cur_url = page.url or ""
+                    # 1) 精确片段
+                    if cfg.publish_success_fragment and cfg.publish_success_fragment in cur_url:
                         published = True
                         break
-                    # 兜底：URL 离开上传页也算可能成功
-                    if cfg.upload_url not in page.url and "login" not in page.url:
+                    # 2) URL 候选片段（更宽松）
+                    if cfg.publish_success_url_fragments:
+                        for frag in [f.strip() for f in cfg.publish_success_url_fragments.split(",") if f.strip()]:
+                            if frag and frag in cur_url:
+                                published = True
+                                break
+                        if published:
+                            break
+                    # 3) 成功元素（Toast/弹窗）
+                    if cfg.publish_success_selector and await _any_visible(page, cfg.publish_success_selector):
+                        published = True
+                        break
+                    # 4) 兜底：URL 离开上传页（非登录态）
+                    if cfg.upload_url not in cur_url and "login" not in cur_url:
                         published = True
                         break
                 except Exception:
@@ -288,7 +366,11 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                 result.message = f"{cfg.label}发布成功"
             else:
                 result.status = "failed"
-                result.message = f"{cfg.label}发布超时或未检测到成功跳转"
+                # 区分失败原因：是否曾成功点击过按钮
+                if not clicked_once:
+                    result.message = f"{cfg.label}投稿按钮始终不可点击（视频可能仍在转码），发布超时"
+                else:
+                    result.message = f"{cfg.label}发布超时或未检测到成功跳转"
                 emit_error(result.message)
 
             try:

@@ -44,6 +44,51 @@ def derive_title(filename: str) -> str:
     return _VARIANT_SUFFIX_RE.sub("", stem)
 
 
+def extract_plan_snapshot(plan_like) -> dict | None:
+    """从 plan / job / 类似对象安全提取「方案/方案内容」关键字段，供发布文案生成时回看。
+
+    对智剪 plan（含 mode/style/user_prompt/target_duration/video_id）、影视解说 job
+    （mode/style/target_duration）、文案素材脚本（脚本片段）等异构对象统一容错提取。
+    """
+    if plan_like is None:
+        return None
+    snap: dict = {}
+    # 字符串/标量字段
+    for key in ("mode", "style", "user_prompt", "target_duration", "target_duration_sec",
+                "duration", "script_text", "title", "tone", "voice", "video_id", "audio_mode"):
+        try:
+            val = getattr(plan_like, key, None)
+        except Exception:
+            val = None
+        if val is None and isinstance(plan_like, dict):
+            val = plan_like.get(key)
+        if val in (None, ""):
+            continue
+        # 标量/字符串直接存；其他类型转 str
+        if isinstance(val, (str, int, float, bool)):
+            snap[key] = val
+        else:
+            snap[key] = str(val)
+    # plan 内可能还藏着脚本/文案列表（sentences/storyline/script_segments）
+    for key in ("sentences", "storyline", "script_segments", "script_lines"):
+        try:
+            val = getattr(plan_like, key, None)
+        except Exception:
+            val = None
+        if val is None and isinstance(plan_like, dict):
+            val = plan_like.get(key)
+        if not val:
+            continue
+        try:
+            if isinstance(val, (list, tuple)):
+                snap[key] = [str(x)[:300] for x in val][:30]
+            else:
+                snap[key] = str(val)[:1000]
+        except Exception:
+            pass
+    return snap or None
+
+
 def _abs_to_storage_rel(abs_path: str) -> str:
     """绝对路径转 storage 相对路径（storage/xxx/burned_videos/a.mp4）。"""
     try:
@@ -62,10 +107,14 @@ async def record_render_from_path(
     material_id: str | None = None,
     title: str | None = None,
     duration: float | None = None,
+    material_title: str | None = None,
+    plan_json: str | None = None,
 ) -> str | None:
     """从成片绝对路径记录一条 render（幂等：同 file_path 已存在则跳过）。
 
     被 5 个渲染产出点和扫描器共用。取时长用 probe_duration（包 run_heavy）。
+    material_title / plan_json：携带原素材标题与方案/方案内容快照，
+        供后续「一键发布」AI 文案生成时无需回查原任务即可拿到上下文。
     返回 render id；若文件不存在或入库失败返回 None。
     """
     if not abs_path or not os.path.isfile(abs_path):
@@ -108,10 +157,12 @@ async def record_render_from_path(
         await db.execute(
             """INSERT OR IGNORE INTO renders
                (id, file_path, public_url, filename, title, source, material_id,
-                duration, file_size, created_at, recorded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                duration, file_size, created_at, recorded_at,
+                material_title, plan_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (render_id, file_path, public_url, filename, title, source, material_id,
-             float(duration or 0), file_size, created_at, _now_iso()),
+             float(duration or 0), file_size, created_at, _now_iso(),
+             material_title, plan_json),
         )
         await db.commit()
         # 若是 IGNORE 命中（已存在），查一下真实 id 返回
@@ -239,5 +290,39 @@ async def find_existing_by_path(file_path: str) -> dict | None:
         cur = await db.execute("SELECT * FROM renders WHERE file_path = ?", (file_path,))
         row = await cur.fetchone()
         return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def update_ai_context(
+    render_id: str,
+    *,
+    asr_text: str | None = None,
+    vlm_summary: str | None = None,
+) -> None:
+    """更新成片的 AI 文案生成缓存（asr_text / vlm_summary / ai_context_at）。
+
+    仅更新非 None 字段。供「一键发布」文案生成模块缓存 ASR/VLM 结果用，
+    避免重复抽音频/抽帧/调模型。
+    """
+    sets: list[str] = []
+    params: list = []
+    if asr_text is not None:
+        sets.append("asr_text = ?")
+        params.append(asr_text)
+    if vlm_summary is not None:
+        sets.append("vlm_summary = ?")
+        params.append(vlm_summary)
+    if not sets:
+        return
+    sets.append("ai_context_at = ?")
+    params.append(_now_iso())
+    params.append(render_id)
+    db = await get_db_conn()
+    try:
+        await db.execute(
+            f"UPDATE renders SET {', '.join(sets)} WHERE id = ?", params
+        )
+        await db.commit()
     finally:
         await db.close()

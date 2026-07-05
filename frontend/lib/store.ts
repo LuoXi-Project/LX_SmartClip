@@ -548,6 +548,8 @@ export interface PublishDraftPerPlatform {
   title: string
   description: string
   tags: string[]
+  /** AI 生成时的自定义提示词（语言/特定指引/修正/特定要求等），跨会话保留 */
+  user_prompt: string
 }
 export interface PublishPageState {
   /** keyed by platform，存每平台草稿；账号默认 main */
@@ -559,6 +561,7 @@ export interface PublishPageState {
   setSelectedPlatforms: (platforms: string[]) => void
   resetDrafts: () => void
 }
+const defaultDraft: PublishDraftPerPlatform = { title: '', description: '', tags: [], user_prompt: '' }
 export const usePublishStore = create<PublishPageState>()(
   persist(
     (set) => ({
@@ -576,8 +579,20 @@ export const usePublishStore = create<PublishPageState>()(
       setSelectedPlatforms: (selectedPlatforms) => set({ selectedPlatforms }),
       resetDrafts: () => set({ drafts: {} }),
     }),
-    { name: 'lx-publish-state', version: 1 }
+    {
+      name: 'lx-publish-state',
+      version: 2,
+      // v1 → v2：补齐老草稿的 user_prompt 字段
+      migrate: (persisted: unknown) => {
+        const s = (persisted || {}) as Partial<PublishPageState>
+        if (s.drafts) {
+          for (const k of Object.keys(s.drafts)) {
+            const d = s.drafts[k] as PublishDraftPerPlatform
+            if (d && typeof d.user_prompt !== 'string') d.user_prompt = ''
+          }
+        }
+        return s as PublishPageState
+      },
+    }
   )
 )
-
-const defaultDraft: PublishDraftPerPlatform = { title: '', description: '', tags: [] }

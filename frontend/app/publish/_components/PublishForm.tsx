@@ -1,15 +1,18 @@
 'use client'
 
-import { Loader2, Send } from 'lucide-react'
+import { Loader2, Send, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 import { usePublishStore, type PublishDraftPerPlatform } from '@/lib/store'
 import type { PlatformInfo, PublishAccount, RenderItem } from './types'
+import { getPlatformSpec, countByLang } from './types'
 
 interface PublishFormProps {
   platforms: PlatformInfo[]
   accounts: PublishAccount[]
   selectedRender: RenderItem | null
   submitting: boolean
+  /** 正在为某平台生成文案的平台 key（null=空闲） */
+  generatingPlatform: string | null
   onSubmit: (
     videoPath: string,
     items: Array<{
@@ -20,6 +23,8 @@ interface PublishFormProps {
       tags: string[]
     }>,
   ) => void
+  /** 触发 AI 生成文案（单平台）。父组件实现 toast 与 API 调用 */
+  onGenerateCopy: (platform: string) => void
 }
 
 export function PublishForm({
@@ -27,7 +32,9 @@ export function PublishForm({
   accounts,
   selectedRender,
   submitting,
+  generatingPlatform,
   onSubmit,
+  onGenerateCopy,
 }: PublishFormProps) {
   const { drafts, selectedPlatforms, setDraft, setSelectedPlatforms } = usePublishStore()
 
@@ -139,39 +146,98 @@ export function PublishForm({
           .filter((p) => accounts.some((a) => a.platform === p && a.login_status === 'logged_in'))
           .map((p) => {
             const meta = platforms.find((x) => x.platform === p)
-            const d = drafts[p] || { title: '', description: '', tags: [] }
+            const d = drafts[p] || { title: '', description: '', tags: [], user_prompt: '' }
+            const spec = getPlatformSpec(p)
+            const titleLen = countByLang(d.title, spec.lang)
+            const descLen = countByLang(d.description, spec.lang)
+            const overTitle = titleLen > spec.title_max
+            const overDesc = descLen > spec.desc_max
+            const overTags = d.tags.length > spec.tags_max
             return (
               <div key={p} className="rounded-md border border-slate-800 bg-slate-950/30 p-3 space-y-2">
-                <div className="text-xs font-medium text-slate-300">{meta?.label} 文案</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-slate-300">{meta?.label} 文案</div>
+                  <button
+                    type="button"
+                    disabled={!!generatingPlatform || !selectedRender}
+                    onClick={() => onGenerateCopy(p)}
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-indigo-500/40 bg-indigo-600/10 text-indigo-200 hover:bg-indigo-600/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    title="基于成片内容（ASR/VLM + 原素材/方案）自动生成标题、描述和标签"
+                  >
+                    {generatingPlatform === p ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        生成中…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3 h-3" />
+                        AI 生成
+                      </>
+                    )}
+                  </button>
+                </div>
+                {/* AI 生成提示词（可选）：影响下一次 AI 生成的语言/风格/修正/特定要求 */}
                 <input
                   type="text"
-                  value={d.title}
-                  onChange={(e) => setDraft(p, { title: e.target.value })}
-                  placeholder="标题（建议 ≤30 字）"
-                  maxLength={100}
-                  className="w-full bg-slate-900/60 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  value={d.user_prompt}
+                  onChange={(e) => setDraft(p, { user_prompt: e.target.value })}
+                  placeholder="AI 生成提示词（可选）：如 用英文输出 / 突出洁柔品牌 / 偏悬疑口吻"
+                  maxLength={200}
+                  className="w-full bg-slate-900/40 border border-slate-700/70 border-dashed rounded px-2 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 />
-                <textarea
-                  value={d.description}
-                  onChange={(e) => setDraft(p, { description: e.target.value })}
-                  placeholder="描述（可选）"
-                  rows={2}
-                  className="w-full bg-slate-900/60 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none"
-                />
-                <input
-                  type="text"
-                  value={d.tags.join(' ')}
-                  onChange={(e) =>
-                    setDraft(p, {
-                      tags: e.target.value
-                        .split(/[\s,，]+/)
-                        .map((t) => t.replace(/^#/, '').trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  placeholder="话题标签，空格分隔，如：旅行 风景 vlog"
-                  className="w-full bg-slate-900/60 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                />
+                {/* 标题（按平台字数硬约束限制 + 实时计数器） */}
+                <div>
+                  <input
+                    type="text"
+                    value={d.title}
+                    onChange={(e) => setDraft(p, { title: e.target.value })}
+                    placeholder={`标题（${spec.lang === 'en' ? '≤' : '建议 ≤'}${spec.title_max}${spec.lang === 'en' ? ' 字符' : ' 字'}）`}
+                    className={`w-full bg-slate-900/60 border rounded px-2 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 ${
+                      overTitle ? 'border-red-500/60' : 'border-slate-700'
+                    }`}
+                  />
+                  <div className={`text-[10px] mt-0.5 text-right ${overTitle ? 'text-red-400' : 'text-slate-500'}`}>
+                    {titleLen}/{spec.title_max}{spec.lang === 'en' ? ' 字符' : ' 字'}
+                  </div>
+                </div>
+                {/* 描述 */}
+                <div>
+                  <textarea
+                    value={d.description}
+                    onChange={(e) => setDraft(p, { description: e.target.value })}
+                    placeholder="描述（可选）"
+                    rows={2}
+                    className={`w-full bg-slate-900/60 border rounded px-2 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none ${
+                      overDesc ? 'border-red-500/60' : 'border-slate-700'
+                    }`}
+                  />
+                  <div className={`text-[10px] mt-0.5 text-right ${overDesc ? 'text-red-400' : 'text-slate-500'}`}>
+                    {descLen}/{spec.desc_max}{spec.lang === 'en' ? ' 字符' : ' 字'}
+                  </div>
+                </div>
+                {/* 标签 */}
+                <div>
+                  <input
+                    type="text"
+                    value={d.tags.join(' ')}
+                    onChange={(e) =>
+                      setDraft(p, {
+                        tags: e.target.value
+                          .split(/[\s,，]+/)
+                          .map((t) => t.replace(/^#/, '').trim())
+                          .filter(Boolean),
+                      })
+                    }
+                    placeholder={`话题标签，空格分隔（最多 ${spec.tags_max} 个）`}
+                    className={`w-full bg-slate-900/60 border rounded px-2 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 ${
+                      overTags ? 'border-red-500/60' : 'border-slate-700'
+                    }`}
+                  />
+                  <div className={`text-[10px] mt-0.5 text-right ${overTags ? 'text-red-400' : 'text-slate-500'}`}>
+                    {d.tags.length}/{spec.tags_max} 个
+                  </div>
+                </div>
               </div>
             )
           })}

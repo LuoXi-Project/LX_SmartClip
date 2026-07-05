@@ -30,6 +30,16 @@ class PlatformConfig:
     publish_btn_text: str = "发布"
     # 发布成功后 URL 包含的片段
     publish_success_fragment: str = ""
+    # 视频上传/转码完成的检测选择器（逗号分隔多候选）。
+    # 任一可见即认为上传完成（如「重新上传」按钮、上传完成提示文本）。
+    # 留空则退化成「固定等待」粗等策略。
+    upload_done_selector: str = ""
+    # 上传/转码失败的检测选择器（逗号分隔多候选，含「上传失败」「转码失败」等文案）
+    upload_fail_selector: str = ""
+    # 发布成功的 URL 片段候选（逗号分隔），任一命中即成功。比 publish_success_fragment 更宽松
+    publish_success_url_fragments: str = ""
+    # 发布成功的页面元素选择器（逗号分隔，如「发布成功」弹窗/Toast），任一可见即成功
+    publish_success_selector: str = ""
     # 风控等级（前端展示用）
     risk: str = "normal"
     # 是否已联调验证（False = 代码就绪但未经真机测试，UI 标"测试版"）
@@ -99,10 +109,28 @@ PLATFORM_CONFIGS: dict[str, PlatformConfig] = {
         title_selector='input[placeholder*="标题"]',
         desc_selector='div[contenteditable="true"], textarea',
         publish_btn_text="立即投稿",
-        publish_success_fragment="upload/submitted",
+        publish_success_fragment="upload/report",
+        # B站上传/转码完成检测：视频卡片出现「重新上传」按钮，或上传区出现完成提示
+        # 每个候选都是独立合法的 Playwright 选择器（逗号分隔，程序里逐个尝试）
+        # 用 :has-text() 而非 text= 以兼容更多匹配场景（包含子元素）
+        upload_done_selector=(
+            'button:has-text("重新上传"),'
+            '.video-upload-item:has-text("重新上传"),'
+            'a:has-text("重新上传"),'
+            ':has-text("上传完成"),'
+            ':has-text("点击添加封面")'
+        ),
+        upload_fail_selector=(
+            ':has-text("上传失败"),'
+            ':has-text("转码失败")'
+        ),
+        # 投稿成功跳转候选：投稿管理页 / 提交成功页
+        publish_success_url_fragments="upload/report,upload/submitted",
+        # B站投稿成功后可能出现「稿件投递成功」Toast
+        publish_success_selector=':has-text("稿件投递成功"),:has-text("投稿成功")',
         risk="low",
         verified=False,
-        note="B站后续可叠加官方 API（更稳定）",
+        note="B站上传/转码较慢，已加完成检测；后续可叠加官方 API（更稳定）",
     ),
     "kuaishou": PlatformConfig(
         name="kuaishou",

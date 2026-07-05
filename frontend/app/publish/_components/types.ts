@@ -114,7 +114,7 @@ export const PLATFORM_SPECS: Record<string, PlatformSpec> = {
   xhs: { title_max: 20, desc_max: 1000, tags_max: 10, lang: 'zh-CN' },
   bilibili: { title_max: 80, desc_max: 2000, tags_max: 10, lang: 'zh-CN' },
   wxchannels: { title_max: 1000, desc_max: 1000, tags_max: 6, lang: 'zh-CN' },
-  kuaishou: { title_max: 100, desc_max: 500, tags_max: 8, lang: 'zh-CN' },
+  kuaishou: { title_max: 100, desc_max: 500, tags_max: 4, lang: 'zh-CN' },
   tiktok: { title_max: 150, desc_max: 4000, tags_max: 6, lang: 'en' },
   youtube: { title_max: 100, desc_max: 5000, tags_max: 15, lang: 'en' },
 }

@@ -89,10 +89,10 @@ _PLATFORM_SPECS: dict[str, dict] = {
     },
     "kuaishou": {
         "lang": "zh-CN",
-        "title_max": 100, "desc_max": 500, "tags_max": 8, "tags_each_max": 20,
+        "title_max": 100, "desc_max": 500, "tags_max": 4, "tags_each_max": 20,
         "style": (
             "快手风格：标题接地气、口语化；"
-            "描述简短直接；标签偏生活/接地气词。"
+            "描述简短直接；标签最多 4 个，偏生活/接地气词。"
         ),
     },
     "tiktok": {

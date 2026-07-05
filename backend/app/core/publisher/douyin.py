@@ -201,8 +201,10 @@ async def fill_title_and_description(page, title: str, description: str, tags: l
     await page.keyboard.press("Control+KeyA")
     await page.keyboard.press("Delete")
 
-    # 先输入描述正文（若有），与首个话题间用空格分隔，否则 # 不被识别为话题
-    desc_text = (description or "").strip()
+    # 描述正文：剥离行内 #话题（tags 由参数单独管理，避免重复计数挤占名额）
+    import re
+    desc_text = re.sub(r"#([\w\u4e00-\u9fff]{2,})", "", description or "")
+    desc_text = re.sub(r"[ \t]{2,}", " ", desc_text).strip()
     if desc_text:
         await page.keyboard.type(desc_text)
         await page.keyboard.type(" ")

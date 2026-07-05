@@ -177,6 +177,24 @@ async def _try_selectors(page, selectors: str, action: str = "fill", value: str 
     return False
 
 
+def _strip_inline_tags(text: str) -> str:
+    """剥离文本里的行内 #话题（#后跟非空白字符），避免和 item.tags 重复。
+
+    部分平台（快手）描述框里 # 总数有硬限制，若 LLM 生成的描述自带 #话题，
+    再追加 item.tags 会超限。统一在此剥离，话题由 item.tags 单独管理。
+    保留普通 # 用法（如「C#」「#1 编号」需上下文判断，这里只剥离 #后跟中文/英文/数字的常见话题形态）。
+    """
+    import re
+    if not text:
+        return ""
+    # 匹配 #话题：# 后跟 2 个及以上中文/英文/数字/下划线（避免误删 C#、#1 等）
+    # 同时清理剥离后多余的多空格
+    stripped = re.sub(r"#([\w\u4e00-\u9fff]{2,})", "", text)
+    # 合并连续空格，去掉行首/行尾空格
+    stripped = re.sub(r"[ \t]{2,}", " ", stripped).strip()
+    return stripped
+
+
 async def _any_visible(page, selectors: str) -> bool:
     """多候选选择器中任一可见即返回 True（用于状态检测）。
 
@@ -481,14 +499,13 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                 if await _try_selectors(page, cfg.desc_selector, "click"):
                     await page.keyboard.press("Control+KeyA")
                     await page.keyboard.press("Delete")
-                    # 先输入描述正文（若有）
-                    desc = (item.description or "").strip()
+                    # 描述正文：剥离行内 #话题（tags 由 item.tags 统一管理，避免重复计数）。
+                    # 部分平台（快手）描述框里 # 总数有硬限制，描述自带 # 会挤占 tags 名额。
+                    desc = _strip_inline_tags(item.description or "").strip()
                     if desc:
                         await page.keyboard.type(desc)
-                        # 描述与首个话题间确保有空格分隔，否则 # 不被识别为话题
                         await page.keyboard.type(" ")
-                    # 逐个输入话题：每个话题前空格 + 文本 + 后置空格，
-                    # 这样平台（B站/小红书等 contenteditable）能识别 # 为话题触发符。
+                    # 逐个输入话题：每个话题 # + 文本 + 空格，触发平台话题识别
                     for tag in item.tags:
                         tag = (tag or "").strip().lstrip("#")
                         if not tag:
@@ -575,19 +592,27 @@ async def publish(item: PublishItem, video_path: str) -> TaskItemResult:
                     cand = page.get_by_role("button", name=btn_text, exact=False)
                     if await cand.count():
                         btn = cand.first
-                    # 2) 含目标文案的可点元素（B站 span.submit-add 等）
+                    # 2) 含目标文案的可点元素（B站 span.submit-add / 快手 div._button-primary 等）
                     if btn is None:
                         for sel in (
+                            # 高优先级：明确的发布按钮 class（快手 _button-primary、B站 submit-add）
                             f'span.submit-add:has-text("{btn_text}")',
-                            f'span:has-text("{btn_text}")',
-                            f'div:has-text("{btn_text}"):not(:has(div)):not(:has(span))',
-                            f'a:has-text("{btn_text}")',
-                            f'button:has-text("{btn_text}")',
+                            f'[class*="button-primary"]:has-text("{btn_text}")',
+                            f'[class*="submit-btn"]:has-text("{btn_text}")',
+                            f'[class*="publish-btn"]:has-text("{btn_text}")',
                             f'[class*="submit"]:has-text("{btn_text}")',
                             f'[class*="publish"]:has-text("{btn_text}")',
+                            # 通用：button / a / span（无子元素的叶子节点）
+                            f'button:has-text("{btn_text}")',
+                            f'a:has-text("{btn_text}")',
+                            f'span:has-text("{btn_text}")',
+                            # div 叶子节点（不含子 div/span，避免误匹配大容器）
+                            f'div:has-text("{btn_text}"):not(:has(div)):not(:has(span))',
                         ):
                             try:
-                                loc = page.locator(sel).last
+                                # 用 first：class 类候选取第一个（最外层匹配），
+                                # 文本叶子候选也取第一个
+                                loc = page.locator(sel).first
                                 if await loc.count():
                                     btn = loc
                                     break

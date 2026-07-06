@@ -208,7 +208,6 @@ try {
             "yt_dlp"
             "pyJianYingDraft"
             "patchright"
-            "playwright"
         )
 
         $CollectAll = @(
@@ -234,12 +233,14 @@ try {
         )
 
         # PyInstaller：把 pip 包的元数据目录打进包，供 importlib.metadata 查询版本
+        # 注意：项目实际使用 patchright（Playwright 反检测分支），未安装 playwright，
+        # 故不要 copy-metadata / collect-submodules playwright，否则 PyInstaller 会因
+        # 找不到 playwright 包元数据而中断打包。
         $CopyMetadata = @(
             "imageio"
             "imageio-ffmpeg"
             "moviepy"
             "patchright"
-            "playwright"
         )
 
         $HiddenImports = @(

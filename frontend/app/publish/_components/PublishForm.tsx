@@ -38,7 +38,7 @@ export function PublishForm({
   onSubmit,
   onGenerateCopy,
 }: PublishFormProps) {
-  const { drafts, selectedTargets, setDraft, setSelectedTargets, publishHeadless, setPublishHeadless } = usePublishStore()
+  const { drafts, selectedTargets, deselectedTargets, setDraft, setSelectedTargets, setDeselectedTargets, publishHeadless, setPublishHeadless } = usePublishStore()
 
   const implemented = platforms.filter((p) => p.implemented)
   // 已登录账号（按平台分组），勾选只在这些账号里展开
@@ -52,9 +52,9 @@ export function PublishForm({
   const loggedInPlatforms = implemented.filter((p) => (loggedInAccountsByPlatform[p.platform]?.length || 0) > 0)
 
   // 默认勾选补全：当 accounts 到来后，把"已登录但未在 selectedTargets 中的账号"补上。
-  // 用户主动取消勾选的账号，只要仍处于"已登录"状态就会保留在 selectedTargets 里
-  // （取消 = 从 selectedTargets 移除，但下次 accounts 变化触发的补全会再加回 —— 这是
-  // "默认全选"语义的预期行为；如需持久化取消意图，可在后续迭代加白名单）。
+  // 注意：用户主动取消勾选过的账号会记录在 deselectedTargets 里，补全时跳过它们，
+  // 否则后台轮询（PublishPageClient 每 3s setAccounts 一次）会反复把取消的勾选勾回去。
+  // deselectedTargets 会在该账号下线、或用户再次勾选时自动清理。
   useEffect(() => {
     const expected: string[] = []
     for (const p of loggedInPlatforms) {
@@ -64,8 +64,13 @@ export function PublishForm({
     }
     if (expected.length === 0) return
     const current = new Set(selectedTargets)
-    const missing = expected.filter((k) => !current.has(k))
-    if (missing.length === 0) return
+    const deselected = new Set(deselectedTargets)
+    // 只补"未勾选 且 用户未主动取消过"的账号
+    const missing = expected.filter((k) => !current.has(k) && !deselected.has(k))
+    // 清理 deselectedTargets：已不存在的账号（下线/删除）应移除，避免脏数据堆积
+    const expectedSet = new Set(expected)
+    const cleanedDeselected = deselectedTargets.filter((k) => expectedSet.has(k))
+    if (missing.length === 0 && cleanedDeselected.length === deselectedTargets.length) return
     // 合并：保留已有 + 补缺
     const next = Array.from(new Set([...selectedTargets, ...missing]))
     // 同时剔除已失效/已删除的脏 target（不在当前已登录集合里且不在 expected 里的）
@@ -78,29 +83,39 @@ export function PublishForm({
     if (cleaned.length !== selectedTargets.length || cleaned.some((k, i) => k !== next[i])) {
       setSelectedTargets(cleaned)
     }
+    if (cleanedDeselected.length !== deselectedTargets.length) {
+      setDeselectedTargets(cleanedDeselected)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts])
 
   const toggleAccount = (platform: string, account: string) => {
     const key = `${platform}:${account}`
-    setSelectedTargets(
-      selectedTargets.includes(key)
-        ? selectedTargets.filter((x) => x !== key)
-        : [...selectedTargets, key],
-    )
+    if (selectedTargets.includes(key)) {
+      // 选中 → 取消：记入 deselectedTargets，阻止后台轮询触发的自动补全再勾回
+      setSelectedTargets(selectedTargets.filter((x) => x !== key))
+      setDeselectedTargets(Array.from(new Set([...deselectedTargets, key])))
+    } else {
+      // 取消 → 选中：从 deselectedTargets 移除
+      setSelectedTargets([...selectedTargets, key])
+      setDeselectedTargets(deselectedTargets.filter((x) => x !== key))
+    }
   }
 
   // 平台级"全选/全不选"：点平台标题 checkbox 切换该平台下所有已登录账号
   const togglePlatformAll = (platform: string) => {
     const accs = loggedInAccountsByPlatform[platform] || []
     const keys = accs.map((a) => `${platform}:${a.account}`)
+    const keySet = new Set(keys)
     const allChecked = keys.every((k) => selectedTargets.includes(k))
     if (allChecked) {
-      // 全选 → 取消该平台全部
-      setSelectedTargets(selectedTargets.filter((k) => !keys.includes(k)))
+      // 全选 → 取消该平台全部：记入 deselectedTargets 阻止自动补全
+      setSelectedTargets(selectedTargets.filter((k) => !keySet.has(k)))
+      setDeselectedTargets(Array.from(new Set([...deselectedTargets, ...keys])))
     } else {
-      // 非全选 → 补全
+      // 非全选 → 补全：从 deselectedTargets 移除这些账号
       setSelectedTargets(Array.from(new Set([...selectedTargets, ...keys])))
+      setDeselectedTargets(deselectedTargets.filter((k) => !keySet.has(k)))
     }
   }
 
@@ -140,12 +155,15 @@ export function PublishForm({
   // 全局全选 / 取消全选
   const toggleSelectAll = () => {
     if (allSelected) {
-      // 已全选 → 取消全部（仅清空这些可选目标，保留 selectedTargets 中其它不存在的脏数据无意义）
+      // 已全选 → 取消全部：记入 deselectedTargets 阻止自动补全
       const set = new Set(allTargetKeys)
       setSelectedTargets(selectedTargets.filter((k) => !set.has(k)))
+      setDeselectedTargets(Array.from(new Set([...deselectedTargets, ...allTargetKeys])))
     } else {
-      // 非全选 → 全选
+      // 非全选 → 全选：清空 deselectedTargets 中对应这些账号的记录
+      const set = new Set(allTargetKeys)
       setSelectedTargets(Array.from(new Set([...selectedTargets, ...allTargetKeys])))
+      setDeselectedTargets(deselectedTargets.filter((k) => !set.has(k)))
     }
   }
 

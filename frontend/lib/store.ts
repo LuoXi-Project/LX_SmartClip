@@ -558,11 +558,16 @@ export interface PublishPageState {
   /** 选中的发布目标，粒度到账号：`${platform}:${account}`。
    * 替代旧的 selectedPlatforms（平台粒度），支持多账号矩阵下逐账号勾选。 */
   selectedTargets: string[]
+  /** 用户主动取消勾选过的目标集合（同 selectedTargets 的 key 格式）。
+   * 用于阻止"默认全选补全"把用户刚取消的账号又自动勾回（轮询刷新 accounts 时会反复触发补全）。
+   * 当用户再次勾选该账号、或该账号下线时，对应 key 会被移除。 */
+  deselectedTargets: string[]
   /** 发布时是否无头模式（true=后台；false=显示浏览器窗口便于排查/手动兜底）*/
   publishHeadless: boolean
   setDraft: (platform: string, draft: Partial<PublishDraftPerPlatform>) => void
   setSelectedVideoPath: (p: string) => void
   setSelectedTargets: (targets: string[]) => void
+  setDeselectedTargets: (targets: string[]) => void
   setPublishHeadless: (v: boolean) => void
   resetDrafts: () => void
 }
@@ -574,6 +579,7 @@ export const usePublishStore = create<PublishPageState>()(
       selectedVideoPath: '',
       // 初始为空：运行时由 PublishForm 按"各平台已登录账号默认全选"补全
       selectedTargets: [],
+      deselectedTargets: [],
       publishHeadless: true,
       setDraft: (platform, draft) =>
         set((state) => ({
@@ -584,13 +590,15 @@ export const usePublishStore = create<PublishPageState>()(
         })),
       setSelectedVideoPath: (selectedVideoPath) => set({ selectedVideoPath }),
       setSelectedTargets: (selectedTargets) => set({ selectedTargets }),
+      setDeselectedTargets: (deselectedTargets) => set({ deselectedTargets }),
       setPublishHeadless: (publishHeadless) => set({ publishHeadless }),
       resetDrafts: () => set({ drafts: {} }),
     }),
     {
       name: 'lx-publish-state',
-      version: 4,
-      // v1→v2 补 user_prompt；v2→v3 补 publishHeadless；v3→v4 selectedPlatforms→selectedTargets
+      version: 5,
+      // v1→v2 补 user_prompt；v2→v3 补 publishHeadless；v3→v4 selectedPlatforms→selectedTargets；
+      // v4→v5 补 deselectedTargets（修复取消勾选后被轮询自动勾回的 bug）
       migrate: (persisted: unknown, oldVersion: number) => {
         const s = ((persisted || {}) as Record<string, unknown>) as Partial<PublishPageState> & {
           selectedPlatforms?: string[]
@@ -607,6 +615,7 @@ export const usePublishStore = create<PublishPageState>()(
           delete (s as Record<string, unknown>).selectedPlatforms
         }
         if (!Array.isArray(s.selectedTargets)) s.selectedTargets = []
+        if (!Array.isArray(s.deselectedTargets)) s.deselectedTargets = []
         return s as PublishPageState
       },
     }

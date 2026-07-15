@@ -235,6 +235,27 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
             </div>
           </div>
         )}
+        {config.asr_correct_hint && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-400 flex items-center gap-1">
+              校准倾向提示词
+              <span title="告诉 LLM 领域词汇/专有名词/口音特点，提升领域词修正率。如：这是面巾纸产品视频，面积纸应为面巾纸" className="text-slate-600 cursor-help"><Info className="w-3 h-3" /></span>
+            </label>
+            <p className="text-[11px] text-slate-500 leading-relaxed -mt-0.5">
+              作为全局默认。手动校准时会预填到输入框（可临时改），流水线自动校准直接使用此值。
+            </p>
+            <div className="flex gap-2 items-start">
+              <textarea
+                value={v('asr_correct_hint')}
+                onChange={(e) => onSet('asr_correct_hint', e.target.value)}
+                rows={3}
+                placeholder="例：这是面巾纸产品视频，ASR 中的「面积纸」应为「面巾纸」；品牌名「洁柔」勿改成「洁柔」以外字"
+                className="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors resize-y"
+              />
+              <SaveBtn dirty={isDirty('asr_correct_hint')} saving={!!saving['asr_correct_hint']} saved={!!saved['asr_correct_hint']} onSave={() => onSave('asr_correct_hint')} />
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

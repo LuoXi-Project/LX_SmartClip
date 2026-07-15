@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw, Wand2 } from 'lucide-react'
-import { API_BASE_URL, clipsApi, asrApi, processJobsApi, type AsrSegmentJson, type AsrCorrectResult, type ClipResult } from '@/lib/api'
+import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw, Wand2, Info, Settings2 } from 'lucide-react'
+import { API_BASE_URL, apiClient, clipsApi, asrApi, processJobsApi, type AsrSegmentJson, type AsrCorrectResult, type ClipResult } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 import { useToast } from '@/components/ui/toast-provider'
 
@@ -145,6 +145,11 @@ export function VideoResultDrawer({
   const [correcting, setCorrecting] = useState<Record<string, boolean>>({})
   const [correctPreview, setCorrectPreview] = useState<Record<string, AsrCorrectResult>>({})
   const [applyingCorrect, setApplyingCorrect] = useState<string | null>(null)
+  // 倾向性校准提示词：globalHint 为全局默认（懒加载），correctHint[clipId] 为该片段临时输入
+  const [globalHint, setGlobalHint] = useState<string | null>(null)
+  const [correctHint, setCorrectHint] = useState<Record<string, string>>({})
+  // 单 clip 提示词框是否展开（默认折叠，省空间）
+  const [hintOpen, setHintOpen] = useState<Record<string, boolean>>({})
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -353,6 +358,27 @@ export function VideoResultDrawer({
     })
   }
 
+  /** 懒加载全局校准提示词（用于输入框 placeholder/预填） */
+  const ensureGlobalHint = async () => {
+    if (globalHint !== null) return globalHint
+    try {
+      const cfg = await apiClient.get<unknown, Record<string, { value?: string }>>('/api/config')
+      const gh = (cfg?.['asr_correct_hint']?.value ?? '').trim()
+      setGlobalHint(gh)
+      return gh
+    } catch {
+      setGlobalHint('')
+      return ''
+    }
+  }
+
+  /** 取某片段校准提示词：有临时输入则用之，否则交给后端用全局（传 undefined） */
+  const resolveHintFor = (clipId: string): string | undefined => {
+    const local = correctHint[clipId]
+    if (local === undefined) return undefined
+    return local
+  }
+
   /** 触发单片段 LLM 校准（仅预览） */
   const runCorrectPreview = async (clipId: string) => {
     if (correcting[clipId]) return
@@ -362,6 +388,7 @@ export function VideoResultDrawer({
       toast.error('该片段暂无 ASR 文本，无法校准')
       return
     }
+    await ensureGlobalHint()
     setCorrecting((p) => ({ ...p, [clipId]: true }))
     // 清掉旧预览
     setCorrectPreview((p) => {
@@ -371,7 +398,7 @@ export function VideoResultDrawer({
       return next
     })
     try {
-      const res = await asrApi.correctClip(clipId, false)
+      const res = await asrApi.correctClip(clipId, false, resolveHintFor(clipId))
       setCorrectPreview((p) => ({ ...p, [clipId]: res }))
       if (!res.changed) {
         toast.success('LLM 校准完成：未发现明显错误')
@@ -388,7 +415,7 @@ export function VideoResultDrawer({
     if (applyingCorrect) return
     setApplyingCorrect(clipId)
     try {
-      const res = await asrApi.correctClip(clipId, true)
+      const res = await asrApi.correctClip(clipId, true, resolveHintFor(clipId))
       // 同步本地 clips 与 editing state
       const newSegJson = res.corrected_segments.length
         ? JSON.stringify(res.corrected_segments)
@@ -906,20 +933,39 @@ export function VideoResultDrawer({
                               <div>
                                 <div className="flex items-center justify-between mb-1">
                                   <div className="text-[11px] text-slate-500">ASR（全文）</div>
-                                  <button
-                                    type="button"
-                                    title="用 LLM 校准 ASR 识别错误（同音/形近错字、标点），保留原句级时间轴"
-                                    disabled={!!correcting[c.id]}
-                                    onClick={() => void runCorrectPreview(c.id)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-900/30 px-2 py-0.5 text-[11px] text-indigo-200 hover:border-indigo-500 hover:bg-indigo-800/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                  >
-                                    {correcting[c.id] ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Wand2 className="w-3 h-3" />
-                                    )}
-                                    LLM 校准
-                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      title="展开/收起校准提示词（覆盖全局设置）"
+                                      onClick={() => setHintOpen((p) => ({ ...p, [c.id]: !p[c.id] }))}
+                                      className={`relative inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors ${
+                                        correctHint[c.id]?.trim()
+                                          ? 'border-indigo-500/70 bg-indigo-900/40 text-indigo-200'
+                                          : hintOpen[c.id]
+                                            ? 'border-slate-600 bg-slate-800/60 text-slate-300'
+                                            : 'border-slate-700 bg-slate-900/40 text-slate-500 hover:text-slate-300'
+                                      }`}
+                                    >
+                                      <Settings2 className="w-3 h-3" />
+                                      {correctHint[c.id]?.trim() && (
+                                        <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="用 LLM 校准 ASR 识别错误（同音/形近错字、标点），保留原句级时间轴"
+                                      disabled={!!correcting[c.id]}
+                                      onClick={() => void runCorrectPreview(c.id)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-900/30 px-2 py-0.5 text-[11px] text-indigo-200 hover:border-indigo-500 hover:bg-indigo-800/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      {correcting[c.id] ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Wand2 className="w-3 h-3" />
+                                      )}
+                                      LLM 校准
+                                    </button>
+                                  </div>
                                 </div>
                                 <textarea
                                   value={st?.asr_text ?? safeStr(c.asr_text)}
@@ -929,6 +975,31 @@ export function VideoResultDrawer({
                                   placeholder="整段转写；修改下方句级时会按句拼接覆盖此处"
                                 />
                               </div>
+
+                              {/* 倾向性校准提示词（默认折叠，省空间；齿轮切换展开） */}
+                              {hintOpen[c.id] && (
+                                <div className="space-y-1">
+                                  <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                                    校准提示词（可选）
+                                    <span title="填入领域词汇/专有名词/口音特点，提升领域词修正率。留空则用「设置-语音识别」里的全局值" className="text-slate-600 cursor-help">
+                                      <Info className="w-3 h-3 inline" />
+                                    </span>
+                                  </div>
+                                  <textarea
+                                    value={correctHint[c.id] ?? ''}
+                                    onChange={(e) =>
+                                      setCorrectHint((p) => ({ ...p, [c.id]: e.target.value }))
+                                    }
+                                    rows={2}
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-800 text-[11px] text-slate-200 outline-none focus:border-indigo-500 transition-colors resize-y"
+                                    placeholder={
+                                      globalHint
+                                        ? `留空用全局：${globalHint}`
+                                        : '留空用全局设置。例：这是面巾纸视频，「面积纸」应为「面巾纸」'
+                                    }
+                                  />
+                                </div>
+                              )}
 
                               {/* LLM 校准 diff 预览 */}
                               {correctPreview[c.id] && (() => {

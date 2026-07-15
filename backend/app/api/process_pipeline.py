@@ -207,6 +207,7 @@ async def run_pipeline(
         enrich_enabled_cfg = (await read_config(db, "enrich_enabled", "true")).strip().lower() in ("1", "true", "yes")
         asr_auto_correct_cfg = (await read_config(db, "asr_auto_correct", "false")).strip().lower() in ("1", "true", "yes")
         asr_auto_correct_apply = (await read_config(db, "asr_auto_correct_apply", "true")).strip().lower() in ("1", "true", "yes")
+        asr_correct_hint = (await read_config(db, "asr_correct_hint", "")).strip()
     finally:
         await db.close()
 
@@ -598,6 +599,7 @@ async def run_pipeline(
                                 item["asr_text"],
                                 seg_list,
                                 topic=(video.get("name") or "").strip() or None,
+                                hint=asr_correct_hint or None,
                             )
                             if ac["changed"]:
                                 if asr_auto_correct_apply:

@@ -156,6 +156,7 @@ export const ASR_KEYS = [
   'asr_concurrency',
   'asr_auto_correct',
   'asr_auto_correct_apply',
+  'asr_correct_hint',
 ]
 export const TTS_KEYS  = [
   'tts_provider',

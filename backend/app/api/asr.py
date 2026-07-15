@@ -261,6 +261,10 @@ class AsrCorrectRequest(BaseModel):
     apply: bool = Field(
         False, description="true=校准后直接写库覆盖；false=仅返回 diff 预览"
     )
+    hint: str | None = Field(
+        None,
+        description="倾向性校准提示词（覆盖全局 asr_correct_hint）；领域词汇/专有名词/口音特点",
+    )
 
 
 class AsrCorrectBatchRequest(BaseModel):
@@ -268,6 +272,10 @@ class AsrCorrectBatchRequest(BaseModel):
         None, description="待校准片段 id 列表；不传则校准该视频下全部片段"
     )
     apply: bool = Field(False, description="true=校准后直接写库；false=仅返回 diff")
+    hint: str | None = Field(
+        None,
+        description="倾向性校准提示词（覆盖全局 asr_correct_hint）",
+    )
 
 
 async def _build_llm_for_correct(db) -> LLMClient:
@@ -373,6 +381,22 @@ async def _build_correction_context(
     return topic, "\n".join(context_parts)
 
 
+async def _resolve_correction_hint(db, req_hint: str | None) -> str:
+    """
+    解析最终校准提示词：请求体传入优先，否则读全局 asr_correct_hint 配置。
+    返回去空格后的字符串（可能为空）。
+    """
+    if req_hint is not None:
+        # 显式传 None 以外的值（含空串）均以请求体为准，允许前端临时清空
+        return req_hint.strip()
+    try:
+        cur = await db.execute("SELECT value FROM config WHERE key = ?", ("asr_correct_hint",))
+        row = await cur.fetchone()
+        return ((row["value"] if row else "") or "").strip()
+    except Exception:
+        return ""
+
+
 @router.post("/clips/{clip_id}/asr-correct")
 async def correct_clip_asr(clip_id: str, req: AsrCorrectRequest):
     """对单个片段的 ASR 结果做 LLM 校准（预览或直接应用）。"""
@@ -399,10 +423,11 @@ async def correct_clip_asr(clip_id: str, req: AsrCorrectRequest):
 
         # 拼装视频主题 + 同视频其他片段上下文，帮助修正领域专有名词
         topic, context = await _build_correction_context(db, row["video_id"], exclude_clip_id=clip_id)
+        hint = await _resolve_correction_hint(db, req.hint)
 
         try:
             result = await correct_transcript(
-                llm, asr_text, segments, topic=topic, context=context
+                llm, asr_text, segments, topic=topic, context=context, hint=hint or None
             )
         except Exception as e:
             logger.error("片段 %s ASR 校准失败: %s", clip_id, e)
@@ -476,6 +501,7 @@ async def correct_video_asr_batch(video_id: str, req: AsrCorrectBatchRequest):
 
         # 视频主题 + 片段文本映射（用于为每条拼装上下文，排除自身）
         topic, _ = await _build_correction_context(db, video_id, exclude_clip_id=None)
+        hint = await _resolve_correction_hint(db, req.hint)
         clip_text_map = {
             r["id"]: (r["asr_text"] or "").strip()
             for r in targets
@@ -505,7 +531,7 @@ async def correct_video_asr_batch(video_id: str, req: AsrCorrectBatchRequest):
             context = "\n".join(ctx_parts)
             try:
                 res = await correct_transcript(
-                    llm, asr_text, segments, topic=topic, context=context
+                    llm, asr_text, segments, topic=topic, context=context, hint=hint or None
                 )
                 applied = False
                 if req.apply and res["changed"]:

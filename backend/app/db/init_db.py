@@ -404,6 +404,13 @@ DEFAULT_CONFIG = [
         "自动校准直接应用并覆盖（关闭则仅生成不写库）",
         '["true","false"]',
     ),
+    (
+        "asr_correct_hint",
+        "",
+        "string",
+        "ASR 校准倾向提示词（领域词汇/专有名词/口音特点，如：这是面巾纸产品视频，面积纸应为面巾纸）",
+        None,
+    ),
     ("llm_base_url", "https://api.openai.com/v1", "string", "LLM API 地址", None),
     ("llm_api_key", "", "string", "LLM API 密钥", None),
     ("llm_model", "gpt-4o-mini", "string", "大语言模型（精排）", None),

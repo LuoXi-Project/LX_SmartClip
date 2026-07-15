@@ -421,14 +421,17 @@ export interface AsrCorrectBatchResult {
 }
 
 export const asrApi = {
-  /** 校准单个片段 ASR（apply=false 预览，true 直接写库） */
-  correctClip: (clipId: string, apply: boolean) =>
+  /** 校准单个片段 ASR（apply=false 预览，true 直接写库）；hint 可选覆盖全局提示词 */
+  correctClip: (clipId: string, apply: boolean, hint?: string) =>
     apiClient.post<unknown, AsrCorrectResult>(
       `/api/videos/clips/${clipId}/asr-correct`,
-      { apply },
+      { apply, ...(hint !== undefined ? { hint } : {}) },
     ),
-  /** 批量校准视频下片段 ASR */
-  correctBatch: (videoId: string, payload: { clip_ids?: string[]; apply: boolean }) =>
+  /** 批量校准视频下片段 ASR；hint 可选覆盖全局提示词 */
+  correctBatch: (
+    videoId: string,
+    payload: { clip_ids?: string[]; apply: boolean; hint?: string },
+  ) =>
     apiClient.post<unknown, AsrCorrectBatchResult>(
       `/api/videos/${videoId}/asr-correct-batch`,
       payload,

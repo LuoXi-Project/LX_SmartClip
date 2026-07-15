@@ -42,16 +42,28 @@ def build_user_message(
     *,
     topic: Optional[str] = None,
     context: Optional[str] = None,
+    hint: Optional[str] = None,
 ) -> str:
-    """构造用户消息：主题/上下文 + 全文 + 编号句级列表。
+    """构造用户消息：倾向提示词 + 主题/上下文 + 全文 + 编号句级列表。
 
     Args:
         asr_text: 原始全文
         segments: 原始句级 [{start,end,text}]
         topic: 视频主题/标题（可选）；用于领域词汇判断
         context: 同视频其他片段的参考台词（可选）；帮助理解整体内容
+        hint: 用户自定义倾向提示词（可选）；优先级最高，用于指定领域词汇、
+            专有名词、口音特点等倾向性校准（如「这是面巾纸视频，面积纸应为面巾纸」）
     """
     header_parts: list[str] = ["以下是 ASR 识别结果。请逐句校对并返回 JSON。"]
+
+    # 用户倾向提示词优先级最高，单独高亮放最前
+    if hint and hint.strip():
+        hint_text = hint.strip()
+        if len(hint_text) > 1500:
+            hint_text = hint_text[:1500] + "…"
+        header_parts.append(
+            f"【用户校准要求（请优先遵循）】\n{hint_text}"
+        )
 
     # 主题与上下文段（注入视频全局信息，用于领域词汇/专有名词修正）
     context_lines: list[str] = []

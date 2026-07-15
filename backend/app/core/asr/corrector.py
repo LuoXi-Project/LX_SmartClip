@@ -59,6 +59,7 @@ async def correct_transcript(
     max_tokens: int | None = None,
     topic: str | None = None,
     context: str | None = None,
+    hint: str | None = None,
 ) -> dict[str, Any]:
     """
     用 LLM 校准 ASR 文本。
@@ -72,6 +73,8 @@ async def correct_transcript(
         topic: 视频主题/标题（可选）；用于领域专有名词判断
             （如「面积纸」→「面巾纸」），单看一句难判错字时尤其重要
         context: 同视频其他片段的参考台词（可选）；帮助 LLM 理解整体内容
+        hint: 用户自定义倾向提示词（可选）；优先级最高，用于指定领域词汇、
+            专有名词、口音特点等
 
     Returns:
         {
@@ -97,7 +100,11 @@ async def correct_transcript(
         {
             "role": "user",
             "content": build_user_message(
-                original_text, original_segments, topic=topic, context=context
+                original_text,
+                original_segments,
+                topic=topic,
+                context=context,
+                hint=hint,
             ),
         },
     ]

@@ -186,6 +186,55 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
             </p>
           </div>
         )}
+
+        <div className="border-t border-slate-800/70 pt-2" />
+        <p className="text-xs font-medium text-slate-500 -mt-1">LLM 校准</p>
+        <p className="text-[11px] text-slate-500 leading-relaxed -mt-1">
+          用 LLM 修正 ASR 识别错误（同音/形近错字、标点、断句），保留原句级时间轴。需配置 LLM Key。
+          也可在「处理结果」抽屉里对单个片段手动点「LLM 校准」预览后应用。
+        </p>
+        {config.asr_auto_correct && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-400 flex items-center gap-1">
+              流水线自动校准
+              <span title="ASR 识别完成后自动调用 LLM 校准；失败不阻断流水线" className="text-slate-600 cursor-help"><Info className="w-3 h-3" /></span>
+            </label>
+            <div className="flex gap-2 items-center">
+              <div className="flex-1">
+                <select
+                  value={v('asr_auto_correct')}
+                  onChange={(e) => onSet('asr_auto_correct', e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors"
+                >
+                  <option value="false">关闭（默认，手动校准）</option>
+                  <option value="true">开启（处理时自动校准）</option>
+                </select>
+              </div>
+              <SaveBtn dirty={isDirty('asr_auto_correct')} saving={!!saving['asr_auto_correct']} saved={!!saved['asr_auto_correct']} onSave={() => onSave('asr_auto_correct')} />
+            </div>
+          </div>
+        )}
+        {config.asr_auto_correct_apply && v('asr_auto_correct') === 'true' && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-400 flex items-center gap-1">
+              自动校准直接应用
+              <span title="开启：校准后直接覆盖 ASR；关闭：仅生成不写库（需手动应用）" className="text-slate-600 cursor-help"><Info className="w-3 h-3" /></span>
+            </label>
+            <div className="flex gap-2 items-center">
+              <div className="flex-1">
+                <select
+                  value={v('asr_auto_correct_apply')}
+                  onChange={(e) => onSet('asr_auto_correct_apply', e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors"
+                >
+                  <option value="true">直接应用并覆盖（推荐）</option>
+                  <option value="false">仅生成，不覆盖</option>
+                </select>
+              </div>
+              <SaveBtn dirty={isDirty('asr_auto_correct_apply')} saving={!!saving['asr_auto_correct_apply']} saved={!!saved['asr_auto_correct_apply']} onSave={() => onSave('asr_auto_correct_apply')} />
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

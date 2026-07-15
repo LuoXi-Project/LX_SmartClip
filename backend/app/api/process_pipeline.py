@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 from fastapi import HTTPException
 from app.core.asr.types import ASRSegment, ASRTranscript
+from app.core.asr.corrector import correct_transcript
 from app.core.embedder import Embedder
 from app.core.enricher import enrich_clip
 from app.core.killable_subprocess import run_killable_target
@@ -204,6 +205,8 @@ async def run_pipeline(
         if embedding_timeout_sec <= 0:
             embedding_timeout_sec = 120.0
         enrich_enabled_cfg = (await read_config(db, "enrich_enabled", "true")).strip().lower() in ("1", "true", "yes")
+        asr_auto_correct_cfg = (await read_config(db, "asr_auto_correct", "false")).strip().lower() in ("1", "true", "yes")
+        asr_auto_correct_apply = (await read_config(db, "asr_auto_correct_apply", "true")).strip().lower() in ("1", "true", "yes")
     finally:
         await db.close()
 
@@ -396,6 +399,29 @@ async def run_pipeline(
     else:
         await reporter.send("enrich", "skip", "跳过智能标注（未启用或已 skip）")
 
+    # ASR 自动 LLM 校准：独立于 enrich，即便 enrich 关闭也可启用。
+    # 复用 llm_* 配置，温度偏低（0.2）以求稳定；失败不阻断流水线。
+    asr_correct_llm: LLMClient | None = None
+    if do_asr and asr_auto_correct_cfg:
+        try:
+            db = await get_db_conn()
+            try:
+                _ac_params = await LLMConfig.get_llm_params_with_defaults(db, default_temperature=0.2, default_max_tokens=8192)
+            finally:
+                await db.close()
+            asr_correct_llm = LLMClient(
+                base_url=_ac_params["base_url"],
+                api_key=_ac_params["api_key"],
+                model=_ac_params["model"],
+                temperature=_ac_params["temperature"],
+                max_tokens=_ac_params["max_tokens"],
+                timeout=120.0,
+            )
+            logger.info("ASR 自动校准已启用（apply=%s, model=%s）", asr_auto_correct_apply, _ac_params["model"])
+        except Exception as e:
+            asr_correct_llm = None
+            logger.warning("ASR 自动校准初始化失败，跳过: %s", e)
+
     frames_worker_count = max(1, frame_concurrency)
     asr_worker_count = max(1, asr_concurrency)
     vlm_worker_count = max(1, vlm_concurrency)
@@ -561,6 +587,34 @@ async def run_pipeline(
                     seg_json = json.dumps(tr.segments_as_dicts(), ensure_ascii=False) if tr.segments else None
                     await update_clip_asr(item["id"], tr.text, seg_json)
                     item["asr_text"] = (tr.text or "").strip()
+                    # ASR 自动 LLM 校准：修正识别错误，保留原句级时间轴。
+                    # 在 asr_ready.set() 之前完成，使下游 VLM/embedding 基于校准后文本。
+                    # 注入视频标题作为主题，帮助修正领域专有名词（如「面积纸」→「面巾纸」）。
+                    if asr_correct_llm is not None and item["asr_text"]:
+                        try:
+                            seg_list = tr.segments_as_dicts() if tr.segments else []
+                            ac = await correct_transcript(
+                                asr_correct_llm,
+                                item["asr_text"],
+                                seg_list,
+                                topic=(video.get("name") or "").strip() or None,
+                            )
+                            if ac["changed"]:
+                                if asr_auto_correct_apply:
+                                    ac_seg_json = (
+                                        json.dumps(ac["corrected_segments"], ensure_ascii=False)
+                                        if ac["corrected_segments"]
+                                        else None
+                                    )
+                                    await update_clip_asr(
+                                        item["id"], ac["corrected_text"], ac_seg_json
+                                    )
+                                    item["asr_text"] = (ac["corrected_text"] or "").strip()
+                                    logger.info("片段 %s ASR 自动校准已应用", item["id"])
+                                else:
+                                    logger.info("片段 %s ASR 自动校准有改动但未应用（apply=False）", item["id"])
+                        except Exception as ac_e:
+                            logger.warning("片段 %s ASR 自动校准失败，沿用原结果: %s", item["id"], ac_e)
                     ok = True
             except ProcessCancelled:
                 raise

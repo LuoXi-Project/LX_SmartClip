@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw } from 'lucide-react'
-import { API_BASE_URL, clipsApi, processJobsApi, type AsrSegmentJson, type ClipResult } from '@/lib/api'
+import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw, Wand2 } from 'lucide-react'
+import { API_BASE_URL, clipsApi, asrApi, processJobsApi, type AsrSegmentJson, type AsrCorrectResult, type ClipResult } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 import { useToast } from '@/components/ui/toast-provider'
 
@@ -141,6 +141,10 @@ export function VideoResultDrawer({
 
   const [editing, setEditing] = useState<Record<string, EditState>>({})
   const [reprocessBusyId, setReprocessBusyId] = useState<string | null>(null)
+  // LLM 校准：correcting[clipId]=true 表示该校准进行中；correctPreview[clipId] 存预览结果
+  const [correcting, setCorrecting] = useState<Record<string, boolean>>({})
+  const [correctPreview, setCorrectPreview] = useState<Record<string, AsrCorrectResult>>({})
+  const [applyingCorrect, setApplyingCorrect] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -346,6 +350,93 @@ export function VideoResultDrawer({
           error: '',
         },
       }
+    })
+  }
+
+  /** 触发单片段 LLM 校准（仅预览） */
+  const runCorrectPreview = async (clipId: string) => {
+    if (correcting[clipId]) return
+    const clip = clips.find((c) => c.id === clipId)
+    if (!clip) return
+    if (!safeStr(clip.asr_text).trim() && !parseAsrSegments(clip.asr_segments).length) {
+      toast.error('该片段暂无 ASR 文本，无法校准')
+      return
+    }
+    setCorrecting((p) => ({ ...p, [clipId]: true }))
+    // 清掉旧预览
+    setCorrectPreview((p) => {
+      if (!p[clipId]) return p
+      const next = { ...p }
+      delete next[clipId]
+      return next
+    })
+    try {
+      const res = await asrApi.correctClip(clipId, false)
+      setCorrectPreview((p) => ({ ...p, [clipId]: res }))
+      if (!res.changed) {
+        toast.success('LLM 校准完成：未发现明显错误')
+      }
+    } catch (e: unknown) {
+      toast.error(apiDetailMessage(e))
+    } finally {
+      setCorrecting((p) => ({ ...p, [clipId]: false }))
+    }
+  }
+
+  /** 应用校准结果（写库 + 更新本地 state + 提示重算向量） */
+  const applyCorrect = async (clipId: string) => {
+    if (applyingCorrect) return
+    setApplyingCorrect(clipId)
+    try {
+      const res = await asrApi.correctClip(clipId, true)
+      // 同步本地 clips 与 editing state
+      const newSegJson = res.corrected_segments.length
+        ? JSON.stringify(res.corrected_segments)
+        : null
+      setClips((prev) =>
+        prev.map((c) =>
+          c.id === clipId
+            ? { ...c, asr_text: res.corrected_text, asr_segments: newSegJson }
+            : c,
+        ),
+      )
+      setEditing((prev) => {
+        if (!prev[clipId]) return prev
+        return {
+          ...prev,
+          [clipId]: {
+            ...prev[clipId],
+            asr_text: res.corrected_text,
+            asr_segments: res.corrected_segments,
+            asrSegmentsDirty: false,
+            dirty: false,
+            error: '',
+          },
+        }
+      })
+      // 清掉预览
+      setCorrectPreview((p) => {
+        const next = { ...p }
+        delete next[clipId]
+        return next
+      })
+      if (res.vector_stale) {
+        toast.success('校准已应用。ASR 文本已变更，建议重跑向量以保持检索一致')
+      } else {
+        toast.success('校准已应用')
+      }
+    } catch (e: unknown) {
+      toast.error(apiDetailMessage(e))
+    } finally {
+      setApplyingCorrect(null)
+    }
+  }
+
+  const dismissCorrect = (clipId: string) => {
+    setCorrectPreview((p) => {
+      const next = { ...p }
+      delete next[clipId]
+      return next
     })
   }
 
@@ -813,7 +904,23 @@ export function VideoResultDrawer({
 
                             <div className="grid grid-cols-1 gap-2">
                               <div>
-                                <div className="text-[11px] text-slate-500 mb-1">ASR（全文）</div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <div className="text-[11px] text-slate-500">ASR（全文）</div>
+                                  <button
+                                    type="button"
+                                    title="用 LLM 校准 ASR 识别错误（同音/形近错字、标点），保留原句级时间轴"
+                                    disabled={!!correcting[c.id]}
+                                    onClick={() => void runCorrectPreview(c.id)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-900/30 px-2 py-0.5 text-[11px] text-indigo-200 hover:border-indigo-500 hover:bg-indigo-800/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    {correcting[c.id] ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Wand2 className="w-3 h-3" />
+                                    )}
+                                    LLM 校准
+                                  </button>
+                                </div>
                                 <textarea
                                   value={st?.asr_text ?? safeStr(c.asr_text)}
                                   onChange={(e) => setEditField(c.id, 'asr_text', e.target.value)}
@@ -822,6 +929,94 @@ export function VideoResultDrawer({
                                   placeholder="整段转写；修改下方句级时会按句拼接覆盖此处"
                                 />
                               </div>
+
+                              {/* LLM 校准 diff 预览 */}
+                              {correctPreview[c.id] && (() => {
+                                const cp = correctPreview[c.id]
+                                const hasSegs = cp.original_segments.length > 0
+                                return (
+                                  <div className="rounded-lg border border-indigo-800/60 bg-indigo-950/20 p-2.5 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-1.5 text-[11px] text-indigo-300">
+                                        <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                                        <span>LLM 校准预览</span>
+                                        {cp.changed ? (
+                                          <span className="text-amber-400">· 有改动，请确认</span>
+                                        ) : (
+                                          <span className="text-slate-500">· 未发现明显错误</span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          disabled={!cp.changed || applyingCorrect === c.id}
+                                          onClick={() => void applyCorrect(c.id)}
+                                          className="inline-flex items-center gap-1 rounded-md border border-emerald-700/50 bg-emerald-900/30 px-2 py-0.5 text-[11px] text-emerald-200 hover:border-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                          {applyingCorrect === c.id ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <Check className="w-3 h-3" />
+                                          )}
+                                          应用校准
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => dismissCorrect(c.id)}
+                                          className="rounded-md border border-slate-700 px-2 py-0.5 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+                                        >
+                                          放弃
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {hasSegs ? (
+                                      <div className="max-h-[200px] space-y-1 overflow-y-auto styled-scrollbar pr-0.5">
+                                        {cp.corrected_segments.map((seg, si) => {
+                                          const orig = cp.original_segments[si]?.text ?? ''
+                                          const changed = seg.text !== orig
+                                          return (
+                                            <div
+                                              key={si}
+                                              className={`rounded-md border p-1.5 text-[11px] ${
+                                                changed
+                                                  ? 'border-amber-700/40 bg-amber-950/15'
+                                                  : 'border-slate-800/60 bg-slate-900/30'
+                                              }`}
+                                            >
+                                              <div className="text-slate-500 mb-0.5">
+                                                #{si + 1} · {seg.start.toFixed(2)}s—{seg.end.toFixed(2)}s
+                                              </div>
+                                              <div className="text-slate-500 line-through decoration-slate-600 break-all">
+                                                {orig || '（空）'}
+                                              </div>
+                                              {changed && (
+                                                <div className="text-emerald-300 break-all mt-0.5">
+                                                  {seg.text}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        <div className="text-[11px] text-slate-500 break-all line-through decoration-slate-600">
+                                          {cp.original_text || '（空）'}
+                                        </div>
+                                        <div className="text-[11px] text-emerald-300 break-all">
+                                          {cp.corrected_text}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {cp.changed && (
+                                      <p className="text-[10px] leading-snug text-slate-500">
+                                        应用后将覆盖 ASR 全文与句级文字（时间轴保留不变），并提示重跑向量。
+                                      </p>
+                                    )}
+                                  </div>
+                                )
+                              })()}
 
                               <div className="rounded-lg border border-slate-800/90 bg-slate-950/25 p-2.5 space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">

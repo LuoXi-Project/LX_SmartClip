@@ -387,6 +387,54 @@ export const clipsApi = {
     apiClient.patch<unknown, { ok: boolean; clip_id: string }>(`/api/videos/clips/${clipId}`, payload),
 }
 
+/** ASR 结果 LLM 校准：单片段返回结构 */
+export interface AsrCorrectResult {
+  clip_id: string
+  original_text: string
+  corrected_text: string
+  original_segments: AsrSegmentJson[]
+  corrected_segments: AsrSegmentJson[]
+  changed: boolean
+  applied: boolean
+  vector_stale: boolean
+}
+
+/** ASR 结果 LLM 校准：批量单条结果 */
+export interface AsrCorrectBatchItem {
+  clip_id: string
+  status: 'success' | 'error'
+  changed?: boolean
+  applied?: boolean
+  original_text?: string
+  corrected_text?: string
+  error?: string
+}
+
+export interface AsrCorrectBatchResult {
+  video_id: string
+  total: number
+  success: number
+  changed: number
+  applied: boolean
+  vector_stale: boolean
+  results: AsrCorrectBatchItem[]
+}
+
+export const asrApi = {
+  /** 校准单个片段 ASR（apply=false 预览，true 直接写库） */
+  correctClip: (clipId: string, apply: boolean) =>
+    apiClient.post<unknown, AsrCorrectResult>(
+      `/api/videos/clips/${clipId}/asr-correct`,
+      { apply },
+    ),
+  /** 批量校准视频下片段 ASR */
+  correctBatch: (videoId: string, payload: { clip_ids?: string[]; apply: boolean }) =>
+    apiClient.post<unknown, AsrCorrectBatchResult>(
+      `/api/videos/${videoId}/asr-correct-batch`,
+      payload,
+    ),
+}
+
 export const exportApi = {
   downloadProject: (payload: ExportRequest) =>
     apiClient.post('/api/export/project', payload, { responseType: 'blob' }),

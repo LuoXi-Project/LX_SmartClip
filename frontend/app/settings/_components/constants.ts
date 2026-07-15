@@ -154,6 +154,8 @@ export const ASR_KEYS = [
   'asr_openai_model',
   'asr_language',
   'asr_concurrency',
+  'asr_auto_correct',
+  'asr_auto_correct_apply',
 ]
 export const TTS_KEYS  = [
   'tts_provider',

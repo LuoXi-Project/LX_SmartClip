@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { X, Loader2, Save, Search, Check, Film, Subtitles, ListTree, Play, Trash2, Plus, RotateCcw, Wand2, Info, Settings2 } from 'lucide-react'
-import { API_BASE_URL, apiClient, clipsApi, asrApi, processJobsApi, type AsrSegmentJson, type AsrCorrectResult, type ClipResult } from '@/lib/api'
+import { API_BASE_URL, apiClient, clipsApi, asrApi, processJobsApi, type AsrSegmentJson, type AsrCorrectResult, type AsrCorrectBatchResult, type ClipResult } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 import { useToast } from '@/components/ui/toast-provider'
+import { BatchCorrectReviewModal } from '@/app/_components/BatchCorrectReviewModal'
+import { BatchCorrectConfirmDialog } from '@/app/_components/BatchCorrectConfirmDialog'
 
 type VideoOption = { id: string; name: string }
 
@@ -150,6 +152,14 @@ export function VideoResultDrawer({
   const [correctHint, setCorrectHint] = useState<Record<string, string>>({})
   // 单 clip 提示词框是否展开（默认折叠，省空间）
   const [hintOpen, setHintOpen] = useState<Record<string, boolean>>({})
+  // 批量校准全部：running 时显示进度；result 存上次结果摘要
+  const [batchCorrect, setBatchCorrect] = useState<{ running: boolean; done: number; total: number; changed: number } | null>(null)
+  // 批量审核弹窗：previewData 存预览结果，submitting 为提交写库中
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewData, setReviewData] = useState<AsrCorrectBatchResult | null>(null)
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
+  // 批量校准确认弹窗（带提示词输入）：点「批量校准全部」先弹此
+  const [batchConfirmOpen, setBatchConfirmOpen] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -169,41 +179,43 @@ export function VideoResultDrawer({
     })
   }, [videoOptions, videoQ])
 
+  const reloadClips = useCallback(async (videoId: string) => {
+    const rows = await clipsApi.listByVideo(videoId)
+    setClips(rows || [])
+    const map: Record<string, EditState> = {}
+    ;(rows || []).forEach((c) => {
+      map[c.id] = {
+        asr_text: safeStr(c.asr_text),
+        asr_segments: parseAsrSegments(c.asr_segments),
+        asrSegmentsDirty: false,
+        vlm_description: safeStr(c.vlm_description),
+        abstract_summary: safeStr(c.abstract_summary),
+        keywords: parseStrList(c.keywords),
+        emotion_tags: parseStrList(c.emotion_tags),
+        tagsDirty: false,
+        dirty: false,
+        saving: false,
+        error: '',
+      }
+    })
+    setEditing(map)
+    return rows || []
+  }, [])
+
   useEffect(() => {
     if (!open) return
     if (!curVideoId) return
     setLoading(true)
     setErr('')
-    clipsApi
-      .listByVideo(curVideoId)
+    reloadClips(curVideoId)
       .then((rows) => {
-        setClips(rows || [])
-        // 初始化编辑缓存（避免首次点击编辑时闪烁）
-        const map: Record<string, EditState> = {}
-        ;(rows || []).forEach((c) => {
-          map[c.id] = {
-            asr_text: safeStr(c.asr_text),
-            asr_segments: parseAsrSegments(c.asr_segments),
-            asrSegmentsDirty: false,
-            vlm_description: safeStr(c.vlm_description),
-            abstract_summary: safeStr(c.abstract_summary),
-            keywords: parseStrList(c.keywords),
-            emotion_tags: parseStrList(c.emotion_tags),
-            tagsDirty: false,
-            dirty: false,
-            saving: false,
-            error: '',
-          }
-        })
-        setEditing(map)
-        const first = rows?.[0]?.id || ''
-        setActiveClipId(first)
+        setActiveClipId(rows?.[0]?.id || '')
       })
       .catch((e: unknown) => {
         setErr((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '加载失败')
       })
       .finally(() => setLoading(false))
-  }, [open, curVideoId])
+  }, [open, curVideoId, reloadClips])
 
   const filtered = useMemo(() => {
     const kw = q.trim().toLowerCase()
@@ -467,6 +479,90 @@ export function VideoResultDrawer({
     })
   }
 
+  /** 点「批量校准全部」：打开带提示词输入的确认弹窗 */
+  const openBatchCorrect = async () => {
+    if (!curVideoId || batchCorrect?.running) return
+    if (clips.length === 0) {
+      toast.error('当前没有可校准的片段')
+      return
+    }
+    await ensureGlobalHint()
+    setBatchConfirmOpen(true)
+  }
+
+  /** 批量校准当前视频全部片段 ASR：预览 → 审核弹层 → 写库 */
+  const runBatchCorrect = async (hint: string) => {
+    if (!curVideoId || batchCorrect?.running) return
+    setBatchCorrect({ running: true, done: 0, total: clips.length, changed: 0 })
+    try {
+      // 先 apply=false 预览，拿到句级 diff 供审核；携带用户输入的提示词
+      const res = await asrApi.correctBatch(curVideoId, {
+        apply: false,
+        ...(hint.trim() ? { hint: hint.trim() } : {}),
+      })
+      const failed = res.total - res.success
+      // 全部失败：不弹空审核层，直接报错
+      if (res.success === 0) {
+        toast.error(
+          `批量校准全部失败（${failed}/${res.total}）。请检查「设置」里的 LLM API Key 是否有效/有余额。`,
+        )
+        setBatchCorrect(null)
+        setBatchConfirmOpen(false)
+        return
+      }
+      // 全部成功但无改动
+      if (res.changed === 0) {
+        toast.success(`批量校准完成：${res.success}/${res.total} 成功，未发现明显错误，无需审核`)
+        setBatchCorrect({ running: false, done: res.success, total: res.total, changed: 0 })
+        setBatchConfirmOpen(false)
+        return
+      }
+      // 有改动（可能伴随部分失败）→ 关闭确认弹窗，弹审核层
+      setBatchConfirmOpen(false)
+      setReviewData(res)
+      setReviewOpen(true)
+      setBatchCorrect({ running: false, done: res.success, total: res.total, changed: res.changed })
+    } catch (e: unknown) {
+      toast.error(apiDetailMessage(e))
+      setBatchCorrect(null)
+      setBatchConfirmOpen(false)
+    }
+  }
+
+  /** 审核弹层提交：按用户审核结果写库 */
+  const submitReview = async (finalized: Record<string, AsrSegmentJson[]>) => {
+    if (!curVideoId) return
+    setReviewSubmitting(true)
+    try {
+      // 逐 clip 写库（复用 clipsApi.update，与单片段保存一致）
+      let written = 0
+      let changedClips = 0
+      for (const [clipId, segs] of Object.entries(finalized)) {
+        const newText = segs.map((s) => s.text ?? '').join('')
+        // 判断该 clip 是否相对原库有改动
+        const oldClip = clips.find((c) => c.id === clipId)
+        const oldText = safeStr(oldClip?.asr_text)
+        if (newText !== oldText) changedClips += 1
+        await clipsApi.update(clipId, {
+          asr_text: newText,
+          asr_segments: JSON.stringify(segs),
+        })
+        written += 1
+      }
+      // 刷新本地数据
+      await reloadClips(curVideoId)
+      setCorrectPreview({})
+      setReviewOpen(false)
+      setReviewData(null)
+      const hint = changedClips > 0 ? '。ASR 已变更，建议重跑向量' : ''
+      toast.success(`审核结果已写库：${written} 个片段${hint}`)
+    } catch (e: unknown) {
+      toast.error(apiDetailMessage(e))
+    } finally {
+      setReviewSubmitting(false)
+    }
+  }
+
   const saveClip = async (clipId: string) => {
     const st = editing[clipId]
     const clipRow = clips.find((c) => c.id === clipId)
@@ -705,6 +801,20 @@ export function VideoResultDrawer({
                   className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-900/50 border border-slate-700 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors"
                 />
               </div>
+              <button
+                type="button"
+                title="用 LLM 一次性校准当前视频全部片段的 ASR（直接覆盖，使用全局提示词）"
+                disabled={!curVideoId || clips.length === 0 || !!batchCorrect?.running}
+                onClick={() => void openBatchCorrect()}
+                className="inline-flex items-center gap-1 rounded-lg border border-indigo-700/50 bg-indigo-900/30 px-2.5 py-2 text-xs text-indigo-200 hover:border-indigo-500 hover:bg-indigo-800/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+              >
+                {batchCorrect?.running ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="w-3.5 h-3.5" />
+                )}
+                {batchCorrect?.running ? '校准中…' : '批量校准全部'}
+              </button>
               <div className="text-xs text-slate-500 shrink-0">{filtered.length}/{clips.length}</div>
             </div>
 
@@ -1284,6 +1394,32 @@ export function VideoResultDrawer({
           </div>
         </div>
       </div>
+
+      {/* 批量校准确认弹窗（带辅助提示词输入） */}
+      <BatchCorrectConfirmDialog
+        open={batchConfirmOpen}
+        totalClips={clips.length}
+        globalHint={globalHint}
+        running={!!batchCorrect?.running}
+        onConfirm={(hint) => void runBatchCorrect(hint)}
+        onCancel={() => {
+          if (!batchCorrect?.running) setBatchConfirmOpen(false)
+        }}
+      />
+
+      {/* 批量校准审核弹层（fixed 定位，脱离抽屉） */}
+      <BatchCorrectReviewModal
+        open={reviewOpen}
+        data={reviewData}
+        submitting={reviewSubmitting}
+        onClose={() => {
+          if (!reviewSubmitting) {
+            setReviewOpen(false)
+            setReviewData(null)
+          }
+        }}
+        onSubmit={submitReview}
+      />
     </div>
   )
 }

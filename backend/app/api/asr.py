@@ -553,6 +553,8 @@ async def correct_video_asr_batch(video_id: str, req: AsrCorrectBatchRequest):
                         "applied": applied,
                         "original_text": res["original_text"],
                         "corrected_text": res["corrected_text"],
+                        "original_segments": res["original_segments"],
+                        "corrected_segments": res["corrected_segments"],
                     }
                 )
             except Exception as e:

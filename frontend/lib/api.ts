@@ -407,6 +407,10 @@ export interface AsrCorrectBatchItem {
   applied?: boolean
   original_text?: string
   corrected_text?: string
+  /** 句级原文（success 时有值），供审核层逐句对比 */
+  original_segments?: AsrSegmentJson[]
+  /** 句级校准后（success 时有值），供审核层逐句对比 */
+  corrected_segments?: AsrSegmentJson[]
   error?: string
 }
 

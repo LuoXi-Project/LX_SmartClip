@@ -687,22 +687,26 @@ def materialize_clip_paths_for_group(
         if sfp0:
             seg_codec_args0 = force_video_reencode(seg_codec_args0, render_opts=trim_opts)
         nvenc = _materialize_opts_use_nvenc(trim_opts, seg_codec_args0)
-        # 单进程多路 NVENC（filter_complex 多 -map）在部分环境极慢或假死；默认改为逐段编码。
-        # 若需实验批量可设 SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH=1
-        nvenc_batch_ok = (os.environ.get("SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH") or "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        # 同源批量默认关闭：多路 filter 输出在 NVENC/弱机上极易变慢或假死；需要时再开启。
-        # libx264 等：SMARTCLIP_MATERIALIZE_ENCODE_BATCH=1
-        # NVENC 多路：另需 SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH=1（不推荐）
-        batch_opt_in = (os.environ.get("SMARTCLIP_MATERIALIZE_ENCODE_BATCH") or "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        allow_batch = batch_opt_in and len(batch) >= 2 and (not nvenc or nvenc_batch_ok)
+
+        def _env_flag(name: str) -> Optional[bool]:
+            """三态解析：1/true/yes → True；0/false/no → False；空 → None（用默认）。"""
+            raw = (os.environ.get(name) or "").strip().lower()
+            if raw in ("1", "true", "yes", "on"):
+                return True
+            if raw in ("0", "false", "no", "off"):
+                return False
+            return None
+
+        # 单进程多路 NVENC（filter_complex 多 -map）在部分环境极慢或假死。
+        nvenc_batch_ok = _env_flag("SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH")
+        # 软编（libx264/libx265 等）批量已验证稳定，默认开启；可设 0 关闭。
+        # NVENC 多路仍保守：默认关闭，仅当 SMARTCLIP_ALLOW_NVENC_ENCODE_BATCH=1 时才启用。
+        soft_batch = _env_flag("SMARTCLIP_MATERIALIZE_ENCODE_BATCH")
+        if nvenc:
+            allow_nvenc_batch = bool(nvenc_batch_ok) if nvenc_batch_ok is not None else False
+            allow_batch = allow_nvenc_batch and len(batch) >= 2
+        else:
+            allow_batch = (soft_batch if soft_batch is not None else True) and len(batch) >= 2
         # 批量路径：音轨经 atrim，禁止 -c:a copy；逐段 encode 仍可用 copy（仅 -ss/-t + -vf）
         seg_codec_args_batch = _codec_args_for_filtered_audio(seg_codec_args0, trim_opts)
 

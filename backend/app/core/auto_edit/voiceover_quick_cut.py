@@ -236,6 +236,39 @@ def _merge_contiguous_asr_rows(
     return out
 
 
+def _collect_asr_text_for_range(
+    seg_items: list[dict[str, Any]],
+    st_rel: float,
+    et_rel: float,
+    *,
+    overlap_sec: float = 0.05,
+) -> str:
+    """
+    在 clip 内的 [st_rel, et_rel] 区间收集重叠的 ASR 句子文本。
+
+    用于「音频粗剪」模式：检测出的语音区间本身无文案，但若该 clip 已做过 ASR，
+    把落入区间的句子拼起来作为字幕（让导出成片能带上字幕）。无匹配时返回空串。
+    """
+    if not seg_items or et_rel <= st_rel:
+        return ""
+    texts: list[str] = []
+    for seg in seg_items:
+        try:
+            ss = float(seg.get("start") or 0.0)
+            se = float(seg.get("end") or ss)
+        except Exception:
+            continue
+        if se <= ss:
+            continue
+        # 区间相交判定（含 overlap_sec 容差，避免边界浮点误差丢字）
+        if se < st_rel - overlap_sec or ss > et_rel + overlap_sec:
+            continue
+        t = str(seg.get("text") or "").strip()
+        if _is_meaningful_text(t):
+            texts.append(t)
+    return "\n".join(texts)
+
+
 def _is_meaningful_text(text: str | None) -> bool:
     if not text:
         return False
@@ -913,6 +946,14 @@ def build_plan_from_clip_groups(
                         if dur2 < aa_min_keep:
                             continue
                         total_sec += dur2
+                        # 音高门控保留区间同样尝试匹配 ASR 文案，让导出能带字幕。
+                        asr_text2 = _collect_asr_text_for_range(seg_items, st_rel2, et_rel2)
+                        if asr_text2:
+                            sub_strategy2 = "asr"
+                            sub_text2 = asr_text2
+                        else:
+                            sub_strategy2 = "none"
+                            sub_text2 = "（音高/活动保留片段）"
                         segments.append(
                             SegmentPlan(
                                 id=f"vq_{order:04d}_{cid[:6]}_p{idx2:03d}",
@@ -925,8 +966,8 @@ def build_plan_from_clip_groups(
                                 clip_start_offset_sec=st_rel2,
                                 audio_mode="original",
                                 subtitle=SubtitlePlan(
-                                    strategy="none",
-                                    text="（音高/活动保留片段）",
+                                    strategy=sub_strategy2,
+                                    text=sub_text2,
                                     source="asr",
                                     timing_hint=TimingHint(start=clip_base + st_rel2, end=clip_base + et_rel2),
                                 ),
@@ -951,6 +992,17 @@ def build_plan_from_clip_groups(
                     total_sec += dur
                     st_abs = clip_base + st_rel
                     et_abs = clip_base + et_rel
+                    # 音频粗剪默认无文案；但若该 clip 已做过 ASR，把落入区间的句子拼成字幕，
+                    # 让导出成片能带上 ASR 字幕（无匹配时回退占位）。
+                    asr_text = _collect_asr_text_for_range(seg_items, st_rel, et_rel)
+                    if asr_text:
+                        sub_strategy = "asr"
+                        sub_text = asr_text
+                        sub_source = "asr"
+                    else:
+                        sub_strategy = "none"
+                        sub_text = "（语音活动片段）"
+                        sub_source = "asr"
                     segments.append(
                         SegmentPlan(
                             id=f"vq_{order:04d}_{cid[:6]}_a{idx:03d}",
@@ -963,9 +1015,9 @@ def build_plan_from_clip_groups(
                             clip_start_offset_sec=st_rel,
                             audio_mode="original",
                             subtitle=SubtitlePlan(
-                                strategy="none",
-                                text="（语音活动片段）",
-                                source="asr",
+                                strategy=sub_strategy,
+                                text=sub_text,
+                                source=sub_source,
                                 timing_hint=TimingHint(start=st_abs, end=et_abs),
                             ),
                         )

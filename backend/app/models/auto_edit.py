@@ -462,13 +462,13 @@ class VoiceoverQuickCutRequest(BaseModel):
         description="audio_activity_fast: 相邻语音段间隔小于该值时自动合并(秒)",
     )
     activity_head_pad_sec: float = Field(
-        0.08,
+        0.5,
         ge=0.0,
         le=1.0,
         description="audio_activity_fast: 每段前置补偿时长(秒)",
     )
     activity_tail_pad_sec: float = Field(
-        0.12,
+        0.5,
         ge=0.0,
         le=1.0,
         description="audio_activity_fast: 每段后置补偿时长(秒)",
@@ -478,16 +478,16 @@ class VoiceoverQuickCutRequest(BaseModel):
         description="audio_activity_fast: 可选，前端预计算的“保留区间”（绝对时间秒）。格式：[{\"video_id\":\"...\",\"start\":0.0,\"end\":1.0}]。提供时优先使用该区间生成方案（用于 pitch 轨调参）。",
     )
     asr_head_pad_sec: float = Field(
-        0.0,
+        0.5,
         ge=0.0,
         le=3.0,
-        description="口播快剪（asr_fast/standard/semantic）：每段句头多保留的秒数，用于保留说话间隙、避免吃掉首字。默认 0=不补偿。",
+        description="口播快剪（asr_fast/standard/semantic）：每段句头多保留的秒数，用于保留说话间隙、避免吃掉首字。默认 0.5。",
     )
     asr_tail_pad_sec: float = Field(
-        0.0,
+        0.5,
         ge=0.0,
         le=3.0,
-        description="口播快剪（asr_fast/standard/semantic）：每段句尾多保留的秒数，用于保留说话间隙、避免吃掉尾音。默认 0=不补偿。",
+        description="口播快剪（asr_fast/standard/semantic）：每段句尾多保留的秒数，用于保留说话间隙、避免吃掉尾音。默认 0.5。",
     )
 
 

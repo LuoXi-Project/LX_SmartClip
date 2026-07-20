@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, Literal, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 from app.core.subtitle.render_opts import build_render_codec_args
 from app.models.production import ProductionProfile, TransitionPolicy
@@ -13,6 +13,21 @@ from app.utils.ffmpeg_utils import run_ffmpeg
 logger = logging.getLogger(__name__)
 
 SegmentTransitionKind = Literal["hard_cut", "cross_dissolve", "fade_in", "fade_out"]
+
+
+def _xfade_chunk_size() -> int:
+    """
+    xfade 分块大小：段数超过该阈值时，把单条超长 filter 链拆成多块各自一个 ffmpeg 进程，
+    块间用 concat demuxer + copy 拼接（几乎零成本）。短链调度效率远高于 80 段单链。
+    块边界只在 hard_cut 处切分，保证 cross_dissolve 不被拆断。
+    """
+    raw = (os.environ.get("SMARTCLIP_XFADE_CHUNK_SIZE") or "").strip()
+    if raw:
+        try:
+            return max(4, int(float(raw)))
+        except ValueError:
+            pass
+    return 12
 
 
 def _effective_policy(profile: ProductionProfile) -> TransitionPolicy:
@@ -171,73 +186,177 @@ def compose_with_transitions(
         target_h,
     )
 
-    filter_parts: List[str] = []
-    for i in range(n):
-        w, h = probe_video_dimensions(paths[i], logger_=logger)
-        if w != target_w or h != target_h:
-            logger.info("postprod xfade: seg_%d %dx%d -> %dx%d", i, w, h, target_w, target_h)
-        vf = _video_prep_filter(i, w, h, target_w, target_h)
-        sr = probe_audio_sample_rate(paths[i], logger_=logger)
-        af = _audio_prep_filter(i, sr)
-        if fade_a > 0:
-            af += f",afade=t=in:st=0:d={fade_a:.3f},afade=t=out:st={max(0.0, durs[i] - fade_a):.3f}:d={fade_a:.3f}"
-        if i == 0 and trans[0] == "fade_in":
-            fi = min(d, durs[0] * 0.4)
-            vf += f",fade=t=in:st=0:d={fi:.3f}"
-        if i == n - 1 and trans[-1] == "fade_out":
-            fo = min(d, durs[-1] * 0.4)
-            vf += f",fade=t=out:st={max(0.0, durs[-1] - fo):.3f}:d={fo:.3f}"
-        filter_parts.append(f"{vf}[v{i}]")
-        filter_parts.append(f"{af}[a{i}]")
+    def _run_single_chain(
+        sub_paths: List[str],
+        sub_trans: List[SegmentTransitionKind],
+        sub_durs: List[float],
+        block_out: str,
+        *,
+        is_first_block: bool,
+        is_last_block: bool,
+        input_index_base: int = 0,
+    ) -> None:
+        """对一组段构建单条 xfade/concat filter 链并运行（块内逻辑与原单进程一致）。"""
+        bn = len(sub_paths)
+        fparts: List[str] = []
+        for li in range(bn):
+            gi = input_index_base + li  # 仅用于日志，实际 filter 用块内局部下标 li
+            w, h = probe_video_dimensions(sub_paths[li], logger_=logger)
+            if w != target_w or h != target_h:
+                logger.info("postprod xfade: seg_%d %dx%d -> %dx%d", gi, w, h, target_w, target_h)
+            vf = _video_prep_filter(li, w, h, target_w, target_h)
+            sr = probe_audio_sample_rate(sub_paths[li], logger_=logger)
+            af = _audio_prep_filter(li, sr)
+            if fade_a > 0:
+                af += f",afade=t=in:st=0:d={fade_a:.3f},afade=t=out:st={max(0.0, sub_durs[li] - fade_a):.3f}:d={fade_a:.3f}"
+            # fade_in 仅整片首段（第一个块的第一段）；fade_out 仅整片末段（最后一块的最后一段）。
+            if is_first_block and li == 0 and sub_trans[0] == "fade_in":
+                fi = min(d, sub_durs[0] * 0.4)
+                vf += f",fade=t=in:st=0:d={fi:.3f}"
+            if is_last_block and li == bn - 1 and sub_trans[-1] == "fade_out":
+                fo = min(d, sub_durs[-1] * 0.4)
+                vf += f",fade=t=out:st={max(0.0, sub_durs[-1] - fo):.3f}:d={fo:.3f}"
+            fparts.append(f"{vf}[v{li}]")
+            fparts.append(f"{af}[a{li}]")
 
-    vlabel = "v0"
-    alabel = "a0"
-    acc_dur = durs[0]
-    for i in range(1, n):
-        kind = trans[i]
-        if kind in ("cross_dissolve", "fade_in", "fade_out"):
-            td = min(d, durs[i - 1] * 0.45, durs[i] * 0.45, acc_dur * 0.45)
-            offset = max(0.0, acc_dur - td)
-            vn = f"vx{i}"
-            an = f"ax{i}"
-            xfade_type = "fade" if kind == "cross_dissolve" else "fade"
-            filter_parts.append(
-                f"[{vlabel}][v{i}]xfade=transition={xfade_type}:duration={td:.3f}:offset={offset:.3f}[{vn}]"
-            )
-            filter_parts.append(
-                f"[{alabel}][a{i}]acrossfade=d={td:.3f}[{an}]"
-            )
-            vlabel = vn
-            alabel = an
-            acc_dur = acc_dur + durs[i] - td
-        else:
-            vn = f"vc{i}"
-            an = f"ac{i}"
-            filter_parts.append(f"[{vlabel}][v{i}]concat=n=2:v=1:a=0[{vn}]")
-            filter_parts.append(f"[{alabel}][a{i}]concat=n=2:v=0:a=1[{an}]")
-            vlabel = vn
-            alabel = an
-            acc_dur += durs[i]
+        vlabel = "v0"
+        alabel = "a0"
+        acc_dur = sub_durs[0]
+        for li in range(1, bn):
+            kind = sub_trans[li]
+            if kind in ("cross_dissolve", "fade_in", "fade_out"):
+                td = min(d, sub_durs[li - 1] * 0.45, sub_durs[li] * 0.45, acc_dur * 0.45)
+                offset = max(0.0, acc_dur - td)
+                vn = f"vx{li}"
+                an = f"ax{li}"
+                xfade_type = "fade" if kind == "cross_dissolve" else "fade"
+                fparts.append(
+                    f"[{vlabel}][v{li}]xfade=transition={xfade_type}:duration={td:.3f}:offset={offset:.3f}[{vn}]"
+                )
+                fparts.append(
+                    f"[{alabel}][a{li}]acrossfade=d={td:.3f}[{an}]"
+                )
+                vlabel = vn
+                alabel = an
+                acc_dur = acc_dur + sub_durs[li] - td
+            else:
+                vn = f"vc{li}"
+                an = f"ac{li}"
+                fparts.append(f"[{vlabel}][v{li}]concat=n=2:v=1:a=0[{vn}]")
+                fparts.append(f"[{alabel}][a{li}]concat=n=2:v=0:a=1[{an}]")
+                vlabel = vn
+                alabel = an
+                acc_dur += sub_durs[li]
 
-    filter_parts.append(f"[{vlabel}]null[vout]")
-    filter_parts.append(f"[{alabel}]anull[aout]")
-    fc = ";".join(filter_parts)
+        fparts.append(f"[{vlabel}]null[vout]")
+        fparts.append(f"[{alabel}]anull[aout]")
+        fc = ";".join(fparts)
+        cmd: List[str] = []
+        for p in sub_paths:
+            cmd += ["-i", p]
+        codec_args = build_render_codec_args(render_opts)
+        cmd += [
+            "-filter_complex",
+            fc,
+            "-map",
+            "[vout]",
+            "-map",
+            "[aout]",
+            *codec_args,
+            "-movflags",
+            "+faststart",
+            block_out,
+        ]
+        run_ffmpeg(cmd, desc="postprod xfade compose")
 
-    cmd: List[str] = []
-    for p in paths:
-        cmd += ["-i", p]
-    codec_args = build_render_codec_args(render_opts)
-    cmd += [
-        "-filter_complex",
-        fc,
-        "-map",
-        "[vout]",
-        "-map",
-        "[aout]",
-        *codec_args,
-        "-movflags",
-        "+faststart",
-        out_path,
-    ]
-    run_ffmpeg(cmd, desc="postprod xfade compose")
+    # 分块策略：段数 > 阈值时拆成多块，块边界只在 hard_cut 处，块间 concat+copy。
+    # 单条超长 filter 链（如 80 段）调度效率低；拆成多块各自短链可显著加速。
+    chunk_threshold = _xfade_chunk_size()
+    use_chunked = n > chunk_threshold
+
+    if not use_chunked:
+        _run_single_chain(paths, trans, durs, out_path, is_first_block=True, is_last_block=True)
+        return out_path
+
+    # 找到所有可切的边界点（i 表示「第 i 段的入向转场」，即 trans[i] 控制第 i-1→i 段之间）。
+    # 在 hard_cut 处切分，块间用 concat demuxer 拼接（硬切，无视觉差异）。
+    hard_cut_boundaries = [i for i in range(1, n) if trans[i] == "hard_cut"]
+    # 选间隔接近 chunk_threshold 的边界点作为切分点。
+    cut_points: List[int] = []
+    seg_start = 0
+    for b in hard_cut_boundaries:
+        if b - seg_start >= chunk_threshold:
+            cut_points.append(b)
+            seg_start = b
+    # 未能切出足够大的块（边界不足）→ 退化为单链，保持效果与原实现一致。
+    if len(cut_points) < 1:
+        _run_single_chain(paths, trans, durs, out_path, is_first_block=True, is_last_block=True)
+        return out_path
+
+    block_ranges: List[Tuple[int, int]] = []  # [start, end) 半开区间
+    prev = 0
+    for cp in cut_points:
+        block_ranges.append((prev, cp))
+        prev = cp
+    block_ranges.append((prev, n))
+
+    logger.info(
+        "postprod xfade 分块: %d 段 -> %d 块（块大小阈值 %d）",
+        n,
+        len(block_ranges),
+        chunk_threshold,
+    )
+
+    block_paths: List[str] = []
+    for bi, (bs, be) in enumerate(block_ranges):
+        sub_paths = paths[bs:be]
+        sub_trans = trans[bs:be]
+        sub_durs = durs[bs:be]
+        block_out = out_path + f".blk{bi:02d}.mp4"
+        _run_single_chain(
+            sub_paths,
+            sub_trans,
+            sub_durs,
+            block_out,
+            is_first_block=(bi == 0),
+            is_last_block=(bi == len(block_ranges) - 1),
+            input_index_base=bs,
+        )
+        block_paths.append(block_out)
+
+    # 块间拼接：硬切（边界均为 hard_cut），concat demuxer + copy，几乎零成本。
+    from app.utils.ffmpeg_utils import write_concat_list
+
+    concat_list = out_path + ".blk_concat.txt"
+    write_concat_list(block_paths, concat_list)
+    run_ffmpeg(
+        [
+            "-fflags",
+            "+genpts",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_list,
+            "-c",
+            "copy",
+            "-avoid_negative_ts",
+            "make_zero",
+            "-movflags",
+            "+faststart",
+            out_path,
+        ],
+        desc="postprod xfade block concat+copy",
+    )
+    # 清理块中间文件
+    for bp in block_paths:
+        try:
+            os.remove(bp)
+        except OSError:
+            pass
+    try:
+        os.remove(concat_list)
+    except OSError:
+        pass
     return out_path

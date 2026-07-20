@@ -2,12 +2,58 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.utils.bin_paths import ffprobe_bin
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 进程内 probe 缓存：单次合成任务（如口播快剪 80 段）会对同一批 seg 文件
+# 反复 probe（composer uniform 检查、xfade canvas、xfade 每段又 probe 两三次），
+# 合计几百次 ffprobe 子进程。缓存以 (path, mtime, size) 为键，跨任务通过
+# clear_probe_cache() 清理，避免脏读。
+# ---------------------------------------------------------------------------
+_PROBE_CACHE: Dict[Tuple[str, float, int], Dict[str, Any]] = {}
+_PROBE_CACHE_CAP = 512
+
+
+def _probe_cache_key(path: str) -> Optional[Tuple[str, float, int]]:
+    """以路径+mtime+size 作为缓存键；取不到 stat 时返回 None（不缓存）。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (path, st.st_mtime, st.st_size)
+
+
+def _probe_cache_get(path: str, field: str) -> Tuple[bool, Any]:
+    key = _probe_cache_key(path)
+    if key is None:
+        return False, None
+    bucket = _PROBE_CACHE.get(key)
+    if bucket is None or field not in bucket:
+        return False, None
+    return True, bucket[field]
+
+
+def _probe_cache_set(path: str, field: str, value: Any) -> None:
+    key = _probe_cache_key(path)
+    if key is None:
+        return
+    # 简单容量上限：超出时整体清空（合成任务内总量可控，无需精细 LRU）。
+    if len(_PROBE_CACHE) >= _PROBE_CACHE_CAP:
+        _PROBE_CACHE.clear()
+    bucket = _PROBE_CACHE.setdefault(key, {})
+    bucket[field] = value
+
+
+def clear_probe_cache() -> None:
+    """清空进程内 probe 缓存（合成任务结束后调用）。"""
+    _PROBE_CACHE.clear()
 
 
 def _run_ffprobe(
@@ -45,6 +91,10 @@ def probe_duration(
           - "raise": 失败抛出 RuntimeError
         log_stderr_tail: 错误日志截断长度
     """
+    hit, cached = _probe_cache_get(path, "duration")
+    if hit:
+        return float(cached)  # type: ignore[arg-type]
+
     probe = _run_ffprobe(
         [
             ffprobe_bin(),
@@ -62,7 +112,9 @@ def probe_duration(
     raw = (probe.stdout.decode(errors="replace") or "").strip()
     try:
         # 有些封装会返回空字符串或非数值，这里用 float 统一兜底
-        return float(raw or 0.0)
+        val = float(raw or 0.0)
+        _probe_cache_set(path, "duration", val)
+        return val
     except Exception:
         if on_error == "raise":
             tail = probe.stderr.decode(errors="replace")[-log_stderr_tail:]
@@ -85,6 +137,9 @@ def probe_video_dimensions(
     若探测失败则返回 default，避免上层依赖尺寸导致整条流水线失败。
     """
     log = logger_ or logger
+    hit, cached = _probe_cache_get(path, "dims")
+    if hit:
+        return cached  # type: ignore[return-value]
     probe = _run_ffprobe(
         [
             ffprobe_bin(),
@@ -111,6 +166,7 @@ def probe_video_dimensions(
         w = int(float(w_str))
         h = int(float(h_str))
         if w > 0 and h > 0:
+            _probe_cache_set(path, "dims", (w, h))
             return w, h
     except Exception:
         pass
@@ -128,6 +184,9 @@ def probe_audio_sample_rate(
 ) -> int:
     """探测主音频流采样率（Hz）；失败或无音轨时返回 default。"""
     log = logger_ or logger
+    hit, cached = _probe_cache_get(path, "sr")
+    if hit:
+        return int(cached)  # type: ignore[arg-type]
     probe = _run_ffprobe(
         [
             ffprobe_bin(),
@@ -145,7 +204,9 @@ def probe_audio_sample_rate(
     )
     raw = (probe.stdout.decode(errors="replace") or "").strip()
     try:
-        return int(float(raw))
+        val = int(float(raw))
+        _probe_cache_set(path, "sr", val)
+        return val
     except Exception:
         log.warning("ffprobe 探测音频采样率失败，回退 %s: %s", default, path)
         return default
@@ -234,8 +295,13 @@ def probe_keyframes_times(
     说明：
     - 用于“是否可安全 stream copy 裁剪”的快速判断（对齐关键帧时，-c copy 的切点更可靠）。
     - 失败时返回空列表（上层可回退到重编码或宽松策略）。
+    - 进程内缓存：同一源片的关键帧扫描成本较高（-skip_frame nokey 全片扫描），
+      在单次合成任务内对同一文件只扫一次。
     """
     log = logger_ or logger
+    hit, cached = _probe_cache_get(path, "keyframes")
+    if hit:
+        return list(cached)  # type: ignore[arg-type]
     probe = _run_ffprobe(
         [
             ffprobe_bin(),
@@ -271,6 +337,7 @@ def probe_keyframes_times(
             except Exception:
                 continue
         out.sort()
+        _probe_cache_set(path, "keyframes", out)
         return out
     except Exception:
         log.warning("ffprobe 探测关键帧失败，回退为空: %s", path)

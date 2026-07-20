@@ -216,6 +216,21 @@ async def _load_export_backend(db) -> str:
     return v if v in ("ffmpeg", "moviepy") else "moviepy"
 
 
+async def _record_burned_render(public_url: str, source: str) -> None:
+    """把烧录/原声导出成片记录到 renders 表（异步，不阻塞返回）。
+
+    从 public_url 反解绝对路径，调 record_render_from_path（幂等）。
+    失败仅记日志——成片本身已落盘，入库失败不应影响返回。
+    """
+    try:
+        from app.api.renders_db import record_render_from_path
+
+        abs_path = resolve_stored_path(public_url)
+        await record_render_from_path(abs_path=abs_path, source=source)
+    except Exception:
+        logger.debug("记录 %s 成片失败（忽略）: %s", source, public_url, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------

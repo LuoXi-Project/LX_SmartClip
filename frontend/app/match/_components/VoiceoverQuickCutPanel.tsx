@@ -6,6 +6,7 @@ import type { Video as VideoModel } from '@/lib/api'
 import { Switch } from '@/components/ui/switch'
 import { VoiceInputControl } from '@/components/ui/voice-input'
 import { clipsApi, type AutoEditSegmentPlanApi, type TtsVideoAlignConfigApi, type TtsVideoAlignPolicyApi } from '@/lib/api'
+import { useToast } from '@/components/ui/toast-provider'
 import { fmt, videoAudioStreamUrl } from './types'
 
 export type VoiceoverQuickCutStrategy = 'asr_fast' | 'standard' | 'semantic' | 'audio_activity_fast'
@@ -213,11 +214,11 @@ const PARAM_HELP_TEXT: Record<
 const ASR_PAD_HELP: Record<'head' | 'tail', ParamHelp> = {
   head: {
     title: '句头多保留秒',
-    detail: '在每条 ASR 句子的起点前多保留 n 秒，保留说话间隙、避免切掉开头字。默认 0=严格按句子起点。',
+    detail: '在每条 ASR 句子的起点前多保留 n 秒，保留说话间隙、避免切掉开头字。默认 0.5 秒；设为 0=严格按句子起点。',
   },
   tail: {
     title: '句尾多保留秒',
-    detail: '在每条 ASR 句子的终点后多保留 n 秒，保留说话间隙、避免切掉尾音。默认 0=严格按句子终点。',
+    detail: '在每条 ASR 句子的终点后多保留 n 秒，保留说话间隙、避免切掉尾音。默认 0.5 秒；设为 0=严格按句子终点。',
   },
 }
 
@@ -271,6 +272,7 @@ export function VoiceoverQuickCutPanel({
   ttsAlign,
   onTtsAlignChange,
 }: VoiceoverQuickCutPanelProps) {
+  const toast = useToast()
   const overlapSwitchId = useId()
   const overlapLabelId = `${overlapSwitchId}-label`
   const [strategy, setStrategy] = useState<VoiceoverQuickCutStrategy>('standard')
@@ -282,14 +284,14 @@ export function VoiceoverQuickCutPanel({
     activityMinSilenceSec: 0.25,
     activityMinKeepSec: 0.35,
     activityMergeGapSec: 0.2,
-    activityHeadPadSec: 0.08,
-    activityTailPadSec: 0.12,
+    activityHeadPadSec: 0.5,
+    activityTailPadSec: 0.5,
   })
   const [audioPresetId, setAudioPresetId] = useState<VoiceoverAudioActivityPreset['id'] | 'custom'>('custom')
   const [denoiseStrength, setDenoiseStrength] = useState(0)
   /** 口播快剪（asr_fast/standard/semantic）句头/句尾补偿秒，用于保留说话间隙 */
-  const [asrHeadPadSec, setAsrHeadPadSec] = useState(0)
-  const [asrTailPadSec, setAsrTailPadSec] = useState(0)
+  const [asrHeadPadSec, setAsrHeadPadSec] = useState(0.5)
+  const [asrTailPadSec, setAsrTailPadSec] = useState(0.5)
   const [asrSentenceBlocks, setAsrSentenceBlocks] = useState<
     Array<{ absStart: number; absEnd: number; text: string }>
   >([])
@@ -309,7 +311,7 @@ export function VoiceoverQuickCutPanel({
   const [pitchHz, setPitchHz] = useState<number[]>([])
   const [pitchLoading, setPitchLoading] = useState(false)
   const [pitchError, setPitchError] = useState<string | null>(null)
-  const [pitchThresholdHz, setPitchThresholdHz] = useState(120)
+  const [pitchThresholdHz, setPitchThresholdHz] = useState(100)
   const [pitchGateEnabled, setPitchGateEnabled] = useState(true)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [loopRange, setLoopRange] = useState<{ a: number; b: number } | null>(null)
@@ -624,6 +626,7 @@ export function VoiceoverQuickCutPanel({
 
   useEffect(() => {
     let cancelled = false
+    let worker: Worker | null = null
     async function buildPitch() {
       if (strategy !== 'audio_activity_fast' || !previewSrc) {
         setPitchHz([])
@@ -631,6 +634,8 @@ export function VoiceoverQuickCutPanel({
       }
       setPitchLoading(true)
       setPitchError(null)
+      // 音高识别跑在 Web Worker 后台线程，主线程不阻塞；这里仅提示用户正在处理。
+      const task = toast.task('正在后台解析音高轨…')
       try {
         const resp = await fetch(previewSrc)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -641,49 +646,43 @@ export function VoiceoverQuickCutPanel({
         if (!Ctx) throw new Error('当前浏览器不支持 AudioContext')
         const ctx = new Ctx()
         const audioBuf = await ctx.decodeAudioData(buf.slice(0))
-        const data = audioBuf.getChannelData(0)
-        const sr = audioBuf.sampleRate
-        const hop = Math.max(128, Math.floor(sr * 0.02))
-        const minHz = 70
-        const maxHz = 320
-        const minLag = Math.floor(sr / maxHz)
-        const maxLag = Math.floor(sr / minHz)
-        const out: number[] = []
-
-        for (let i = 0; i + maxLag < data.length; i += hop) {
-          // 能量过低直接判无音高
-          let sum = 0
-          const end = Math.min(data.length, i + hop)
-          for (let j = i; j < end; j += 1) sum += data[j] * data[j]
-          const rms = Math.sqrt(sum / Math.max(1, end - i))
-          if (rms < 0.01) {
-            out.push(0)
-            continue
-          }
-          let bestLag = 0
-          let best = 0
-          for (let lag = minLag; lag <= maxLag; lag += 1) {
-            let c = 0
-            for (let j = 0; j < hop; j += 1) c += data[i + j] * data[i + j + lag]
-            if (c > best) {
-              best = c
-              bestLag = lag
-            }
-          }
-          const hz = bestLag > 0 ? sr / bestLag : 0
-          out.push(hz >= minHz && hz <= maxHz ? hz : 0)
-        }
         await ctx.close()
-        if (!cancelled) setPitchHz(out)
+        if (cancelled) {
+          task.done('已取消')
+          return
+        }
+        // 把单声道 PCM 交给 worker 做自相关（重计算在后台线程，不卡 UI）。
+        const pcm = audioBuf.getChannelData(0).slice()
+        worker = new Worker(new URL('../_workers/pitch-detect.worker.ts', import.meta.url))
+        const out: number[] = await new Promise<number[]>((resolve, reject) => {
+          if (!worker) return reject(new Error('worker 初始化失败'))
+          worker.onmessage = (ev: MessageEvent<number[]>) => resolve(ev.data)
+          worker.onerror = (err) => reject(new Error(err.message || '音高 worker 错误'))
+          // Transferable 传输：零拷贝移交 pcm 缓冲区所有权（发送后主线程不再使用）。
+          worker.postMessage({ data: pcm, sampleRate: audioBuf.sampleRate }, [pcm.buffer])
+        })
+        if (cancelled) {
+          task.done('已取消')
+          return
+        }
+        setPitchHz(out)
+        task.done(`音高轨解析完成（${out.length} 帧）`)
       } catch (e) {
-        if (!cancelled) setPitchError((e as Error)?.message || '音高解析失败')
+        const msg = (e as Error)?.message || '音高解析失败'
+        if (!cancelled) setPitchError(msg)
+        task.fail(`音高轨解析失败：${msg}`)
       } finally {
         if (!cancelled) setPitchLoading(false)
+        if (worker) {
+          worker.terminate()
+          worker = null
+        }
       }
     }
     void buildPitch()
     return () => {
       cancelled = true
+      if (worker) worker.terminate()
     }
   }, [strategy, previewSrc])
 
@@ -1619,7 +1618,7 @@ export function VoiceoverQuickCutPanel({
                     setDenoiseStrength(0)
                     setAudioActivityConfig({
                       ...effectiveAudioConfig,
-                      activityHeadPadSec: Number(e.target.value || 0.08),
+                      activityHeadPadSec: Number(e.target.value || 0.5),
                     })
                   }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
@@ -1638,7 +1637,7 @@ export function VoiceoverQuickCutPanel({
                     setDenoiseStrength(0)
                     setAudioActivityConfig({
                       ...effectiveAudioConfig,
-                      activityTailPadSec: Number(e.target.value || 0.12),
+                      activityTailPadSec: Number(e.target.value || 0.5),
                     })
                   }}
                   className="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-violet-500/60"
@@ -1674,7 +1673,7 @@ export function VoiceoverQuickCutPanel({
                   />
                 </label>
                 <p className="sm:col-span-2 text-[10px] text-slate-500 leading-relaxed">
-                  在每条 ASR 句子的起点前/终点后多保留 n 秒，用于保留说话间隙、避免切到首字或尾音。默认 0=严格按句子边界裁剪。调大后重新生成可在上方频谱查看分段外扩。
+                  在每条 ASR 句子的起点前/终点后多保留 n 秒，用于保留说话间隙、避免切到首字或尾音。默认 0.5 秒。设为 0=严格按句子边界裁剪。调大后重新生成可在上方频谱查看分段外扩。
                 </p>
               </div>
             )}

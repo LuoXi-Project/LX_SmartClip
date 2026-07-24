@@ -233,7 +233,6 @@ export function ManualMatchPanel({
               value={globalQuery}
               onTextChange={onGlobalQueryChange}
               merge="append"
-              disabled={globalMatching || globalTtsSynthesising}
             />
           </div>
         </div>
@@ -250,7 +249,7 @@ export function ManualMatchPanel({
             <>
               <button
                 onClick={onMatchAll}
-                disabled={globalMatching || globalTtsSynthesising}
+                disabled={globalMatching}
                 className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
               >
                 {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
@@ -259,7 +258,7 @@ export function ManualMatchPanel({
               <button
                 type="button"
                 onClick={onSynthesiseAllTts}
-                disabled={globalTtsSynthesising || globalMatching || !segments.some((s) => s.text.trim())}
+                disabled={globalTtsSynthesising || !segments.some((s) => s.text.trim())}
                 className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
               >
                 {globalTtsSynthesising ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}

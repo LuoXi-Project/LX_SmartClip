@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -38,9 +39,20 @@ class FaissVectorDB(IVectorDB):
 
     def _load(self) -> None:
         if os.path.exists(self.mapping_path):
-            with open(self.mapping_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            try:
+                with open(self.mapping_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
                 self._embeddings = data.get("embeddings", {})
+            except (json.JSONDecodeError, OSError) as e:
+                # JSON 损坏（多半是上次写入被中断导致截断）：备份原文件后回退为空，
+                # 避免整个 FaissVectorDB 构造失败拖垮 /api/search 等接口。
+                logger.error(
+                    "映射文件损坏，回退为空并继续（FAISS 索引如完好可重建）：path=%s err=%s",
+                    self.mapping_path,
+                    e,
+                )
+                self._backup_corrupt(self.mapping_path)
+                self._embeddings = {}
 
         self._clip_ids = list(self._embeddings.keys())
 
@@ -53,11 +65,38 @@ class FaissVectorDB(IVectorDB):
 
         self._rebuild_index(save=False)
 
+    def _backup_corrupt(self, path: str) -> None:
+        """把损坏的映射文件改名备份，便于事后排查或抢救数据。"""
+        try:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            backup = f"{path}.corrupt.{ts}"
+            os.replace(path, backup)
+            logger.warning("损坏的映射文件已备份为: %s", backup)
+        except OSError as backup_err:
+            logger.error("备份损坏文件失败: %s", backup_err)
+
+    def _atomic_write_text(self, path: str, data: str) -> None:
+        """先写 .tmp 再 os.replace 原子替换，避免写入中途被中断导致文件半写损坏。"""
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(data)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                # 某些文件系统（如网络挂载）不支持 fsync，忽略即可
+                pass
+        os.replace(tmp, path)
+
     def _save(self) -> None:
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
-        self._faiss.write_index(self._index, self.index_path)
-        with open(self.mapping_path, "w", encoding="utf-8") as f:
-            json.dump({"embeddings": self._embeddings}, f, ensure_ascii=False)
+        # FAISS 索引同样走原子写：先写到临时文件再替换
+        tmp_index = f"{self.index_path}.tmp"
+        self._faiss.write_index(self._index, tmp_index)
+        os.replace(tmp_index, self.index_path)
+
+        payload = json.dumps({"embeddings": self._embeddings}, ensure_ascii=False)
+        self._atomic_write_text(self.mapping_path, payload)
 
     def _rebuild_index(self, save: bool = True) -> None:
         self._clip_ids = list(self._embeddings.keys())

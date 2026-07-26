@@ -6,9 +6,10 @@ import { useSearchParams } from 'next/navigation'
 import apiClient, { clipsApi, jobsApi, processJobsApi, videosApi, type JobSnapshot, type Video } from '@/lib/api'
 import { fetchSSE } from '@/lib/stream'
 import { useTaskStore } from '@/lib/task-store'
-import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic, Check, Square } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { VoiceInputControl } from '@/components/ui/voice-input'
+import { useToast } from '@/components/ui/toast-provider'
 
 const STEPS = [
   { key: 'split',          label: '视频切分',       desc: '按镜头或固定时长切分视频' },
@@ -93,6 +94,12 @@ export default function ProcessPage() {
   const [runPreset, setRunPreset] = useState<'full' | 'asr_only'>('full')
   /** 当前选中视频所展示的 process job id（来自 async_jobs，前端唯一追踪键）*/
   const [selJobId, setSelJobId] = useState('')
+  /** 多选模式开关：开启后视频卡片改为复选，底部出现批量启动按钮 */
+  const [multiSelect, setMultiSelect] = useState(false)
+  /** 多选模式下已勾选的视频 id 集合（跨页保留）*/
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  /** 批量提交进行中（顺序提交多个 create 期间禁用按钮）*/
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
   /** SSE 连接的 AbortController（切视频/停止/卸载时中止，避免旧流污染新视图）*/
   const sseAbortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -104,6 +111,7 @@ export default function ProcessPage() {
 
   const taskStoreUpsert = useTaskStore((s) => s.upsert)
   const taskStorePatch = useTaskStore((s) => s.patch)
+  const toast = useToast()
 
   /** 把 process job 同步到 TaskHub 的 task-store（带视频名 + 停止/删除回调）*/
   const bridgeToTaskHub = (
@@ -513,6 +521,73 @@ export default function ProcessPage() {
     )
   }
 
+  /** 切换多选开关：进入多选时清空单选视图（避免两套选择态打架），退出时清空多选勾选 */
+  const toggleMultiSelect = (next: boolean) => {
+    setMultiSelect(next)
+    setSelectedIds(new Set())
+    if (next) {
+      closeStreamQuietly()
+      stopTaskPolling()
+      activeJobRef.current = ''
+      setSelId('')
+      setSelJobId('')
+      setSteps(blank())
+      setRunning(false)
+      setDone(false)
+      setFinalMetrics(null)
+    }
+  }
+
+  /** 多选模式下勾选/取消某个视频 */
+  const toggleSelectVideo = (videoId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(videoId)) next.delete(videoId)
+      else next.add(videoId)
+      return next
+    })
+  }
+
+  /**
+   * 多选批量提交预处理任务：顺序调用 processJobsApi.create，让后端按入队顺序串行执行。
+   * 每个 job 通过 bridgeToTaskHub 注入全局任务面板（右下角 TaskHub 逐个展示进度/排队位置）。
+   * 单个失败不阻断其余；完成后用 toast 汇总成功数并清空选择。
+   */
+  const handleBatchStart = async (preset: 'full' | 'asr_only') => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0 || batchSubmitting) return
+    setBatchSubmitting(true)
+    let okCount = 0
+    for (const vid of ids) {
+      try {
+        let created
+        if (preset === 'full') {
+          created = await processJobsApi.create(vid)
+        } else {
+          const v = videos.find((x) => x.id === vid)
+          const hasClips = (v?.total_clips ?? 0) > 0
+          created = await processJobsApi.create(vid, { skip_steps: asrOnlySkipSteps(hasClips) })
+        }
+        const videoName = created.video_name || videos.find((x) => x.id === vid)?.name || ''
+        bridgeToTaskHub(
+          { ...created, video_name: videoName },
+          preset === 'full' ? '视频预处理' : '视频预处理(ASR)',
+        )
+        okCount++
+      } catch {
+        /* 单个失败不阻断其余，继续提交下一个 */
+      }
+    }
+    setBatchSubmitting(false)
+    if (okCount > 0) {
+      toast.success(`已提交 ${okCount} / ${ids.length} 个预处理任务，将在队列中依次执行`)
+      // 提交后清空选择，方便用户继续选下一批
+      setSelectedIds(new Set())
+    } else {
+      toast.error('批量提交失败，请稍后重试')
+    }
+  }
+
   const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only'): string[] => {
     let base: string[]
     if (preset === 'asr_only') base = ['split', 'extract_frames', 'vlm', 'enrich']                // 仅补 ASR：画面未变，跳过 enrich
@@ -607,11 +682,28 @@ export default function ProcessPage() {
                 <p className="text-[11px] text-amber-500/90 mt-1">处理进行中，无法切换其它视频；请先停止任务后再选择。</p>
               )}
             </div>
-            {!loading && videos.length > 0 && (
-              <span className="shrink-0 text-xs text-slate-600">
-                {search ? `${filteredVideos.length} / ${videos.length}` : videos.length} 个视频
-              </span>
-            )}
+            <div className="flex items-center gap-3 shrink-0">
+              {!loading && videos.length > 0 && (
+                <span className="text-xs text-slate-600">
+                  {search ? `${filteredVideos.length} / ${videos.length}` : videos.length} 个视频
+                </span>
+              )}
+              {!loading && videos.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleMultiSelect(!multiSelect)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs transition-colors ${
+                    multiSelect
+                      ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
+                      : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                  }`}
+                  title={multiSelect ? '退出多选模式' : '开启多选模式，可批量提交预处理任务'}
+                >
+                  {multiSelect ? <Check className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                  多选
+                </button>
+              )}
+            </div>
           </div>
 
           {!loading && videos.length > 0 && (
@@ -657,23 +749,42 @@ export default function ProcessPage() {
           ) : (
             <>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {pagedVideos.map((v) => (
-                  <button key={v.id} disabled={false} onClick={() => !false && setSelId(v.id)}
-                    className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                      selId === v.id ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'border-slate-700 bg-slate-800/40 hover:border-slate-500'
-                    }`}>
-                    <div className="flex items-start gap-3">
-                      <Film className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{v.name}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {{ pending: '待处理', processing: '处理中', done: '已完成', error: '错误' }[v.status]}
-                          {v.total_clips > 0 && ` · ${v.total_clips} 片段`}
-                        </p>
+                {pagedVideos.map((v) => {
+                  const checked = selectedIds.has(v.id)
+                  return (
+                    <button
+                      key={v.id}
+                      disabled={false}
+                      onClick={() => (multiSelect ? toggleSelectVideo(v.id) : setSelId(v.id))}
+                      className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed relative ${
+                        (multiSelect ? checked : selId === v.id)
+                          ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30'
+                          : 'border-slate-700 bg-slate-800/40 hover:border-slate-500'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        {multiSelect ? (
+                          <span
+                            className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                              checked ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-600 bg-slate-900/60 text-transparent'
+                            }`}
+                          >
+                            <Check className="w-3 h-3" />
+                          </span>
+                        ) : (
+                          <Film className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{v.name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {{ pending: '待处理', processing: '处理中', done: '已完成', error: '错误' }[v.status]}
+                            {v.total_clips > 0 && ` · ${v.total_clips} 片段`}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  )
+                })}
               </div>
 
               {totalPages > 1 && (
@@ -699,58 +810,100 @@ export default function ProcessPage() {
           )}
         </section>
 
-        <section className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            data-tour="page-process-start"
-            onClick={handleStart}
-            disabled={!selId || false}
-            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            {false ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleStartAsrOnly()}
-            disabled={!selId || false}
-            title="跳过抽帧、视觉描述与向量入库；无现成片段时会先切分再识别。适合口播剪气口。"
-            className="flex items-center gap-2 px-5 py-2.5 border border-amber-600/50 bg-amber-500/10 hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed text-amber-100 text-sm font-medium rounded-lg transition-colors"
-          >
-            {false ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
-            口播快轨（仅 ASR）
-          </button>
-          {selJobId && running && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
-          {selVideo && running && (
-            <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo!.name}</span></span>
-          )}
-          {selVideo && !false && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
-          {selVideo && !false && (
-            <span className="w-full sm:w-auto text-[11px] text-slate-500 leading-relaxed sm:ml-0 basis-full">
-              全流程含抽帧与 VLM，较慢；若只依赖台词剪口播，优先用「口播快轨」。
-              {selVideo.total_clips > 0
-                ? ` 当前已有 ${selVideo.total_clips} 个片段，快轨不会重切分，仅刷新 ASR。`
-                : ' 当前尚无片段，快轨会先切分再只跑语音识别。'}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setRecoverOpen((o) => !o)}
-            disabled={!selId}
-            className="flex items-center gap-1 px-3 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 text-slate-300 text-sm rounded-lg transition-colors"
-          >
-            {recoverOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            恢复 / 重跑 / 状态修改
-          </button>
-          <button
-            onClick={() => setResultOpen(true)}
-            disabled={!selId}
-            className="ml-auto px-4 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 text-sm rounded-lg transition-colors"
-          >
-            查看处理结果/纠错
-          </button>
-        </section>
+        {!multiSelect && (
+          <section className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              data-tour="page-process-start"
+              onClick={handleStart}
+              disabled={!selId || false}
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {false ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleStartAsrOnly()}
+              disabled={!selId || false}
+              title="跳过抽帧、视觉描述与向量入库；无现成片段时会先切分再识别。适合口播剪气口。"
+              className="flex items-center gap-2 px-5 py-2.5 border border-amber-600/50 bg-amber-500/10 hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed text-amber-100 text-sm font-medium rounded-lg transition-colors"
+            >
+              {false ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
+              口播快轨（仅 ASR）
+            </button>
+            {selJobId && running && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
+            {selVideo && running && (
+              <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo!.name}</span></span>
+            )}
+            {selVideo && !false && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
+            {selVideo && !false && (
+              <span className="w-full sm:w-auto text-[11px] text-slate-500 leading-relaxed sm:ml-0 basis-full">
+                全流程含抽帧与 VLM，较慢；若只依赖台词剪口播，优先用「口播快轨」。
+                {selVideo.total_clips > 0
+                  ? ` 当前已有 ${selVideo.total_clips} 个片段，快轨不会重切分，仅刷新 ASR。`
+                  : ' 当前尚无片段，快轨会先切分再只跑语音识别。'}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setRecoverOpen((o) => !o)}
+              disabled={!selId}
+              className="flex items-center gap-1 px-3 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 text-slate-300 text-sm rounded-lg transition-colors"
+            >
+              {recoverOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              恢复 / 重跑 / 状态修改
+            </button>
+            <button
+              onClick={() => setResultOpen(true)}
+              disabled={!selId}
+              className="ml-auto px-4 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 text-sm rounded-lg transition-colors"
+            >
+              查看处理结果/纠错
+            </button>
+          </section>
+        )}
 
-        {recoverOpen && (
+        {multiSelect && (
+          <section className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-5 py-4">
+            <span className="text-sm text-slate-300">
+              已选 <span className="text-indigo-300 font-medium">{selectedIds.size}</span> 个视频
+            </span>
+            <button
+              type="button"
+              onClick={() => void handleBatchStart('full')}
+              disabled={selectedIds.size === 0 || batchSubmitting}
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {batchSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              批量开始处理（全流程）
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleBatchStart('asr_only')}
+              disabled={selectedIds.size === 0 || batchSubmitting}
+              title="跳过抽帧、视觉描述与向量入库；无现成片段时会先切分再识别。适合口播剪气口。"
+              className="flex items-center gap-2 px-5 py-2.5 border border-amber-600/50 bg-amber-500/10 hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed text-amber-100 text-sm font-medium rounded-lg transition-colors"
+            >
+              {batchSubmitting ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
+              批量口播快轨（仅 ASR）
+            </button>
+            {selectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                disabled={batchSubmitting}
+                className="px-3 py-2.5 border border-slate-700 bg-slate-800/40 hover:border-slate-500 disabled:opacity-40 text-slate-300 text-sm rounded-lg transition-colors"
+              >
+                清空选择
+              </button>
+            )}
+            <span className="w-full text-[11px] text-slate-500 leading-relaxed basis-full">
+              任务将自动排队、串行执行；可在右下角任务面板查看每个任务的进度，或单独取消。
+            </span>
+          </section>
+        )}
+
+        {recoverOpen && !multiSelect && (
           <section className="rounded-lg border border-slate-800 bg-slate-900/40 px-5 py-4 space-y-3">
             <p className="text-xs text-slate-400">
               针对<strong className="text-slate-300">已切片的素材</strong>，跳过切分并重跑 ASR / VLM / Embed（全片段）。需在「素材库」中已有片段（total_clips &gt; 0）。
@@ -859,7 +1012,7 @@ export default function ProcessPage() {
           </section>
         )}
 
-        {(running || done || !!selJobId) && (
+        {(running || done || !!selJobId) && !multiSelect && (
           <section className="space-y-1.5">
             <div className="flex justify-between text-xs text-slate-400"><span>总进度</span><span>{pct}%</span></div>
             <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -868,6 +1021,7 @@ export default function ProcessPage() {
           </section>
         )}
 
+        {!multiSelect && (
         <section className="space-y-2">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">处理步骤</h2>
           {STEPS.map((step) => {
@@ -953,8 +1107,9 @@ export default function ProcessPage() {
             )
           })}
         </section>
+        )}
 
-        {finalMetrics && (
+        {finalMetrics && !multiSelect && (
           <section className="space-y-2">
             <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">耗时 / Token 汇总</h2>
             <div className="rounded-lg border border-slate-800 bg-slate-900/30 px-5 py-4">
@@ -995,7 +1150,7 @@ export default function ProcessPage() {
           </section>
         )}
 
-        {done && (
+        {done && !multiSelect && (
           <section className="border border-emerald-600/30 bg-emerald-500/5 rounded-lg px-6 py-5 flex items-center gap-4">
             <CheckCircle2 className="w-8 h-8 text-emerald-400 shrink-0" />
             <div>

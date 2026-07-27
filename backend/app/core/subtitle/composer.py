@@ -11,6 +11,7 @@ from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
 from .render_opts import (
     build_extra_video_filters,
     build_render_codec_args,
+    canvas_wh_from_clip_scale_opts,
     force_video_reencode,
     iter_export_gpu_render_attempts,
     sanitize_merged_opts_for_final_burn,
@@ -100,9 +101,24 @@ def _maybe_merge_segments_with_transitions(
         prof,
         plan_transitions=segment_transition_ins,
     )
-    need = any(k != "hard_cut" for k in kinds) or segment_fade_ms > 0
+    # 仅当存在非硬切转场（dissolve/fade）时才走 xfade 重编码路径。
+    # 纯硬切（即使带 micro-fade 消爆音）不在此处重编码：交给下方主流程，
+    # 让等大段走 concat -c copy、不等大段按画布统一，避免 micro-fade 把全部硬切拖进重编码。
+    need = any(k != "hard_cut" for k in kinds)
     if not need:
         return seg_paths
+    # 解析统一画布：优先 export 配置（clip_scale_*），无配置时由 compose_with_transitions 取各段最大值兜底。
+    target_canvas: Optional[tuple[int, int]] = None
+    if seg_paths:
+        opts_for_canvas = sanitize_merged_opts_for_final_burn(final_render_opts, seg_paths[0])
+        cw, ch = canvas_wh_from_clip_scale_opts(opts_for_canvas, seg_paths[0])
+        # canvas_wh_from_clip_scale_opts 在无配置时返回参考段原始分辨率；
+        # 仅当配置了非零缩放（即用户/导出明确指定画布）时才作为显式画布传入，
+        # 否则让 transitions 兜底取最大值，保持混剪等场景的旧行为。
+        sw = to_int(opts_for_canvas, "clip_scale_width", 0)
+        sh = to_int(opts_for_canvas, "clip_scale_height", 0)
+        if sw > 0 or sh > 0:
+            target_canvas = (cw, ch)
     merged = os.path.join(tmp, f"{project_name}__xfade.mp4")
     try:
         compose_with_transitions(
@@ -112,6 +128,7 @@ def _maybe_merge_segments_with_transitions(
             segment_fade_ms=segment_fade_ms,
             out_path=merged,
             render_opts=final_render_opts,
+            target_canvas=target_canvas,
         )
         logger.info("段间转场合成完成: %s", merged)
         return [merged]
@@ -145,30 +162,9 @@ def compose_final_video(
         final_render_opts=final_render_opts,
     )
     out_path = os.path.join(tmp, f"{project_name}.mp4")
-    target_w, target_h = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)
-
-    if srt_entries:
-        video_size = probe_video_dimensions(seg_paths[0], default=(1920, 1080), logger_=logger)
-        ass_path = os.path.join(tmp, "subtitles.ass")
-        with open(ass_path, "w", encoding="utf-8") as f:
-            f.write(build_ass(srt_entries, style, video_size))
-        logger.info("ASS 字幕已写入: %s (%d 条)", ass_path, len(srt_entries))
-        ass_filter_path = ass_path.replace("\\", "/").replace(":", "\\:")
-        vf_filter = f"setpts=PTS-STARTPTS,ass='{ass_filter_path}'"
-        if fonts_dir and os.path.isdir(fonts_dir):
-            safe_fonts = fonts_dir.replace("\\", "/").replace(":", "\\:")
-            vf_filter = f"setpts=PTS-STARTPTS,ass='{ass_filter_path}':fontsdir='{safe_fonts}'"
-    else:
-        vf_filter = "setpts=PTS-STARTPTS"
 
     opts_for_vf = sanitize_merged_opts_for_final_burn(final_render_opts, seg_paths[0])
     extra_filters = build_extra_video_filters(opts_for_vf)
-    if extra_filters:
-        vf_filter = f"{vf_filter},{','.join(extra_filters)}"
-
-    # 注意：dynaudnorm / alimiter 这类实时音频滤镜非常吃 CPU。
-    # 这里默认不做任何音频后处理；若上层显式要求 normalize_audio，仅做“音频转码/统一编码器”，不加滤镜。
-    audio_post = "anull"
 
     # 快路径：无字幕、无成片缩放/帧率、各段规格一致 → concat demuxer + copy，避免再整片 x264。
     uniform = _segments_uniform_for_stream_copy(seg_paths)
@@ -227,44 +223,65 @@ def compose_final_video(
         logger.info("FFmpeg concat+copy_v+encode_a 完成")
         return out_path
 
-    # 慢路径：规格不一致或需要字幕/缩放 → filter_complex concat，逐路按需 scale / resample。
-    filter_parts: List[str] = []
-    concat_in = []
-    for i in range(len(seg_paths)):
-        w, h = probe_video_dimensions(seg_paths[i], logger_=logger)
-        if w == target_w and h == target_h:
-            filter_parts.append(f"[{i}:v]setsar=1,setpts=PTS-STARTPTS[v{i}]")
-        else:
-            filter_parts.append(
-                f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v{i}]"
-            )
-        sr = probe_audio_sample_rate(seg_paths[i], logger_=logger)
-        if sr == 48000:
-            filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
-        else:
-            filter_parts.append(
-                f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]"
-            )
-        concat_in.append(f"[v{i}][a{i}]")
-    filter_parts.append(f"{''.join(concat_in)}concat=n={len(seg_paths)}:v=1:a=1[vcat][acat]")
-    filter_parts.append(f"[vcat]{vf_filter}[vout]")
-    filter_parts.append(f"[acat]{audio_post}[aout]")
-    filter_complex = ";".join(filter_parts)
+    # === 两步走（避免「N 段塞进单条 filter_complex + 每段 scale」导致的超时）===
+    #
+    # 历史问题：带字幕或混合分辨率时，旧实现把所有段塞进一条 filter_complex
+    # （concat=n={N} + 每段 scale+pad 到画布 + ass），N 较大（如 42）时单条链
+    # 调度极慢甚至超时。
+    #
+    # 正确做法（与 compose_final_video_moviepy 一致）：
+    #   步骤1：先把所有段「分块合并」成单个中间文件（无字幕）。
+    #          等大段 → concat demuxer + copy（零重编码）；
+    #          不等大 → 分块统一画布重编码（块≤12，块间 copy）。
+    #   步骤2：对合并后的单文件做一次 ass overlay + 成片滤镜 + 编码（O(1)，与段数无关）。
 
-    cmd = []
-    for p in seg_paths:
-        cmd += ["-i", p]
+    # —— 步骤1：合并画面（无字幕）。 ——
+    needs_merge_for_burn = bool(srt_entries) or bool(extra_filters) or (not uniform)
+    merged_path = out_path
+    if needs_merge_for_burn and len(seg_paths) > 1:
+        merged_path = _merge_segments_to_single(
+            seg_paths=seg_paths,
+            tmp=tmp,
+            project_name=f"{project_name}__merged",
+            final_render_opts=final_render_opts,
+            normalize_audio=normalize_audio,
+            prefer_gpu=prefer_gpu,
+            segment_transition_ins=segment_transition_ins,
+            transition_dissolve_sec=transition_dissolve_sec,
+            segment_fade_ms=segment_fade_ms,
+        )
 
-    def _cmd_concat_burn(concat_codec_args: List[str]) -> List[str]:
+    # —— 步骤2：单文件烧字幕 + 成片滤镜 + 编码。 ——
+    # 无字幕/无滤镜/已 copy 合并 → 直接返回。
+    if not srt_entries and not extra_filters:
+        if merged_path != out_path:
+            _replace_file(merged_path, out_path)
+        return out_path
+
+    # 构建字幕滤镜（作用于单文件）
+    vf_filter = "setpts=PTS-STARTPTS"
+    if srt_entries:
+        video_size = probe_video_dimensions(merged_path, default=(1920, 1080), logger_=logger)
+        ass_path = os.path.join(tmp, f"{project_name}__subtitles.ass")
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(build_ass(srt_entries, style, video_size))
+        logger.info("ASS 字幕已写入: %s (%d 条)", ass_path, len(srt_entries))
+        ass_filter_path = ass_path.replace("\\", "/").replace(":", "\\:")
+        vf_filter = f"setpts=PTS-STARTPTS,ass='{ass_filter_path}'"
+        if fonts_dir and os.path.isdir(fonts_dir):
+            safe_fonts = fonts_dir.replace("\\", "/").replace(":", "\\:")
+            vf_filter = f"setpts=PTS-STARTPTS,ass='{ass_filter_path}':fontsdir='{safe_fonts}'"
+    if extra_filters:
+        vf_filter = f"{vf_filter},{','.join(extra_filters)}"
+
+    def _cmd_burn(concat_codec_args: List[str]) -> List[str]:
         return [
-            *cmd,
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[vout]",
-            "-map",
-            "[aout]",
+            "-i",
+            merged_path,
+            "-vf",
+            vf_filter,
+            "-c:a",
+            "copy" if not normalize_audio else "aac",
             *concat_codec_args,
             "-avoid_negative_ts",
             "make_zero",
@@ -273,14 +290,106 @@ def compose_final_video(
             out_path,
         ]
 
+    logger.info("FFmpeg 单文件烧字幕（%s 段已合并为单文件）", len(seg_paths))
     _run_export_encode_attempts(
         prefer_gpu=prefer_gpu,
         final_render_opts=final_render_opts,
         normalize_audio=normalize_audio,
-        cmd_for_codec=_cmd_concat_burn,
-        desc="concat+burn",
+        cmd_for_codec=_cmd_burn,
+        desc="merge+burn",
     )
+    logger.info("FFmpeg 单文件烧字幕完成")
     return out_path
+
+
+def _merge_segments_to_single(
+    *,
+    seg_paths: List[str],
+    tmp: str,
+    project_name: str,
+    final_render_opts: Optional[Dict[str, str]],
+    normalize_audio: bool,
+    prefer_gpu: bool,
+    segment_transition_ins: Optional[Sequence[Optional[str]]] = None,
+    transition_dissolve_sec: float = 0.35,
+    segment_fade_ms: int = 0,
+) -> str:
+    """
+    把多段合并为单个中间文件（不含字幕）。
+
+    - 等大段：concat demuxer + -c copy（零重编码，秒级）。
+    - 不等大：调用分块的 compose_with_transitions（纯硬切 + 配置画布，块≤12，块间 copy）。
+    """
+    out = os.path.join(tmp, f"{project_name}.mp4")
+
+    # 等大 → concat copy
+    if _segments_uniform_for_stream_copy(seg_paths):
+        concat_list = os.path.join(tmp, f"{project_name}__concat.txt")
+        write_concat_list(seg_paths, concat_list)
+        if not normalize_audio:
+            logger.info("合并画面：concat+copy（%d 段，零重编码）", len(seg_paths))
+            run_ffmpeg(
+                ["-fflags", "+genpts", "-f", "concat", "-safe", "0", "-i", concat_list,
+                 "-c", "copy", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out],
+                desc="merge concat+copy",
+            )
+            return out
+        a_bitrate = to_int(final_render_opts, "clip_audio_bitrate_kbps", 192)
+        logger.info("合并画面：concat+copy_v+encode_a（%d 段）", len(seg_paths))
+        run_ffmpeg(
+            ["-fflags", "+genpts", "-f", "concat", "-safe", "0", "-i", concat_list,
+             "-c:v", "copy", "-c:a", "aac", "-b:a", f"{a_bitrate}k",
+             "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out],
+            desc="merge concat+copy_v+encode_a",
+        )
+        return out
+
+    # 不等大 → 分块统一画布（纯硬切 + 配置画布）
+    from app.core.postprod.transitions import compose_with_transitions, resolve_segment_transitions
+    from app.models.production import ProductionProfile, TransitionPolicy
+
+    n = len(seg_paths)
+    # 解析画布：优先 export 配置
+    target_canvas: Optional[tuple] = None
+    if seg_paths:
+        opts_for_canvas = sanitize_merged_opts_for_final_burn(final_render_opts, seg_paths[0])
+        sw = to_int(opts_for_canvas, "clip_scale_width", 0)
+        sh = to_int(opts_for_canvas, "clip_scale_height", 0)
+        if sw > 0 or sh > 0:
+            cw, ch = canvas_wh_from_clip_scale_opts(opts_for_canvas, seg_paths[0])
+            target_canvas = (cw, ch)
+
+    # 纯硬切 transitions（合并阶段不做视觉转场，转场已在 _maybe_merge 处理或这里统一）
+    plan_trans = list(segment_transition_ins) if segment_transition_ins else [None] * n
+    policy = "soft" if any(t in ("cross_dissolve", "fade_in", "fade_out") for t in plan_trans if t) else "hard_cut"
+    prof = ProductionProfile(
+        transition=TransitionPolicy(
+            policy=policy,
+            dissolve_sec=transition_dissolve_sec,
+            segment_fade_ms=segment_fade_ms,
+        )
+    )
+    kinds = resolve_segment_transitions(n, prof, plan_transitions=plan_trans)
+    logger.info("合并画面：分块统一画布（%d 段，画布=%s）", n, target_canvas)
+    compose_with_transitions(
+        seg_paths,
+        kinds,
+        dissolve_sec=transition_dissolve_sec,
+        segment_fade_ms=segment_fade_ms,
+        out_path=out,
+        render_opts=final_render_opts,
+        target_canvas=target_canvas,
+    )
+    return out
+
+
+def _replace_file(src: str, dst: str) -> None:
+    """跨盘符/占用安全的文件替换。"""
+    try:
+        os.replace(src, dst)
+    except Exception:
+        with open(src, "rb") as rf, open(dst, "wb") as wf:
+            wf.write(rf.read())
 
 
 def compose_final_video_moviepy(

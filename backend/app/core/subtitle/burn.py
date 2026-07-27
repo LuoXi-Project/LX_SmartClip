@@ -170,6 +170,9 @@ def _resolve_segment_render_concurrency(render_mode_opts: Dict[str, str], n_segm
     - 环境变量 SMARTCLIP_BURN_SEGMENT_CONCURRENCY 显式指定时优先。
     - 否则：NVENC 默认 2（消费级 N 卡会话数上限常为 3，留一路给后续 compose）；
       CPU 编码默认 min(4, cpu//2)。
+    - 段数很多时（>= 阈值）进一步收敛：每段还会触发 materialize 批量子进程 + 段渲染进程，
+      并发过高会导致同时拉起大量 ffmpeg 子进程（资源耗尽/超时/磁盘 IO 争抢），表现为
+      「切片多时合成失败」。收敛后单任务内 ffmpeg 子进程总数受控，保证稳定可成片。
     - 下限 1（即完全串行，等同旧行为）；n_segments<=1 时为 1。
     """
     raw = (os.environ.get("SMARTCLIP_BURN_SEGMENT_CONCURRENCY") or "").strip()
@@ -182,7 +185,14 @@ def _resolve_segment_render_concurrency(render_mode_opts: Dict[str, str], n_segm
         return 1
     # NVENC 保守：多路并发受限于显卡编码会话数。
     vc = (render_mode_opts.get("clip_vcodec") or "").strip().lower()
-    if vc in ("h264_nvenc", "hevc_nvenc"):
+    is_nvenc = vc in ("h264_nvenc", "hevc_nvenc")
+
+    # 段数阈值：超过则收敛并发，避免子进程爆机。
+    high_seg_threshold = 24
+    if n_segments >= high_seg_threshold:
+        # NVENC 会话数本就紧张，段多时直接串行；软编降到 2。
+        return 1 if is_nvenc else 2
+    if is_nvenc:
         return 2
     cpu = os.cpu_count() or 4
     return max(1, min(4, cpu // 2))
@@ -241,7 +251,10 @@ def burn_to_mp4(
     effective_style = _style_from_production(style, production_profile)
     seg_transitions = _collect_segment_transitions(segments, production_profile)
     tr_dissolve = 0.35
-    tr_fade_ms = 80
+    # 段间音频 micro-fade（消爆音）默认关闭：开启会把全部硬切拖进重编码路径
+    # （composer 的 need 判定 / compose_with_transitions 的 concat-copy 快路径都被 fade>0 跳过）。
+    # 仅当 production_profile 显式配置 segment_fade_ms 时才启用，保持画质/听感可配置。
+    tr_fade_ms = 0
     if production_profile:
         tr_dissolve = float(production_profile.transition.dissolve_sec)
         tr_fade_ms = int(production_profile.transition.segment_fade_ms)

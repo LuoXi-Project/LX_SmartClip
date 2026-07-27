@@ -123,8 +123,13 @@ def compose_with_transitions(
     segment_fade_ms: int = 80,
     out_path: str,
     render_opts: Optional[Dict[str, str]] = None,
+    target_canvas: Optional[Tuple[int, int]] = None,
 ) -> str:
-    """将多段视频按 transitions 合成；需要重编码。编码器优先走配置（如 h264_nvenc），未配则 libx264。"""
+    """将多段视频按 transitions 合成；需要重编码。编码器优先走配置（如 h264_nvenc），未配则 libx264。
+
+    target_canvas：显式指定统一画布（宽,高），优先于「取各段最大值」的兜底逻辑。
+    混合分辨率场景应传入 export 配置画布（如 1080p），避免把所有低清段放大到 4K。
+    """
     paths = list(seg_paths)
     if not paths:
         raise ValueError("seg_paths 为空")
@@ -177,13 +182,18 @@ def compose_with_transitions(
     d = max(0.05, min(float(dissolve_sec), 1.5))
     fade_a = max(0.0, segment_fade_ms / 1000.0)
 
-    target_w, target_h = _resolve_target_canvas(paths)
+    # 画布来源优先级：调用方显式传入（export 配置）> 各段最大值兜底。
+    if target_canvas is not None and target_canvas[0] > 0 and target_canvas[1] > 0:
+        target_w, target_h = target_canvas
+    else:
+        target_w, target_h = _resolve_target_canvas(paths)
     n = len(paths)
     logger.info(
-        "postprod xfade: %d 段, 目标画布 %dx%d",
+        "postprod xfade: %d 段, 目标画布 %dx%d%s",
         n,
         target_w,
         target_h,
+        "（配置）" if target_canvas is not None else "（最大值兜底）",
     )
 
     def _run_single_chain(

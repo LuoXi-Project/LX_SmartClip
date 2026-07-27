@@ -100,13 +100,26 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
 
         trims = getattr(seg, "clip_trims", None)
         if trims:
-            # 按 trims 顺序累加（同一 clip_id 多段拼接时不能用 dict 去重覆盖）
+            # 按 trims 顺序累加（同一 clip_id 多段拼接时不能用 dict 去重覆盖）。
+            # 每条 trim 的可用时长需 clamp 到「该 clip 内 clip_start_sec 之后剩余的可用长度」，
+            # 与 materialize_clip_paths_for_group 的 clamp 一致，避免请求时长超出真实 clip
+            # 长度导致字幕时间轴高估、与成片段落时长错位。
             total_tr = 0.0
             for t in trims:
                 try:
-                    total_tr += max(0.05, float(getattr(t, "duration_sec", 0) or 0))
+                    rel_st = float(getattr(t, "clip_start_sec", 0.0) or 0.0)
+                    span = float(getattr(t, "duration_sec", 0.0) or 0.0)
                 except Exception:
-                    total_tr += 0.05
+                    rel_st, span = 0.0, 0.0
+                cid = getattr(t, "clip_id", None)
+                clip_total = 0.0
+                if cid is not None:
+                    try:
+                        clip_total = float(clip_durations.get(cid, 0.0) or 0.0)
+                    except Exception:
+                        clip_total = 0.0
+                avail = max(0.05, clip_total - rel_st) if clip_total > 0.05 else span
+                total_tr += max(0.05, min(span, avail))
             durs.append(max(total_tr, 0.05))
             srcs.append("clip_trims")
             continue

@@ -11,6 +11,10 @@ class MatchRequest(BaseModel):
         None,
         description="单次匹配模式覆盖（auto/vector/text/llm_only）；不传则用全局 match_mode 配置",
     )
+    refine: Optional[bool] = Field(
+        None,
+        description="LLM 精排控制：True=强制启用 LLM 精排；False=跳过 LLM 精排（仅用初筛排序）；None=沿用默认行为",
+    )
 
 
 class ClipResult(BaseModel):

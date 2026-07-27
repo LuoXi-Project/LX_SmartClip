@@ -475,6 +475,7 @@ class Matcher:
         mode: MatchMode = "vector",
         min_llm_score: float = 0.0,
         min_similarity: float = 0.0,
+        refine: Optional[bool] = None,
     ) -> dict:
         video_ids = [v for v in (video_ids or []) if v]
         scoped_ids = video_ids or None
@@ -500,6 +501,12 @@ class Matcher:
         logger.info("[Matcher] 初筛候选: %d 个片段 (mode=%s)", len(candidates), mode)
 
         force_llm = mode == "llm_only"
+        # refine 显式控制：True=强制启用 LLM 精排；False=跳过 LLM 精排（仅用初筛排序）。
+        # None=保持原有行为（llm_only 强制启用；其余按候选数量自动决定）。
+        if refine is True:
+            force_llm = True
+        elif refine is False:
+            force_llm = False
         skip_llm = not force_llm and len(candidates) > _LLM_MAX_CANDIDATES
 
         if self.llm is not None and (force_llm or not skip_llm):

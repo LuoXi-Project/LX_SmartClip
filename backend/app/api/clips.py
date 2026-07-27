@@ -305,6 +305,49 @@ async def stream_clip(clip_id: str):
     return FileResponse(clip_path, media_type=media_type, filename=os.path.basename(clip_path))
 
 
+@router.get("/clips/{clip_id}/download")
+async def download_clip(clip_id: str):
+    """
+    下载单个视频片段原文件。
+
+    与 `/clips/{clip_id}/stream` 同源，但强制 `Content-Disposition: attachment`，
+    让浏览器走「下载」而非「播放」。文件名沿用存储 clip 的 basename。
+    """
+    db = await get_db_conn()
+    try:
+        cursor = await db.execute(
+            "SELECT clip_path, video_id, start_time, end_time FROM clips WHERE id = ?",
+            (clip_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"片段 '{clip_id}' 不存在")
+        clip_path = resolve_stored_path(row["clip_path"])
+        video_id = row["video_id"]
+        start_time = row["start_time"]
+    finally:
+        await db.close()
+
+    if not clip_path or not os.path.exists(clip_path):
+        raise HTTPException(status_code=404, detail="片段文件不存在")
+
+    # 命名规范：<video_id 前缀>_start<秒>.<ext>，便于多片段下载后区分
+    basename = os.path.basename(clip_path)
+    ext = os.path.splitext(basename)[1] or ".mp4"
+    try:
+        start_sec = f"{float(start_time):.1f}".replace(".", "p")
+    except (TypeError, ValueError):
+        start_sec = "0p"
+    vid_prefix = (video_id or "clip")[:8]
+    download_name = f"{vid_prefix}_start{start_sec}{ext}"
+
+    return FileResponse(
+        clip_path,
+        media_type="application/octet-stream",
+        filename=download_name,
+    )
+
+
 @router.get("/clips/{clip_id}")
 async def get_clip_meta(clip_id: str):
     """获取 clip 元信息（用于前端把 clip 关联回原视频）"""

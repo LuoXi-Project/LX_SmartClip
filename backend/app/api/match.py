@@ -152,6 +152,7 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
             mode=effective_mode,
             min_llm_score=min_llm_score,
             min_similarity=min_similarity,
+            refine=req.refine,
         )
 
         return MatchResponse(

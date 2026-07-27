@@ -396,9 +396,10 @@ async def clear_clips_for_video(video_id: str):
     db = await get_db_conn()
     try:
         # 先取出待删 clip_id，用于稍后清理向量库（SQL 删除后就查不到了）
-        rows = (
-            await db.execute("SELECT id FROM clips WHERE video_id = ?", (video_id,))
-        ).fetchall()
+        # 注意：aiosqlite 的 cursor.fetchall() 是协程，必须 await；
+        #       漏 await 会让 fetchall() 返回 coroutine，遍历时抛 'coroutine' object is not iterable。
+        cursor = await db.execute("SELECT id FROM clips WHERE video_id = ?", (video_id,))
+        rows = await cursor.fetchall()
         clip_ids = [r["id"] for r in rows] if rows else []
         await db.execute("DELETE FROM clips WHERE video_id = ?", (video_id,))
         await db.execute("UPDATE videos SET total_clips = 0 WHERE id = ?", (video_id,))

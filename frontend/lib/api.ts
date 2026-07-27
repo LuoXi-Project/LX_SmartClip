@@ -229,6 +229,9 @@ export interface SemanticSearchRequest {
   top_k?: number
   top_n?: number
   highlight_only?: boolean
+  match_mode?: MatchMode
+  /** LLM 精排控制：true=强制启用；false=跳过；不传=默认行为 */
+  refine?: boolean
   filters?: SemanticSearchFilters
 }
 
@@ -264,6 +267,14 @@ export const searchApi = {
     apiClient.post<unknown, SemanticSearchResponse>('/api/search/assets/semantic', payload),
   browseHighlights: (payload: HighlightBrowseRequest) =>
     apiClient.post<unknown, HighlightBrowseResponse>('/api/search/highlights', payload),
+}
+
+/**
+ * 片段原文件下载地址（GET /api/videos/clips/{clip_id}/download）。
+ * 与 stream 同源，但强制 attachment，浏览器走下载。
+ */
+export function clipDownloadUrl(clipId: string): string {
+  return `${API_BASE_URL}/api/videos/clips/${clipId}/download`
 }
 
 // 高光浏览（无需检索）

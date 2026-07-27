@@ -33,6 +33,14 @@ class SemanticSearchRequest(BaseModel):
     highlight_only: bool = Field(
         default=False, description="仅返回推测为高光的片段"
     )
+    match_mode: Optional[str] = Field(
+        default=None,
+        description="单次检索模式覆盖（auto/vector/text/llm_only）；不传则用全局 match_mode 配置",
+    )
+    refine: Optional[bool] = Field(
+        default=None,
+        description="LLM 精排控制：True=强制启用 LLM 精排；False=跳过 LLM 精排；None=沿用默认行为",
+    )
     filters: Optional[SemanticSearchFilters] = None
 
 
@@ -353,6 +361,8 @@ async def semantic_search_assets(payload: SemanticSearchRequest, request: Reques
         top_k=payload.top_k,
         top_n=payload.top_n,
         video_ids=(payload.filters.video_ids if payload.filters and payload.filters.video_ids else None),
+        match_mode=payload.match_mode,
+        refine=payload.refine,
     )
 
     # 由于 _match_clips_sync 是同步阻塞函数，这里沿用 /api/match 的封装方式：

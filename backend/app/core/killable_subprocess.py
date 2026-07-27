@@ -5,7 +5,6 @@ Windows 使用 multiprocessing spawn；任务目标须为模块顶层可 pickle 
 """
 from __future__ import annotations
 
-import asyncio
 import importlib
 import logging
 import multiprocessing as mp
@@ -83,5 +82,15 @@ async def run_killable_target(
     kwargs: dict | None = None,
     timeout_sec: float,
 ) -> Any:
-    """在子进程中执行 ``module.qualname(*args, **kwargs)``，超时则终止子进程并抛出 ``TimeoutError``。"""
-    return await asyncio.to_thread(_sync_run_target, module, qualname, args, kwargs or {}, timeout_sec)
+    """在子进程中执行 ``module.qualname(*args, **kwargs)``，超时则终止子进程并抛出 ``TimeoutError``。
+
+    使用专用 I/O 线程池（``run_in_blocking_executor``）而非 ``asyncio.to_thread``：本函数
+    线程绝大部分时间在 ``proc.join()`` 上阻塞等待子进程，属于 I/O 等待而非 CPU 工作。
+    若走默认 ThreadPoolExecutor，预处理流水线高并发时会占满默认线程池，导致普通 HTTP
+    请求（列表/流/静态文件等）排队 → 前端整体卡顿。
+    """
+    from app.core.blocking_pool import run_in_blocking_executor
+
+    return await run_in_blocking_executor(
+        _sync_run_target, module, qualname, args, kwargs or {}, timeout_sec
+    )

@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from fastapi import HTTPException
 from app.core.asr.types import ASRSegment, ASRTranscript
 from app.core.asr.corrector import correct_transcript
+from app.core.blocking_pool import run_heavy
 from app.core.embedder import Embedder
 from app.core.enricher import enrich_clip
 from app.core.killable_subprocess import run_killable_target
@@ -314,7 +315,7 @@ async def run_pipeline(
                     await reporter.send("asr", "running", f"加载 Whisper ({asr_model}) 主进程线程识别（仅提音频走可杀子进程）...")
                     from app.core.asr.whisper_asr import WhisperASR
 
-                    asr_instance = await loop.run_in_executor(None, lambda: WhisperASR(asr_model, language=asr_language or None))
+                    asr_instance = await run_heavy(WhisperASR, asr_model, language=asr_language or None)
                     logger.warning(
                         "SMARTCLIP_WHISPER_INPROCESS_TRANSCRIBE=1：Whisper 转写在主进程线程中执行，wait_for 超时后仍可能长期占用线程"
                     )
@@ -572,7 +573,7 @@ async def run_pipeline(
                             timeout_sec=PIPELINE_STEP_TIMEOUT_SEC,
                         )
                         return await asyncio.wait_for(
-                            loop.run_in_executor(None, asr_instance.transcribe_detailed, audio_path),
+                            run_heavy(asr_instance.transcribe_detailed, audio_path),
                             timeout=PIPELINE_STEP_TIMEOUT_SEC,
                         )
                     payload = await run_killable_target(
@@ -796,7 +797,9 @@ async def run_pipeline(
                                     u_dict = u.to_dict() if isinstance(u, TokenUsage) else None
                                     return {"embedding": emb_vec, "usage": u_dict}
 
-                                return await asyncio.wait_for(asyncio.to_thread(_do_embed_sync), timeout=embedding_timeout_sec)
+                                # 走专用 blocking_pool：embedding 是阻塞型 HTTP 调用，
+                                # 默认 asyncio.to_thread 会与普通 HTTP 请求争默认线程池。
+                                return await asyncio.wait_for(run_heavy(_do_embed_sync), timeout=embedding_timeout_sec)
                             return await run_killable_target(
                                 _PIPELINE_ISOLATED,
                                 "isolated_embed_text",
@@ -914,52 +917,48 @@ async def run_pipeline(
 
         async def _run_split_task():
             try:
+                # 重任务（ffmpeg 切分）走专用 blocking_pool，避免占用默认线程池导致
+                # 普通 HTTP 请求（list videos / stream / 静态文件等）排队卡顿。
                 if split_mode == "fixed":
                     await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None,
-                            lambda: splitter.split_by_fixed(
-                                video_path,
-                                fixed_duration,
-                                transcode_opts=transcode_opts,
-                                on_clip_created=_on_clip_created,
-                                on_progress=_on_split_progress,
-                                should_stop=cancel_event.is_set,
-                            ),
+                        run_heavy(
+                            splitter.split_by_fixed,
+                            video_path,
+                            fixed_duration,
+                            transcode_opts=transcode_opts,
+                            on_clip_created=_on_clip_created,
+                            on_progress=_on_split_progress,
+                            should_stop=cancel_event.is_set,
                         ),
                         timeout=_remaining_timeout(PIPELINE_SPLIT_TIMEOUT_SEC),
                     )
                 elif split_mode == "hybrid":
                     await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None,
-                            lambda: splitter.split_by_hybrid(
-                                video_path,
-                                scene_threshold,
-                                scene_min_scene_len,
-                                hybrid_max_segment_sec,
-                                fixed_duration,
-                                transcode_opts=transcode_opts,
-                                on_clip_created=_on_clip_created,
-                                on_progress=_on_split_progress,
-                                should_stop=cancel_event.is_set,
-                            ),
+                        run_heavy(
+                            splitter.split_by_hybrid,
+                            video_path,
+                            scene_threshold,
+                            scene_min_scene_len,
+                            hybrid_max_segment_sec,
+                            fixed_duration,
+                            transcode_opts=transcode_opts,
+                            on_clip_created=_on_clip_created,
+                            on_progress=_on_split_progress,
+                            should_stop=cancel_event.is_set,
                         ),
                         timeout=_remaining_timeout(PIPELINE_SPLIT_TIMEOUT_SEC),
                     )
                 else:
                     await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None,
-                            lambda: splitter.split_by_scene(
-                                video_path,
-                                scene_threshold,
-                                scene_min_scene_len,
-                                transcode_opts=transcode_opts,
-                                on_clip_created=_on_clip_created,
-                                on_progress=_on_split_progress,
-                                should_stop=cancel_event.is_set,
-                            ),
+                        run_heavy(
+                            splitter.split_by_scene,
+                            video_path,
+                            scene_threshold,
+                            scene_min_scene_len,
+                            transcode_opts=transcode_opts,
+                            on_clip_created=_on_clip_created,
+                            on_progress=_on_split_progress,
+                            should_stop=cancel_event.is_set,
                         ),
                         timeout=_remaining_timeout(PIPELINE_SPLIT_TIMEOUT_SEC),
                     )

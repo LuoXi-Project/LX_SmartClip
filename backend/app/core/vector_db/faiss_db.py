@@ -76,7 +76,8 @@ class FaissVectorDB(IVectorDB):
             logger.error("备份损坏文件失败: %s", backup_err)
 
     def _atomic_write_text(self, path: str, data: str) -> None:
-        """先写 .tmp 再 os.replace 原子替换，避免写入中途被中断导致文件半写损坏。"""
+        """先写 .tmp 再 os.replace 原子替换，避免写入中途被中断导致文件半写损坏。
+        Windows 下 os.replace 偶发 WinError 5（杀软扫描/文件句柄占用），做短暂重试。"""
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(data)
@@ -86,14 +87,31 @@ class FaissVectorDB(IVectorDB):
             except OSError:
                 # 某些文件系统（如网络挂载）不支持 fsync，忽略即可
                 pass
-        os.replace(tmp, path)
+        last_err = None
+        for attempt in range(5):
+            try:
+                os.replace(tmp, path)
+                return
+            except OSError as e:
+                last_err = e
+                time.sleep(0.1 * (attempt + 1))
+        raise OSError(f"原子替换失败（重试 5 次）: {path} -> {last_err}")
 
     def _save(self) -> None:
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
-        # FAISS 索引同样走原子写：先写到临时文件再替换
+        # FAISS 索引同样走原子写：先写到临时文件再替换；Windows 下偶发占用做短暂重试
         tmp_index = f"{self.index_path}.tmp"
         self._faiss.write_index(self._index, tmp_index)
-        os.replace(tmp_index, self.index_path)
+        last_err = None
+        for attempt in range(5):
+            try:
+                os.replace(tmp_index, self.index_path)
+                break
+            except OSError as e:
+                last_err = e
+                time.sleep(0.1 * (attempt + 1))
+        else:
+            raise OSError(f"FAISS 索引原子替换失败（重试 5 次）: {last_err}")
 
         payload = json.dumps({"embeddings": self._embeddings}, ensure_ascii=False)
         self._atomic_write_text(self.mapping_path, payload)
@@ -116,6 +134,24 @@ class FaissVectorDB(IVectorDB):
         self._embeddings[clip_id] = [float(x) for x in embedding]
         self._rebuild_index(save=True)
         logger.info("向量已写入(FAISS): %s", clip_id)
+
+    def add_embeddings(self, items: List[tuple]) -> int:
+        """批量写入向量，只触发一次 rebuild + 落盘。items=[(clip_id, embedding), ...]。
+        维度不匹配的条目会被跳过并记 warning。返回实际写入数量。"""
+        added = 0
+        for clip_id, embedding in items:
+            if len(embedding) != self.vector_dimension:
+                logger.warning(
+                    "跳过向量 %s: 维度不匹配 期望 %d 实际 %d",
+                    clip_id, self.vector_dimension, len(embedding),
+                )
+                continue
+            self._embeddings[clip_id] = [float(x) for x in embedding]
+            added += 1
+        if added:
+            self._rebuild_index(save=True)
+            logger.info("批量写入向量(FAISS): %d 个", added)
+        return added
 
     def search(
         self,
@@ -175,6 +211,18 @@ class FaissVectorDB(IVectorDB):
         self._embeddings.pop(clip_id, None)
         self._rebuild_index(save=True)
         logger.info("向量已删除(FAISS): %s", clip_id)
+
+    def delete_embeddings(self, clip_ids: List[str]) -> int:
+        """批量删除向量，只触发一次 rebuild + 落盘。返回实际删除的数量。"""
+        removed = 0
+        for cid in clip_ids:
+            if cid in self._embeddings:
+                self._embeddings.pop(cid, None)
+                removed += 1
+        if removed:
+            self._rebuild_index(save=True)
+            logger.info("批量删除向量(FAISS): %d 个", removed)
+        return removed
 
     def get_vector_dimension(self) -> int:
         return self.vector_dimension

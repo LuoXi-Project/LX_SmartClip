@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -12,6 +14,8 @@ from moviepy import AudioFileClip
 
 from app.models.bgm import BgmTrack, BgmUpdatePayload
 from app.utils.paths import ensure_storage_subpath
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bgm", tags=["bgm"])
 
@@ -126,15 +130,32 @@ def _load_manifest() -> List[dict]:
             return [x for x in data if isinstance(x, dict)]
         if isinstance(data, dict) and isinstance(data.get("tracks"), list):
             return [x for x in data["tracks"] if isinstance(x, dict)]
-    except Exception:
+    except (json.JSONDecodeError, OSError) as e:
+        # manifest 损坏（多半是上次写入被中断截断）：备份后回退为空，避免拖垮 BGM 接口
+        logger.error("BGM manifest 损坏，回退为空: path=%s err=%s", _BGM_MANIFEST_PATH, e)
+        try:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            backup = f"{_BGM_MANIFEST_PATH}.corrupt.{ts}"
+            os.replace(_BGM_MANIFEST_PATH, backup)
+            logger.warning("损坏的 BGM manifest 已备份为: %s", backup)
+        except OSError as backup_err:
+            logger.error("备份损坏的 BGM manifest 失败: %s", backup_err)
         return []
     return []
 
 
 def _save_manifest(items: List[dict]) -> None:
     _ensure_dir()
-    with open(_BGM_MANIFEST_PATH, "w", encoding="utf-8") as f:
+    # 原子写：先写 .tmp 再 os.replace，避免写入中途被中断导致 manifest 半写损坏
+    tmp = _BGM_MANIFEST_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    os.replace(tmp, _BGM_MANIFEST_PATH)
 
 
 def _scan_files() -> List[str]:

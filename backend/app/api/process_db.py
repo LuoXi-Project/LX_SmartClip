@@ -395,11 +395,27 @@ async def update_clip_asr(clip_id: str, asr_text: str, asr_segments_json: str | 
 async def clear_clips_for_video(video_id: str):
     db = await get_db_conn()
     try:
+        # 先取出待删 clip_id，用于稍后清理向量库（SQL 删除后就查不到了）
+        rows = (
+            await db.execute("SELECT id FROM clips WHERE video_id = ?", (video_id,))
+        ).fetchall()
+        clip_ids = [r["id"] for r in rows] if rows else []
         await db.execute("DELETE FROM clips WHERE video_id = ?", (video_id,))
         await db.execute("UPDATE videos SET total_clips = 0 WHERE id = ?", (video_id,))
         await db.commit()
     finally:
         await db.close()
+
+    # 同步清理向量库，避免残留孤儿；放线程池避免阻塞事件循环；软失败不阻断主流程
+    if clip_ids:
+        try:
+            from app.core.vector_db.cleanup import purge_clip_vectors
+            from app.core.blocking_pool import run_heavy
+            removed = await run_heavy(purge_clip_vectors, clip_ids)
+            if removed:
+                logger.info("清理 video=%s 的 %d 个 clip 向量，删除 %d 个", video_id, len(clip_ids), removed)
+        except Exception as e:
+            logger.warning("清理 video=%s 向量失败（已忽略）: %s", video_id, e)
 
 
 async def insert_clip_to_db(video_id: str, clip) -> str:

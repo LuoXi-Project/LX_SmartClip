@@ -584,6 +584,18 @@ async def delete_video(video_id: str):
     finally:
         await db.close()
 
+    # 同步清理向量库中该视频所有 clip 的向量，避免残留孤儿
+    # （SQL 删除已在上面提交，向量清理走软失败：失败只记日志，不影响视频删除结果）
+    # 放线程池避免阻塞事件循环（FAISS 写 100MB 文件耗时较长）
+    try:
+        from app.core.vector_db.cleanup import purge_video_vectors
+        from app.core.blocking_pool import run_heavy
+        removed = await run_heavy(purge_video_vectors, video_id)
+        if removed:
+            logger.info("删除视频 %s 时清理了 %d 个向量", video_id, removed)
+    except Exception as e:
+        logger.warning("删除视频 %s 时清理向量失败（已忽略）: %s", video_id, e)
+
     material_root = ensure_storage_subpath(video_id)
     if os.path.isdir(material_root):
         try:

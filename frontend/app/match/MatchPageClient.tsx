@@ -128,6 +128,8 @@ export default function MatchPage() {
     setMatchSubtitleStyle,
     exportMode,
     setMatchExportMode,
+    manualTtsAlign,
+    setManualTtsAlign,
     matchMode: mode,
     autoTemplateEnabled,
     setAutoTemplateEnabled,
@@ -987,12 +989,8 @@ export default function MatchPage() {
           export_backend: exportBackend,
           strict_use_client_srt: strictUseClientSrt,
           bgm: buildManualBgmPayload(),
-          ...(mode === 'audio_match'
-            ? {
-                tts_align: { policy: 'loop_video_to_cover' as const },
-                require_tts_audio: true,
-              }
-            : {}),
+          tts_align: { ...manualTtsAlign },
+          require_tts_audio: mode === 'audio_match',
         })
         const burnJid = burnJob.job_id
         const burnStreamUrl = (burnJob.stream_url || '').startsWith('/')
@@ -1072,9 +1070,7 @@ export default function MatchPage() {
           style: subtitleStyle,
           project_name: projectName,
           strict_use_client_srt: strictUseClientSrt,
-          ...(mode === 'audio_match'
-            ? { tts_align: { policy: 'loop_video_to_cover' as const } }
-            : {}),
+          tts_align: { ...manualTtsAlign },
         })
         if (res.mode === 'direct' && res.local_path) {
           toast.success(`剪映草稿已写入：${res.local_path}`)
@@ -1110,6 +1106,7 @@ export default function MatchPage() {
           normalize_audio: true,
           export_backend: exportBackend,
           bgm: buildManualBgmPayload(),
+          tts_align: { ...manualTtsAlign },
         })
         const exportJid = exportJob.job_id
         const exportStreamUrl = (exportJob.stream_url || '').startsWith('/')
@@ -1181,6 +1178,7 @@ export default function MatchPage() {
           style: subtitleStyle,
           project_name: projectName,
           include_subtitle: subtitleEnabled,
+          tts_align: { ...manualTtsAlign },
         })
         if (res.mode === 'direct' && res.local_path) {
           toast.success(`剪映草稿已写入：${res.local_path}`)
@@ -1863,6 +1861,8 @@ export default function MatchPage() {
           exporting={exporting} exportError={exportError} onExport={handleExport}
           subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
           srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
+          ttsAlign={manualTtsAlign}
+          onTtsAlignChange={(patch) => setManualTtsAlign({ ...manualTtsAlign, ...patch })}
           matchMode={mode}
         />
       )}

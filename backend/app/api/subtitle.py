@@ -635,6 +635,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         export_backend=(req.export_backend or export_backend_cfg),
         materialize_from_source=req.materialize_from_source,
         production_profile=getattr(req, "production_profile", None),
+        tts_align=getattr(req, "tts_align", None),
     )
 
     if not saved_path or not os.path.exists(saved_path):

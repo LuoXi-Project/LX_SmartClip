@@ -564,6 +564,11 @@ export interface ExportOriginalRequest {
   bgm?: BgmMixConfigApi
   /** 默认 true：从原始完整视频裁剪；false：用预处理 clip */
   materialize_from_source?: boolean
+  /**
+   * 画面时长 < 配音时的补足策略。原声导出本身不消费此字段（后端走 render_original_segment），
+   * 保留仅为与「一键成片」请求体对称、便于前端统一携带用户所选策略。
+   */
+  tts_align?: TtsVideoAlignConfigApi | null
 }
 
 /** 仅剪映草稿 ZIP，不烧录 MP4 */

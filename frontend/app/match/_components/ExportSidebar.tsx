@@ -2,6 +2,8 @@ import { Subtitles, Loader2 } from 'lucide-react'
 import type { ExportMode, Segment } from './types'
 import type { MatchWorkspaceMode } from './matchModeTypes'
 import { isAutoLikeMode, isManualLikeMode } from './matchModeTypes'
+import type { TtsVideoAlignConfigApi } from '@/lib/api'
+import { TtsAlignPolicySelect } from './TtsAlignPolicySelect'
 
 export function ExportSidebar({
   segments,
@@ -14,6 +16,8 @@ export function ExportSidebar({
   onToggleSubtitle,
   srtReady,
   generatingSrt,
+  ttsAlign,
+  onTtsAlignChange,
   /** 方案驱动模式（自动 / 模板 / 口播快剪）：隐藏段落进度与底部导出，成片在主区方案卡片 */
   matchMode = 'manual',
 }: {
@@ -27,6 +31,9 @@ export function ExportSidebar({
   onToggleSubtitle: (v: boolean) => void
   srtReady: boolean
   generatingSrt: boolean
+  /** 手动匹配成片：画面时长 < 配音时的补足策略 */
+  ttsAlign: TtsVideoAlignConfigApi
+  onTtsAlignChange: (patch: Partial<TtsVideoAlignConfigApi>) => void
   matchMode?: MatchWorkspaceMode
 }) {
   const readySegs  = segments.filter((s) => s.clips.length > 0)
@@ -98,6 +105,19 @@ export function ExportSidebar({
               </div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* 成片时长策略：画面时长 < 配音时如何补足；zip 仅打包素材不合成，隐藏 */}
+      {isManualLikeMode(matchMode) && exportMode !== 'zip' && (
+        <div className="px-5 py-4 border-b border-slate-800">
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-3">成片时长策略</p>
+          <TtsAlignPolicySelect
+            value={ttsAlign}
+            onChange={onTtsAlignChange}
+            basicOnly
+            className="!space-y-0"
+          />
         </div>
       )}
 

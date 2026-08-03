@@ -247,4 +247,7 @@ class ExportOriginalRequest(BaseModel):
     # 默认 True：从原始完整视频按时间窗裁剪拼接；False：仅用预处理 clip（旧行为）
     materialize_from_source: bool = True
     production_profile: Optional[ProductionProfile] = None
+    # 原声导出本不依赖 TTS 对齐策略；保留字段仅为与「一键成片」请求体对称，
+    # 便于前端统一携带所选策略（render_mode='original' 路径不会消费它）。
+    tts_align: Optional[TtsVideoAlignConfig] = None
 

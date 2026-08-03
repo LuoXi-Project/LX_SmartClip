@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AutoEditPlanApi, AutoEditMode, Video } from './api'
+import type { AutoEditPlanApi, AutoEditMode, TtsVideoAlignConfigApi, Video } from './api'
 import type { Segment } from '@/app/match/_components/types'
 import type { MatchWorkspaceMode } from '@/app/match/_components/matchModeTypes'
 import { normalizeMatchWorkspaceMode } from '@/app/match/_components/matchModeTypes'
 import type { ExportMode, SubtitleStyle } from '@/lib/subtitle-types'
 import { DEFAULT_SUBTITLE_STYLE } from '@/lib/subtitle-types'
+import { DEFAULT_VOICEOVER_TTS_ALIGN } from '@/lib/voiceoverRedub'
 
 export type { Video }
 export type TemplatePresetSource = 'library' | 'replica'
@@ -31,6 +32,9 @@ export interface MatchPageState {
   subtitleEnabled: boolean
   subtitleStyle: SubtitleStyle
   exportMode: ExportMode
+  /** 手动匹配成片：画面时长 < 配音时的补足策略（循环/定格/保留画面等），跨刷新保留 */
+  manualTtsAlign: TtsVideoAlignConfigApi
+  setManualTtsAlign: (v: TtsVideoAlignConfigApi | ((prev: TtsVideoAlignConfigApi) => TtsVideoAlignConfigApi)) => void
   /** 工作区：手动 / 口播快剪 / 自动成片实验 / 模板剪辑 */
   matchMode: MatchWorkspaceMode
   /** 模板剪辑预设 */
@@ -126,6 +130,7 @@ export type MatchPersistedSlice = Pick<
   | 'subtitleEnabled'
   | 'subtitleStyle'
   | 'exportMode'
+  | 'manualTtsAlign'
   | 'matchMode'
   | 'templatePreset'
   | 'templatePresetSource'
@@ -244,6 +249,8 @@ export const useMatchStore = create<MatchPageState>()(
       subtitleEnabled: false,
       subtitleStyle: DEFAULT_SUBTITLE_STYLE,
       exportMode: 'zip' as ExportMode,
+      // 默认「循环本段画面」：与历史 audio_match 行为一致，升级无感
+      manualTtsAlign: { ...DEFAULT_VOICEOVER_TTS_ALIGN, policy: 'loop_video_to_cover' },
       matchMode: 'manual' as const,
       templatePreset: 'ecommerce',
       templatePresetSource: 'library' as const,
@@ -279,6 +286,11 @@ export const useMatchStore = create<MatchPageState>()(
       setMatchSubtitleEnabled: (subtitleEnabled) => set({ subtitleEnabled }),
       setMatchSubtitleStyle: (subtitleStyle) => set({ subtitleStyle }),
       setMatchExportMode: (exportMode) => set({ exportMode }),
+      setManualTtsAlign: (v) =>
+        set((state) => ({
+          manualTtsAlign:
+            typeof v === 'function' ? (v as (prev: TtsVideoAlignConfigApi) => TtsVideoAlignConfigApi)(state.manualTtsAlign) : v,
+        })),
       setMatchMode: (matchMode) => set({ matchMode }),
       setTemplatePreset: (templatePreset) => set({ templatePreset }),
       setTemplatePresetSource: (templatePresetSource) => set({ templatePresetSource }),
@@ -350,6 +362,7 @@ export const useMatchStore = create<MatchPageState>()(
         subtitleEnabled: state.subtitleEnabled,
         subtitleStyle: state.subtitleStyle,
         exportMode: state.exportMode,
+        manualTtsAlign: state.manualTtsAlign,
         matchMode: state.matchMode,
         templatePreset: state.templatePreset,
         templatePresetSource: state.templatePresetSource,
@@ -435,6 +448,22 @@ export const useMatchStore = create<MatchPageState>()(
           em !== 'jianying_original'
         ) {
           merged.exportMode = 'zip'
+        }
+        // 兼容旧持久化（无 manualTtsAlign）或脏数据：回填默认「循环本段画面」
+        const alignPolicies = [
+          'preserve_video_duration',
+          'loop_video_to_cover',
+          'loop_playlist_to_cover',
+          'freeze_last_frame',
+          'stretch_audio',
+          'stretch_video',
+        ]
+        if (
+          !merged.manualTtsAlign ||
+          typeof merged.manualTtsAlign !== 'object' ||
+          !alignPolicies.includes((merged.manualTtsAlign as TtsVideoAlignConfigApi).policy)
+        ) {
+          merged.manualTtsAlign = { ...DEFAULT_VOICEOVER_TTS_ALIGN, policy: 'loop_video_to_cover' }
         }
         if (!Array.isArray(merged.autoPlans)) merged.autoPlans = []
         if (!merged.autoRealizeDownloads || typeof merged.autoRealizeDownloads !== 'object') {

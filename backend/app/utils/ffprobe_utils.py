@@ -4,11 +4,33 @@ import json
 import logging
 import os
 import subprocess
+from math import gcd
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.utils.bin_paths import ffprobe_bin
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_frame_rate(raw: str) -> Optional[Tuple[int, int]]:
+    """把 ffprobe 的 r_frame_rate（如 '30/1'、'30000/1001'）约分成 (num, den)；非法返回 None。
+
+    约分后比较，规避 '30/1' 与 '60/2' 这类同值不同写法导致的误判。
+    """
+    if not raw:
+        return None
+    text = raw.strip().splitlines()[0].strip() if raw.strip() else ""
+    if "/" not in text:
+        return None
+    try:
+        n_str, d_str = text.split("/", 1)
+        num, den = int(n_str), int(d_str)
+    except Exception:
+        return None
+    if den <= 0 or num < 0:
+        return None
+    g = gcd(num, den) or 1
+    return (num // g, den // g)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +232,45 @@ def probe_audio_sample_rate(
     except Exception:
         log.warning("ffprobe 探测音频采样率失败，回退 %s: %s", default, path)
         return default
+
+
+def probe_video_frame_rate(
+    path: str,
+    *,
+    timeout: int = 600,
+    logger_: Optional[logging.Logger] = None,
+) -> Optional[Tuple[int, int]]:
+    """探测主视频流帧率，返回约分后的 (num, den)；失败返回 None。
+
+    用于判断多段是否「帧率/时间基准一致」：concat demuxer 与 -c copy 拼接都要求
+    各段 time_base 一致，否则段边界会吐出乱序 DTS → ffmpeg 丢帧 + 复制上一帧，
+    表现为「部分段画面卡死、声音正常」。用 r_frame_rate（基础帧率）约分后比较。
+    """
+    log = logger_ or logger
+    hit, cached = _probe_cache_get(path, "fr")
+    if hit:
+        return cached  # type: ignore[return-value]
+    probe = _run_ffprobe(
+        [
+            ffprobe_bin(),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        timeout=timeout,
+    )
+    raw = (probe.stdout.decode(errors="replace") or "").strip()
+    val = _parse_frame_rate(raw)
+    if val is None:
+        log.warning("ffprobe 探测视频帧率失败: %s", path)
+    _probe_cache_set(path, "fr", val)
+    return val
 
 
 def has_video_stream(

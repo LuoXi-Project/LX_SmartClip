@@ -134,6 +134,25 @@ def _trim_list_from_seg(seg, clip_ids: List[str]) -> Optional[List[Tuple[float, 
     return out
 
 
+def _force_no_bframes(codec_args: List[str]) -> List[str]:
+    """关闭 B 帧（-bf 0）：段成品后续走 concat copy 拼接，无 B 帧保证段间无跨段参考。
+
+    移除已有 -bf 参数，统一设为 0；不存在则追加。
+    """
+    out = list(codec_args)
+    i = 0
+    while i < len(out):
+        if out[i] == "-bf":
+            if i + 1 < len(out):
+                out[i + 1] = "0"
+            else:
+                out.append("0")
+            return out
+        i += 1
+    out.extend(["-bf", "0"])
+    return out
+
+
 def _force_audio_copy(codec_args: List[str]) -> List[str]:
     """
     仅用于无音频滤镜的中间预处理：将音频设置为 stream copy，避免重复 AAC 编码。
@@ -1292,6 +1311,9 @@ def render_tts_segment(
     # "Input link parameters ... do not match ..."。
     seg_codec_args = force_video_reencode(build_render_codec_args(render_opts), render_opts=render_opts)
     seg_codec_args = _force_audio_reencode(seg_codec_args, acodec="aac", abitrate_kbps=128)
+    # 关闭 B 帧：TTS 段成品后续走 concat copy 拼接，无 B 帧可保证段间无跨段参考，
+    # 配合统一画布/参数实现安全 copy（避免之前 concat copy 卡死的三次教训）。
+    seg_codec_args = _force_no_bframes(seg_codec_args)
 
     concat_list = os.path.join(tmp, f"seg_{seg_idx:03d}_vconcat.txt")
     write_concat_list(paths_group, concat_list)

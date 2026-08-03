@@ -4,7 +4,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence
 
-from app.utils.ffprobe_utils import probe_audio_sample_rate, probe_video_dimensions
+from app.utils.ffprobe_utils import probe_audio_sample_rate, probe_video_dimensions, probe_video_frame_rate
 
 from .ass_builder import build_ass
 from app.utils.ffmpeg_utils import run_ffmpeg, write_concat_list
@@ -59,18 +59,48 @@ def _run_export_encode_attempts(
 
 
 def _segments_uniform_for_stream_copy(seg_paths: List[str]) -> bool:
-    """各段视频宽高、音频采样率一致时，concat 可走 stream copy（快）。"""
+    """各段视频宽高、帧率、音频采样率一致时，concat 可走 stream copy（快）。
+
+    必须校验帧率/时间基准：concat demuxer + -c copy 是字节级拼接，对段边界
+    time_base 细微差异极敏感 —— 帧率不一致（如 30fps `1/15360` 与 25fps `1/12800`
+    混排）时 demuxer 吐出乱序 DTS，ffmpeg 丢帧并复制上一帧，实测造成「部分段
+    画面卡死、声音正常」。帧率探测失败时也视为不统一，保守走重编码。
+    """
     if not seg_paths:
         return False
     w0, h0 = probe_video_dimensions(seg_paths[0], logger_=logger)
     sr0 = probe_audio_sample_rate(seg_paths[0], logger_=logger)
+    fr0 = probe_video_frame_rate(seg_paths[0], logger_=logger)
+    if fr0 is None:
+        return False
     for p in seg_paths[1:]:
         w, h = probe_video_dimensions(p, logger_=logger)
         if (w, h) != (w0, h0):
             return False
         if probe_audio_sample_rate(p, logger_=logger) != sr0:
             return False
+        if probe_video_frame_rate(p, logger_=logger) != fr0:
+            return False
     return True
+
+
+def _resolve_output_fps(opts: Dict[str, str], seg_paths: List[str]) -> int:
+    """单次编码出片的目标输出帧率。
+
+    必须显式指定输出帧率：concat filter 在输入帧率不一致（如 30/25 混排）时，
+    输出帧率未定义，ffmpeg vsync 会失控疯狂复制帧（time 卡在 0、dup 爆涨）直至
+    进程卡死。取各段最大帧率作为目标（只对低帧率段做帧重复、drop=0，不丢运动）；
+    clip_fps 配置优先；探测失败回退 30。
+    """
+    cfg = to_int(opts, "clip_fps", 0)
+    if cfg > 0:
+        return cfg
+    best = 0.0
+    for p in seg_paths:
+        fr = probe_video_frame_rate(p, logger_=logger)
+        if fr and fr[1] > 0:
+            best = max(best, fr[0] / fr[1])
+    return int(round(best)) if best > 0 else 30
 
 
 def _maybe_merge_segments_with_transitions(
@@ -302,6 +332,185 @@ def compose_final_video(
     return out_path
 
 
+def _try_single_encode_concat_burn(
+    *,
+    seg_paths: List[str],
+    srt_entries: list,
+    style: "SubtitleStyle",
+    fonts_dir: str,
+    tmp: str,
+    project_name: str,
+    final_render_opts: Dict[str, str],
+    normalize_audio: bool,
+    prefer_gpu: bool,
+    segment_transition_ins: Optional[Sequence[Optional[str]]],
+    transition_dissolve_sec: float,
+    segment_fade_ms: int,
+) -> Optional[str]:
+    """合并 + 烧字幕 + 成片滤镜 → 单条 filter_complex，只编码一次。
+
+    适用条件：纯硬切（无 xfade/fade）+ 无 micro-fade。此时合并无需视觉转场，
+    可把「每段 scale+pad → concat → ass 烧字幕 → 成片滤镜」塞进同一条 filter_complex，
+    一次编码出片，省去「先合并编码一次、再烧字幕编码一次」的双重全量编码。
+
+    画布：用 _resolve_canvas_from_opts 解析（export 配置优先，否则取各段占比最高分辨率），
+    与 compose_with_transitions 的画布语义一致。
+    返回 out_path 表示成功；None 表示不适用/失败，调用方回退原两步管线。
+    """
+    # 仅纯硬切 + 无 micro-fade 适用（xfade/fade 需 compose_with_transitions 处理转场）
+    if segment_transition_ins:
+        non_hard = [t for t in segment_transition_ins if t in ("cross_dissolve", "fade_in", "fade_out")]
+        if non_hard or segment_fade_ms > 0:
+            return None
+    n = len(seg_paths)
+    if n < 2:
+        return None
+
+    try:
+        from app.core.postprod.transitions import _resolve_target_canvas, _audio_prep_filter
+        from .render_opts import build_render_codec_args as _brca
+
+        opts_for_vf = sanitize_merged_opts_for_final_burn(final_render_opts, seg_paths[0])
+        extra_filters = build_extra_video_filters(opts_for_vf)
+        # 画布：export 配置 > 各段占比最高
+        sw = to_int(opts_for_vf, "clip_scale_width", 0)
+        sh = to_int(opts_for_vf, "clip_scale_height", 0)
+        if sw > 0 and sh > 0:
+            target_w, target_h = sw, sh
+        else:
+            target_w, target_h = _resolve_target_canvas(seg_paths)
+
+        # 烧字幕滤镜（作用于 concat 后的整片画面）
+        burn_vf = ""
+        if srt_entries:
+            video_size = (target_w, target_h)
+            ass_path = os.path.join(tmp, f"{project_name}__subtitles.ass")
+            with open(ass_path, "w", encoding="utf-8") as f:
+                f.write(build_ass(srt_entries, style, video_size))
+            logger.info("ASS 字幕已写入: %s (%d 条)", ass_path, len(srt_entries))
+            ass_filter_path = ass_path.replace("\\", "/").replace(":", "\\:")
+            burn_vf = f"ass='{ass_filter_path}'"
+            if fonts_dir and os.path.isdir(fonts_dir):
+                safe_fonts = fonts_dir.replace("\\", "/").replace(":", "\\:")
+                burn_vf = f"ass='{ass_filter_path}':fontsdir='{safe_fonts}'"
+        if extra_filters:
+            burn_vf = (burn_vf + "," if burn_vf else "") + ",".join(extra_filters)
+
+        out_path = os.path.join(tmp, f"{project_name}.mp4")
+        tw, th = target_w, target_h
+        # 显式输出帧率：concat filter 在混合帧率输入下输出帧率未定义，vsync 会失控
+        # 复制帧直至卡死（实测 22 段 30/25 混排时 time 卡 0、dup 爆涨）。取各段最大帧率，
+        # drop=0 不丢运动。对 demuxer 快路径无害（统一帧率时 -r 与原帧率一致）。
+        target_fps = _resolve_output_fps(opts_for_vf, seg_paths)
+
+        # 快路径：所有段已统一画布 + 帧率一致 + 无成片额外滤镜 → concat demuxer + ass + 重编码。
+        # concat demuxer 顺序读段文件（vs filter_complex 同时打开 N 输入），解码调度更简单，
+        # 实测比 N 输入 filter 快 ~15%。
+        #
+        # 关键：demuxer 要求各段 time_base 一致，否则段边界吐乱序 DTS → 丢帧 + 复制上一帧
+        # → 「部分段画面卡死、声音正常」（口播/TTS 场景 30fps 与 25fps 段混排时必现）。
+        # 因此 demuxer 快路径只在帧率也一致时启用；帧率不一致时改走下方 filter_complex
+        # （解码每段并各自 setpts 重排时间戳，彻底规避）。
+        fr0 = probe_video_frame_rate(seg_paths[0], logger_=logger)
+        all_uniform = (
+            fr0 is not None
+            and all(probe_video_dimensions(p, default=(0, 0), logger_=logger) == (tw, th) for p in seg_paths)
+            and all(probe_video_frame_rate(p, logger_=logger) == fr0 for p in seg_paths)
+        )
+        if all_uniform and not extra_filters:
+            logger.info("FFmpeg concat-demuxer+burn（%d 段统一画布，顺序读+1次编码）", n)
+            concat_list = os.path.join(tmp, f"{project_name}__demux_concat.txt")
+            write_concat_list(seg_paths, concat_list)
+            # 烧字幕滤镜（作用在 concat 后的整片）
+            vf_filter = "setpts=PTS-STARTPTS"
+            if burn_vf:
+                vf_filter = f"setpts=PTS-STARTPTS,{burn_vf}"
+
+            def _cmd_demux(concat_codec_args: List[str]) -> List[str]:
+                return [
+                    "-fflags", "+genpts",
+                    "-f", "concat", "-safe", "0",
+                    "-i", concat_list,
+                    "-vf", vf_filter,
+                    "-r", str(target_fps),
+                    "-c:a", "aac" if normalize_audio else "copy",
+                    *concat_codec_args,
+                    "-avoid_negative_ts", "make_zero",
+                    "-movflags", "+faststart",
+                    out_path,
+                ]
+
+            _run_export_encode_attempts(
+                prefer_gpu=prefer_gpu,
+                final_render_opts=final_render_opts,
+                normalize_audio=normalize_audio,
+                cmd_for_codec=_cmd_demux,
+                desc="concat-demuxer+burn",
+            )
+            logger.info("FFmpeg concat-demuxer+burn 完成")
+            return out_path
+
+        # 通用路径：filter_complex（段不统一需 scale，或有成片额外滤镜）。
+        # 注意：多输入 filter_graph 下「不要」用大 -thread_queue_size（如 1024）。
+        # 实测 22 输入 × thread_queue 1024 会导致 ffmpeg 预缓冲爆内存 → 进程假死（用户反馈
+        # 「卡在最后一步没反应」）。不指定 thread_queue 或用小值（默认）反而稳定。
+        parts: List[str] = []
+        inputs: List[str] = []
+        for i, p in enumerate(seg_paths):
+            inputs += ["-i", p]
+            w, h = probe_video_dimensions(p, default=(tw, th), logger_=logger)
+            if w != tw or h != th:
+                logger.info("postprod single-encode: seg_%d %dx%d -> %dx%d", i, w, h, tw, th)
+            if w == tw and h == th:
+                vf = f"[{i}:v]setsar=1,setpts=PTS-STARTPTS"
+            else:
+                vf = (
+                    f"[{i}:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,"
+                    f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS"
+                )
+            sr = probe_audio_sample_rate(p, logger_=logger)
+            af = _audio_prep_filter(i, sr)
+            parts.append(vf + f"[v{i}]")
+            parts.append(af + f"[a{i}]")
+        cat = "".join(f"[v{i}][a{i}]" for i in range(n))
+        if burn_vf:
+            parts.append(f"{cat}concat=n={n}:v=1:a=1[vcat][acat]")
+            parts.append(f"[vcat]{burn_vf}[vout]")
+            audio_out = "[acat]"
+        else:
+            parts.append(f"{cat}concat=n={n}:v=1:a=1[vout][aout]")
+            audio_out = "[aout]"
+        fc = ";".join(parts)
+
+        codec_args = _brca(final_render_opts)
+
+        def _cmd(concat_codec_args: List[str]) -> List[str]:
+            return [
+                *inputs,
+                "-filter_complex", fc,
+                "-map", "[vout]", "-map", audio_out,
+                "-r", str(target_fps),
+                *concat_codec_args,
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart",
+                out_path,
+            ]
+
+        logger.info("FFmpeg single-encode concat+burn（%d 段，1 次编码出片）", n)
+        _run_export_encode_attempts(
+            prefer_gpu=prefer_gpu,
+            final_render_opts=final_render_opts,
+            normalize_audio=normalize_audio,
+            cmd_for_codec=_cmd,
+            desc="single-encode concat+burn",
+        )
+        logger.info("FFmpeg single-encode concat+burn 完成")
+        return out_path
+    except Exception as e:
+        logger.warning("single-encode concat+burn 失败，回退两步管线: %s", e)
+        return None
+
+
 def _merge_segments_to_single(
     *,
     seg_paths: List[str],
@@ -414,6 +623,30 @@ def compose_final_video_moviepy(
     t>audio_dur 处抛错（口播快剪等场景易出现）。现第一步改为与 compose_final_video 相同的 FFmpeg
     拼接逻辑（不在此阶段套用 export 缩放/帧率，与旧 MoviePy 第一步语义一致）。
     """
+    # 单次编码出片：纯硬切（无 xfade/fade、无 micro-fade）时，把「合并 + 烧字幕 + 成片滤镜」
+    # 塞进一条 filter_complex，一次编码出片。省去「先合并编码一次、再烧字幕编码一次」的双重全量编码
+    # （混剪/TTS 多段场景可省近一半编码时间）。不适配（有转场）或失败时回退下方两步管线。
+    #
+    # 注意：合并阶段一律用 concat filter（解码→重编码），绝不用 concat demuxer + copy。
+    # copy 是字节级拼接，对段边界的时间戳/SPS 细微差异极敏感，实测会造成「部分段画面冻结、声音正常」
+    # （用户多次反馈，合成内容难以复现但真实素材必现）。concat filter 解码每帧后重编码，彻底规避。
+    single_out = _try_single_encode_concat_burn(
+        seg_paths=list(seg_paths),
+        srt_entries=srt_entries,
+        style=style,
+        fonts_dir=fonts_dir,
+        tmp=tmp,
+        project_name=project_name,
+        final_render_opts=final_render_opts,
+        normalize_audio=normalize_audio,
+        prefer_gpu=prefer_gpu,
+        segment_transition_ins=segment_transition_ins,
+        transition_dissolve_sec=transition_dissolve_sec,
+        segment_fade_ms=segment_fade_ms,
+    )
+    if single_out is not None:
+        return single_out
+
     out_path = os.path.join(tmp, f"{project_name}.mp4")
     concat_path = os.path.join(tmp, f"{project_name}__concat.mp4")
 

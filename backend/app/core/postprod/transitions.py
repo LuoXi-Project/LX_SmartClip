@@ -81,6 +81,27 @@ def _seg_durations(paths: Sequence[str]) -> List[float]:
     return ds
 
 
+def _segments_uniform_for_copy(paths: Sequence[str]) -> bool:
+    """各段视频宽高、音频采样率一致时，concat demuxer 才能走 -c copy（零重编码）。
+
+    concat demuxer + -c copy 仅复用各段原始包，不重采样/重缩放；段间分辨率或音频
+    采样率不一致时，播放器按首段参数解码，第二段开始画面会卡死/黑屏/爆音。
+    因此「纯硬切快路径」必须满足本函数为 True。
+    """
+    paths = list(paths)
+    if not paths:
+        return False
+    w0, h0 = probe_video_dimensions(paths[0], default=(0, 0), logger_=logger)
+    sr0 = probe_audio_sample_rate(paths[0], logger_=logger)
+    for p in paths[1:]:
+        w, h = probe_video_dimensions(p, default=(0, 0), logger_=logger)
+        if (w, h) != (w0, h0):
+            return False
+        if probe_audio_sample_rate(p, logger_=logger) != sr0:
+            return False
+    return True
+
+
 def _video_prep_filter(input_idx: int, w: int, h: int, target_w: int, target_h: int) -> str:
     """与 composer 慢路径一致：scale+pad 到统一画布，xfade 要求宽高完全相同。"""
     base = f"[{input_idx}:v]"
@@ -104,15 +125,98 @@ def _audio_prep_filter(input_idx: int, sample_rate: int) -> str:
 
 
 def _resolve_target_canvas(paths: Sequence[str]) -> tuple[int, int]:
-    """取各段宽高的最大值作为 xfade 画布，避免长画面被压进短画布。"""
-    max_w, max_h = 0, 0
+    """兜底画布：取各段中「出现次数最多」的分辨率（占比最高）。
+
+    说明（与旧「取最大值」行为的差异）：
+    - 混合分辨率混剪时（如 1 段 4K + 多段 1080p/720p），取最大值会把所有低清段放大到 4K：
+      编码极慢、码率虚高，且放大的低清素材本就发糊，画质无明显收益。
+    - 取占比最高的分辨率，多数段零成本直通，少数异类按需缩放，更贴近用户预期。
+    - 出现次数并列时（多个分辨率频次相同），按宽*高降序取最大者，保持「不丢分辨率」的稳妥兜底。
+    """
+    from collections import Counter
+
+    counts: Counter = Counter()
     for p in paths:
         w, h = probe_video_dimensions(p, default=(1920, 1080), logger_=logger)
-        max_w = max(max_w, w)
-        max_h = max(max_h, h)
-    if max_w <= 0 or max_h <= 0:
+        if w > 0 and h > 0:
+            counts[(w, h)] += 1
+    if not counts:
         return 1920, 1080
-    return max_w, max_h
+    # 频次最高；并列时取面积最大的（宽*高），避免在并列场景无谓缩水。
+    best_w, best_h = max(counts.items(), key=lambda kv: (kv[1], kv[0][0] * kv[0][1]))[0]
+    return best_w, best_h
+
+
+def _make_even(x: int, *, min_v: int = 2) -> int:
+    """偶数化（h264/yuv420p 要求宽高为偶数）。"""
+    x = int(x)
+    if x < min_v:
+        x = min_v
+    return x if (x % 2 == 0) else (x - 1)
+
+
+def _try_hardcut_concat_filter(
+    *,
+    paths: List[str],
+    target_w: int,
+    target_h: int,
+    render_opts: Optional[Dict[str, str]],
+    out_path: str,
+) -> bool:
+    """纯硬切 + 段间分辨率不一致的合并路径：单条 concat filter，只编码一次。
+
+    思路（已删去「逐段归一化」冗余层）：
+      N 段原始输入 → filter 内每段 scale+pad 到统一画布 → concat → 重编码一次。
+    全程只有一次编码，既快又彻底规避 concat demuxer + copy 的所有问题
+    （B 帧 / SPS-PPS / timebase / encoder delay 不一致 → 画面冻结）。
+
+    为什么不用 concat demuxer + copy（已踩三次坑）：
+    字节级拼接要求各段参数「字节级一致」，逐段 NVENC 归一化仍无法保证；concat filter
+    是「解码每帧 → filter graph 内拼接 → 重编码」，无 stream copy，参数不一致被解码层吸收。
+
+    实测（22 段混合分辨率，NVENC p2）：单链 ~17s 编码 110s 成片，足够快，
+    无需分块（分块反而会引入块间二次合并的额外编码）。
+
+    返回 True 表示成功；False 表示失败/不可用，调用方回退到 _run_single_chain。
+    """
+    try:
+        tw, th = _make_even(target_w), _make_even(target_h)
+        n = len(paths)
+        parts: List[str] = []
+        inputs: List[str] = []
+        for i, p in enumerate(paths):
+            # 不用 -thread_queue_size：多输入 filter_graph 下大值（如 1024）会导致 ffmpeg 预缓冲
+            # 爆内存 → 进程假死（实测 22 输入 × 1024 卡死）。默认缓冲稳定。
+            inputs += ["-i", p]
+            w, h = probe_video_dimensions(p, default=(tw, th), logger_=logger)
+            if w != tw or h != th:
+                logger.info("postprod hardcut concat: seg_%d %dx%d -> %dx%d", i, w, h, tw, th)
+            # 与 _run_single_chain._video_prep_filter 一致：等大直接 setpts，不等大 scale+pad
+            if w == tw and h == th:
+                vf = f"[{i}:v]setsar=1,setpts=PTS-STARTPTS"
+            else:
+                vf = (
+                    f"[{i}:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,"
+                    f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS"
+                )
+            sr = probe_audio_sample_rate(p, logger_=logger)
+            af = _audio_prep_filter(i, sr)
+            parts.append(vf + f"[v{i}]")
+            parts.append(af + f"[a{i}]")
+        cat = "".join(f"[v{i}][a{i}]" for i in range(n))
+        parts.append(f"{cat}concat=n={n}:v=1:a=1[vout][aout]")
+        fc = ";".join(parts)
+
+        codec_args = build_render_codec_args(render_opts)
+        run_ffmpeg(
+            [*inputs, "-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
+             *codec_args, "-movflags", "+faststart", out_path],
+            desc=f"postprod hardcut concat filter ({n} segs, 1 encode)",
+        )
+        return True
+    except Exception as e:
+        logger.warning("postprod hardcut concat filter 失败，回退 xfade 单链: %s", e)
+        return False
 
 
 def compose_with_transitions(
@@ -148,36 +252,39 @@ def compose_with_transitions(
     ) or trans[0] in ("fade_in",)
 
     if not use_xfade and segment_fade_ms <= 0:
-        # 硬切 + concat demuxer
-        from app.utils.ffmpeg_utils import write_concat_list
+        # 纯硬切 + 无 micro-fade → 若各段分辨率/采样率一致才走 concat demuxer + copy（零重编码）。
+        # 段间不一致时 concat copy 会让播放器按首段解码，第二段起画面卡死/黑屏；
+        # 此时优先走「逐段归一化 + concat copy」快路径（失败回退下方 xfade 单链）。
+        if _segments_uniform_for_copy(paths):
+            from app.utils.ffmpeg_utils import write_concat_list
 
-        concat_list = out_path + ".concat.txt"
-        write_concat_list(paths, concat_list)
-        run_ffmpeg(
-            [
-                "-fflags",
-                "+genpts",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_list,
-                "-c",
-                "copy",
-                "-avoid_negative_ts",
-                "make_zero",
-                "-movflags",
-                "+faststart",
-                out_path,
-            ],
-            desc="postprod concat+copy",
-        )
-        try:
-            os.remove(concat_list)
-        except OSError:
-            pass
-        return out_path
+            concat_list = out_path + ".concat.txt"
+            write_concat_list(paths, concat_list)
+            run_ffmpeg(
+                [
+                    "-fflags",
+                    "+genpts",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    concat_list,
+                    "-c",
+                    "copy",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                    "-movflags",
+                    "+faststart",
+                    out_path,
+                ],
+                desc="postprod concat+copy",
+            )
+            try:
+                os.remove(concat_list)
+            except OSError:
+                pass
+            return out_path
 
     d = max(0.05, min(float(dissolve_sec), 1.5))
     fade_a = max(0.0, segment_fade_ms / 1000.0)
@@ -188,12 +295,27 @@ def compose_with_transitions(
     else:
         target_w, target_h = _resolve_target_canvas(paths)
     n = len(paths)
+
+    # 纯硬切 + 段间分辨率不一致 → 单条 concat filter（每段 scale+pad + concat + 一次重编码）。
+    # 实测单链足够快（22 段 NVENC ~17s 编 110s），且无 stream copy，彻底规避 concat demuxer
+    # 字节级拼接导致的画面冻结（B 帧 / SPS-PPS / timebase / encoder delay 不一致）。
+    if not use_xfade and segment_fade_ms <= 0:
+        if _try_hardcut_concat_filter(
+            paths=paths,
+            target_w=target_w,
+            target_h=target_h,
+            render_opts=render_opts,
+            out_path=out_path,
+        ):
+            return out_path
+        logger.warning("postprod: 归一化快路径失败，回退 xfade 单链重编码")
+
     logger.info(
         "postprod xfade: %d 段, 目标画布 %dx%d%s",
         n,
         target_w,
         target_h,
-        "（配置）" if target_canvas is not None else "（最大值兜底）",
+        "（配置）" if target_canvas is not None else "（占比最高兜底）",
     )
 
     def _run_single_chain(
@@ -334,30 +456,25 @@ def compose_with_transitions(
         )
         block_paths.append(block_out)
 
-    # 块间拼接：硬切（边界均为 hard_cut），concat demuxer + copy，几乎零成本。
-    from app.utils.ffmpeg_utils import write_concat_list
-
-    concat_list = out_path + ".blk_concat.txt"
-    write_concat_list(block_paths, concat_list)
+    # 块间拼接：用 concat filter（解码→合并→重编码一次），不用 concat demuxer + copy。
+    # 块间为硬切（边界均为 hard_cut），各块由 _run_single_chain 独立 NVENC 编码，SPS/PPS/
+    # timebase 可能字节级不一致，concat copy 会触发跨块冻结。concat filter 各块已统一画布/采样率，
+    # 链内无需 scale，只做时间轴重置 + concat，很轻；彻底无 stream copy，杜绝冻结。
+    m = len(block_paths)
+    bparts: List[str] = []
+    binputs: List[str] = []
+    for i, bp in enumerate(block_paths):
+        binputs += ["-i", bp]
+        bparts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+        bparts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
+    bcat = "".join(f"[v{i}][a{i}]" for i in range(m))
+    bparts.append(f"{bcat}concat=n={m}:v=1:a=1[vout][aout]")
+    bfc = ";".join(bparts)
+    block_codec_args = build_render_codec_args(render_opts)
     run_ffmpeg(
-        [
-            "-fflags",
-            "+genpts",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            concat_list,
-            "-c",
-            "copy",
-            "-avoid_negative_ts",
-            "make_zero",
-            "-movflags",
-            "+faststart",
-            out_path,
-        ],
-        desc="postprod xfade block concat+copy",
+        [*binputs, "-filter_complex", bfc, "-map", "[vout]", "-map", "[aout]",
+         *block_codec_args, "-movflags", "+faststart", out_path],
+        desc="postprod xfade block concat (filter merge)",
     )
     # 清理块中间文件
     for bp in block_paths:
@@ -365,8 +482,4 @@ def compose_with_transitions(
             os.remove(bp)
         except OSError:
             pass
-    try:
-        os.remove(concat_list)
-    except OSError:
-        pass
     return out_path

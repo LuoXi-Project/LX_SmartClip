@@ -11,7 +11,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-from app.utils.ffprobe_utils import clear_probe_cache, probe_duration
+from app.utils.ffprobe_utils import clear_probe_cache, probe_duration, probe_video_dimensions
 from app.utils.paths import get_render_tmp_base_dir
 
 from .ass_builder import build_ass  # noqa: F401 - re-export for backwards compatibility
@@ -327,6 +327,65 @@ def burn_to_mp4(
     return data, saved_path
 
 
+def _inject_unified_canvas(
+    segment_render_opts: Dict[str, str], segments: list, clip_map: dict
+) -> Dict[str, str]:
+    """预探测所有段的源片分辨率，取占比最高作为统一画布，注入 clip_scale_width/height。
+
+    目的：让所有段成品输出到同一画布（含 TTS 段），合并阶段即可走 concat copy +
+    单文件 ass（省一次全量重编码，实测 TTS 模式快 ~2x）。
+
+    仅当用户未显式指定导出分辨率（clip_scale_* 全 0）时介入；显式指定时尊重用户配置。
+    用 probe 缓存避免重复探测；探测失败/无源片时回退不注入（保持旧行为）。
+    """
+    opts = dict(segment_render_opts or {})
+    # 已显式指定导出分辨率 → 尊重配置，不覆盖
+    try:
+        sw = int(float(str(opts.get("clip_scale_width") or "0").strip() or 0))
+        sh = int(float(str(opts.get("clip_scale_height") or "0").strip() or 0))
+    except Exception:
+        sw = sh = 0
+    if sw > 0 or sh > 0:
+        return opts
+
+    # 收集所有段涉及的源片路径（去重）
+    src_paths: list = []
+    seen: set = set()
+    for seg in segments:
+        try:
+            clip_ids, _infos = collect_segment_sources(seg, clip_map, -1)
+        except Exception:
+            continue
+        for cid in clip_ids:
+            info = clip_map.get(cid)
+            if not info:
+                continue
+            sp = str(info.get("src_video_path") or "").strip()
+            if sp and sp not in seen and os.path.isfile(sp):
+                seen.add(sp)
+                src_paths.append(sp)
+
+    if not src_paths:
+        return opts
+
+    # 取占比最高的分辨率作为统一画布（与合并阶段 _resolve_target_canvas 语义一致）
+    from collections import Counter
+    counts: Counter = Counter()
+    for sp in src_paths:
+        w, h = probe_video_dimensions(sp, default=(0, 0), logger_=logger)
+        if w > 0 and h > 0:
+            counts[(w, h)] += 1
+    if not counts:
+        return opts
+    # 频次最高；并列时取面积最大（与 _resolve_target_canvas 一致）
+    tw, th = max(counts.items(), key=lambda kv: (kv[1], kv[0][0] * kv[0][1]))[0]
+    if tw > 0 and th > 0:
+        opts["clip_scale_width"] = str(tw)
+        opts["clip_scale_height"] = str(th)
+        logger.info("统一画布注入：所有段成品输出到 %dx%d（占比最高），启用 concat copy 合并", tw, th)
+    return opts
+
+
 def _render_generic(
     *,
     segments: list,
@@ -351,6 +410,13 @@ def _render_generic(
     tr_fade_ms: int,
 ) -> str:
     """通用管线：逐段材质化 → 并发渲染 → composer 合成（混剪/TTS/多源等场景）。"""
+    import time as _time
+    _t_total = _time.monotonic()
+
+    # 统一画布：预探测所有段涉及的源片分辨率，取占比最高作为统一画布，注入 segment_render_opts。
+    # 目的：让所有段成品规格一致（画布/参数），合并阶段可走 concat copy + 单文件 ass（省一次全量重编码）。
+    segment_render_opts = _inject_unified_canvas(segment_render_opts, segments, clip_map)
+
     seg_paths: List[str] = [""] * len(segments)
 
     def _render_one(seg_idx: int) -> Tuple[int, str]:
@@ -418,6 +484,7 @@ def _render_generic(
         return seg_idx, seg_out
 
     concurrency = _resolve_segment_render_concurrency(segment_render_opts, len(segments))
+    _t_seg = _time.monotonic()
     if concurrency <= 1 or len(segments) <= 1:
         # 串行：行为与改造前完全一致（含异常即时抛出）。
         for i in range(len(segments)):
@@ -430,6 +497,8 @@ def _render_generic(
             for fut in futures:
                 idx, out = fut.result()  # 任一段失败：result() 重抛异常，与串行一致
                 seg_paths[idx] = out
+    logger.info("[耗时] 段渲染阶段 %.1fs（%d 段，并发=%d）",
+                _time.monotonic() - _t_seg, len(segments), concurrency)
 
     for i, p in enumerate(seg_paths, 1):
         d = float(probe_duration(p, log_on_failure=True) or 0.0)
@@ -439,6 +508,7 @@ def _render_generic(
     if backend not in ("ffmpeg", "moviepy"):
         backend = "moviepy"
 
+    _t_compose = _time.monotonic()
     if backend == "moviepy":
         out_path = compose_final_video_moviepy(
             seg_paths=seg_paths,
@@ -469,6 +539,9 @@ def _render_generic(
             transition_dissolve_sec=tr_dissolve,
             segment_fade_ms=tr_fade_ms,
         )
+    logger.info("[耗时] 合并+烧字幕阶段 %.1fs（backend=%s）",
+                _time.monotonic() - _t_compose, backend)
+    logger.info("[耗时] _render_generic 总计 %.1fs", _time.monotonic() - _t_total)
     logger.info("导出 MP4 完成: %s", out_path)
     return out_path
 

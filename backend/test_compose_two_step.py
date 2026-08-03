@@ -24,6 +24,7 @@ class ManySegmentsSubtitleTest(unittest.TestCase):
         self._patches = [
             mock.patch("app.core.subtitle.composer.probe_video_dimensions"),
             mock.patch("app.core.subtitle.composer.probe_audio_sample_rate"),
+            mock.patch("app.core.subtitle.composer.probe_video_frame_rate", return_value=(30, 1)),
             mock.patch("app.core.subtitle.composer.run_ffmpeg"),
             mock.patch("app.core.subtitle.composer.write_concat_list"),
             mock.patch("app.core.subtitle.composer.build_ass", return_value="ASS_CONTENT"),
@@ -156,6 +157,308 @@ class ManySegmentsSubtitleTest(unittest.TestCase):
         self.assertIn("concat", desc)
         copy_idx = cmd.index("-c")
         self.assertEqual(cmd[copy_idx + 1], "copy")
+
+
+class SingleEncodeConcatBurnTest(unittest.TestCase):
+    """纯硬切 + 字幕 → 单条 filter_complex 一次编码（合并 + 烧字幕合一，省双重编码）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="lxtest_")
+        self._patches = [
+            mock.patch("app.core.subtitle.composer.probe_video_dimensions"),
+            mock.patch("app.core.subtitle.composer.probe_audio_sample_rate", return_value=48000),
+            mock.patch("app.core.subtitle.composer.probe_video_frame_rate", return_value=(30, 1)),
+            mock.patch("app.core.subtitle.composer.run_ffmpeg"),
+            mock.patch("app.core.subtitle.composer.write_concat_list"),
+            mock.patch("app.core.subtitle.composer.build_ass", return_value="ASS_CONTENT"),
+            mock.patch("app.core.subtitle.composer.os.path.isdir", return_value=True),
+            # 拦截 _try_single_encode_concat_burn 内对 transitions 的调用
+            mock.patch("app.core.postprod.transitions._resolve_target_canvas", return_value=(1920, 1080)),
+            mock.patch("app.core.postprod.transitions.probe_video_dimensions"),
+            mock.patch("app.core.postprod.transitions.probe_audio_sample_rate", return_value=48000),
+        ]
+        for p in self._patches:
+            p.start()
+        self.ffmpeg_calls = []
+
+        def _capture(args, desc=""):
+            self.ffmpeg_calls.append((desc, list(args)))
+        from app.core.subtitle import composer as cp
+        cp.run_ffmpeg.side_effect = _capture
+
+    def tearDown(self):
+        mock.patch.stopall()
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_hardcut_subtitle_single_encode(self):
+        """纯硬切 + 混合分辨率 + 字幕 → 单条 filter_complex：scale+pad → concat → ass，1 次编码。"""
+        from app.core.subtitle import composer as cp
+        from app.core.postprod import transitions as tr
+        from app.models.subtitle import SubtitleStyle
+
+        dims = {"a.mp4": (1920, 1080), "b.mp4": (1280, 720), "c.mp4": (1920, 1080)}
+        cp.probe_video_dimensions.side_effect = lambda p, **kw: dims.get(p, (1920, 1080))
+        tr.probe_video_dimensions.side_effect = lambda p, **kw: dims.get(p, (1920, 1080))
+        style = SubtitleStyle(font_size=48)
+        srt = [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+        cp.compose_final_video_moviepy(
+            seg_paths=["a.mp4", "b.mp4", "c.mp4"],
+            srt_entries=srt,
+            style=style,
+            fonts_dir="/fonts",
+            tmp=self._tmp,
+            project_name="p",
+            final_render_opts={"clip_vcodec": "h264_nvenc", "clip_preset": "p2"},
+            normalize_audio=False,
+            prefer_gpu=True,
+            segment_transition_ins=["hard_cut", "hard_cut", "hard_cut"],
+            transition_dissolve_sec=0.35,
+            segment_fade_ms=0,
+        )
+
+        # 只应有一次 ffmpeg 编码调用（合并 + 烧字幕合一）
+        encode_calls = [c for d, c in self.ffmpeg_calls if "-filter_complex" in c]
+        self.assertEqual(
+            len(encode_calls), 1,
+            f"纯硬切+字幕应单次编码出片，实际 {len(encode_calls)} 次 filter_complex 调用",
+        )
+        cmd = encode_calls[0]
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        # 一条链内完成：scale+pad（720p 段）+ concat=n=3 + ass 烧字幕
+        self.assertIn("scale=1920:1080:force_original_aspect_ratio=decrease", fc)
+        self.assertIn("concat=n=3", fc)
+        self.assertIn("ass=", fc)
+        # 不应有 concat demuxer + copy
+        self.assertFalse(
+            ("-f" in cmd and "concat" in cmd) and ("-c" in cmd and cmd[cmd.index("-c") + 1] == "copy"),
+            "单次编码路径禁用 concat demuxer + copy",
+        )
+
+    def test_xfade_falls_back_to_two_step(self):
+        """有 xfade 转场 → 不适用单次编码，回退两步管线。"""
+        from app.core.subtitle import composer as cp
+        from app.models.subtitle import SubtitleStyle
+
+        cp.probe_video_dimensions.return_value = (1920, 1080)
+        style = SubtitleStyle(font_size=48)
+        srt = [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+        cp.compose_final_video_moviepy(
+            seg_paths=["a.mp4", "b.mp4", "c.mp4"],
+            srt_entries=srt,
+            style=style,
+            fonts_dir="/fonts",
+            tmp=self._tmp,
+            project_name="p2",
+            final_render_opts={},
+            normalize_audio=False,
+            segment_transition_ins=["hard_cut", "cross_dissolve", "hard_cut"],
+            transition_dissolve_sec=0.35,
+            segment_fade_ms=0,
+        )
+        # 不应触发 single-encode concat+burn（有 dissolve）
+        descs = [d for d, _ in self.ffmpeg_calls]
+        self.assertFalse(
+            any("single-encode concat+burn" in d for d in descs),
+            "有 xfade 转场不应走单次编码路径",
+        )
+
+    def test_mixed_framerate_avoids_concat_demuxer(self):
+        """段帧率不一致（30/25 混排）→ 必走 filter_complex，禁用 concat demuxer。
+
+        回归场景（用户反馈，真实素材必现）：口播/TTS 段里 30fps(1/15360) 与
+        25fps(1/12800) 混排时，concat demuxer 在段边界吐乱序 DTS → ffmpeg 丢帧 +
+        复制上一帧 → 「部分段画面卡死、声音正常」。修复：帧率不一致时改走
+        filter_complex（解码每段并 setpts 重排时间戳，drop=0，无卡死）。
+        """
+        from app.core.subtitle import composer as cp
+        from app.core.postprod import transitions as tr
+        from app.models.subtitle import SubtitleStyle
+
+        cp.probe_video_dimensions.return_value = (1920, 1080)  # 画布统一
+        tr.probe_video_dimensions.return_value = (1920, 1080)
+        # 帧率混排：a/c=30fps，b=25fps（画布一致但 time_base 不同）
+        fr = {"a.mp4": (30, 1), "b.mp4": (25, 1), "c.mp4": (30, 1)}
+        cp.probe_video_frame_rate.side_effect = lambda p, **kw: fr.get(p, (30, 1))
+        style = SubtitleStyle(font_size=48)
+        srt = [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+        cp.compose_final_video_moviepy(
+            seg_paths=["a.mp4", "b.mp4", "c.mp4"],
+            srt_entries=srt,
+            style=style,
+            fonts_dir="/fonts",
+            tmp=self._tmp,
+            project_name="mixfr",
+            final_render_opts={"clip_vcodec": "h264_nvenc", "clip_preset": "p2"},
+            normalize_audio=False,
+            prefer_gpu=True,
+            segment_transition_ins=["hard_cut", "hard_cut", "hard_cut"],
+            transition_dissolve_sec=0.35,
+            segment_fade_ms=0,
+        )
+
+        descs = [d for d, _ in self.ffmpeg_calls]
+        # 不能走 concat-demuxer（帧率不一致时会吐乱序 DTS → 画面卡死）
+        self.assertFalse(
+            any("concat-demuxer" in d for d in descs),
+            "帧率不一致时禁用 concat demuxer（会卡死），应走 filter_complex",
+        )
+        # 应走 filter_complex（解码每段重排时间戳）
+        self.assertTrue(
+            any("-filter_complex" in c for _, c in self.ffmpeg_calls),
+            "帧率不一致应走 filter_complex 路径",
+        )
+
+
+class NoConcatCopyRegressionTest(unittest.TestCase):
+    """回归守卫：合并阶段绝不用 concat demuxer + copy（会卡死，多次教训）。
+
+    无论段是否统一，合并都用 concat filter（解码→重编码一次）。copy 是字节级拼接，
+    对段边界时间戳/SPS 细微差异敏感，实测会造成「部分段画面冻结、声音正常」。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="lxtest_")
+        self._patches = [
+            mock.patch("app.core.subtitle.composer.probe_video_dimensions"),
+            mock.patch("app.core.subtitle.composer.probe_audio_sample_rate", return_value=48000),
+            mock.patch("app.core.subtitle.composer.probe_video_frame_rate", return_value=(30, 1)),
+            mock.patch("app.core.subtitle.composer.run_ffmpeg"),
+            mock.patch("app.core.subtitle.composer.write_concat_list"),
+            mock.patch("app.core.subtitle.composer.build_ass", return_value="ASS_CONTENT"),
+            mock.patch("app.core.subtitle.composer.os.path.isdir", return_value=True),
+            mock.patch("app.core.postprod.transitions._resolve_target_canvas", return_value=(1920, 1080)),
+            mock.patch("app.core.postprod.transitions.probe_video_dimensions"),
+        ]
+        for p in self._patches:
+            p.start()
+        self.ffmpeg_calls = []
+
+        def _capture(args, desc=""):
+            self.ffmpeg_calls.append((desc, list(args)))
+        from app.core.subtitle import composer as cp
+        cp.run_ffmpeg.side_effect = _capture
+
+    def tearDown(self):
+        mock.patch.stopall()
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_uniform_segments_no_concat_copy(self):
+        """段统一 → 走 concat-demuxer+burn（顺序读+重编码），不走 concat copy。"""
+        from app.core.subtitle import composer as cp
+        from app.core.postprod import transitions as tr
+        from app.models.subtitle import SubtitleStyle
+
+        cp.probe_video_dimensions.return_value = (1920, 1080)
+        tr.probe_video_dimensions.return_value = (1920, 1080)
+        style = SubtitleStyle(font_size=48)
+        srt = [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+        cp.compose_final_video_moviepy(
+            seg_paths=["a.mp4", "b.mp4", "c.mp4"],
+            srt_entries=srt,
+            style=style,
+            fonts_dir="/fonts",
+            tmp=self._tmp,
+            project_name="p",
+            final_render_opts={"clip_vcodec": "h264_nvenc", "clip_preset": "p2"},
+            normalize_audio=False,
+            prefer_gpu=True,
+            segment_transition_ins=["hard_cut", "hard_cut", "hard_cut"],
+            transition_dissolve_sec=0.35,
+            segment_fade_ms=0,
+        )
+
+        for desc, cmd in self.ffmpeg_calls:
+            # 绝不能出现 concat demuxer + copy（会卡死）
+            has_concat_demuxer = "-f" in cmd and "concat" in cmd
+            has_any_copy = (
+                ("-c" in cmd and cmd[cmd.index("-c") + 1] == "copy")
+                or ("-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy")
+            )
+            self.assertFalse(
+                has_concat_demuxer and has_any_copy,
+                f"合并阶段禁用 concat demuxer + copy（会卡死）。desc={desc}",
+            )
+
+    def test_mixed_resolution_no_concat_copy(self):
+        """段画布不统一 → single-encode，同样禁用 concat copy。"""
+        from app.core.subtitle import composer as cp
+        from app.core.postprod import transitions as tr
+        from app.models.subtitle import SubtitleStyle
+
+        dims = {"a.mp4": (1920, 1080), "b.mp4": (1280, 720), "c.mp4": (1920, 1080)}
+        cp.probe_video_dimensions.side_effect = lambda p, **kw: dims.get(p, (1920, 1080))
+        tr.probe_video_dimensions.side_effect = lambda p, **kw: dims.get(p, (1920, 1080))
+        style = SubtitleStyle(font_size=48)
+        srt = [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+        cp.compose_final_video_moviepy(
+            seg_paths=["a.mp4", "b.mp4", "c.mp4"],
+            srt_entries=srt,
+            style=style,
+            fonts_dir="/fonts",
+            tmp=self._tmp,
+            project_name="p2",
+            final_render_opts={"clip_vcodec": "h264_nvenc", "clip_preset": "p2"},
+            normalize_audio=False,
+            prefer_gpu=True,
+            segment_transition_ins=["hard_cut", "hard_cut", "hard_cut"],
+            transition_dissolve_sec=0.35,
+            segment_fade_ms=0,
+        )
+
+        for desc, cmd in self.ffmpeg_calls:
+            has_concat_demuxer = "-f" in cmd and "concat" in cmd
+            has_any_copy = (
+                ("-c" in cmd and cmd[cmd.index("-c") + 1] == "copy")
+                or ("-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy")
+            )
+            self.assertFalse(
+                has_concat_demuxer and has_any_copy,
+                f"段不统一也禁用 concat demuxer + copy。desc={desc}",
+            )
+
+    def test_uniform_segments_use_concat_demuxer_reencode(self):
+        """段统一画布 → 走 concat-demuxer+burn（顺序读+重编码），不用 filter_complex N输入。"""
+        from app.core.subtitle import composer as cp
+        from app.core.postprod import transitions as tr
+        from app.models.subtitle import SubtitleStyle
+
+        cp.probe_video_dimensions.return_value = (1920, 1080)
+        tr.probe_video_dimensions.return_value = (1920, 1080)
+        style = SubtitleStyle(font_size=48)
+        srt = [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+        cp.compose_final_video_moviepy(
+            seg_paths=["a.mp4", "b.mp4", "c.mp4"],
+            srt_entries=srt,
+            style=style,
+            fonts_dir="/fonts",
+            tmp=self._tmp,
+            project_name="p3",
+            final_render_opts={"clip_vcodec": "h264_nvenc", "clip_preset": "p2"},
+            normalize_audio=False,
+            prefer_gpu=True,
+            segment_transition_ins=["hard_cut", "hard_cut", "hard_cut"],
+            transition_dissolve_sec=0.35,
+            segment_fade_ms=0,
+        )
+
+        descs = [d for d, _ in self.ffmpeg_calls]
+        # 应走 concat-demuxer+burn（顺序读，1输入流）
+        self.assertTrue(
+            any("concat-demuxer" in d for d in descs),
+            "段统一应走 concat-demuxer+burn 路径",
+        )
+        # 不应走 filter_complex N输入（demuxer 路径更快）
+        filter_calls = [c for d, c in self.ffmpeg_calls if "-filter_complex" in c]
+        self.assertFalse(
+            filter_calls,
+            "段统一时不应走 filter_complex（应走 concat-demuxer）",
+        )
 
 
 if __name__ == "__main__":

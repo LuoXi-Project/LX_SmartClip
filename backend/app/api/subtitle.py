@@ -31,6 +31,8 @@ from app.jobs import create_job, JobReporter, launch_job, update_job_status
 from app.db.database import DB_PATH
 from app.utils.ffprobe_utils import probe_duration
 from app.utils.paths import ensure_storage_subpath, get_fonts_dir, get_storage_root, resolve_stored_path, storage_public_url_for_file
+from app.core.material.proxy import ensure_proxies_for_clips
+from app.core.subtitle.render_opts import truthy_export_gpu
 from app.core.subtitle.srt import build_srt, parse_srt
 from app.core.subtitle.timeline import (
     resolve_durations,
@@ -216,6 +218,58 @@ async def _load_export_backend(db) -> str:
     return v if v in ("ffmpeg", "moviepy") else "moviepy"
 
 
+async def _load_proxy_opts(db) -> dict:
+    """代理剪辑配置：proxy_enabled（默认 on）、proxy_max_height（默认 1080）。"""
+    return {
+        "proxy_enabled": await _get_config_value(db, "proxy_enabled", "on"),
+        "proxy_max_height": await _get_config_value(db, "proxy_max_height", "1080"),
+    }
+
+
+def _build_clip_map_with_proxy(
+    rows,
+    *,
+    export_render_opts: dict,
+    proxy_opts: dict,
+) -> dict:
+    """构建 clip_map，并为 >目标分辨率 的原片生成代理替代（混剪提速）。
+
+    代理生成走专用线程池外的同步调用（execute_* 本身已在 run_heavy 线程池内执行）。
+    任一素材代理失败 → 回退原片，不阻断合成。
+    返回 clip_map：{clip_id: {path, dur, src_video_path, src_start, src_end}}。
+    """
+    # 1) 批量生成代理（仅 >目标分辨率的原片；命中缓存则跳过）。
+    prefer_gpu = truthy_export_gpu(export_render_opts.get("export_gpu"))
+
+    def _on_proxy_progress(done: int, total: int, msg: str) -> None:
+        # 进度通过 logger 暴露到 [阶段] SSE 流；用户首次合成时可见「代理生成 N/M」。
+        logger.info("[阶段] 代理生成 %s", msg)
+
+    proxy_paths = ensure_proxies_for_clips(
+        rows, proxy_opts, prefer_gpu=prefer_gpu, on_progress=_on_proxy_progress
+    )
+    if proxy_paths:
+        logger.info("[阶段] 代理替代 %d 个高分辨率原片用于合成提速", len(proxy_paths))
+
+    # 2) 构建 clip_map：有代理则 src_video_path 指向代理（时间轴与原片对齐，src_start/src_end 复用）。
+    clip_map = {}
+    for r in rows:
+        vfp = (r.get("video_file_path") or "").strip()
+        vid = str(r.get("video_id") or "").strip()
+        src_video_path = resolve_stored_path(vfp) if vfp else ""
+        # 代理替代原片（代理时间轴与原片逐帧对齐，裁剪偏移 src_start/src_end 无需改动）。
+        if vid and vid in proxy_paths:
+            src_video_path = proxy_paths[vid]
+        clip_map[str(r["id"])] = {
+            "path": resolve_stored_path(str(r.get("clip_path") or "")),
+            "dur": float(r.get("duration") or 5),
+            "src_video_path": src_video_path,
+            "src_start": float(r.get("start_time") or 0.0),
+            "src_end": float(r.get("end_time") or 0.0),
+        }
+    return clip_map
+
+
 async def _record_burned_render(public_url: str, source: str) -> None:
     """把烧录/原声导出成片记录到 renders 表（异步，不阻塞返回）。
 
@@ -321,22 +375,16 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
         export_backend_cfg = await _load_export_backend(db)
+        proxy_opts = await _load_proxy_opts(db)
 
     if not rows:
         raise HTTPException(400, "未找到片段数据，请检查 clip_id 是否有效")
 
     burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
-    clip_map = {}
-    for r in rows:
-        vfp = (r.get("video_file_path") or "").strip()
-        clip_map[str(r["id"])] = {
-            "path": resolve_stored_path(str(r.get("clip_path") or "")),
-            "dur": float(r.get("duration") or 5),
-            "src_video_path": resolve_stored_path(vfp) if vfp else "",
-            "src_start": float(r.get("start_time") or 0.0),
-            "src_end": float(r.get("end_time") or 0.0),
-        }
+    clip_map = _build_clip_map_with_proxy(
+        rows, export_render_opts=export_render_opts, proxy_opts=proxy_opts
+    )
     clip_dur = {cid: float(info.get("dur") or 5.0) for cid, info in clip_map.items()}
 
     from app.core.subtitle.burn import prepare_tts_burn_segments
@@ -502,22 +550,16 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         render_opts = await _load_render_opts(db)
         export_render_opts = await _load_export_render_opts(db)
         export_backend_cfg = await _load_export_backend(db)
+        proxy_opts = await _load_proxy_opts(db)
 
     if not rows:
         raise HTTPException(400, "未找到片段数据，请检查 clip_id 是否有效")
 
     burn_output_dir = _burned_output_dir_for_clip_rows(list(rows))
 
-    clip_map = {}
-    for r in rows:
-        vfp = (r.get("video_file_path") or "").strip()
-        clip_map[str(r["id"])] = {
-            "path": resolve_stored_path(str(r.get("clip_path") or "")),
-            "dur": float(r.get("duration") or 5),
-            "src_video_path": resolve_stored_path(vfp) if vfp else "",
-            "src_start": float(r.get("start_time") or 0.0),
-            "src_end": float(r.get("end_time") or 0.0),
-        }
+    clip_map = _build_clip_map_with_proxy(
+        rows, export_render_opts=export_render_opts, proxy_opts=proxy_opts
+    )
     clip_dur = {cid: float(info["dur"] or 5) for cid, info in clip_map.items()}
 
     # 每段（segments 内每个 seg 对应的“段落”）总时长 = 该段选中 clip 组时长之和

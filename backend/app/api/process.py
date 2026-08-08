@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 class ProcessJobBody(BaseModel):
     skip_steps: list[str] = Field(default_factory=list)
     clip_ids: list[str] | None = None
+    # 增量多向量化：仅补齐缺失的子空间向量（已存在的子空间不重复 embed）。
+    # 供「预处理页面 → 继续拆维度向量化」使用，避免重跑时全量重 embed 浪费 API。
+    embed_incremental: bool = False
 
     @field_validator("skip_steps")
     @classmethod
@@ -86,6 +89,7 @@ async def _run_task(
     video_id: str,
     skip_steps: list[str] | None = None,
     clip_ids_filter: frozenset[str] | None = None,
+    embed_incremental: bool = False,
     job_id: str | None = None,
 ):
     reporter = ProgressReporter(ws=None, task_id=task_id, job_id=job_id)
@@ -104,6 +108,7 @@ async def _run_task(
             skip_steps=skip_steps or [],
             task_id=task_id,
             clip_ids_filter=clip_ids_filter,
+            embed_incremental=embed_incremental,
         )
         await update_task_status(task_id, "done")
         if job_id:
@@ -222,6 +227,7 @@ async def create_process_job(
         "video_id": video_id,
         "skip_steps": skip_steps,
         "clip_ids_filter": clip_ids_filter,
+        "embed_incremental": bool(body.embed_incremental),
         "job_id": job_id,
     }
     await ps._pending_queue.put(job_info)
@@ -229,8 +235,8 @@ async def create_process_job(
     _ensure_queue_worker()
 
     logger.info(
-        "create_process_job: video_id=%s task_id=%s job_id=%s queued=%s skip_steps=%s",
-        video_id, task_id, job_id, is_queued, skip_steps,
+        "create_process_job: video_id=%s task_id=%s job_id=%s queued=%s skip_steps=%s incremental=%s",
+        video_id, task_id, job_id, is_queued, skip_steps, body.embed_incremental,
     )
     return {
         "task_id": task_id,
@@ -309,6 +315,7 @@ def _parse_ws_first_payload(raw: Any) -> ProcessJobBody:
         {
             "skip_steps": skip if isinstance(skip, list) else [],
             "clip_ids": clips if isinstance(clips, list) else None,
+            "embed_incremental": bool(raw.get("embed_incremental")),
         },
     )
 
@@ -365,6 +372,7 @@ async def process_video_ws(video_id: str, ws: WebSocket):
     await ps._pending_queue.put({
         "task_id": task_id, "video_id": video_id,
         "skip_steps": skip_steps, "clip_ids_filter": clip_ids_filter,
+        "embed_incremental": bool(body.embed_incremental),
         "job_id": job_id,
     })
     ps._processing_now = True

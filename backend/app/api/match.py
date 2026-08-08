@@ -5,7 +5,7 @@ import sqlite3
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from app.models.match import MatchRequest, MatchResponse, ClipResult
+from app.models.match import MatchRequest, MatchResponse, ClipResult, VALID_SUBSPACES
 
 from app.core.blocking_pool import run_heavy
 from app.core.matcher import Matcher, resolve_match_mode
@@ -64,6 +64,11 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
         raise MatchPipelineError(500, f"数据库连接失败: {e}") from e
 
     try:
+        # 子空间合法性校验（仅 vector 模式生效，但提前校验避免无效值穿透）
+        if req.subspaces:
+            invalid = [s for s in req.subspaces if s not in VALID_SUBSPACES]
+            if invalid:
+                raise MatchPipelineError(400, f"subspaces 含非法值 {invalid}，允许: {sorted(VALID_SUBSPACES)}")
         # 优先用请求级覆盖，其次全局配置
         match_mode_cfg = (req.match_mode or "").strip().lower() or _read_cfg(conn, "match_mode", "auto")
 
@@ -153,6 +158,7 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
             min_llm_score=min_llm_score,
             min_similarity=min_similarity,
             refine=req.refine,
+            subspaces=req.subspaces,
         )
 
         return MatchResponse(

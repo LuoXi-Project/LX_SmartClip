@@ -1,6 +1,10 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+# 向量检索可指定的子空间（与 IVectorDB.SUBSPACES 对齐）
+# asr=台词+关键词 / vlm=画面 / abstract=摘要+情绪 / legacy=旧混合向量
+VALID_SUBSPACES = frozenset({"asr", "vlm", "abstract", "legacy"})
+
 
 class MatchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="用户文案")
@@ -14,6 +18,10 @@ class MatchRequest(BaseModel):
     refine: Optional[bool] = Field(
         None,
         description="LLM 精排控制：True=强制启用 LLM 精排；False=跳过 LLM 精排（仅用初筛排序）；None=沿用默认行为",
+    )
+    subspaces: Optional[List[str]] = Field(
+        None,
+        description="向量检索限定的子空间（仅 vector 模式生效）；不传=自动选择所有有数据的子空间。",
     )
 
 

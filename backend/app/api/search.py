@@ -41,6 +41,11 @@ class SemanticSearchRequest(BaseModel):
         default=None,
         description="LLM 精排控制：True=强制启用 LLM 精排；False=跳过 LLM 精排；None=沿用默认行为",
     )
+    subspaces: Optional[List[str]] = Field(
+        default=None,
+        description="向量检索限定的子空间（asr=台词 / vlm=画面 / abstract=抽象主题 / legacy=混合）；"
+        "不传=自动选择所有有数据的子空间做多路融合。仅 vector 模式生效。",
+    )
     filters: Optional[SemanticSearchFilters] = None
 
 
@@ -363,6 +368,7 @@ async def semantic_search_assets(payload: SemanticSearchRequest, request: Reques
         video_ids=(payload.filters.video_ids if payload.filters and payload.filters.video_ids else None),
         match_mode=payload.match_mode,
         refine=payload.refine,
+        subspaces=payload.subspaces,
     )
 
     # 由于 _match_clips_sync 是同步阻塞函数，这里沿用 /api/match 的封装方式：

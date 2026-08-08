@@ -588,26 +588,31 @@ export default function ProcessPage() {
     }
   }
 
-  const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only'): string[] => {
+  const recoverSkipSteps = (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only' | 'multivec'): string[] => {
     let base: string[]
     if (preset === 'asr_only') base = ['split', 'extract_frames', 'vlm', 'enrich']                // 仅补 ASR：画面未变，跳过 enrich
     else if (preset === 'vlm_only') base = ['split', 'asr']                                        // 重跑 VLM：画面描述变了，需重跑 enrich 更新摘要
     else if (preset === 'asr_vlm') base = ['split']                                                // 重跑 ASR+VLM：画面描述变了，需重跑 enrich 更新摘要
     else if (preset === 'embed_only') base = ['split', 'extract_frames', 'asr', 'vlm', 'enrich']   // 仅重新入库：enrich 数据已存在，跳过
     else if (preset === 'enrich_only') base = ['split', 'extract_frames', 'asr', 'vlm']            // 重跑智能标注：标注改了必须重算 embed（与旧 /process-enrich 链式语义一致）
+    else if (preset === 'multivec') base = ['split', 'extract_frames', 'asr', 'vlm', 'enrich', 'replica']  // 增量多向量化：只跑 embed，且仅补缺失子空间
     else base = ['split', 'enrich']                                                                 // 兜底：仅重跑 ASR 时跳过 enrich
-    // 约束：重跑 VLM / 智能标注 / 仅 embed 时必须同步更新向量，否则语义检索不一致。
-    if (preset === 'vlm_only' || preset === 'asr_vlm' || preset === 'embed_only' || preset === 'enrich_only') return base
+    // 约束：重跑 VLM / 智能标注 / 仅 embed / 增量多向量化 时必须走 embed，否则语义检索不一致。
+    if (preset === 'vlm_only' || preset === 'asr_vlm' || preset === 'embed_only' || preset === 'enrich_only' || preset === 'multivec') return base
     // 仅重跑 ASR 才允许选择是否 skip embed（高级选项）
     return syncVectorOnRecover ? base : [...base, 'embed']
   }
 
-  const handleRecoverStart = async (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only') => {
+  const handleRecoverStart = async (preset: 'asr_only' | 'vlm_only' | 'asr_vlm' | 'embed_only' | 'enrich_only' | 'multivec') => {
     if (!selId) return
     const v = videos.find((x) => x.id === selId)
     if (!v || v.total_clips <= 0) return
     await submitProcessJob(
-      () => processJobsApi.create(selId, { skip_steps: recoverSkipSteps(preset) }),
+      () => processJobsApi.create(selId, {
+        skip_steps: recoverSkipSteps(preset),
+        // 增量多向量化：只补缺失子空间，已存在的子空间不重 embed，省 API 调用。
+        embed_incremental: preset === 'multivec',
+      }),
       '视频预处理(恢复)',
     )
   }
@@ -958,6 +963,15 @@ export default function ProcessPage() {
                 className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 重跑向量（全片段）
+              </button>
+              <button
+                type="button"
+                disabled={!canRecover}
+                onClick={() => void handleRecoverStart('multivec')}
+                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-violet-500/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="把每个片段按 台词/画面/抽象主题 拆成多个子向量分别入库，检索时多路融合，提升「旁白文案 ↔ 画面」的跨层命中率。仅补缺失的子空间，已处理过的片段会秒过，不重复消耗 API。"
+              >
+                继续拆维度向量化（增量）
               </button>
             </div>
             <div className="pt-2 border-t border-slate-800/80 space-y-2">

@@ -9,6 +9,7 @@ import {
   type SemanticSearchAssetResult,
   type SemanticSearchSegment,
   type MatchMode,
+  type Subspace,
   videosApi,
   type Video,
   type HighlightBrowseAssetResult,
@@ -41,6 +42,8 @@ export default function AssetSearchPage() {
   const [topN, setTopN] = useState<number>(10)
   const [matchMode, setMatchMode] = useState<MatchMode | ''>('')
   const [refine, setRefine] = useState<boolean>(true)
+  // 选中的向量检索子空间（空=自动全选所有有数据的子空间；仅 vector 模式生效）
+  const [subspaces, setSubspaces] = useState<Subspace[]>([])
   const [advOpen, setAdvOpen] = useState(false)
   const [downloadingClipId, setDownloadingClipId] = useState<string | null>(null)
 
@@ -138,11 +141,12 @@ export default function AssetSearchPage() {
       try {
         const res = await searchApi.semanticSearch({
           query: text,
-          top_k: topK,
-          top_n: topN,
+          top_k: topK || undefined,
+          top_n: topN || undefined,
           highlight_only: highlightOnly,
           match_mode: matchMode || undefined,
           refine,
+          subspaces: subspaces.length ? subspaces : undefined,
           filters: scopeVideoIds.length ? { video_ids: scopeVideoIds } : undefined,
         })
         setResults(res.results || [])
@@ -167,7 +171,7 @@ export default function AssetSearchPage() {
         setLoading(false)
       }
     },
-    [query, highlightOnly, scopeVideoIds, topK, topN, matchMode, refine],
+    [query, highlightOnly, scopeVideoIds, topK, topN, matchMode, refine, subspaces],
   )
 
   const loadHighlights = useCallback(async () => {
@@ -524,19 +528,19 @@ export default function AssetSearchPage() {
                 onClick={() => setAdvOpen((v) => !v)}
                 disabled={dataMode === 'highlight'}
                 className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 transition-colors ${
-                  advOpen || matchMode || refine === false
+                  advOpen || matchMode || refine === false || subspaces.length > 0
                     ? 'border-cyan-500/70 bg-cyan-500/10 text-cyan-200'
                     : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-500 hover:text-slate-200'
                 } ${dataMode === 'highlight' ? 'opacity-50 cursor-not-allowed' : ''}`}
                 title={
                   dataMode === 'highlight'
                     ? '高光浏览模式不走向量/LLM，无需检索参数'
-                    : '自定义检索数量 / 模式 / 精排'
+                    : '自定义检索数量 / 模式 / 精排 / 子空间'
                 }
               >
                 <SlidersHorizontal className="w-3 h-3" />
                 <span>检索参数</span>
-                {(matchMode || refine === false) && (
+                {(matchMode || refine === false || subspaces.length > 0) && (
                   <span className="ml-0.5 px-1 rounded-full bg-cyan-500/30 text-[9px] text-cyan-100">
                     已自定义
                   </span>
@@ -601,6 +605,51 @@ export default function AssetSearchPage() {
                     </select>
                   </label>
 
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-slate-500">
+                      向量检索子空间（仅向量模式；不选=自动全选融合）
+                    </span>
+                    <div className="grid grid-cols-2 gap-1">
+                      {([
+                        { key: 'asr', label: '台词', desc: 'ASR+关键词' },
+                        { key: 'vlm', label: '画面', desc: 'VLM 视觉描述' },
+                        { key: 'abstract', label: '抽象主题', desc: '摘要+情绪' },
+                        { key: 'legacy', label: '混合(旧)', desc: '旧版全量向量' },
+                      ] as { key: Subspace; label: string; desc: string }[]).map((s) => {
+                        const checked = subspaces.includes(s.key)
+                        return (
+                          <button
+                            key={s.key}
+                            type="button"
+                            onClick={() =>
+                              setSubspaces((prev) =>
+                                prev.includes(s.key) ? prev.filter((x) => x !== s.key) : [...prev, s.key],
+                              )
+                            }
+                            title={s.desc}
+                            className={`px-2 py-1 rounded-md border text-[11px] transition-colors text-left ${
+                              checked
+                                ? 'border-violet-500/70 bg-violet-500/15 text-violet-100'
+                                : 'border-slate-700 bg-slate-900/70 text-slate-400 hover:border-slate-500'
+                            }`}
+                          >
+                            <span className="font-medium">{s.label}</span>
+                            {checked && <span className="ml-1 text-violet-300">✓</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {subspaces.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSubspaces([])}
+                        className="self-start text-[10px] text-slate-500 hover:text-slate-300"
+                      >
+                        清空（恢复自动全选）
+                      </button>
+                    )}
+                  </div>
+
                   <label className="flex items-center justify-between gap-2 px-1">
                     <div className="flex flex-col">
                       <span className="text-[11px] text-slate-200">LLM 精排</span>
@@ -633,6 +682,7 @@ export default function AssetSearchPage() {
                         setTopN(10)
                         setMatchMode('')
                         setRefine(true)
+                        setSubspaces([])
                       }}
                       className="text-[10px] text-slate-400 hover:text-slate-200"
                     >

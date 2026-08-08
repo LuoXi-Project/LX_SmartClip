@@ -16,6 +16,7 @@ from app.core.llm.config import LLMConfig
 from app.core.metrics.token_usage import TokenAccumulator, TokenUsage
 from app.core.splitter import StopRequested
 from app.core.vector_db.faiss_db import FaissVectorDB
+from app.core.vector_db.sub_texts import build_sub_texts, non_empty_subspaces
 from app.db.database import DB_PATH, get_db_conn
 from .process_db import (
     clear_clips_for_video,
@@ -124,10 +125,13 @@ async def run_pipeline(
     skip_steps: list = None,
     task_id: str | None = None,
     clip_ids_filter: frozenset[str] | None = None,
+    embed_incremental: bool = False,
 ):
     """执行全素材处理（按片段流水线并发）：split -> (frames||asr) -> vlm -> embed
 
-    clip_ids_filter: 仅在不重新切分时生效；只处理这些 clip id（须已通过 API 校验归属）。"""
+    clip_ids_filter: 仅在不重新切分时生效；只处理这些 clip id（须已通过 API 校验归属）。
+    embed_incremental: 增量多向量化——仅补齐缺失子空间，已存在的子空间不重复 embed。
+        供「预处理页面 → 继续拆维度向量化」使用，避免重跑时全量重 embed。"""
     skip_steps = skip_steps or []
     skip_cn = "、".join(STEP_LABELS.get(s, s) for s in skip_steps) if skip_steps else "无"
     stage_log(
@@ -753,18 +757,25 @@ async def run_pipeline(
                     if do_asr:
                         logger.info("片段 %s Embedding 等待 ASR 完成...", item["id"])
                         await item["asr_ready"].wait()
-                    # 五路文本拼接：台词 + 画面 + 旁白适配摘要 + 关键词 + 情绪标签。
-                    # 后三者来自 enrich，用于抹平「旁白文案（抽象层）↔ 画面/台词（具体层）」的表征鸿沟，
-                    # 让旁白能从抽象层命中索引。无 enrich 数据时自动退化为原来的两路拼接。
-                    parts = [
-                        item["asr_text"],
-                        item["vlm_description"],
-                        item.get("abstract_summary", ""),
-                        " ".join(item.get("keywords", []) or []),
-                        " ".join(item.get("emotion_tags", []) or []),
-                    ]
-                    text = " ".join(p for p in parts if p and p.strip()).strip()
-                    if text:
+                    # 多向量子空间文本拼装：asr(台词+关键词) / vlm(画面) / abstract(摘要+情绪)。
+                    # 拆分独立子空间抹平「旁白（抽象层）↔ 画面/台词（具体层）」的表征鸿沟，
+                    # 检索侧由 FaissVectorDB 做 RRF 融合。无 enrich 数据时自动退化为 asr+vlm 两路。
+                    sub_texts = build_sub_texts(
+                        asr_text=item.get("asr_text", ""),
+                        vlm_description=item.get("vlm_description", ""),
+                        abstract_summary=item.get("abstract_summary", ""),
+                        keywords=item.get("keywords"),
+                        emotion_tags=item.get("emotion_tags"),
+                    )
+                    wanted_subs = non_empty_subspaces(sub_texts)
+                    # 增量模式：只补缺失子空间（已存在的不重 embed），供「继续拆维度向量化」复用。
+                    incremental_skipped = False
+                    if embed_incremental and wanted_subs:
+                        existing = vector_db.get_embedding_multi(item["id"])
+                        before = wanted_subs
+                        wanted_subs = [s for s in wanted_subs if not existing.get(s)]
+                        incremental_skipped = bool(before) and not wanted_subs
+                    if wanted_subs:
                         # 该日志与 WS 进度用于判断：是否已进入 embedding 外部调用、卡在哪个 clip
                         try:
                             async with progress_lock:
@@ -776,38 +787,49 @@ async def run_pipeline(
                                 )
                         except Exception:
                             pass
+                        total_len = sum(len(sub_texts[s]) for s in wanted_subs)
                         logger.info(
-                            "片段 %s Embedding 开始：len=%d model=%s",
+                            "片段 %s Embedding 开始：子空间=%s 总长=%d model=%s",
                             item["id"],
-                            len(text),
+                            wanted_subs,
+                            total_len,
                             embedding_model,
                         )
                         async def _run_embed():
                             await check_cancel(video_id)
                             if embed_inprocess:
-                                # 与 /process-embed 同路径：主进程线程调用，便于复现/对齐自测
+                                # 与 /process-embed 同路径：主进程线程调用，便于复现/对齐自测。
+                                # 逐子空间调用 embedder.embed（火山方舟无 batch），共享同一 Embedder 连接。
                                 usage_box: dict[str, Any] = {}
 
                                 def _do_embed_sync():
-                                    def _on_usage(u):
-                                        usage_box["usage"] = u
+                                    merged_usage: TokenUsage | None = None
+                                    vectors: dict[str, list[float]] = {}
 
-                                    emb_vec = embedder.embed(text, on_usage=_on_usage)
-                                    u = usage_box.get("usage")
-                                    u_dict = u.to_dict() if isinstance(u, TokenUsage) else None
-                                    return {"embedding": emb_vec, "usage": u_dict}
+                                    def _on_usage(u):
+                                        nonlocal merged_usage
+                                        if u is None:
+                                            return
+                                        if merged_usage is None:
+                                            merged_usage = TokenUsage()
+                                        merged_usage.add(u)
+
+                                    for sub in wanted_subs:
+                                        vectors[sub] = embedder.embed(sub_texts[sub], on_usage=_on_usage)
+                                    u_dict = merged_usage.to_dict() if isinstance(merged_usage, TokenUsage) else None
+                                    return {"vectors": vectors, "usage": u_dict}
 
                                 # 走专用 blocking_pool：embedding 是阻塞型 HTTP 调用，
                                 # 默认 asyncio.to_thread 会与普通 HTTP 请求争默认线程池。
                                 return await asyncio.wait_for(run_heavy(_do_embed_sync), timeout=embedding_timeout_sec)
                             return await run_killable_target(
                                 _PIPELINE_ISOLATED,
-                                "isolated_embed_text",
+                                "isolated_embed_multi",
                                 (
                                     embedding_base_url,
                                     embedding_api_key,
                                     embedding_model,
-                                    text,
+                                    {s: sub_texts[s] for s in wanted_subs},
                                     embedding_timeout_sec,
                                     vector_dim,
                                 ),
@@ -823,7 +845,7 @@ async def run_pipeline(
                         )
                         t_embed_ms = int((time.perf_counter() - t_embed0) * 1000)
                         if raw_emb is not None:
-                            embedding = raw_emb["embedding"]
+                            vectors = raw_emb["vectors"]
                             usage_dict = raw_emb.get("usage")
                             usage = TokenUsage(**usage_dict) if usage_dict else None
                             try:
@@ -831,11 +853,17 @@ async def run_pipeline(
                             except Exception:
                                 metrics_errors.append("embed_usage_merge_error")
                             async with vector_db_lock:
-                                vector_db.add_embedding(item["id"], embedding)
-                            logger.info("片段 %s Embedding 写入完成：%dms", item["id"], t_embed_ms)
+                                vector_db.add_embedding_multi(item["id"], vectors)
+                            logger.info(
+                                "片段 %s Embedding 写入完成：%dms 子空间=%s",
+                                item["id"], t_embed_ms, list(vectors.keys()),
+                            )
                             ok = True
                         else:
                             logger.warning("片段 %s Embedding 失败/超时：%dms", item["id"], t_embed_ms)
+                    elif incremental_skipped:
+                        logger.info("片段 %s Embedding 跳过：增量模式下子空间已齐全", item["id"])
+                        ok = True  # 增量幂等完成，计入成功
                     else:
                         logger.info("片段 %s Embedding 跳过：无可用文本（asr+vlm 为空）", item["id"])
                 else:

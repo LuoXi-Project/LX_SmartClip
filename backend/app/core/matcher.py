@@ -328,6 +328,8 @@ class Matcher:
         db_conn,
         top_k: int,
         video_ids: Optional[List[str]],
+        *,
+        subspaces: Optional[List[str]] = None,
     ) -> Tuple[List[dict], bool]:
         if self.embedder is None or self.vector_db is None:
             raise RuntimeError("向量匹配模式需要 embedder 与 vector_db")
@@ -343,7 +345,7 @@ class Matcher:
 
         try:
             candidate_ids = self.vector_db.search(
-                query_vec, top_k=top_k, video_ids=video_ids or None
+                query_vec, top_k=top_k, video_ids=video_ids or None, subspaces=subspaces
             )
         except Exception as e:
             return self._recall_on_vector_failure(
@@ -476,13 +478,14 @@ class Matcher:
         min_llm_score: float = 0.0,
         min_similarity: float = 0.0,
         refine: Optional[bool] = None,
+        subspaces: Optional[List[str]] = None,
     ) -> dict:
         video_ids = [v for v in (video_ids or []) if v]
         scoped_ids = video_ids or None
 
         if mode == "vector":
             candidates, used_full_fallback = self._recall_vector(
-                query, db_conn, top_k, scoped_ids
+                query, db_conn, top_k, scoped_ids, subspaces=subspaces
             )
         elif mode == "text":
             candidates, used_full_fallback = self._recall_text(

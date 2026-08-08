@@ -108,18 +108,22 @@ const WS_BASE_URL = typeof window !== 'undefined'
 export interface ProcessJobCreateBody {
   skip_steps?: string[]
   clip_ids?: string[] | null
+  /** 增量多向量化：仅补齐缺失子空间向量（供「继续拆维度向量化」使用） */
+  embed_incremental?: boolean
 }
 
 export function createProcessWebSocket(
   videoId: string,
   skipSteps: string[] = [],
   clipIds?: string[] | null,
+  embedIncremental?: boolean,
 ): WebSocket {
   const ws = new WebSocket(`${WS_BASE_URL}/api/videos/${videoId}/process-ws`)
   ws.addEventListener('open', () => {
     // 后端会等待首条 JSON（包含 skip_steps / optionally clip_ids）后再进入处理流程。
     const payload: ProcessJobCreateBody = { skip_steps: skipSteps }
     if (clipIds != null && clipIds.length > 0) payload.clip_ids = clipIds
+    if (embedIncremental) payload.embed_incremental = true
     ws.send(JSON.stringify(payload))
   })
   return ws
@@ -232,8 +236,13 @@ export interface SemanticSearchRequest {
   match_mode?: MatchMode
   /** LLM 精排控制：true=强制启用；false=跳过；不传=默认行为 */
   refine?: boolean
+  /** 向量检索限定的子空间（仅 vector 模式生效）；不传=自动选择所有有数据的子空间 */
+  subspaces?: Subspace[]
   filters?: SemanticSearchFilters
 }
+
+/** 向量子空间：asr=台词 / vlm=画面 / abstract=抽象主题 / legacy=混合 */
+export type Subspace = 'asr' | 'vlm' | 'abstract' | 'legacy'
 
 export interface SemanticSearchSegment {
   clip_id: string

@@ -157,3 +157,58 @@ def isolated_embed_text(
             emb.close()
         except Exception:
             pass
+
+
+def isolated_embed_multi(
+    base_url: str,
+    api_key: str,
+    model: str,
+    sub_texts: dict[str, str],
+    request_timeout_sec: float = 120.0,
+    volc_output_dimensions: Optional[int] = None,
+) -> dict[str, Any]:
+    """多向量子空间 embed（单子进程内逐子空间调用，共享一个 Embedder 连接）。
+
+    Args:
+        sub_texts: {subspace: text}，仅对非空文本 embed；空文本子空间不出现在结果中。
+
+    Returns:
+        {"vectors": {subspace: [float...]}, "usage": <合并的 TokenUsage dict 或 None>}
+    """
+    from app.core.embedder import Embedder
+    from app.core.metrics.token_usage import TokenUsage
+
+    emb = Embedder(
+        base_url,
+        api_key,
+        model,
+        request_timeout_sec=request_timeout_sec,
+        volc_output_dimensions=volc_output_dimensions,
+    )
+    merged: Optional[TokenUsage] = None
+
+    def on_usage(u):
+        nonlocal merged
+        try:
+            if u is None:
+                return
+            if merged is None:
+                merged = TokenUsage()
+            merged.add(u)
+        except Exception:
+            pass
+
+    try:
+        vectors: dict[str, list[float]] = {}
+        for sub, text in sub_texts.items():
+            t = (text or "").strip()
+            if not t:
+                continue
+            vectors[sub] = emb.embed(t, on_usage=on_usage)
+        u_dict = merged.to_dict() if isinstance(merged, TokenUsage) else None
+        return {"vectors": vectors, "usage": u_dict}
+    finally:
+        try:
+            emb.close()
+        except Exception:
+            pass

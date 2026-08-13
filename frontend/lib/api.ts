@@ -1958,3 +1958,116 @@ export const rendersApi = {
     apiClient.delete<unknown, { deleted: boolean; filename: string }>(`/api/renders/${id}`),
   scan: () => apiClient.post<unknown, { stats: Record<string, number> }>('/api/renders/scan'),
 }
+
+// ── 音频库（音乐爬取 + 账号管理） ────────────────────────────────────────
+export interface AudioSourceMeta {
+  source: string
+  label: string
+  needs_login: boolean
+  has_account: boolean
+}
+
+export interface AudioLibraryStatusResp {
+  ready: boolean
+  browser: {
+    ready: boolean
+    kind: string
+    label: string
+    channel: string | null
+    detected_proxy: string | null
+  }
+  sources: AudioSourceMeta[]
+}
+
+export interface AudioAccountResp {
+  source: string
+  account: string
+  display_name: string | null
+  login_status: string // logged_in | logged_out | expired | guest
+  last_login_at: string | null
+  last_used_at: string | null
+  last_error: string | null
+}
+
+export interface SongMetaDTO {
+  source: string
+  source_id: string
+  title: string
+  artist?: string | null
+  album?: string | null
+  duration?: number | null
+  cover_url?: string | null
+  heat: number
+  tags: string[]
+}
+
+export interface AudioTaskResp {
+  id: string
+  job_type: string // search | download
+  source: string
+  account: string | null
+  status: string // pending | running | succeeded | failed | partial | cancelled
+  pid: number | null
+  payload_json: string
+  progress_json: string | null
+  result_json: string | null
+  log: string
+  created_at: string
+  updated_at: string
+}
+
+export const audioLibraryApi = {
+  status: () => apiClient.get<unknown, AudioLibraryStatusResp>('/api/audio-library/status'),
+  listAccounts: (source?: string) =>
+    apiClient.get<unknown, { accounts: AudioAccountResp[] }>('/api/audio-library/accounts', {
+      params: source ? { source } : undefined,
+    }),
+  login: (source: string, account = 'main') =>
+    apiClient.post<unknown, { message: string; account: string }>(
+      `/api/audio-library/accounts/${source}/login`,
+      { account },
+    ),
+  checkLogin: (source: string, account = 'main') =>
+    apiClient.post<
+      unknown,
+      { source: string; account: string; valid: boolean; message?: string }
+    >(`/api/audio-library/accounts/${source}/check`, { account }),
+  deleteAccount: (source: string, account: string) =>
+    apiClient.delete<unknown, { removed: boolean; source: string; account: string }>(
+      `/api/audio-library/accounts/${source}/${account}`,
+    ),
+  updateAccount: (source: string, account: string, body: { display_name: string }) =>
+    apiClient.patch<
+      unknown,
+      { source: string; account: string; display_name: string | null; updated: boolean }
+    >(`/api/audio-library/accounts/${source}/${account}`, body),
+  searchPreview: (body: {
+    source: string
+    keyword: string
+    limit?: number
+    account?: string
+  }) =>
+    apiClient.post<unknown, { task_id: string; message: string }>(
+      '/api/audio-library/search-preview',
+      body,
+    ),
+  downloadBatch: (body: {
+    source: string
+    account: string
+    songs: SongMetaDTO[]
+  }) =>
+    apiClient.post<unknown, { task_id: string; message: string }>(
+      '/api/audio-library/download-batch',
+      body,
+    ),
+  listTasks: (limit = 50, offset = 0) =>
+    apiClient.get<unknown, { tasks: AudioTaskResp[] }>('/api/audio-library/tasks', {
+      params: { limit, offset },
+    }),
+  getTask: (taskId: string) =>
+    apiClient.get<unknown, AudioTaskResp>(`/api/audio-library/tasks/${taskId}`),
+  cancelTask: (taskId: string) =>
+    apiClient.post<unknown, { cancelled: boolean; message?: string }>(
+      `/api/audio-library/tasks/${taskId}/cancel`,
+    ),
+}

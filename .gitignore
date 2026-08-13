@@ -45,3 +45,4 @@ tmp/
 start_dev.bat
 .gitignore
 playwright/ms-playwright/
+.zcode/plans/

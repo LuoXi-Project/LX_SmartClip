@@ -21,6 +21,7 @@ const editItems: NavDropdownItem[] = [
 const audioItems: NavDropdownItem[] = [
   { href: '/tts', label: 'TTS 配音', description: '文字转语音' },
   { href: '/bgm', label: 'BGM 音乐库', description: '背景音乐管理' },
+  { href: '/audio-library', label: '音频库', description: '音乐账号与爬取' },
 ]
 
 const moreItems: NavDropdownItem[] = [

@@ -235,6 +235,43 @@ CREATE TABLE IF NOT EXISTS publish_accounts (
 );
 """
 
+# 音频库账号（音乐爬取源账号管理，仿 publish_accounts）
+# source: netease / kuwo；酷我免登录，login_status 固定 'guest'
+# 与 publish_accounts 字段语义一一对应，仅 platform → source
+CREATE_AUDIO_ACCOUNTS = """
+CREATE TABLE IF NOT EXISTS audio_accounts (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    account TEXT NOT NULL,
+    display_name TEXT,
+    login_status TEXT NOT NULL DEFAULT 'logged_out',
+    last_login_at TEXT,
+    last_used_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, account)
+);
+"""
+
+# 音频库爬取任务（搜索/批量下载，仿 publish_tasks）
+CREATE_AUDIO_TASKS = """
+CREATE TABLE IF NOT EXISTS audio_tasks (
+    id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    account TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    pid INTEGER,
+    progress_json TEXT,
+    result_json TEXT,
+    log TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 # 成片（用户合成/导出的最终视频）追踪表
 # 双轨：渲染成功时主动写入（5 个产出点）+ 首次启动扫描历史文件入库
 # material_title/plan_json：渲染时携带的原素材标题 + 方案/方案内容快照，
@@ -658,6 +695,8 @@ async def init_db():
         await db.execute(CREATE_VIDEO_SMART_OUTLINES)
         await db.execute(CREATE_PUBLISH_TASKS)
         await db.execute(CREATE_PUBLISH_ACCOUNTS)
+        await db.execute(CREATE_AUDIO_ACCOUNTS)
+        await db.execute(CREATE_AUDIO_TASKS)
         await db.execute(CREATE_RENDERS)
         # 兼容旧库：renders 补齐 AI 文案生成相关列
         try:

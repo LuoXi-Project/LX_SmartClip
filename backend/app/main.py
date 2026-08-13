@@ -43,6 +43,7 @@ from app.api.license import router as license_router
 from app.api.logs import router as logs_router
 from app.api.ui import router as ui_router
 from app.api.publish import router as publish_router
+from app.api.audio_library import router as audio_library_router
 from app.api.renders import router as renders_router
 from app.middleware.license_middleware import LicenseMiddleware
 
@@ -118,6 +119,7 @@ app.include_router(script_stock_router)
 app.include_router(film_commentary_router)
 app.include_router(agent_router)
 app.include_router(publish_router)
+app.include_router(audio_library_router)
 app.include_router(renders_router)
 
 

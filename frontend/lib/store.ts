@@ -20,6 +20,15 @@ export interface TtsHistoryItem {
   filename: string
 }
 
+/** 手动 BGM 分段配置项（手动/音频匹配面板与全自动流水线共用） */
+export interface ManualBgmTimelineSegment {
+  id: string
+  startSec: number
+  endSec: number
+  trackId?: string
+  volumeDb?: number
+}
+
 /** 与智能剪辑页 localStorage 旧版自动成片键一致，仅用于一次性 migrate 合并 */
 export const LEGACY_AUTO_EDIT_CACHE_KEY = 'lx-auto-edit-state-v1'
 
@@ -35,6 +44,28 @@ export interface MatchPageState {
   /** 手动匹配成片：画面时长 < 配音时的补足策略（循环/定格/保留画面等），跨刷新保留 */
   manualTtsAlign: TtsVideoAlignConfigApi
   setManualTtsAlign: (v: TtsVideoAlignConfigApi | ((prev: TtsVideoAlignConfigApi) => TtsVideoAlignConfigApi)) => void
+  /** 手动 BGM 混音（迁自会话态：配置一次跨刷新保留，手动导出与全自动共用） */
+  manualBgmEnabled: boolean
+  manualBgmTrackIds: string[]
+  manualBgmVolumeByTrackId: Record<string, number>
+  manualBgmTimelineSegments: ManualBgmTimelineSegment[]
+  setManualBgmEnabled: (v: boolean) => void
+  setManualBgmTrackIds: (fn: string[] | ((prev: string[]) => string[])) => void
+  setManualBgmVolumeByTrackId: (
+    fn: Record<string, number> | ((prev: Record<string, number>) => Record<string, number>)
+  ) => void
+  setManualBgmTimelineSegments: (
+    fn: ManualBgmTimelineSegment[] | ((prev: ManualBgmTimelineSegment[]) => ManualBgmTimelineSegment[])
+  ) => void
+  /** 全自动成片：配音音色覆盖（空字符串 = 使用设置页全局 tts_voice） */
+  autoTtsVoice: string
+  /** 全自动成片：语速覆盖（仅 edge-tts 生效） */
+  autoTtsRate: string
+  /** 全自动成片：音量覆盖（仅 edge-tts 生效） */
+  autoTtsVolume: string
+  setAutoTtsVoice: (v: string) => void
+  setAutoTtsRate: (v: string) => void
+  setAutoTtsVolume: (v: string) => void
   /** 工作区：手动 / 口播快剪 / 自动成片实验 / 模板剪辑 */
   matchMode: MatchWorkspaceMode
   /** 模板剪辑预设 */
@@ -131,6 +162,13 @@ export type MatchPersistedSlice = Pick<
   | 'subtitleStyle'
   | 'exportMode'
   | 'manualTtsAlign'
+  | 'manualBgmEnabled'
+  | 'manualBgmTrackIds'
+  | 'manualBgmVolumeByTrackId'
+  | 'manualBgmTimelineSegments'
+  | 'autoTtsVoice'
+  | 'autoTtsRate'
+  | 'autoTtsVolume'
   | 'matchMode'
   | 'templatePreset'
   | 'templatePresetSource'
@@ -251,6 +289,13 @@ export const useMatchStore = create<MatchPageState>()(
       exportMode: 'zip' as ExportMode,
       // 默认「循环本段画面」：与历史 audio_match 行为一致，升级无感
       manualTtsAlign: { ...DEFAULT_VOICEOVER_TTS_ALIGN, policy: 'loop_video_to_cover' },
+      manualBgmEnabled: false,
+      manualBgmTrackIds: [] as string[],
+      manualBgmVolumeByTrackId: {} as Record<string, number>,
+      manualBgmTimelineSegments: [] as ManualBgmTimelineSegment[],
+      autoTtsVoice: '',
+      autoTtsRate: '+0%',
+      autoTtsVolume: '+0%',
       matchMode: 'manual' as const,
       templatePreset: 'ecommerce',
       templatePresetSource: 'library' as const,
@@ -291,6 +336,28 @@ export const useMatchStore = create<MatchPageState>()(
           manualTtsAlign:
             typeof v === 'function' ? (v as (prev: TtsVideoAlignConfigApi) => TtsVideoAlignConfigApi)(state.manualTtsAlign) : v,
         })),
+      setManualBgmEnabled: (manualBgmEnabled) => set({ manualBgmEnabled }),
+      setManualBgmTrackIds: (fn) =>
+        set((state) => ({
+          manualBgmTrackIds: typeof fn === 'function' ? (fn as (prev: string[]) => string[])(state.manualBgmTrackIds) : fn,
+        })),
+      setManualBgmVolumeByTrackId: (fn) =>
+        set((state) => ({
+          manualBgmVolumeByTrackId:
+            typeof fn === 'function'
+              ? (fn as (prev: Record<string, number>) => Record<string, number>)(state.manualBgmVolumeByTrackId)
+              : fn,
+        })),
+      setManualBgmTimelineSegments: (fn) =>
+        set((state) => ({
+          manualBgmTimelineSegments:
+            typeof fn === 'function'
+              ? (fn as (prev: ManualBgmTimelineSegment[]) => ManualBgmTimelineSegment[])(state.manualBgmTimelineSegments)
+              : fn,
+        })),
+      setAutoTtsVoice: (autoTtsVoice) => set({ autoTtsVoice }),
+      setAutoTtsRate: (autoTtsRate) => set({ autoTtsRate }),
+      setAutoTtsVolume: (autoTtsVolume) => set({ autoTtsVolume }),
       setMatchMode: (matchMode) => set({ matchMode }),
       setTemplatePreset: (templatePreset) => set({ templatePreset }),
       setTemplatePresetSource: (templatePresetSource) => set({ templatePresetSource }),
@@ -351,7 +418,7 @@ export const useMatchStore = create<MatchPageState>()(
     }),
     {
       name: 'lx-match-state',
-      version: 5,
+      version: 6,
       /** 只持久化数据字段，避免把函数/未知键写进 localStorage */
       partialize: (state): MatchPersistedSlice => ({
         segments: state.segments,
@@ -363,6 +430,13 @@ export const useMatchStore = create<MatchPageState>()(
         subtitleStyle: state.subtitleStyle,
         exportMode: state.exportMode,
         manualTtsAlign: state.manualTtsAlign,
+        manualBgmEnabled: state.manualBgmEnabled,
+        manualBgmTrackIds: state.manualBgmTrackIds,
+        manualBgmVolumeByTrackId: state.manualBgmVolumeByTrackId,
+        manualBgmTimelineSegments: state.manualBgmTimelineSegments,
+        autoTtsVoice: state.autoTtsVoice,
+        autoTtsRate: state.autoTtsRate,
+        autoTtsVolume: state.autoTtsVolume,
         matchMode: state.matchMode,
         templatePreset: state.templatePreset,
         templatePresetSource: state.templatePresetSource,
@@ -465,6 +539,16 @@ export const useMatchStore = create<MatchPageState>()(
         ) {
           merged.manualTtsAlign = { ...DEFAULT_VOICEOVER_TTS_ALIGN, policy: 'loop_video_to_cover' }
         }
+        // v6：手动 BGM 配置迁入持久化；全自动配音覆盖参数回填默认值
+        if (typeof merged.manualBgmEnabled !== 'boolean') merged.manualBgmEnabled = false
+        if (!Array.isArray(merged.manualBgmTrackIds)) merged.manualBgmTrackIds = []
+        if (!merged.manualBgmVolumeByTrackId || typeof merged.manualBgmVolumeByTrackId !== 'object') {
+          merged.manualBgmVolumeByTrackId = {}
+        }
+        if (!Array.isArray(merged.manualBgmTimelineSegments)) merged.manualBgmTimelineSegments = []
+        if (typeof merged.autoTtsVoice !== 'string') merged.autoTtsVoice = ''
+        if (typeof merged.autoTtsRate !== 'string' || !merged.autoTtsRate.trim()) merged.autoTtsRate = '+0%'
+        if (typeof merged.autoTtsVolume !== 'string' || !merged.autoTtsVolume.trim()) merged.autoTtsVolume = '+0%'
         if (!Array.isArray(merged.autoPlans)) merged.autoPlans = []
         if (!merged.autoRealizeDownloads || typeof merged.autoRealizeDownloads !== 'object') {
           merged.autoRealizeDownloads = {}

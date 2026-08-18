@@ -4,16 +4,11 @@ import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 're
 import { Loader2, Mic, Plus, Search, SplitSquareHorizontal } from 'lucide-react'
 import { type BgmTrack, type MatchClip } from '@/lib/api'
 import { type Segment } from './types'
-import { CopyGeneratorPanel } from './CopyGeneratorPanel'
+import { CopySourcePanel } from './CopySourcePanel'
 import { SegmentRow } from './SegmentRow'
 import { BgmCustomConfigPanel } from './BgmCustomConfigPanel'
-import { VoiceInputControl } from '@/components/ui/voice-input'
 
 export type ManualMatchPanelProps = {
-  topK: number
-  topN: number
-  onTopKChange: (value: number) => void
-  onTopNChange: (value: number) => void
   selectedVideoIds: string[]
   onAiApply: (parts: string[]) => void
   globalQuery: string
@@ -62,16 +57,14 @@ export type ManualMatchPanelProps = {
     patch: Partial<{ startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
   ) => void
   bgmListError?: string
+  /** 全自动成片区块（仅手动模式传入）：参数配置 + 一键流水线 */
+  autoPipelineSlot?: ReactNode
   /** 主工作区：成片时间轴（预览 + 裁剪） */
   timelineWorkspace?: ReactNode
   focusedSegId?: string | null
 }
 
 export function ManualMatchPanel({
-  topK,
-  topN,
-  onTopKChange,
-  onTopNChange,
   selectedVideoIds,
   onAiApply,
   globalQuery,
@@ -113,6 +106,7 @@ export function ManualMatchPanel({
   onRemoveManualBgmTimelineSegment,
   onUpdateManualBgmTimelineSegment,
   bgmListError,
+  autoPipelineSlot,
   timelineWorkspace,
   focusedSegId,
 }: ManualMatchPanelProps) {
@@ -156,87 +150,34 @@ export function ManualMatchPanel({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-4">
-        <label className="text-xs text-slate-500 flex items-center gap-2">
-          初筛
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={topK}
-            onChange={(e) => onTopKChange(Number(e.target.value))}
-            className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200"
-          />
-        </label>
-        <label className="text-xs text-slate-500 flex items-center gap-2">
-          推荐
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={topN}
-            onChange={(e) => onTopNChange(Number(e.target.value))}
-            className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200"
-          />
-        </label>
-      </div>
-      <CopyGeneratorPanel
+      {/* ① 工作区级文案输入源：手动输入 / AI 生成双 Tab，全自动与手动模式共用 */}
+      <CopySourcePanel
+        globalQuery={globalQuery}
+        onGlobalQueryChange={onGlobalQueryChange}
         selectedVideoIds={selectedVideoIds}
-        onApply={onAiApply}
+        onAiApply={onAiApply}
         replicaTemplateGuide={replicaTemplateGuide}
       />
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">手动 BGM</p>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={manualBgmEnabled}
-            onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
-            className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
-          />
-          <span className="text-sm text-slate-200">导出时混入 BGM（支持多选循环、分段配置）</span>
-        </label>
-        {manualBgmEnabled && (
-          <BgmCustomConfigPanel
-            title="手动 BGM 自定义"
-            enabled
-            onEnabledChange={() => {}}
-            bgmTracks={bgmTracks}
-            bgmListError={bgmListError}
-            selectedTrackIds={selectedManualBgmTrackIds}
-            onToggleTrack={onToggleManualBgmTrack}
-            volumeByTrackId={manualBgmVolumeByTrackId}
-            onTrackVolumeChange={onManualBgmTrackVolumeChange}
-            timelineSegments={manualBgmTimelineSegments}
-            onAddTimelineSegment={onAddManualBgmTimelineSegment}
-            onRemoveTimelineSegment={onRemoveManualBgmTimelineSegment}
-            onUpdateTimelineSegment={onUpdateManualBgmTimelineSegment}
-          />
-        )}
-      </section>
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-          <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />
-          批量拆分文案
-        </p>
-        <div className="relative">
-          <textarea
-            value={globalQuery}
-            onChange={(e) => onGlobalQueryChange(e.target.value)}
-            placeholder="粘贴完整文案，按空行自动拆分为多段分别匹配..."
-            rows={4}
-            className="w-full rounded-xl bg-slate-900/60 border border-slate-700 px-4 py-3 pr-14 pt-11 text-sm outline-none focus:border-indigo-500 placeholder-slate-600 resize-none"
-          />
-          <div className="absolute right-2 top-2 z-10">
-            <VoiceInputControl
-              intent="这是「批量拆分文案」的大段输入：用户可口述或朗读要拆成多段的口播/脚本。整理成适合按空行拆分的正文，保留段落感；不要添加「请拆分」等元说明。"
-              value={globalQuery}
-              onTextChange={onGlobalQueryChange}
-              merge="append"
-            />
+      {autoPipelineSlot}
+      {/* 手动逐段模式：文案取上方输入框，这里只做拆分与批量操作 */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />
+              手动逐段模式
+            </p>
+            <span className="text-[11px] text-slate-600 normal-case font-normal">想逐段挑选素材、精修出入点时使用；文案取上方输入框</span>
           </div>
+          <button
+            onClick={onAddSegment}
+            className="px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-400 flex items-center gap-1.5 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            手动添加段落
+          </button>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={onSplit}
             disabled={!globalQuery.trim()}
@@ -266,14 +207,36 @@ export function ManualMatchPanel({
               </button>
             </>
           )}
-          <button
-            onClick={onAddSegment}
-            className="ml-auto px-3 py-2 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-400 flex items-center gap-1.5 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            手动添加段落
-          </button>
         </div>
+      </section>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">手动 BGM</p>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={manualBgmEnabled}
+            onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
+            className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+          />
+          <span className="text-sm text-slate-200">导出时混入 BGM（支持多选循环、分段配置）</span>
+        </label>
+        {manualBgmEnabled && (
+          <BgmCustomConfigPanel
+            title="手动 BGM 自定义"
+            enabled
+            onEnabledChange={() => {}}
+            bgmTracks={bgmTracks}
+            bgmListError={bgmListError}
+            selectedTrackIds={selectedManualBgmTrackIds}
+            onToggleTrack={onToggleManualBgmTrack}
+            volumeByTrackId={manualBgmVolumeByTrackId}
+            onTrackVolumeChange={onManualBgmTrackVolumeChange}
+            timelineSegments={manualBgmTimelineSegments}
+            onAddTimelineSegment={onAddManualBgmTimelineSegment}
+            onRemoveTimelineSegment={onRemoveManualBgmTimelineSegment}
+            onUpdateTimelineSegment={onUpdateManualBgmTimelineSegment}
+          />
+        )}
       </section>
       {timelineWorkspace}
       {segments.length > 0 && (

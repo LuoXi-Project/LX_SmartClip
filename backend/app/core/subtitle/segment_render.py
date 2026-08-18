@@ -511,9 +511,22 @@ def materialize_clip_paths_for_group(
         need_norm = (w, h) != (tw, th)
         # 中间材质化归一化：bicubic 为 FFmpeg 默认缩放，与 lanczos 对实拍素材肉眼无差且更快；
         # 最终成片缩放（render_opts.build_extra_video_filters）仍保留 lanczos。
-        norm_vf = (
-            [f"scale={tw}:{th}:flags=bicubic", "setsar=1"] if need_norm else []
-        )
+        # 跨宽高比（统一画布/预设输出宽高与素材不一致）时等比缩放 + 黑边补齐，
+        # 与 composer 合并路径（force_original_aspect_ratio=decrease + pad）语义一致，避免拉伸变形。
+        if need_norm:
+            _src_ar = (w / h) if h > 0 else 0.0
+            _dst_ar = (tw / th) if th > 0 else 0.0
+            _cross_aspect = not (_src_ar > 0 and _dst_ar > 0 and abs(_src_ar - _dst_ar) <= 0.01)
+            if _cross_aspect:
+                norm_vf = [
+                    f"scale={tw}:{th}:force_original_aspect_ratio=decrease:flags=bicubic",
+                    f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2",
+                    "setsar=1",
+                ]
+            else:
+                norm_vf = [f"scale={tw}:{th}:flags=bicubic", "setsar=1"]
+        else:
+            norm_vf = []
         visual_vf = build_segment_visual_filters(getattr(seg, "visual_effect", None))
         seg_filter_parts = [*norm_vf, *extra_filters, *visual_vf]
         seg_vf_args = ["-vf", ",".join(seg_filter_parts)] if seg_filter_parts else []

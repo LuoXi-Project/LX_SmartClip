@@ -16,7 +16,12 @@ from app.utils.paths import get_render_tmp_base_dir
 
 from .ass_builder import build_ass  # noqa: F401 - re-export for backwards compatibility
 from .composer import compose_final_video, compose_final_video_moviepy
-from .render_opts import final_render_opts_from_export, sanitize_no_stream_copy, truthy_export_gpu
+from .render_opts import (
+    export_resolution_fully_unspecified,
+    final_render_opts_from_export,
+    sanitize_no_stream_copy,
+    truthy_export_gpu,
+)
 from .segment_render import (
     collect_segment_sources,
     render_muted_segment,
@@ -226,6 +231,13 @@ def burn_to_mp4(
     final_render_opts = sanitize_no_stream_copy(
         final_render_opts_from_export(export_render_opts, render_opts)
     )
+    # 成片 export_scale_* 全未指定（0=跟随素材）时，不得沿用切片预览 clip_scale_*
+    # （如 960×540 / 1280×720 预览档），否则竖屏素材会被静默拉成横屏。
+    # 与剪映草稿管线（jianying/export_pipeline）使用同一守卫；跟随素材语义交给
+    # _inject_unified_canvas（多素材取占比最高分辨率）与 fast_render（单源直通原分辨率）。
+    if export_resolution_fully_unspecified(export_render_opts):
+        final_render_opts["clip_scale_width"] = "0"
+        final_render_opts["clip_scale_height"] = "0"
     # 从原片裁剪时用 export_* 合并结果；仅用预处理 clip 时用 clip_*（避免低质切片参数污染成片）
     segment_render_opts = final_render_opts if materialize_from_source else (render_opts or {})
 

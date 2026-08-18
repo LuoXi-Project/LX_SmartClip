@@ -19,6 +19,7 @@ import {
   Gauge,
   Film,
   FolderOpen,
+  MonitorSmartphone,
 } from 'lucide-react'
 import type { ConfigMap } from './types'
 import { SettingsDetails } from './SettingsDetails'
@@ -97,8 +98,8 @@ const PARAM_HINTS: Record<string, string> = {
   export_keyint_min: '成片最小关键帧间隔（x264/x265 有效）',
   export_sc_threshold: '成片场景切换阈值（x264/x265 有效）',
   export_fps: '成片强制帧率（0=跟随源）',
-  export_scale_width: '成片输出宽度（0=不限制）',
-  export_scale_height: '成片输出高度（0=不限制）',
+  export_scale_width: '成片统一输出宽度（0=跟随素材；设定后所有段落统一到该宽度，宽高比不一致的素材等比缩放补黑边）',
+  export_scale_height: '成片统一输出高度（0=跟随素材；设定后所有段落统一到该高度，宽高比不一致的素材等比缩放补黑边）',
   export_pix_fmt: '成片像素格式，兼容性优先选 yuv420p',
   jianying_draft_parent_dir:
     '填写或浏览本机文件夹路径（支持 / 与 \\\\）。导出时将在此目录下直接生成剪映草稿文件夹（无需 ZIP）；JSON 内为完整素材绝对路径。留空则仍导出 ZIP，并附带 patch_paths.bat',
@@ -245,6 +246,16 @@ const HOW_IT_WORKS = [
   'fixed 更可控，scene/hybrid 更贴近镜头边界；hybrid 还能防止单段过长。',
 ]
 
+/** 成片分辨率预设：宽高均映射到 export_scale_*（0=跟随素材） */
+const EXPORT_RESOLUTION_PRESETS = [
+  { label: '跟随素材', w: '0', h: '0', hint: '竖屏出竖屏' },
+  { label: '竖屏 1080×1920', w: '1080', h: '1920', hint: '抖音/快手' },
+  { label: '竖屏 720×1280', w: '720', h: '1280', hint: '竖屏轻量' },
+  { label: '横屏 1920×1080', w: '1920', h: '1080', hint: 'B站/YouTube' },
+  { label: '横屏 1280×720', w: '1280', h: '720', hint: '横屏轻量' },
+  { label: '方形 1080×1080', w: '1080', h: '1080', hint: '1:1' },
+]
+
 const IMPACT_LABELS = [
   { key: 'speed', label: '速度' },
   { key: 'accuracy', label: '切点准确' },
@@ -303,7 +314,11 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
   const FRAME_KEYS = ['frame_fps', 'frame_concurrency', 'frame_target_pixels']
   const CLIP_BASIC_KEYS = ['clip_container']
   const CLIP_ADV_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('clip_') && k !== 'clip_container')
-  const EXPORT_KEYS = VIDEO_KEYS.filter((k) => k.startsWith('export_'))
+  // 分辨率两项由下方「成片分辨率」卡片单独承载（预设 + 自定义输入），不在编码折叠面板重复出现
+  const EXPORT_SCALE_KEYS = ['export_scale_width', 'export_scale_height']
+  const EXPORT_KEYS = VIDEO_KEYS.filter(
+    (k) => k.startsWith('export_') && !EXPORT_SCALE_KEYS.includes(k)
+  )
   const JIANYING_EXPORT_KEYS = ['jianying_draft_parent_dir']
   const presetDirty = (values: Record<string, string>) =>
     Object.entries(values).some(([key, val]) => hasConfig(key) && v(key) !== val)
@@ -565,6 +580,59 @@ export function VideoSection({ config, edits, saving, saved, onSet, onSave, onSa
           >
             {renderFields(CLIP_ADV_KEYS)}
           </SettingsDetails>
+        )}
+
+        {/* 成片分辨率（统一输出宽高）：预设 + 自定义，作用于字幕烧录/原声成片等最终文件 */}
+        {EXPORT_SCALE_KEYS.every((k) => config[k]) && (
+          <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
+                  <MonitorSmartphone className="w-4 h-4 text-indigo-300" />
+                  成片分辨率（统一输出宽高）
+                </p>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  「跟随素材」：竖屏出竖屏、横屏出横屏；多素材分辨率不一致时取占比最高的分辨率作统一画布。
+                  选定固定宽高后，所有段落统一输出到该尺寸，宽高比不一致的素材会等比缩放并补黑边（不拉伸变形）。
+                </p>
+              </div>
+              <SaveBtn
+                dirty={EXPORT_SCALE_KEYS.some((k) => isDirty(k))}
+                saving={EXPORT_SCALE_KEYS.some((k) => saving[k])}
+                saved={EXPORT_SCALE_KEYS.every((k) => saved[k])}
+                onSave={() => onSaveGroup(EXPORT_SCALE_KEYS)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {EXPORT_RESOLUTION_PRESETS.map((p) => {
+                const active = v('export_scale_width') === p.w && v('export_scale_height') === p.h
+                return (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      onSet('export_scale_width', p.w)
+                      onSet('export_scale_height', p.h)
+                    }}
+                    className={`px-3 py-2 rounded-lg border text-xs transition-colors ${
+                      active
+                        ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
+                        : 'border-slate-700 bg-slate-900/50 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    <span className="font-medium">{p.label}</span>
+                    <span className="ml-1.5 text-[10px] text-slate-500">{p.hint}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {EXPORT_SCALE_KEYS.map((key) => renderField(key))}
+            </div>
+            <p className="text-[11px] text-slate-600">
+              也可以直接在上方输入框自定义宽高（可只填一边，另一边按素材等比推导）。
+            </p>
+          </div>
         )}
 
         {EXPORT_KEYS.some((k) => config[k]) && (

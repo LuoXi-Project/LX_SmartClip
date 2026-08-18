@@ -15,6 +15,7 @@ import apiClient, {
   formatFastApiDetail,
   type AudioMatchAsrSegment,
   type MatchClip,
+  type TTSRequest,
   type Video,
   autoEditApi,
   type AutoEditPlanApi,
@@ -32,6 +33,13 @@ import { MatchPageHeader } from './_components/MatchPageHeader'
 import { VideoScopeSelector } from './_components/VideoScopeSelector'
 import { ManualMatchPanel } from './_components/ManualMatchPanel'
 import { AudioMatchPanel, type AudioMatchSource } from './_components/AudioMatchPanel'
+import {
+  AutoPipelinePanel,
+  INITIAL_AUTO_PIPELINE_STATE,
+  exportModeNeedsTts,
+  type AutoPipelineStageKey,
+  type AutoPipelineState,
+} from './_components/AutoPipelinePanel'
 import { AutoEditPanel } from './_components/AutoEditPanel'
 import { VoiceoverQuickCutPanel, type VoiceoverQuickCutStrategy } from './_components/VoiceoverQuickCutPanel'
 import { MixEditPanel, type MixEditGeneratePayload } from './_components/MixEditPanel'
@@ -130,6 +138,20 @@ export default function MatchPage() {
     setMatchExportMode,
     manualTtsAlign,
     setManualTtsAlign,
+    manualBgmEnabled,
+    setManualBgmEnabled,
+    manualBgmTrackIds,
+    setManualBgmTrackIds,
+    manualBgmVolumeByTrackId,
+    setManualBgmVolumeByTrackId,
+    manualBgmTimelineSegments,
+    setManualBgmTimelineSegments,
+    autoTtsVoice,
+    setAutoTtsVoice,
+    autoTtsRate,
+    setAutoTtsRate,
+    autoTtsVolume,
+    setAutoTtsVolume,
     matchMode: mode,
     autoTemplateEnabled,
     setAutoTemplateEnabled,
@@ -213,6 +235,9 @@ export default function MatchPage() {
   const [exportBackend, setExportBackend] = useState<'moviepy' | 'ffmpeg'>('moviepy')
   const [globalMatching, setGlobalMatching] = useState(false)
   const [globalTtsSynthesising, setGlobalTtsSynthesising] = useState(false)
+  // 全自动成片 · 仅会话态（BGM/配音/字幕/成片方式等参数在 useMatchStore 持久化，浏览器记忆）
+  const [autoPipeline, setAutoPipeline] = useState<AutoPipelineState>(INITIAL_AUTO_PIPELINE_STATE)
+  const autoPipelineCancelRef = useRef(false)
   const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
   const [timingSource, setTimingSource] = useState('')
   const [generatingSrt, setGeneratingSrt] = useState(false)
@@ -223,12 +248,6 @@ export default function MatchPage() {
   const [replicaTemplateRefreshSignal, setReplicaTemplateRefreshSignal] = useState(0)
   const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
   const [bgmListError, setBgmListError] = useState('')
-  const [manualBgmEnabled, setManualBgmEnabled] = useState(false)
-  const [manualBgmTrackIds, setManualBgmTrackIds] = useState<string[]>([])
-  const [manualBgmVolumeByTrackId, setManualBgmVolumeByTrackId] = useState<Record<string, number>>({})
-  const [manualBgmTimelineSegments, setManualBgmTimelineSegments] = useState<
-    Array<{ id: string; startSec: number; endSec: number; trackId?: string; volumeDb?: number }>
-  >([])
   const [voiceoverBgmEnabled, setVoiceoverBgmEnabled] = useState(false)
   const [voiceoverBgmTrackIds, setVoiceoverBgmTrackIds] = useState<string[]>([])
   const [voiceoverBgmVolumeByTrackId, setVoiceoverBgmVolumeByTrackId] = useState<Record<string, number>>({})
@@ -698,11 +717,17 @@ export default function MatchPage() {
     setMatchSegments(list)
   }
 
+  /** 文案切分规则：优先空行分段，其次句读断句，最后按行拆分 */
+  function splitCopyText(text: string): string[] {
+    let parts = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length <= 1) parts = text.split(/(?<=[。！？!?])\s*/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length <= 1) parts = text.split(/\n/).map((p) => p.trim()).filter(Boolean)
+    return parts
+  }
+
   function splitGlobalQuery() {
     if (!globalQuery.trim()) return
-    let parts = globalQuery.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
-    if (parts.length <= 1) parts = globalQuery.split(/(?<=[。！？!?])\s*/).map((p) => p.trim()).filter(Boolean)
-    if (parts.length <= 1) parts = globalQuery.split(/\n/).map((p) => p.trim()).filter(Boolean)
+    const parts = splitCopyText(globalQuery)
     if (!parts.length) return
     const c = useMatchStore.getState().segmentCounter
     setMatchSegments(parts.map((t, i) => makeSeg(`seg-${c + i}`, t)))
@@ -773,7 +798,16 @@ export default function MatchPage() {
     if (!seg || !seg.text.trim()) return
     patchSeg(id, { ttsLoading: true, ttsError: '' })
     try {
-      const res = await ttsApi.synthesize({ text: seg.text.trim() })
+      // 全自动配音参数覆盖：音色非空时随请求下发（后端对非 edge 引擎自动忽略 rate/volume）
+      const { autoTtsVoice, autoTtsRate, autoTtsVolume } = useMatchStore.getState()
+      const payload: TTSRequest = { text: seg.text.trim() }
+      const voiceOverride = autoTtsVoice.trim()
+      if (voiceOverride) {
+        payload.voice = voiceOverride
+        payload.rate = autoTtsRate
+        payload.volume = autoTtsVolume
+      }
+      const res = await ttsApi.synthesize(payload)
       patchSeg(id, { ttsLoading: false, ttsFilename: res.filename })
     } catch (e: unknown) {
       patchSeg(id, { ttsLoading: false, ttsError: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'TTS失败' })
@@ -827,15 +861,29 @@ export default function MatchPage() {
   // 注：历史实现曾把候选 clips 全部拼进 clip_ids，导致导出混入“未选素材”。
   // 现在一键成片/字幕烧录只使用 selectedClipIds（见 handleExport 内 exportMode==='subtitle' 分支）。
 
-  const readySegs = segments.filter((s) => s.clips.length > 0)
   /** 参与成片：已勾选素材；音频匹配还须已同步原声切片 */
-  const exportSegs = useMemo(() => {
-    const withSelection = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
-    if (mode === 'audio_match') {
+  function computeExportSegs(list: Segment[], workspaceMode: string): Segment[] {
+    const withSelection = list.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+    if (workspaceMode === 'audio_match') {
       return withSelection.filter((s) => !!s.ttsFilename)
     }
     return withSelection
-  }, [segments, mode])
+  }
+
+  /**
+   * 调用时从 store 读最新段落/文案/模式：
+   * 全自动流水线在多段 await 之后才会触发生成字幕与导出，若用渲染期闭包会拿到过期 segments。
+   */
+  function freshExportSegs(): Segment[] {
+    const st = useMatchStore.getState()
+    return computeExportSegs(st.segments, st.matchMode)
+  }
+
+  function freshReadySegs(): Segment[] {
+    return useMatchStore.getState().segments.filter((s) => s.clips.length > 0)
+  }
+
+  const readySegs = segments.filter((s) => s.clips.length > 0)
 
   const manualLikeWideLayout = isManualLikeMode(mode) && segments.length > 0
   const autoLikeWideLayout = isAutoLikeMode(mode) && autoPlans.length > 0
@@ -901,7 +949,7 @@ export default function MatchPage() {
   async function generateSrt(): Promise<string> {
     setGeneratingSrt(true); setSrtError('')
     try {
-      const segsInput = exportSegs
+      const segsInput = freshExportSegs()
         .map((s) => {
           const clip_ids = (s.selectedClipIds ?? []).filter(Boolean) as string[]
           const clip_id = clip_ids[0] ?? ''
@@ -924,13 +972,15 @@ export default function MatchPage() {
     } finally { setGeneratingSrt(false) }
   }
 
-  async function handleExport() {
-    if (exporting) return
-    const projectName = globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
+  /** 导出成片；返回是否成功（全自动流水线据此判定渲染阶段结果） */
+  async function handleExport(): Promise<boolean> {
+    if (exporting) return false
+    let exportOk = false
+    const projectName = useMatchStore.getState().globalQuery.slice(0, 30).replace(/\s+/g, '_') || 'smartclip_project'
     try {
       // 一键成片 / 剪映 TTS 草稿：先在前端拦截未完成配音，避免后端因缺音频报错
       if (exportMode === 'subtitle' || exportMode === 'jianying_tts') {
-        const needTtsSegs = exportSegs
+        const needTtsSegs = freshExportSegs()
         const missingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename)
         const loadingTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && s.ttsLoading)
         const failedTtsSegs = needTtsSegs.filter((s) => !s.ttsFilename && !!s.ttsError)
@@ -946,28 +996,31 @@ export default function MatchPage() {
                   ? `还有 ${missingTtsSegs.length} 段未同步原声，请先点击「同步全部原声」后再导出。`
                   : `还有 ${missingTtsSegs.length} 段未生成配音，请先完成配音合成后再导出。`
           toast.info(tip)
-          return
+          return false
         }
       }
 
       setExporting(true); setExportError('')
       if (exportMode === 'zip') {
-        const clipIds = readySegs
+        const zipReadySegs = freshReadySegs()
+        const clipIds = zipReadySegs
           .map((s) => (s.selectedClipIds?.[0] ?? s.clips[s.chosenIdx]?.clip_id))
           .filter(Boolean) as string[]
-        const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: readySegs.map((s) => s.ttsFilename ?? '') })
+        const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: zipReadySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
+        exportOk = true
       } else if (exportMode === 'subtitle') {
-        if (exportSegs.length === 0) {
+        const subtitleSegs = freshExportSegs()
+        if (subtitleSegs.length === 0) {
           toast.info(
             mode === 'audio_match'
               ? '请先为段落勾选素材并同步原声后再导出'
               : '请先为段落勾选素材后再导出',
           )
-          return
+          return false
         }
         const currentSrt = subtitleEnabled ? await generateSrt() : ''
-        const segsInput = exportSegs
+        const segsInput = subtitleSegs
           .map((s) => {
             const clip_ids = (s.selectedClipIds ?? []).filter(Boolean) as string[]
             const clip_id = clip_ids[0] ?? ''
@@ -990,7 +1043,7 @@ export default function MatchPage() {
           strict_use_client_srt: strictUseClientSrt,
           bgm: buildManualBgmPayload(),
           tts_align: { ...manualTtsAlign },
-          require_tts_audio: mode === 'audio_match',
+          require_tts_audio: useMatchStore.getState().matchMode === 'audio_match',
         })
         const burnJid = burnJob.job_id
         const burnStreamUrl = (burnJob.stream_url || '').startsWith('/')
@@ -1015,6 +1068,7 @@ export default function MatchPage() {
                 a.click()
                 burnTask.done('字幕成片已下载')
                 taskStorePatch(burnJid, { status: 'done', percent: 100, resultLabel: r.filename, result: { filename: r.filename, url: downloadUrl } })
+                exportOk = true
               } else {
                 burnTask.fail('导出未返回文件')
                 setExportError('导出未返回文件')
@@ -1040,16 +1094,17 @@ export default function MatchPage() {
           },
         })
       } else if (exportMode === 'jianying_tts') {
-        if (exportSegs.length === 0) {
+        const jyTtsSegs = freshExportSegs()
+        if (jyTtsSegs.length === 0) {
           toast.info(
             mode === 'audio_match'
               ? '请先为段落勾选素材并同步原声后再导出'
               : '请先为段落勾选素材后再导出',
           )
-          return
+          return false
         }
         const currentSrt = subtitleEnabled ? await generateSrt() : ''
-        const segsInput = exportSegs
+        const segsInput = jyTtsSegs
           .map((s) => {
             const clip_ids = (s.selectedClipIds ?? []).filter(Boolean) as string[]
             const clip_id = clip_ids[0] ?? ''
@@ -1074,16 +1129,18 @@ export default function MatchPage() {
         })
         if (res.mode === 'direct' && res.local_path) {
           toast.success(`剪映草稿已写入：${res.local_path}`)
-          return
+          exportOk = true
+          return true
         }
         const a = document.createElement('a')
         a.href = res.url
         a.download = res.filename
         a.click()
         toastRecommendJianyingParentDir(toast)
+        exportOk = true
       } else if (exportMode === 'original') {
-        const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
-        if (exportSegs.length === 0) return
+        const exportSegs = useMatchStore.getState().segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+        if (exportSegs.length === 0) return false
         const segsInput = exportSegs
           .map((s) => {
             const clip_ids = s.selectedClipIds
@@ -1131,6 +1188,7 @@ export default function MatchPage() {
                 a.click()
                 exportTask.done('原声成片已下载')
                 taskStorePatch(exportJid, { status: 'done', percent: 100, resultLabel: r.filename, result: { filename: r.filename, url: downloadUrl } })
+                exportOk = true
               } else {
                 exportTask.fail('导出未返回文件')
                 setExportError('导出未返回文件')
@@ -1156,8 +1214,8 @@ export default function MatchPage() {
           },
         })
       } else if (exportMode === 'jianying_original') {
-        const exportSegs = segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
-        if (exportSegs.length === 0) return
+        const exportSegs = useMatchStore.getState().segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
+        if (exportSegs.length === 0) return false
         const segsInput = exportSegs
           .map((s) => {
             const clip_ids = s.selectedClipIds
@@ -1182,17 +1240,20 @@ export default function MatchPage() {
         })
         if (res.mode === 'direct' && res.local_path) {
           toast.success(`剪映草稿已写入：${res.local_path}`)
-          return
+          exportOk = true
+          return true
         }
         const a = document.createElement('a')
         a.href = res.url
         a.download = res.filename
         a.click()
         toastRecommendJianyingParentDir(toast)
+        exportOk = true
       }
     } catch (e: unknown) {
       setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
     } finally { setExporting(false) }
+    return exportOk
   }
 
   function triggerDownload(blob: Blob, filename: string) {
@@ -1205,6 +1266,124 @@ export default function MatchPage() {
     document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 500)
   }
+
+  function stopAutoPipeline(stage: AutoPipelineStageKey, message: string) {
+    setAutoPipeline((p) => ({ ...p, status: 'cancelled', stage }))
+    toast.info(message)
+  }
+
+  function cancelAutoPipeline() {
+    if (autoPipeline.status !== 'running') return
+    const stage = autoPipeline.stage
+    if (!stage) return
+    // 渲染已是后台任务（任务中心可查/可取消），前端不再中断
+    if (stage === 'rendering') return
+    autoPipelineCancelRef.current = true
+    stopAutoPipeline(stage, '已取消全自动流程：可调整文案/参数后重新运行')
+  }
+
+  /**
+   * 全自动成片流水线：切分文案 → 匹配素材（并发）→ 配音合成（顺序）→ 字幕 → 导出成片。
+   * 复用各手动步骤的 handler 与既有后端 API，中间产物落在 segments，可随时人工微调后重导出。
+   */
+  async function runAutoPipeline() {
+    if (autoPipeline.status === 'running') return
+    const queryText = useMatchStore.getState().globalQuery.trim()
+    if (!queryText) {
+      toast.info('请先在「批量拆分文案」粘贴完整文案，再一键全自动成片')
+      return
+    }
+    autoPipelineCancelRef.current = false
+    setAutoPipeline({ ...INITIAL_AUTO_PIPELINE_STATE, status: 'running', stage: 'splitting' })
+    const fail = (stage: AutoPipelineStageKey, error: string) => {
+      setAutoPipeline((p) => ({ ...p, status: 'error', stage, error }))
+      toast.error(error)
+    }
+    try {
+      // 1. 切分文案（与「拆分为段落」同规则）
+      const parts = splitCopyText(queryText)
+      if (!parts.length) {
+        fail('splitting', '文案切分结果为空，请检查文案内容')
+        return
+      }
+      const counter = useMatchStore.getState().segmentCounter
+      const segIds = parts.map((_, i) => `seg-${counter + i}`)
+      setMatchSegments(parts.map((t, i) => makeSeg(`seg-${counter + i}`, t)))
+      setMatchSegmentCounter(counter + parts.length)
+      if (autoPipelineCancelRef.current) return stopAutoPipeline('splitting', '已取消全自动流程')
+
+      // 2. 匹配素材：并发请求，按完成数推进进度
+      setAutoPipeline((p) => ({ ...p, stage: 'matching', matchTotal: segIds.length, matchDone: 0 }))
+      let matchDone = 0
+      await Promise.all(segIds.map(async (id) => {
+        await matchSegment(id)
+        matchDone += 1
+        setAutoPipeline((p) => ({ ...p, matchDone }))
+      }))
+      if (autoPipelineCancelRef.current) return stopAutoPipeline('matching', '已取消全自动流程')
+      const matchedCount = useMatchStore.getState().segments.filter((s) => s.clips.length > 0).length
+      if (matchedCount === 0) {
+        fail('matching', '所有段落均未匹配到素材：请扩大素材范围或调整文案后重试')
+        return
+      }
+      if (matchedCount < segIds.length) {
+        toast.info(`有 ${segIds.length - matchedCount} 段未匹配到素材，成片将跳过这些段落`)
+      }
+
+      // 3. 配音合成：顺序生成（一键成片/剪映草稿需要 TTS）
+      const st = useMatchStore.getState()
+      if (exportModeNeedsTts(st.exportMode)) {
+        const ttsSegs = st.segments.filter((s) => s.text.trim() && s.clips.length > 0)
+        setAutoPipeline((p) => ({ ...p, stage: 'tts', ttsTotal: ttsSegs.length, ttsDone: 0 }))
+        for (const seg of ttsSegs) {
+          if (autoPipelineCancelRef.current) return stopAutoPipeline('tts', '已取消全自动流程')
+          await synthesiseTts(seg.id)
+          setAutoPipeline((p) => ({ ...p, ttsDone: p.ttsDone + 1 }))
+        }
+        const after = useMatchStore.getState().segments
+        const failedTtsSeg = after.find((s) => s.clips.length > 0 && s.text.trim() && !s.ttsFilename)
+        if (failedTtsSeg) {
+          fail('tts', `配音未全部生成（${failedTtsSeg.ttsError || 'TTS 失败'}），请检查 TTS 配置后重试`)
+          return
+        }
+      }
+
+      // 4. 字幕时间轴（开启字幕且成片方式需要时）
+      const st2 = useMatchStore.getState()
+      const needsSrt = st2.subtitleEnabled && (st2.exportMode === 'subtitle' || st2.exportMode === 'jianying_tts')
+      if (needsSrt) {
+        setAutoPipeline((p) => ({ ...p, stage: 'srt' }))
+        await generateSrt() // 失败会抛错，落到下方 catch
+      }
+      if (autoPipelineCancelRef.current) {
+        // 取消点回退到最近一个实际执行的阶段（配音/字幕可能被跳过）
+        const cancelStage: AutoPipelineStageKey = needsSrt
+          ? 'srt'
+          : exportModeNeedsTts(st2.exportMode)
+            ? 'tts'
+            : 'matching'
+        return stopAutoPipeline(cancelStage, '已取消全自动流程')
+      }
+
+      // 5. 成片导出：复用导出流程（SSE 进度、任务中心登记、完成自动下载）
+      setAutoPipeline((p) => ({ ...p, stage: 'rendering' }))
+      const exportOk = await handleExport()
+      if (autoPipelineCancelRef.current && !exportOk) {
+        return stopAutoPipeline('rendering', '已取消全自动流程')
+      }
+      if (!exportOk) {
+        fail('rendering', '成片导出失败：具体原因见页面错误提示，可在段落区微调后手动重试导出')
+        return
+      }
+      setAutoPipeline((p) => ({ ...p, status: 'done' }))
+      toast.success('全自动成片完成，文件已自动下载')
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '全自动成片失败'
+      setAutoPipeline((p) => ({ ...p, status: 'error', error: msg }))
+      toast.error(msg)
+    }
+  }
+
   const toggleVideo = (id: string) =>
     setSelectedVideoIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
 
@@ -2566,12 +2745,34 @@ export default function MatchPage() {
                 </div>
               ) : null}
               <ManualMatchPanel
-                topK={topK}
-                topN={topN}
-                onTopKChange={setTopK}
-                onTopNChange={setTopN}
                 selectedVideoIds={effectiveCopyGenVideoIds}
                 onAiApply={handleAiApply}
+                autoPipelineSlot={
+                  <AutoPipelinePanel
+                    globalQuery={globalQuery}
+                    selectedVideoCount={selectedVideoIds.length}
+                    ttsVoice={autoTtsVoice}
+                    onTtsVoiceChange={setAutoTtsVoice}
+                    ttsRate={autoTtsRate}
+                    onTtsRateChange={setAutoTtsRate}
+                    ttsVolume={autoTtsVolume}
+                    onTtsVolumeChange={setAutoTtsVolume}
+                    subtitleEnabled={subtitleEnabled}
+                    onSubtitleEnabledChange={setSubtitleEnabled}
+                    exportMode={exportMode}
+                    onExportModeChange={setExportMode}
+                    manualBgmEnabled={manualBgmEnabled}
+                    onManualBgmEnabledChange={setManualBgmEnabled}
+                    manualBgmTrackCount={manualBgmTrackIds.length}
+                    topK={topK}
+                    onTopKChange={setTopK}
+                    topN={topN}
+                    onTopNChange={setTopN}
+                    pipeline={autoPipeline}
+                    onRun={() => void runAutoPipeline()}
+                    onCancel={cancelAutoPipeline}
+                  />
+                }
                 globalQuery={globalQuery}
                 onGlobalQueryChange={setGlobalQuery}
                 onSplit={splitGlobalQuery}

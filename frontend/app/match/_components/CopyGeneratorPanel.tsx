@@ -24,6 +24,10 @@ interface Props { selectedVideoIds: string[]; onApply: (segments: string[]) => v
 interface PropsWithReplicaGuide extends Props {
   /** 复刻模板向导的“提示词约束”，在用户未填创作诉求时自动注入 */
   replicaTemplateGuide?: string
+  /** 渲染形态：card 独立折叠卡片（默认）；embedded 去掉外壳供 CopySourcePanel 内嵌为 Tab 内容 */
+  variant?: 'card' | 'embedded'
+  /** 采用生成文案后回调（embedded 场景用于切回手动 Tab 展示结果） */
+  onApplied?: () => void
 }
 
 function TemplatesGrid({ templates, active, onSelect }: { templates: CopyTemplate[]; active: string | null; onSelect: (t: CopyTemplate) => void }) {
@@ -138,7 +142,7 @@ function NoVideoWarning() {
   return (
     <div className="flex items-center gap-2 rounded-xl bg-amber-500/5 border border-amber-500/20 px-3 py-2.5">
       <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-      <p className="text-xs text-amber-300">请先在上方选择至少一个视频，AI 将读取该视频的台词和画面描述来生成文案</p>
+      <p className="text-xs text-amber-300">请先在页面顶部选择至少一个视频，AI 将读取该视频的台词和画面描述来生成文案</p>
     </div>
   )
 }
@@ -197,8 +201,8 @@ function OutputSection({ generated, generating, copied, outputRef, onCopy, onReg
   )
 }
 
-export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateGuide }: PropsWithReplicaGuide) {
-  const [open, setOpen] = useState(true)
+export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateGuide, variant = 'card', onApplied }: PropsWithReplicaGuide) {
+  const [open, setOpen] = useState(variant === 'card')
   const [prompt, setPrompt] = useState('')
   const [style, setStyle] = useState('')
   const [maxSegs, setMaxSegs] = useState(5)
@@ -280,6 +284,7 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateG
     if (parts.length <= 1) parts = generated.split(/\n/).map((p) => p.trim()).filter(Boolean)
     if (parts.length === 0) return
     onApply(parts)
+    onApplied?.()
   }
 
   async function copyText() {
@@ -287,6 +292,40 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateG
     await navigator.clipboard.writeText(generated)
     setCopied(true); setTimeout(() => setCopied(false), 2000)
   }
+
+  const body = (
+    <div className="space-y-4">
+      <TemplatesGrid templates={TEMPLATES} active={activeTemplate} onSelect={applyTemplate} />
+      <PromptArea
+        prompt={prompt}
+        onChange={(v) => {
+          setPrompt(v)
+          setActiveTemplate(null)
+        }}
+        disabled={generating}
+      />
+      <StyleAndSegs
+        style={style}
+        maxSegs={maxSegs}
+        onStyleChange={setStyle}
+        onMaxSegsChange={setMaxSegs}
+        disabled={generating}
+      />
+      {noVideos && <NoVideoWarning />}
+      <GenerateBar generating={generating} disabled={!prompt.trim() || noVideos} onGenerate={generate} onAbort={abort} />
+      {error && <ErrorBar message={error} />}
+      {(generated || generating) && (
+        <OutputSection
+          generated={generated} generating={generating} copied={copied}
+          outputRef={outputRef as React.RefObject<HTMLDivElement>}
+          onCopy={copyText} onRegenerate={generate} onApply={handleApply}
+        />
+      )}
+    </div>
+  )
+
+  // 内嵌形态：供 CopySourcePanel 作为「AI 生成」Tab 内容，去掉卡片外壳与折叠头
+  if (variant === 'embedded') return body
 
   return (
     <div className="rounded-2xl border border-indigo-500/20 bg-gradient-to-b from-indigo-950/30 to-slate-900/40 overflow-hidden">
@@ -306,32 +345,7 @@ export function CopyGeneratorPanel({ selectedVideoIds, onApply, replicaTemplateG
       </button>
       {open && (
         <div className="px-5 pb-5 space-y-4 border-t border-slate-800/60">
-          <TemplatesGrid templates={TEMPLATES} active={activeTemplate} onSelect={applyTemplate} />
-          <PromptArea
-            prompt={prompt}
-            onChange={(v) => {
-              setPrompt(v)
-              setActiveTemplate(null)
-            }}
-            disabled={generating}
-          />
-          <StyleAndSegs
-            style={style}
-            maxSegs={maxSegs}
-            onStyleChange={setStyle}
-            onMaxSegsChange={setMaxSegs}
-            disabled={generating}
-          />
-          {noVideos && <NoVideoWarning />}
-          <GenerateBar generating={generating} disabled={!prompt.trim() || noVideos} onGenerate={generate} onAbort={abort} />
-          {error && <ErrorBar message={error} />}
-          {(generated || generating) && (
-            <OutputSection
-              generated={generated} generating={generating} copied={copied}
-              outputRef={outputRef as React.RefObject<HTMLDivElement>}
-              onCopy={copyText} onRegenerate={generate} onApply={handleApply}
-            />
-          )}
+          {body}
         </div>
       )}
     </div>

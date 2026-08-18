@@ -8,6 +8,7 @@
 
 import * as THREE from 'three'
 import { type PlanetData, PLANETS, orbitCurve } from './solarData'
+import { type QualityPreset } from './quality'
 
 /** 1 AU = SCENE_AU 个 three 单位 */
 export const SCENE_AU = 100
@@ -59,9 +60,15 @@ export function realRadius(p: PlanetData): number {
   return p.radiusKm / KM_PER_UNIT
 }
 
+/** 按主球体分段数等比缩放次要几何体（云层/月球/大气壳），并设下限防变形 */
+function segFor(preset: QualityPreset, ratio: number, min = 24): number {
+  return Math.max(min, Math.round(preset.sphereSegments * ratio))
+}
+
 /** —— 太阳：核心球 + 多层辉光 sprite + 点光源 —— */
-function buildSun(texLoader: THREE.TextureLoader): THREE.Mesh {
-  const g = new THREE.SphereGeometry(SUN_VIEW_RADIUS, 128, 128)
+function buildSun(texLoader: THREE.TextureLoader, preset: QualityPreset): THREE.Mesh {
+  const seg = preset.sphereSegments
+  const g = new THREE.SphereGeometry(SUN_VIEW_RADIUS, seg, seg)
   const m = new THREE.MeshBasicMaterial({
     map: configureSurfaceTexture(texLoader.load(TEX_DIR + '2k_sun.jpg')),
   })
@@ -136,8 +143,8 @@ function earthMaterial(texLoader: THREE.TextureLoader): THREE.ShaderMaterial {
 }
 
 /** —— 大气辉光：背面 additive 球壳，做出边缘光 —— */
-function atmosphere(radius: number, color: number | string, scale = 1.025): THREE.Mesh {
-  const g = new THREE.SphereGeometry(radius * scale, 48, 48)
+function atmosphere(radius: number, color: number | string, scale = 1.025, segments = 48): THREE.Mesh {
+  const g = new THREE.SphereGeometry(radius * scale, segments, segments)
   const m = new THREE.ShaderMaterial({
     uniforms: { glowColor: { value: new THREE.Color(color) } },
     vertexShader: `
@@ -194,7 +201,7 @@ function buildThinRing(inner: number, outer: number, color: number): THREE.Mesh 
 }
 
 /** 标准纹理行星：phong 材质 + 可选大气 */
-function buildPlanet(p: PlanetData, texLoader: THREE.TextureLoader): PlanetBuild {
+function buildPlanet(p: PlanetData, texLoader: THREE.TextureLoader, preset: QualityPreset): PlanetBuild {
   const r = viewRadius(p)
   const group = new THREE.Group() // 公转锚点（位置由主循环更新）
   const spin = new THREE.Group() // 自转锚点
@@ -205,11 +212,14 @@ function buildPlanet(p: PlanetData, texLoader: THREE.TextureLoader): PlanetBuild
 
   if (p.id === 'earth') {
     // 地球用昼夜 shader
-    mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 128, 128), earthMaterial(texLoader))
+    mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, preset.sphereSegments, preset.sphereSegments),
+      earthMaterial(texLoader),
+    )
     spin.add(mesh)
     // 云层
     const clouds = new THREE.Mesh(
-      new THREE.SphereGeometry(r * 1.012, 96, 96),
+      new THREE.SphereGeometry(r * 1.012, segFor(preset, 0.75, 32), segFor(preset, 0.75, 32)),
       new THREE.MeshPhongMaterial({
         map: configureSurfaceTexture(texLoader.load(TEX_DIR + '2k_earth_clouds.jpg')),
         transparent: true, opacity: 0.55, depthWrite: false,
@@ -218,13 +228,13 @@ function buildPlanet(p: PlanetData, texLoader: THREE.TextureLoader): PlanetBuild
     spin.add(clouds)
     mesh.userData.clouds = clouds
     // 大气辉光
-    spin.add(atmosphere(r, 0x6ab7ff, 1.03))
+    spin.add(atmosphere(r, 0x6ab7ff, 1.03, segFor(preset, 0.375)))
 
     // 月球：独立公转 pivot（不随地球自转/轴倾，挂在 group 上）
     moonPivot = new THREE.Group()
     const moonR = r * 0.27 // 月球约为地球的 0.273
     const moon = new THREE.Mesh(
-      new THREE.SphereGeometry(moonR, 64, 64),
+      new THREE.SphereGeometry(moonR, segFor(preset, 0.5), segFor(preset, 0.5)),
       new THREE.MeshPhongMaterial({
         map: configureSurfaceTexture(texLoader.load(TEX_DIR + '2k_moon.jpg')),
         shininess: 2,
@@ -244,10 +254,13 @@ function buildPlanet(p: PlanetData, texLoader: THREE.TextureLoader): PlanetBuild
       mat.emissive = new THREE.Color(p.color)
       mat.emissiveIntensity = 0.05
     }
-    mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 128, 128), mat)
+    mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, preset.sphereSegments, preset.sphereSegments),
+      mat,
+    )
     spin.add(mesh)
     // 金星厚大气辉光
-    if (p.id === 'venus') spin.add(atmosphere(r, 0xffd9a0, 1.04))
+    if (p.id === 'venus') spin.add(atmosphere(r, 0xffd9a0, 1.04, segFor(preset, 0.375)))
   }
 
   // 轴倾角（绕 z 轴倾斜自转轴）
@@ -325,17 +338,17 @@ function buildOrbitLine(p: PlanetData, jd: number): THREE.LineLoop {
   return line
 }
 
-/** 构建整个太阳系场景对象（不含相机控制/光照环境） */
-export function buildSolarScene(texLoader: THREE.TextureLoader): SceneBuild {
-  const sun = buildSun(texLoader)
-  const belt = buildAsteroidBelt(2200)
+/** 构建整个太阳系场景对象（不含相机控制/光照环境），画质规格由 preset 决定 */
+export function buildSolarScene(texLoader: THREE.TextureLoader, preset: QualityPreset): SceneBuild {
+  const sun = buildSun(texLoader, preset)
+  const belt = buildAsteroidBelt(preset.beltCount)
   const milkyway = buildMilkyWay(texLoader)
 
   const planets: Record<string, PlanetBuild> = {}
   const orbitLines: Record<string, THREE.LineLoop> = {}
   const jd = new Date().getTime() / 86400000 + 2440587.5
   PLANETS.forEach((p) => {
-    const built = buildPlanet(p, texLoader)
+    const built = buildPlanet(p, texLoader, preset)
     planets[p.id] = built
     orbitLines[p.id] = buildOrbitLine(p, jd)
   })

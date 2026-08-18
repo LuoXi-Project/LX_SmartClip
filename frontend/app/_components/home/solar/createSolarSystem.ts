@@ -4,8 +4,10 @@
         每帧推进时间（固定慢速）、更新位置、刷新相机。
    交互：点击星球 → 相机平滑聚焦并锁定跟随该天体（轨道追踪）；
         拖拽旋转视角、滚轮/捏合缩放。
-   说明：移除了原 demo 的控制面板、信息卡、音乐、流星等，
-        仅保留「点击星球跟随」与固定的慢速自转，作为首页壁纸欣赏。
+   画质：按 quality.ts 的档位构建（high 全特效 / low 降规格动画 /
+        static 不自转，贴图就绪后只渲染一帧静态画面）；
+        动画运行期由「帧率守护」监测，持续掉帧自动降档
+        （high→low→static），低配机不再卡顿。
    ============================================================ */
 
 import * as THREE from 'three'
@@ -22,9 +24,17 @@ import {
   SUN_VIEW_RADIUS,
   type SceneBuild,
 } from './solarScene'
+import { QUALITY_PRESETS, type QualityTier } from './quality'
 
 export type SolarHandle = {
   dispose: () => void
+}
+
+export interface CreateSolarOptions {
+  /** 初始画质档位（由 detectQualityTier / 手动覆盖决定） */
+  tier: QualityTier
+  /** 运行期因帧率不足自动降档时回调（含降级后的档位） */
+  onDegrade?: (tier: QualityTier) => void
 }
 
 /** 「被追踪星球」在屏幕上转一圈的目标时长（真实秒）。
@@ -70,6 +80,7 @@ interface CameraState {
 function createOrbitCamera(
   camera: THREE.PerspectiveCamera,
   domElement: HTMLCanvasElement,
+  interactive = true,
 ) {
   const state: CameraState = {
     target: new THREE.Vector3(0, 0, 0),
@@ -193,6 +204,18 @@ function createOrbitCamera(
     domElement.style.cursor = isControlZone(e.clientX) ? 'grab' : 'default'
   }
 
+  // 静态模式不挂交互监听（没有动画循环，交互也无从响应），仅复用取景逻辑
+  if (!interactive) {
+    return {
+      state,
+      update,
+      focusOn,
+      focusSun,
+      freeFly,
+      dispose: () => {},
+    }
+  }
+
   domElement.addEventListener('pointerdown', onDown)
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
@@ -270,11 +293,11 @@ function createOrbitCamera(
    主程序
    ============================================================ */
 
-function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer | null {
+function createRenderer(canvas: HTMLCanvasElement, antialias: boolean): THREE.WebGLRenderer | null {
   try {
     const renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias,
       alpha: false,
       failIfMajorPerformanceCaveat: false,
     })
@@ -288,11 +311,17 @@ function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer | null {
   }
 }
 
-export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null {
-  const renderer = createRenderer(canvas)
+export function createSolarSystem(
+  canvas: HTMLCanvasElement,
+  options: CreateSolarOptions,
+): SolarHandle | null {
+  let currentTier: QualityTier = options.tier
+  const preset = QUALITY_PRESETS[currentTier]
+
+  const renderer = createRenderer(canvas, preset.antialias)
   if (!renderer) return null
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.pixelRatioCap))
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.1
@@ -301,8 +330,10 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200000)
   scene.add(new THREE.AmbientLight(0x404048, 0.35))
 
-  const texLoader = new THREE.TextureLoader()
-  const build: SceneBuild = buildSolarScene(texLoader)
+  // LoadingManager：静态模式需要等全部贴图就绪后再渲染那一帧
+  const manager = new THREE.LoadingManager()
+  const texLoader = new THREE.TextureLoader(manager)
+  const build: SceneBuild = buildSolarScene(texLoader, preset)
 
   scene.add(build.milkyway)
   scene.add(build.sun)
@@ -310,8 +341,8 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
   Object.values(build.planets).forEach((p) => scene.add(p.group))
   Object.values(build.orbitLines).forEach((l) => scene.add(l))
 
-  // 相机控制
-  const camCtrl = createOrbitCamera(camera, canvas)
+  // 相机控制（静态模式非交互）
+  const camCtrl = createOrbitCamera(camera, canvas, preset.animate)
 
   // 拾取
   const raycaster = new THREE.Raycaster()
@@ -428,10 +459,35 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
     })
   }
 
-  canvas.addEventListener('pointerdown', onDownPick)
-  canvas.addEventListener('pointerup', onUpPick)
+  if (preset.animate) {
+    canvas.addEventListener('pointerdown', onDownPick)
+    canvas.addEventListener('pointerup', onUpPick)
+  }
 
-  // 自适应尺寸
+  /** 渲染一帧静态画面：行星按当前真实日期摆放（不自转），相机状态直接吸附到目标取景 */
+  const renderStill = () => {
+    const jd = dateToJD(new Date())
+    updateBodies(jd, 0, 0) // deltaDays * dt = 0 → 只按真实日期摆位置，不推进自转
+    // 没有动画循环去做阻尼过渡，相机状态直接吸附到目标值
+    const s = camCtrl.state
+    s.theta = s.tTheta
+    s.phi = s.tPhi
+    s.distance = s.tDist
+    s.target.copy(s.tTarget)
+    camCtrl.update()
+    renderer.render(scene, camera)
+  }
+
+  // 静态模式：贴图就绪后仅渲染一帧（先出一帧避免空屏，贴图到位后再补一帧）
+  let stillSafetyTimer = 0
+  if (!preset.animate) {
+    renderStill()
+    manager.onLoad = () => renderStill()
+    // 兜底：极端情况下 onLoad 未触发（如个别贴图被拦截），8s 后仍补一帧
+    stillSafetyTimer = window.setTimeout(() => renderStill(), 8000)
+  }
+
+  // 自适应尺寸（静态模式尺寸变化后需补渲一帧）
   const resize = () => {
     const w = canvas.clientWidth
     const h = canvas.clientHeight
@@ -439,6 +495,7 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
     camera.aspect = w / h
     camera.updateProjectionMatrix()
     renderer.setSize(w, h, false)
+    if (!QUALITY_PRESETS[currentTier].animate) renderStill()
   }
   const ro = new ResizeObserver(resize)
   ro.observe(canvas)
@@ -482,6 +539,35 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
     build.sun.rotation.y += (0.1 * deltaDays * dt) / 25
   }
 
+  // —— 帧率守护：热身后按窗口统计平均帧率，连续两个窗口低于阈值 → 自动降一档 ——
+  const GOV_WARMUP_SEC = 2 // 前几秒忽略（贴图解码/着色器编译会造成瞬时掉帧）
+  const GOV_WINDOW_SEC = 3 // 每个统计窗口时长
+  const GOV_MIN_FPS: Record<'high' | 'low', number> = { high: 34, low: 26 }
+  let govElapsed = 0
+  let govFrames = 0
+  let govWindowStart = GOV_WARMUP_SEC
+  let govBadWindows = 0
+
+  /** 运行期降档（只能向下）。抗锯齿属上下文参数无法运行时切换，其余立即生效；
+   *  降到 static 时停掉动画循环与交互监听，转为单帧渲染。 */
+  const applyTier = (tier: QualityTier) => {
+    if (tier === currentTier) return
+    currentTier = tier
+    const p = QUALITY_PRESETS[tier]
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, p.pixelRatioCap))
+    build.belt.count = p.beltCount // 实例按序散布，直接截断 count 即可
+    resize() // 重设画布尺寸（内部会为新像素比刷新缓冲；静态模式顺带补渲一帧）
+    if (!p.animate) {
+      cancelAnimationFrame(raf)
+      camCtrl.dispose()
+      canvas.removeEventListener('pointerdown', onDownPick)
+      canvas.removeEventListener('pointerup', onUpPick)
+      canvas.style.cursor = 'default'
+      renderStill()
+    }
+    options.onDegrade?.(tier)
+  }
+
   const animate = () => {
     raf = requestAnimationFrame(animate)
     const dt = Math.min(clock.getDelta(), 0.1)
@@ -493,11 +579,26 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
     updateBodies(jd, dt, daysPerSecond)
     camCtrl.update()
     renderer.render(scene, camera)
+
+    // 帧率守护（标签页隐藏时 RAF 暂停，不会误判）
+    govElapsed += dt
+    if (govElapsed >= GOV_WARMUP_SEC) govFrames++
+    if (govFrames > 0 && govElapsed >= govWindowStart + GOV_WINDOW_SEC) {
+      const avgFps = govFrames / (govElapsed - govWindowStart)
+      const minFps = GOV_MIN_FPS[currentTier as 'high' | 'low'] ?? Infinity
+      govBadWindows = avgFps < minFps ? govBadWindows + 1 : 0
+      if (govBadWindows >= 2) {
+        govBadWindows = 0
+        applyTier(currentTier === 'high' ? 'low' : 'static')
+      }
+      govWindowStart = govElapsed
+      govFrames = 0
+    }
   }
-  animate()
 
   // 默认追踪地球：相机锁定跟随地球，时间轴以地球自转（≈24h）为基准换算
   focusPlanet('earth')
+  if (preset.animate) animate()
 
   // 保留 realRadius/viewRadius 引用，避免 tree-shaking 误删（未来若开启「真实比例」可复用）
   void realRadius
@@ -506,6 +607,7 @@ export function createSolarSystem(canvas: HTMLCanvasElement): SolarHandle | null
   return {
     dispose() {
       cancelAnimationFrame(raf)
+      window.clearTimeout(stillSafetyTimer)
       ro.disconnect()
       canvas.removeEventListener('pointerdown', onDownPick)
       canvas.removeEventListener('pointerup', onUpPick)

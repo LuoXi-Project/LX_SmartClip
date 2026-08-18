@@ -157,10 +157,13 @@ def _prepare_srt_entries_tts(
     from app.core.subtitle.timeline import (
         resolve_durations,
         rule_timeline_weighted_chars,
+        sanitize_subtitle_entries,
         srt_entries_exceed_max_chars,
     )
 
     srt_entries = parse_srt((client_srt_raw or "").strip())
+    # 与 execute_burn_subtitle 一致：清理前端传入 SRT 的纯标点条/头尾悬挂标点
+    srt_entries = sanitize_subtitle_entries(srt_entries)
     subtitle_enabled = bool((client_srt_raw or "").strip())
     try:
         if strict_use_client_srt:

@@ -131,6 +131,47 @@ def resolve_durations(segments, clip_durations: dict, tts_audio_dir: str, use_tt
 
 
 # ---------------------------------------------------------------------------
+# 字幕标点清理（贴近真实成片标准：不出现纯标点条、头尾悬挂标点）
+# ---------------------------------------------------------------------------
+
+# 仅用于剥头尾的标点/空白集合；句中标点不受影响（如 3.14、don't）。
+_SUBTITLE_EDGE_STRIP_CHARS = (
+    " \t\r\n\u3000"
+    "。，、；：？！…·—～―－"
+    "“”‘’「」『』《》〈〉（）【】〔〕［］｛｝"
+    ",.!?:;\"'`()[]{}<>~*_^|-"
+)
+
+
+def strip_subtitle_edge_punctuation(text: str) -> str:
+    """
+    剥掉字幕条头尾悬挂的标点/空白（连续“？？”切出的独立条会变成空串）。
+
+    句中标点不受影响；整条只剩标点时返回空串，调用方应丢弃该条。
+    """
+    return (text or "").strip(_SUBTITLE_EDGE_STRIP_CHARS)
+
+
+def sanitize_subtitle_entries(entries: list) -> list:
+    """
+    清理字幕条头尾标点并丢弃纯标点条（时间轴不动，仅影响显示文本）。
+
+    供生成/烧录/剪映导出等入口兜底使用，覆盖前端传入的历史或手工编辑 SRT。
+    """
+    out: list[dict] = []
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        cleaned = strip_subtitle_edge_punctuation(str(e.get("text") or ""))
+        if not cleaned:
+            continue
+        ne = dict(e)
+        ne["text"] = cleaned
+        out.append(ne)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 规则法时间轴
 # ---------------------------------------------------------------------------
 
@@ -219,9 +260,11 @@ def _text_to_subtitle_chunks(
             clause_units.extend(split_units_at_intra_clause_punctuation(u))
         units = clause_units
 
-    if mc > 0:
-        return _expand_units_with_char_limit(units, mc)
-    return [u.strip() for u in units if (u or "").strip()]
+    chunks = _expand_units_with_char_limit(units, mc) if mc > 0 else units
+    # 在时长分配前剥头尾标点并丢弃纯标点条：段内时间自动分给真实文本，
+    # 避免成片里出现“？/……”这类独立闪烁条或标点打头的字幕。
+    cleaned = [strip_subtitle_edge_punctuation(u) for u in chunks]
+    return [c for c in cleaned if c]
 
 
 def rule_timeline(
@@ -493,6 +536,8 @@ def rule_timeline_equal_units(segments, durations: list[float], max_chars: int =
             units = _expand_units_with_char_limit(units, max_chars)
         elif units:
             units = [u.strip() for u in units if (u or "").strip()]
+        # 与 _text_to_subtitle_chunks 一致：剥头尾标点、丢弃纯标点条
+        units = [c for c in (strip_subtitle_edge_punctuation(u) for u in units) if c]
         n = len(units)
         if n == 0:
             t += dur

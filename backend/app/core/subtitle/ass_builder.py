@@ -107,7 +107,10 @@ def wrap_text_for_ass_display(text: str, max_chars: int) -> str:
 
     与 SRT 时间轴切分独立：同一条字幕事件内可显示多行，不改变起止时间。
     """
-    from app.core.subtitle.timeline import split_long_text_at_punctuation
+    from app.core.subtitle.timeline import (
+        split_long_text_at_punctuation,
+        strip_subtitle_edge_punctuation,
+    )
 
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not raw:
@@ -116,14 +119,15 @@ def wrap_text_for_ass_display(text: str, max_chars: int) -> str:
 
     lines_out: list[str] = []
     for segment in raw.replace("\\N", "\n").split("\n"):
-        part = segment.strip()
+        # 纵深防御：任何路径漏进来的头尾标点/纯标点行都在显示前剥掉
+        part = strip_subtitle_edge_punctuation(segment)
         if not part:
             continue
         if len(part) <= n:
             lines_out.append(part)
             continue
         for chunk in split_long_text_at_punctuation(part, n):
-            chunk = chunk.strip()
+            chunk = strip_subtitle_edge_punctuation(chunk)
             if chunk:
                 lines_out.append(chunk)
     return "\\N".join(lines_out)

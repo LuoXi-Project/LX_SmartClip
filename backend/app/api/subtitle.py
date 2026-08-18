@@ -39,6 +39,7 @@ from app.core.subtitle.timeline import (
     rule_timeline,
     rule_timeline_equal_units,
     rule_timeline_weighted_chars,
+    sanitize_subtitle_entries,
     srt_entries_exceed_max_chars,
 )
 from app.core.subtitle.burn import burn_to_mp4
@@ -331,6 +332,9 @@ async def generate_srt(req: GenerateSRTRequest):
     else:
         raw_entries = rule_timeline(req.segments, durs, max_chars, fine_grain_split=fine_grain)
 
+    # 兜底：LLM 法等路径产出的条目也统一剥头尾标点、丢弃纯标点条
+    raw_entries = sanitize_subtitle_entries(raw_entries)
+
     logger.warning(f"raw_entries: {raw_entries}")
 
     out = [
@@ -402,6 +406,9 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     # 若 strict_use_client_srt=True：完全按传入 SRT 烧录（不做任何校验/重建）。
     client_srt_raw = (req.srt_content or "").strip()
     srt_entries = parse_srt(client_srt_raw)
+    # 前端传入的 SRT 可能带纯标点条/头尾悬挂标点（历史缓存或手工编辑），
+    # 烧录前统一清理；重建分支经 rule_timeline_weighted_chars 已在切分时清理。
+    srt_entries = sanitize_subtitle_entries(srt_entries)
     subtitle_enabled = bool(client_srt_raw)
     try:
         if getattr(req, "strict_use_client_srt", False):

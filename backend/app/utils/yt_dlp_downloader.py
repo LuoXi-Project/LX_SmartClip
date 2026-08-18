@@ -93,9 +93,14 @@ def download_video_with_yt_dlp(
     resolution: str = "best",
     fps_limit: int | None = None,
     prefer_mp4: bool = True,
+    proxy: str | None = None,
+    cookiefile: str | None = None,
 ) -> str:
     """
     用 yt-dlp 下载视频到 output_dir，并返回最终文件路径。
+
+    proxy: 可选 HTTP(S) 代理（访问 YouTube 等境外站点需要）。
+    cookiefile: 可选 Netscape 格式 cookies.txt（YouTube 机器人验证时提供登录态）。
     """
     os.makedirs(output_dir, exist_ok=True)
     ensure_yt_dlp_available()
@@ -123,6 +128,10 @@ def download_video_with_yt_dlp(
         "outtmpl": out_tpl,
         "socket_timeout": timeout_sec,
     }
+    if proxy:
+        ydl_opts["proxy"] = proxy
+    if cookiefile and os.path.isfile(cookiefile):
+        ydl_opts["cookiefile"] = cookiefile
     if _is_bilibili_url(url):
         ydl_opts["http_headers"] = _BILIBILI_HTTP_HEADERS
 
@@ -131,6 +140,12 @@ def download_video_with_yt_dlp(
             ydl.download([url])
     except Exception as exc:
         err_tail = str(exc).strip()[-2000:]
-        raise YtDlpDownloadError(f"yt-dlp 下载失败：{err_tail}") from exc
+        hint = ""
+        if "Sign in to confirm" in err_tail or "not a bot" in err_tail:
+            hint = (
+                "（YouTube 机器人验证：请在 设置 → external_search_youtube_cookie_file "
+                "配置浏览器导出的 cookies.txt 后重试）"
+            )
+        raise YtDlpDownloadError(f"yt-dlp 下载失败：{err_tail}{hint}") from exc
 
     return _pick_downloaded_file(output_dir, file_stem)

@@ -173,10 +173,10 @@ async def import_video_by_url(payload: ImportVideoByUrlPayload):
     try:
         await db.execute(
             """
-            INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at)
-            VALUES (?, ?, ?, ?, NULL, 0, 'scene', 'pending', ?)
+            INSERT INTO videos (id, name, file_path, thumbnail_path, duration, total_clips, split_mode, status, upload_at, source_url)
+            VALUES (?, ?, ?, ?, NULL, 0, 'scene', 'pending', ?, ?)
             """,
-            (video_id, name, to_stored_path(save_path), to_stored_path(thumbnail_path), upload_at),
+            (video_id, name, to_stored_path(save_path), to_stored_path(thumbnail_path), upload_at, payload.url.strip()),
         )
         await db.commit()
     finally:

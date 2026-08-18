@@ -190,20 +190,21 @@ def _default_job_body() -> ProcessJobBody:
     return ProcessJobBody()
 
 
-@router.post("/{video_id}/process-jobs")
-async def create_process_job(
+async def enqueue_process_job(
     video_id: str,
-    body: ProcessJobBody = Body(default_factory=_default_job_body),
-):
-    video = await get_video(video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
-    if is_license_enforced() and not await ensure_license_valid():
-        raise HTTPException(status_code=403, detail="LICENSE_REQUIRED")
-    skip_steps, clip_ids_filter = await validate_process_job_options(video_id, body)
+    *,
+    video_name: str = "",
+    skip_steps: list[str] | None = None,
+    clip_ids_filter: frozenset[str] | None = None,
+    embed_incremental: bool = False,
+) -> dict:
+    """创建 process_task + async_job 并放入串行预处理队列。
+
+    HTTP 入口（create_process_job）与外部关键词采集任务（external_search.ingest）
+    共用；license 校验只留在 HTTP 层。
+    """
     task_payload = await create_task(video_id)
     task_id = task_payload["id"]
-    video_name = (video.get("name") if isinstance(video, dict) else None) or ""
 
     # 判断是立即执行还是排队（在创建 job 之前判定，决定初始状态）
     is_queued = ps._processing_now
@@ -225,9 +226,9 @@ async def create_process_job(
     job_info = {
         "task_id": task_id,
         "video_id": video_id,
-        "skip_steps": skip_steps,
+        "skip_steps": list(skip_steps or []),
         "clip_ids_filter": clip_ids_filter,
-        "embed_incremental": bool(body.embed_incremental),
+        "embed_incremental": bool(embed_incremental),
         "job_id": job_id,
     }
     await ps._pending_queue.put(job_info)
@@ -235,13 +236,12 @@ async def create_process_job(
     _ensure_queue_worker()
 
     logger.info(
-        "create_process_job: video_id=%s task_id=%s job_id=%s queued=%s skip_steps=%s incremental=%s",
-        video_id, task_id, job_id, is_queued, skip_steps, body.embed_incremental,
+        "enqueue_process_job: video_id=%s task_id=%s job_id=%s queued=%s skip_steps=%s incremental=%s",
+        video_id, task_id, job_id, is_queued, skip_steps, embed_incremental,
     )
     return {
         "task_id": task_id,
         "video_id": video_id,
-        "video_name": video_name,
         "job_id": job_id,
         "status": "queued" if is_queued else "running",
         "queue_size": ps._pending_queue.qsize(),
@@ -249,6 +249,29 @@ async def create_process_job(
         "stream_url": f"/api/jobs/{job_id}/stream",
         "job_stream_url": f"/api/jobs/{job_id}/stream",
     }
+
+
+@router.post("/{video_id}/process-jobs")
+async def create_process_job(
+    video_id: str,
+    body: ProcessJobBody = Body(default_factory=_default_job_body),
+):
+    video = await get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
+    if is_license_enforced() and not await ensure_license_valid():
+        raise HTTPException(status_code=403, detail="LICENSE_REQUIRED")
+    skip_steps, clip_ids_filter = await validate_process_job_options(video_id, body)
+    video_name = (video.get("name") if isinstance(video, dict) else None) or ""
+    result = await enqueue_process_job(
+        video_id,
+        video_name=video_name,
+        skip_steps=skip_steps,
+        clip_ids_filter=clip_ids_filter,
+        embed_incremental=bool(body.embed_incremental),
+    )
+    result["video_name"] = video_name
+    return result
 
 
 @jobs_router.get("/{task_id}")

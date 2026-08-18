@@ -45,6 +45,7 @@ from app.api.ui import router as ui_router
 from app.api.publish import router as publish_router
 from app.api.audio_library import router as audio_library_router
 from app.api.renders import router as renders_router
+from app.api.external_search import router as external_search_router
 from app.middleware.license_middleware import LicenseMiddleware
 
 
@@ -121,6 +122,7 @@ app.include_router(agent_router)
 app.include_router(publish_router)
 app.include_router(audio_library_router)
 app.include_router(renders_router)
+app.include_router(external_search_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

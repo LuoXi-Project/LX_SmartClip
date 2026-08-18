@@ -484,6 +484,48 @@ DEFAULT_CONFIG = [
         None,
     ),
     (
+        "external_search_proxy",
+        "",
+        "string",
+        "关键词采集·HTTP 代理（可选；访问 YouTube 搜索/下载必需，如 http://127.0.0.1:7890；留空直连）",
+        None,
+    ),
+    (
+        "external_search_youtube_cookie_file",
+        "",
+        "string",
+        "关键词采集·YouTube cookies.txt 路径（可选；浏览器导出 Netscape 格式，绕过机器人验证）",
+        None,
+    ),
+    (
+        "external_search_limit_per_keyword",
+        "3",
+        "number",
+        "关键词采集·每个关键词自动下载条数",
+        None,
+    ),
+    (
+        "external_search_min_duration_sec",
+        "5",
+        "number",
+        "关键词采集·素材最短时长（秒，过滤过短视频）",
+        None,
+    ),
+    (
+        "external_search_max_duration_sec",
+        "600",
+        "number",
+        "关键词采集·素材最长时长（秒，过滤长视频/直播切片）",
+        None,
+    ),
+    (
+        "external_search_resolution",
+        "720p",
+        "select",
+        "关键词采集·下载分辨率上限",
+        '["best","1080p","720p","480p","360p"]',
+    ),
+    (
         "jianying_draft_parent_dir",
         "",
         "string",
@@ -739,6 +781,11 @@ async def init_db():
             v_cols = [str(r[1]) for r in await cur.fetchall()]
             if "is_replica_ref" not in v_cols:
                 await db.execute("ALTER TABLE videos ADD COLUMN is_replica_ref INTEGER DEFAULT 0")
+            # 外部关键词采集/链接导入的来源标记（source_url 用于去重，replica 生成模板也会读取）
+            if "source_url" not in v_cols:
+                await db.execute("ALTER TABLE videos ADD COLUMN source_url TEXT")
+            if "source_platform" not in v_cols:
+                await db.execute("ALTER TABLE videos ADD COLUMN source_platform TEXT")
         except Exception:
             pass
 

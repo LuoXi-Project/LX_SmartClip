@@ -17,11 +17,13 @@ def download_video_from_link(
     resolution: str = "best",
     fps_limit: int | None = None,
     prefer_mp4: bool = True,
+    proxy: str | None = None,
+    cookiefile: str | None = None,
 ) -> tuple[str, str | None]:
     """
     按链接类型选择下载方式：
     - 抖音：匿名移动端页面解析（无需用户 Cookie / 登录）
-    - 其它：yt-dlp
+    - 其它：yt-dlp（proxy/cookiefile 仅对 yt-dlp 生效）
 
     返回 (落盘路径, 可选推断素材名)。
     """
@@ -50,6 +52,8 @@ def download_video_from_link(
             resolution=resolution,
             fps_limit=fps_limit,
             prefer_mp4=prefer_mp4,
+            proxy=proxy,
+            cookiefile=cookiefile,
         )
         return path, None
     except YtDlpDownloadError as exc:

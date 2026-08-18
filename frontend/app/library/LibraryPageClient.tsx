@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/toast-provider'
 import { useJobStream } from '@/hooks/use-job-stream'
 
 import { UploadZone } from './_components/UploadZone'
+import { KeywordIngestPanel } from './_components/KeywordIngestPanel'
 import { VideoCard } from './_components/VideoCard'
 import { SearchBar, type SortKey, type StatusFilter } from './_components/SearchBar'
 import { Pagination } from './_components/Pagination'
@@ -496,6 +497,20 @@ export default function LibraryPage() {
             setImportPreset('custom')
           }}
           onImportByUrl={handleImportByUrl}
+        />
+
+        {/* ── Keyword Ingest Panel（关键词采集） ── */}
+        <KeywordIngestPanel
+          onIngested={() => {
+            fetchVideos({
+              q: debouncedQuery || undefined,
+              status: statusFilter !== 'all' ? statusFilter : undefined,
+              sort,
+              page: 1,
+              page_size: pageSize,
+            })
+            setPage(1)
+          }}
         />
 
         {/* ── Loading skeleton ── */}

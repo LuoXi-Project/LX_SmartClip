@@ -2071,3 +2071,71 @@ export const audioLibraryApi = {
       `/api/audio-library/tasks/${taskId}/cancel`,
     ),
 }
+
+// ── 外部平台关键词采集（抖音 / YouTube） ────────────────────────────────
+
+export interface ExternalSearchResultItem {
+  platform: 'douyin' | 'youtube'
+  video_id: string
+  title: string
+  author: string
+  duration_sec: number | null
+  url: string
+  cover_url: string
+  view_count: number | null
+  keyword: string
+  stats_text: string
+}
+
+export interface ExternalSearchExtraction {
+  method: 'llm' | 'fallback'
+  reason: string
+}
+
+export interface ExternalSearchPreviewResponse {
+  keywords: string[]
+  results: ExternalSearchResultItem[]
+  notes: string[]
+  extraction?: ExternalSearchExtraction | null
+}
+
+export interface ExternalSearchIngestRequest {
+  keywords?: string[]
+  copy_text?: string
+  platforms?: Array<'douyin' | 'youtube'>
+  limit_per_keyword?: number | null
+  resolution?: 'best' | '1080p' | '720p' | '480p' | '360p' | null
+  auto_process?: boolean
+  selected_items?: ExternalSearchResultItem[] | null
+}
+
+export interface ExternalSearchJobCreated {
+  job_id: string
+  status: string
+  stream_url: string
+}
+
+export interface DouyinLoginStatus {
+  cookie_ready: boolean
+  message: string
+  accounts: string[]
+}
+
+export const externalSearchApi = {
+  douyinLoginStatus: () =>
+    apiClient.get<unknown, DouyinLoginStatus>('/api/external-search/douyin/login-status'),
+  douyinLogin: () =>
+    apiClient.post<unknown, ExternalSearchJobCreated>('/api/external-search/douyin/login', {}),
+  searchPreview: (body: {
+    keywords?: string[]
+    copy_text?: string
+    platforms?: Array<'douyin' | 'youtube'>
+    limit_per_keyword?: number
+  }) =>
+    apiClient.post<unknown, ExternalSearchPreviewResponse>(
+      '/api/external-search/search-preview',
+      body,
+    ),
+  ingest: (body: ExternalSearchIngestRequest) =>
+    apiClient.post<unknown, ExternalSearchJobCreated>('/api/external-search/ingest', body),
+}

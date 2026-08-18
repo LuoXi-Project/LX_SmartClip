@@ -9,6 +9,7 @@ import apiClient, {
   API_BASE_URL,
   bgmApi,
   exportApi,
+  jobsApi,
   ttsApi,
   subtitleApi,
   audioMatchApi,
@@ -238,6 +239,10 @@ export default function MatchPage() {
   // 全自动成片 · 仅会话态（BGM/配音/字幕/成片方式等参数在 useMatchStore 持久化，浏览器记忆）
   const [autoPipeline, setAutoPipeline] = useState<AutoPipelineState>(INITIAL_AUTO_PIPELINE_STATE)
   const autoPipelineCancelRef = useRef(false)
+  /** 当前渲染中的后台任务（burn / export_original），供「取消渲染」终止 */
+  const activeExportJobIdRef = useRef<string | null>(null)
+  /** 渲染 SSE 中断器：取消时立即断流，不必等后端终止帧 */
+  const exportSseAbortRef = useRef<AbortController | null>(null)
   const [srtEntries, setSrtEntries] = useState<SRTEntry[]>([])
   const [timingSource, setTimingSource] = useState('')
   const [generatingSrt, setGeneratingSrt] = useState(false)
@@ -1055,6 +1060,16 @@ export default function MatchPage() {
         })
         const burnTask = toast.task('正在渲染字幕成片...')
         let burnDone = false
+        // 登记 job + SSE 中断器：供「取消渲染」立即断流并终止后台任务
+        const burnSseCtrl = new AbortController()
+        activeExportJobIdRef.current = burnJid
+        exportSseAbortRef.current = burnSseCtrl
+        burnSseCtrl.signal.addEventListener('abort', () => {
+          if (burnDone) return
+          burnDone = true
+          burnTask.fail('已取消渲染')
+          taskStorePatch(burnJid, { status: 'cancelled', error: '已取消' })
+        }, { once: true })
         await fetchSSE(burnStreamUrl, undefined, {
           onEvent(event, data) {
             if (event === 'result' && !burnDone) {
@@ -1075,24 +1090,30 @@ export default function MatchPage() {
                 taskStorePatch(burnJid, { status: 'error', error: '导出未返回文件' })
               }
             }
-            if (event === 'failed') {
+            if (event === 'failed' && !burnDone) {
               burnDone = true
               const f = data as { message?: string }
               const msg = f?.message || '字幕渲染失败'
-              toast.error(msg)
-              burnTask.fail(msg)
-              setExportError(msg)
-              taskStorePatch(burnJid, { status: 'error', error: msg })
+              if (msg.includes('取消')) {
+                burnTask.fail('已取消渲染')
+                taskStorePatch(burnJid, { status: 'cancelled', error: msg })
+              } else {
+                toast.error(msg)
+                burnTask.fail(msg)
+                setExportError(msg)
+                taskStorePatch(burnJid, { status: 'error', error: msg })
+              }
             }
           },
           onError(err) {
+            if (burnDone || (err as Error).name === 'AbortError') return
             burnDone = true
             toast.error(err.message)
             burnTask.fail(err.message)
             setExportError(err.message)
             taskStorePatch(burnJid, { status: 'error', error: err.message })
           },
-        })
+        }, burnSseCtrl.signal)
       } else if (exportMode === 'jianying_tts') {
         const jyTtsSegs = freshExportSegs()
         if (jyTtsSegs.length === 0) {
@@ -1175,6 +1196,16 @@ export default function MatchPage() {
         })
         const exportTask = toast.task('正在导出原声成片...')
         let exportDone = false
+        // 登记 job + SSE 中断器：供「取消渲染」立即断流并终止后台任务
+        const exportSseCtrl = new AbortController()
+        activeExportJobIdRef.current = exportJid
+        exportSseAbortRef.current = exportSseCtrl
+        exportSseCtrl.signal.addEventListener('abort', () => {
+          if (exportDone) return
+          exportDone = true
+          exportTask.fail('已取消渲染')
+          taskStorePatch(exportJid, { status: 'cancelled', error: '已取消' })
+        }, { once: true })
         await fetchSSE(exportStreamUrl, undefined, {
           onEvent(event, data) {
             if (event === 'result' && !exportDone) {
@@ -1195,24 +1226,30 @@ export default function MatchPage() {
                 taskStorePatch(exportJid, { status: 'error', error: '导出未返回文件' })
               }
             }
-            if (event === 'failed') {
+            if (event === 'failed' && !exportDone) {
               exportDone = true
               const f = data as { message?: string }
               const msg = f?.message || '原声导出失败'
-              toast.error(msg)
-              exportTask.fail(msg)
-              setExportError(msg)
-              taskStorePatch(exportJid, { status: 'error', error: msg })
+              if (msg.includes('取消')) {
+                exportTask.fail('已取消渲染')
+                taskStorePatch(exportJid, { status: 'cancelled', error: msg })
+              } else {
+                toast.error(msg)
+                exportTask.fail(msg)
+                setExportError(msg)
+                taskStorePatch(exportJid, { status: 'error', error: msg })
+              }
             }
           },
           onError(err) {
+            if (exportDone || (err as Error).name === 'AbortError') return
             exportDone = true
             toast.error(err.message)
             exportTask.fail(err.message)
             setExportError(err.message)
             taskStorePatch(exportJid, { status: 'error', error: err.message })
           },
-        })
+        }, exportSseCtrl.signal)
       } else if (exportMode === 'jianying_original') {
         const exportSegs = useMatchStore.getState().segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
         if (exportSegs.length === 0) return false
@@ -1251,8 +1288,15 @@ export default function MatchPage() {
         exportOk = true
       }
     } catch (e: unknown) {
-      setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
-    } finally { setExporting(false) }
+      // 用户主动取消导致的中断不算导出错误
+      if ((e as Error).name !== 'AbortError') {
+        setExportError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '导出失败')
+      }
+    } finally {
+      setExporting(false)
+      activeExportJobIdRef.current = null
+      exportSseAbortRef.current = null
+    }
     return exportOk
   }
 
@@ -1276,9 +1320,19 @@ export default function MatchPage() {
     if (autoPipeline.status !== 'running') return
     const stage = autoPipeline.stage
     if (!stage) return
-    // 渲染已是后台任务（任务中心可查/可取消），前端不再中断
-    if (stage === 'rendering') return
     autoPipelineCancelRef.current = true
+    if (stage === 'rendering') {
+      // 渲染中取消：立即断开前端 SSE，并请求后端终止 burn/export 任务（ffmpeg 进程随任务取消而中止）
+      exportSseAbortRef.current?.abort()
+      const jid = activeExportJobIdRef.current
+      if (jid) {
+        jobsApi.cancel(jid).catch(() => {
+          // 任务可能已自然结束（race），忽略即可
+        })
+      }
+      stopAutoPipeline('rendering', '已取消渲染：后台成片任务正在终止')
+      return
+    }
     stopAutoPipeline(stage, '已取消全自动流程：可调整文案/参数后重新运行')
   }
 
@@ -1368,7 +1422,8 @@ export default function MatchPage() {
       // 5. 成片导出：复用导出流程（SSE 进度、任务中心登记、完成自动下载）
       setAutoPipeline((p) => ({ ...p, stage: 'rendering' }))
       const exportOk = await handleExport()
-      if (autoPipelineCancelRef.current && !exportOk) {
+      // 用户已取消（含渲染中点「取消渲染」）：无论导出是否恰好完成，一律按取消收尾，避免误报"完成"
+      if (autoPipelineCancelRef.current) {
         return stopAutoPipeline('rendering', '已取消全自动流程')
       }
       if (!exportOk) {

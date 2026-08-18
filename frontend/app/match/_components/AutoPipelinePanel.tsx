@@ -206,7 +206,11 @@ export function AutoPipelinePanel({
       const idx = stageIdx[key]
       if (idx < currentIdx) status = 'done'
       else if (idx === currentIdx) {
-        status = pipeline.status === 'error' ? 'failed' : pipeline.status === 'running' ? 'running' : 'done'
+        status =
+          pipeline.status === 'error' ? 'failed'
+          : pipeline.status === 'running' ? 'running'
+          : pipeline.status === 'cancelled' ? 'pending'
+          : 'done'
       } else if (pipeline.status === 'done') {
         status = 'done'
       }
@@ -488,12 +492,11 @@ export function AutoPipelinePanel({
             <button
               type="button"
               onClick={onCancel}
-              disabled={renderStage}
-              className="px-4 py-2.5 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-red-500/60 hover:text-red-300 disabled:opacity-40 text-sm flex items-center gap-2 transition-colors"
-              title={renderStage ? '渲染为后台任务，可在右上角任务中心查看/取消' : '中止全自动流程'}
+              className="px-4 py-2.5 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-red-500/60 hover:text-red-300 text-sm flex items-center gap-2 transition-colors"
+              title={renderStage ? '终止后台成片任务（ffmpeg 渲染会立即中止）' : '中止全自动流程'}
             >
               <Square className="w-3.5 h-3.5" />
-              {renderStage ? '渲染中·见任务中心' : '取消'}
+              {renderStage ? '取消渲染' : '取消'}
             </button>
           )}
           {!globalQuery.trim() && !running && (
@@ -537,7 +540,7 @@ export function AutoPipelinePanel({
             {pipeline.status === 'cancelled' && <p className="text-[11px] text-amber-400">已取消：可调整文案/参数后重新一键运行</p>}
             {pipeline.status === 'done' && <p className="text-[11px] text-emerald-400">全自动成片完成，文件已自动下载；可在下方段落区继续微调后重新导出</p>}
             {renderStage && (
-              <p className="text-[11px] text-slate-500">正在后台渲染成片（进度见右下角提示与右上角任务中心），完成后自动下载...</p>
+              <p className="text-[11px] text-slate-500">正在后台渲染成片（进度见右下角提示与右上角任务中心），完成后自动下载；点「取消渲染」可立即中止</p>
             )}
           </div>
         )}

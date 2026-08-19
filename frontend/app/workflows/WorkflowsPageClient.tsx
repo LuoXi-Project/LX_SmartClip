@@ -6,12 +6,9 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  Copy,
   History,
   Loader2,
-  Pencil,
   Play,
-  Plus,
   Search,
   Sparkles,
   Square,
@@ -32,7 +29,6 @@ import { useTaskStore } from '@/lib/task-store'
 import { useToast } from '@/components/ui/toast-provider'
 import { useWorkflowPrefStore } from '@/lib/workflow-store'
 import { ParamForm } from './_components/ParamForm'
-import { DefinitionEditor } from './_components/DefinitionEditor'
 import { RunHistory } from './_components/RunHistory'
 
 /** 单次运行的前端状态（SSE 驱动） */
@@ -75,12 +71,10 @@ export default function WorkflowsPageClient() {
   const [retrying, setRetrying] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
 
-  // 市场：搜索 / 分类 / 选中详情 / 管理编辑器
+  // 市场：搜索 / 分类 / 选中详情
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
   const [selected, setSelected] = useState<WorkflowDefinition | null>(null)
-  const [showEditor, setShowEditor] = useState(false)
-  const [editingDef, setEditingDef] = useState<WorkflowDefinition | null>(null)
   const [showHistory, setShowHistory] = useState(true)
 
   const abortRef = useRef<AbortController | null>(null)
@@ -337,24 +331,11 @@ export default function WorkflowsPageClient() {
     [runs, definitions, toast, subscribeRun, refresh],
   )
 
-  const handleDuplicate = useCallback(
-    async (id: string) => {
-      try {
-        await workflowApi.duplicateDefinition(id)
-        toast.success('已复制为自定义工作流')
-        refresh(false)
-      } catch (e) {
-        toast.error(formatFastApiDetail(e))
-      }
-    },
-    [toast, refresh],
-  )
-
   const handleDelete = useCallback(
     async (id: string) => {
       try {
         await workflowApi.deleteDefinition(id)
-        toast.success('已删除自定义工作流')
+        toast.success('已删除该工作流')
         if (selected?.id === id) setSelected(null)
         refresh(false)
       } catch (e) {
@@ -412,16 +393,6 @@ export default function WorkflowsPageClient() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setEditingDef(null)
-                setShowEditor((v) => !v)
-              }}
-              className="flex items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-200"
-            >
-              <Plus size={12} /> 自定义工作流
-            </button>
             <button
               type="button"
               onClick={() => setShowHistory((v) => !v)}
@@ -498,18 +469,6 @@ export default function WorkflowsPageClient() {
             {marketDefs.length}/{definitions.length}
           </span>
         </h2>
-        {showEditor && (
-          <div className="mb-3">
-            <DefinitionEditor
-              editing={editingDef}
-              onSaved={() => {
-                setShowEditor(false)
-                setEditingDef(null)
-                refresh(false)
-              }}
-            />
-          </div>
-        )}
         {marketDefs.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-800 p-6 text-center text-sm text-slate-500">
             没有匹配的工作流{search ? `（搜索「${search}」无结果）` : ''}
@@ -517,16 +476,7 @@ export default function WorkflowsPageClient() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {marketDefs.map((def) => (
-              <MarketCard
-                key={def.id}
-                def={def}
-                onOpen={() => setSelected(def)}
-                onEdit={() => {
-                  setEditingDef(def)
-                  setShowEditor(true)
-                  window.scrollTo({ top: 0, behavior: 'smooth' })
-                }}
-              />
+              <MarketCard key={def.id} def={def} onOpen={() => setSelected(def)} />
             ))}
           </div>
         )}
@@ -552,17 +502,6 @@ export default function WorkflowsPageClient() {
           onStart={() => handleStart(selected)}
           starting={starting === selected.id}
           onClose={() => setSelected(null)}
-          onDuplicate={selected.is_builtin ? () => handleDuplicate(selected.id) : undefined}
-          onEdit={
-            !selected.is_builtin
-              ? () => {
-                  setEditingDef(selected)
-                  setShowEditor(true)
-                  setSelected(null)
-                  window.scrollTo({ top: 0, behavior: 'smooth' })
-                }
-              : undefined
-          }
           onDelete={!selected.is_builtin ? () => handleDelete(selected.id) : undefined}
         />
       )}
@@ -665,14 +604,12 @@ function RecentCard({
 function MarketCard({
   def,
   onOpen,
-  onEdit,
 }: {
   def: WorkflowDefinition
   onOpen: () => void
-  onEdit: () => void
 }) {
   return (
-    <div className="group relative rounded-lg border border-slate-800 bg-slate-900/50 p-4 transition-colors hover:border-cyan-500/40">
+    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4 transition-colors hover:border-cyan-500/40">
       <button type="button" onClick={onOpen} className="w-full text-left">
         <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium text-slate-100">{def.name}</span>
@@ -682,7 +619,7 @@ function MarketCard({
             </span>
           ) : (
             <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-1 py-px text-[10px] text-cyan-300">
-              自定义 v{def.version}
+              工作流
             </span>
           )}
           <span className="rounded border border-slate-700 px-1 py-px text-[10px] text-slate-400">
@@ -713,16 +650,6 @@ function MarketCard({
           )}
         </div>
       </button>
-      {!def.is_builtin && (
-        <button
-          type="button"
-          onClick={onEdit}
-          title="编辑 JSON"
-          className="absolute right-3 top-3 rounded-md border border-slate-700/70 p-1 text-slate-500 opacity-0 transition-all hover:border-slate-500 hover:text-slate-200 group-hover:opacity-100"
-        >
-          <Pencil size={12} />
-        </button>
-      )}
     </div>
   )
 }
@@ -736,8 +663,6 @@ function WorkflowDetailModal({
   onStart,
   starting,
   onClose,
-  onDuplicate,
-  onEdit,
   onDelete,
 }: {
   def: WorkflowDefinition
@@ -746,8 +671,6 @@ function WorkflowDetailModal({
   onStart: () => void
   starting: boolean
   onClose: () => void
-  onDuplicate?: () => void
-  onEdit?: () => void
   onDelete?: () => void
 }) {
   return (
@@ -757,14 +680,10 @@ function WorkflowDetailModal({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
               <h3 className="text-base font-semibold text-slate-100">{def.name}</h3>
-              {def.is_builtin ? (
+              {def.is_builtin && (
                 <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[10px] text-violet-300">
                   <Sparkles size={9} className="mr-0.5 inline" />
                   内置
-                </span>
-              ) : (
-                <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-1 py-px text-[10px] text-cyan-300">
-                  自定义 v{def.version}
                 </span>
               )}
               <span className="rounded border border-slate-700 px-1 py-px text-[10px] text-slate-400">
@@ -776,18 +695,8 @@ function WorkflowDetailModal({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {onDuplicate && (
-              <IconBtn title="复制为自定义" onClick={onDuplicate}>
-                <Copy size={13} />
-              </IconBtn>
-            )}
-            {onEdit && (
-              <IconBtn title="编辑 JSON" onClick={onEdit}>
-                <Pencil size={13} />
-              </IconBtn>
-            )}
             {onDelete && (
-              <IconBtn title="删除" onClick={onDelete} danger>
+              <IconBtn title="删除该工作流" onClick={onDelete} danger>
                 <Trash2 size={13} />
               </IconBtn>
             )}

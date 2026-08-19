@@ -1509,12 +1509,11 @@ async def _run_realize_postprocess(
     return final_filename, final_url
 
 
-@router.post("/realize")
-async def realize_auto_edit_plan(
-    req: AutoEditRealizeRequest,
-    request: Request,
-):
-    """将一个 Plan 实际转为成片 -> 后台任务，返回 job_id。"""
+async def _launch_realize_job(req: AutoEditRealizeRequest) -> str:
+    """把 Plan 落地成片：创建 realize 后台 job 并启动，返回 job_id。
+
+    供 /realize 端点与工作流 realize_plan 动作共用。
+    """
     job = await create_job(kind="realize", initial_step="prepare")
     job_id = job["id"]
 
@@ -1566,6 +1565,16 @@ async def realize_auto_edit_plan(
             await reporter.send("error", "error", "成片落地失败: " + str(e))
             await update_job_status(job_id, "error", error_message=str(e))
     launch_job(job_id, _run())
+    return job_id
+
+
+@router.post("/realize")
+async def realize_auto_edit_plan(
+    req: AutoEditRealizeRequest,
+    request: Request,
+):
+    """将一个 Plan 实际转为成片 -> 后台任务，返回 job_id。"""
+    job_id = await _launch_realize_job(req)
     return {"job_id": job_id, "status": "running", "stream_url": f"/api/jobs/{job_id}/stream", "ws_url": f"/api/jobs/{job_id}/ws"}
 
 

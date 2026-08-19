@@ -759,6 +759,11 @@ async def init_db():
                 await db.execute("ALTER TABLE async_jobs ADD COLUMN ref_name TEXT")
         except Exception:
             pass
+        # 工作流：定义（workflows）与运行记录（workflow_runs）
+        from app.core.workflow.store import CREATE_WORKFLOWS, CREATE_WORKFLOW_RUNS
+
+        await db.execute(CREATE_WORKFLOWS)
+        await db.execute(CREATE_WORKFLOW_RUNS)
         await db.execute(CREATE_FILM_COMMENTARY_JOBS)
         try:
             cur = await db.execute("PRAGMA table_info(film_commentary_jobs)")

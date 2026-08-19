@@ -34,6 +34,7 @@ const mobileSections = [
     title: '常用',
     items: [
       { href: '/studio', label: '智剪工作台', tour: TOUR_ANCHORS.navStudio },
+      { href: '/workflows', label: '工作流', description: '一键自动化流水线' },
       { href: '/library', label: '素材库', description: '上传、管理、预览', tour: TOUR_ANCHORS.navLibrary },
       { href: '/process', label: '素材处理', description: '切分与多模态分析', tour: TOUR_ANCHORS.navProcess },
       { href: '/search', label: '素材检索', description: '语义搜索片段' },
@@ -110,6 +111,12 @@ export default function TopNav() {
           className={navLinkClass(isActive(pathname, '/studio'), true)}
         >
           智剪工作台
+        </Link>
+        <Link
+          href="/workflows"
+          className={navLinkClass(isActive(pathname, '/workflows'), true)}
+        >
+          工作流
         </Link>
         <Link
           href="/library"

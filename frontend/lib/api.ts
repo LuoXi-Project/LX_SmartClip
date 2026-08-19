@@ -2139,3 +2139,131 @@ export const externalSearchApi = {
   ingest: (body: ExternalSearchIngestRequest) =>
     apiClient.post<unknown, ExternalSearchJobCreated>('/api/external-search/ingest', body),
 }
+
+// ── 工作流 ────────────────────────────────────────────────────────────────────
+
+export interface WorkflowParamSpec {
+  name: string
+  label: string
+  type: 'text' | 'textarea' | 'number' | 'select' | 'multiselect' | 'switch'
+  required?: boolean
+  default?: unknown
+  options?: Array<{ value: string; label: string }>
+  placeholder?: string
+  help?: string
+}
+
+export interface WorkflowStepSpec {
+  name: string
+  title: string
+  action: string
+  params?: Record<string, unknown>
+  when?: string
+}
+
+export interface WorkflowDefinition {
+  id: string
+  name: string
+  description: string
+  category: string
+  is_builtin: boolean
+  version: number
+  params: WorkflowParamSpec[]
+  steps: WorkflowStepSpec[]
+  definition: Record<string, unknown>
+  created_at?: string
+  updated_at?: string
+}
+
+export interface WorkflowActionCatalogItem {
+  name: string
+  title: string
+  description: string
+  input_schema: Record<string, Record<string, unknown>>
+  output_schema: Record<string, unknown>
+  example: Record<string, unknown>
+}
+
+export interface WorkflowValidationError {
+  field: string
+  message: string
+}
+
+export interface WorkflowRunSummary {
+  id: string
+  workflow_id: string
+  workflow_name: string
+  job_id: string | null
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled'
+  inputs: Record<string, unknown>
+  steps: Record<string, string | undefined>
+  render_url: string
+  error_message: string
+  created_at: string
+  finished_at: string | null
+}
+
+export interface WorkflowRunDetail extends WorkflowRunSummary {
+  def_snapshot: Record<string, unknown>
+  context: {
+    steps?: Record<string, { status?: string; output?: Record<string, unknown> | null; error?: string | null }>
+    child_job_ids?: string[]
+  }
+  job_status?: string
+  job_error?: string | null
+}
+
+export interface WorkflowRunCreated {
+  run_id: string
+  job_id: string
+  status: string
+  stream_url: string
+  ws_url: string
+}
+
+export const workflowApi = {
+  listDefinitions: () =>
+    apiClient.get<unknown, { items: WorkflowDefinition[] }>('/api/workflow/definitions'),
+  listActions: () =>
+    apiClient.get<unknown, { items: WorkflowActionCatalogItem[]; total: number }>(
+      '/api/workflow/actions',
+    ),
+  validateDefinition: (definition: Record<string, unknown>) =>
+    apiClient.post<unknown, { valid: boolean; errors: WorkflowValidationError[] }>(
+      '/api/workflow/definitions/validate',
+      { definition },
+    ),
+  saveDefinition: (definition: Record<string, unknown>) =>
+    apiClient.post<unknown, { saved: boolean; definition: WorkflowDefinition }>(
+      '/api/workflow/definitions',
+      { definition },
+    ),
+  duplicateDefinition: (id: string) =>
+    apiClient.post<unknown, { saved: boolean; definition: WorkflowDefinition }>(
+      `/api/workflow/definitions/${id}/duplicate`,
+      {},
+    ),
+  deleteDefinition: (id: string) =>
+    apiClient.delete<unknown, { deleted: boolean; id: string }>(
+      `/api/workflow/definitions/${id}`,
+    ),
+  startRun: (workflowId: string, inputs: Record<string, unknown>) =>
+    apiClient.post<unknown, WorkflowRunCreated>(`/api/workflow/${workflowId}/runs`, { inputs }),
+  listRuns: (params?: { limit?: number; workflow_id?: string }) =>
+    apiClient.get<unknown, { items: WorkflowRunSummary[]; total: number }>(
+      '/api/workflow/runs',
+      { params },
+    ),
+  getRun: (runId: string) =>
+    apiClient.get<unknown, WorkflowRunDetail>(`/api/workflow/runs/${runId}`),
+  cancelRun: (runId: string) =>
+    apiClient.post<unknown, { ok: boolean; cancelled: string[] }>(
+      `/api/workflow/runs/${runId}/cancel`,
+      {},
+    ),
+  retryRun: (runId: string) =>
+    apiClient.post<unknown, WorkflowRunCreated & { retried_from: string }>(
+      `/api/workflow/runs/${runId}/retry`,
+      {},
+    ),
+}

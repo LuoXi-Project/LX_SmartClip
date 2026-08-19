@@ -672,9 +672,11 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
 # Route: 烧录字幕
 # ---------------------------------------------------------------------------
 
-@router.post("/burn")
-async def burn_subtitle(req: BurnSubtitleRequest, request: Request):
-    """合并视频 + 替换TTS音轨 + 硬烧字幕 -> 后台任务，返回 job_id。"""
+async def _launch_burn_job(req: BurnSubtitleRequest) -> str:
+    """合并视频 + 替换TTS音轨 + 硬烧字幕 → 后台任务，返回 job_id。
+
+    供 /burn 端点与工作流 render_copy_segments 动作共用。
+    """
     job = await create_job(kind="burn", initial_step="render")
     job_id = job["id"]
 
@@ -691,6 +693,13 @@ async def burn_subtitle(req: BurnSubtitleRequest, request: Request):
             await update_job_status(job_id, "error", error_message=str(e))
 
     launch_job(job_id, _run())
+    return job_id
+
+
+@router.post("/burn")
+async def burn_subtitle(req: BurnSubtitleRequest, request: Request):
+    """合并视频 + 替换TTS音轨 + 硬烧字幕 -> 后台任务，返回 job_id。"""
+    job_id = await _launch_burn_job(req)
     return {
         "job_id": job_id,
         "status": "running",

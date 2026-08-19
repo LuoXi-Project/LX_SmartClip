@@ -128,11 +128,14 @@ async def _run_task(
         if job_id:
             await _async_status(job_id, "cancelled")
     except Exception as e:
+        # asyncio.TimeoutError 等异常 str() 为空，兜底用类名，避免「处理异常: 」无法定位
+        err_text = str(e).strip() or f"{type(e).__name__}（无错误消息）"
+        logger.exception("预处理任务失败 video_id=%s task_id=%s", video_id, task_id)
         await set_video_status(video_id, "error")
-        await reporter.send("error", "error", f"处理异常: {str(e)}")
-        await update_task_status(task_id, "error", error_message=str(e))
+        await reporter.send("error", "error", f"处理异常: {err_text}")
+        await update_task_status(task_id, "error", error_message=err_text)
         if job_id:
-            await _async_status(job_id, "error", error_message=str(e))
+            await _async_status(job_id, "error", error_message=err_text)
     finally:
         _job_tasks.pop(task_id, None)
 

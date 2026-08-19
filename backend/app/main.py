@@ -46,6 +46,7 @@ from app.api.publish import router as publish_router
 from app.api.audio_library import router as audio_library_router
 from app.api.renders import router as renders_router
 from app.api.external_search import router as external_search_router
+from app.api.workflow import router as workflow_router
 from app.middleware.license_middleware import LicenseMiddleware
 
 
@@ -60,6 +61,13 @@ async def lifespan(app: FastAPI):
     # 对齐 async_jobs 里卡住的 process 任务（队列 worker 已死），避免前端永久「处理中」
     from app.jobs.store import reconcile_process_jobs_on_startup
     await reconcile_process_jobs_on_startup()
+    # 工作流：同步内置定义 + 对账重启中断的运行
+    from app.core.workflow.store import (
+        reconcile_workflow_runs_on_startup,
+        sync_builtin_workflows,
+    )
+    await sync_builtin_workflows()
+    await reconcile_workflow_runs_on_startup()
     # 恢复已确认的复刻模板为动态 preset（写入内存 TEMPLATES，供 auto_edit 消费）
     from app.api.replica import register_replica_templates_from_db
     await register_replica_templates_from_db()
@@ -123,6 +131,7 @@ app.include_router(publish_router)
 app.include_router(audio_library_router)
 app.include_router(renders_router)
 app.include_router(external_search_router)
+app.include_router(workflow_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

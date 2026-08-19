@@ -47,8 +47,11 @@ PIPELINE_STEP_MAX_ATTEMPTS = 4
 PIPELINE_TOTAL_TIMEOUT_SEC = 6 * 60 * 60.0
 # split 阶段超时（秒）：默认 2 小时
 PIPELINE_SPLIT_TIMEOUT_SEC = 2 * 60 * 60.0
-# 队列 put/join 与 worker 收尾等待超时（秒）
-PIPELINE_QUEUE_TIMEOUT_SEC = 300.0
+# 队列 put/join 与 worker 收尾等待超时（秒）。
+# 注意：join 是「等待全部片段处理完」的兜底上限，不是单步处理时长——
+# Whisper medium 每片段独立子进程加载模型时，30+ 片段的 ASR 可能超过 5 分钟，
+# 过短会导致 join 超时把整条流水线判失败（曾出现 300s 误杀 31 片段任务）。
+PIPELINE_QUEUE_TIMEOUT_SEC = 1800.0
 PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC = 600.0
 
 # multiprocessing 子进程入口（app.core.pipeline_isolated_workers 内顶层函数）
@@ -269,11 +272,24 @@ async def run_pipeline(
         return max(0.1, min(cap_sec, remain))
 
     async def _put_with_timeout(q: asyncio.Queue, item: Any, label: str):
-        await asyncio.wait_for(q.put(item), timeout=_remaining_timeout(PIPELINE_QUEUE_TIMEOUT_SEC))
+        try:
+            await asyncio.wait_for(q.put(item), timeout=_remaining_timeout(PIPELINE_QUEUE_TIMEOUT_SEC))
+        except (asyncio.TimeoutError, TimeoutError) as exc:
+            raise TimeoutError(
+                f"队列投递 {label} 超时（>{int(PIPELINE_QUEUE_TIMEOUT_SEC)}s），流水线可能已阻塞"
+            ) from exc
         logger.debug("queue put ok: %s", label)
 
     async def _join_with_timeout(q: asyncio.Queue, label: str):
-        await asyncio.wait_for(q.join(), timeout=_remaining_timeout(PIPELINE_QUEUE_TIMEOUT_SEC))
+        try:
+            await asyncio.wait_for(q.join(), timeout=_remaining_timeout(PIPELINE_QUEUE_TIMEOUT_SEC))
+        except (asyncio.TimeoutError, TimeoutError) as exc:
+            # asyncio.TimeoutError 的 str() 为空，必须包装出可读消息，否则任务级
+            # handler 会打出「处理异常: 」空错误，无法定位
+            raise TimeoutError(
+                f"等待「{label}」阶段完成超时（>{int(PIPELINE_QUEUE_TIMEOUT_SEC)}s）："
+                f"片段处理过慢或存在阻塞，可重跑（已完成的片段会跳过）"
+            ) from exc
         logger.debug("queue join ok: %s", label)
 
     do_split = "split" not in skip_steps
@@ -1095,24 +1111,38 @@ async def run_pipeline(
         await _cancel_all_workers()
         raise ProcessCancelled()
 
-    for _ in range(frames_worker_count):
-        await _put_with_timeout(frame_queue, None, "frame:sentinel")
-    if do_asr:
-        for _ in range(asr_worker_count):
-            await _put_with_timeout(asr_queue, None, "asr:sentinel")
-    await _join_with_timeout(frame_queue, "frame")
-    if do_asr:
-        await _join_with_timeout(asr_queue, "asr")
-    for _ in range(vlm_worker_count):
-        await _put_with_timeout(vlm_queue, None, "vlm:sentinel")
-    await _join_with_timeout(vlm_queue, "vlm")
-    for _ in range(embed_worker_count):
-        await _put_with_timeout(embed_queue, None, "embed:sentinel")
-    await _join_with_timeout(embed_queue, "embed")
-    await asyncio.wait_for(
-        asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers),
-        timeout=_remaining_timeout(PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC),
-    )
+    # 收尾段：哨兵投递 → 逐队列 join → worker 排空。任何异常都要先回收 worker，
+    # 否则孤儿协程会继续向已判失败的任务写进度（表现为「各步骤 done 但任务 error」）。
+    try:
+        for _ in range(frames_worker_count):
+            await _put_with_timeout(frame_queue, None, "frame:sentinel")
+        if do_asr:
+            for _ in range(asr_worker_count):
+                await _put_with_timeout(asr_queue, None, "asr:sentinel")
+        await _join_with_timeout(frame_queue, "抽帧")
+        if do_asr:
+            await _join_with_timeout(asr_queue, "语音识别(ASR)")
+        for _ in range(vlm_worker_count):
+            await _put_with_timeout(vlm_queue, None, "vlm:sentinel")
+        await _join_with_timeout(vlm_queue, "视觉描述(VLM)")
+        for _ in range(embed_worker_count):
+            await _put_with_timeout(embed_queue, None, "embed:sentinel")
+        await _join_with_timeout(embed_queue, "向量入库(Embedding)")
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*frames_workers, *vlm_workers, *embed_workers, *asr_workers),
+                timeout=_remaining_timeout(PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC),
+            )
+        except (asyncio.TimeoutError, TimeoutError) as exc:
+            raise TimeoutError(
+                f"worker 收尾排空超时（>{int(PIPELINE_WORKERS_DRAIN_TIMEOUT_SEC)}s），可能有步骤阻塞"
+            ) from exc
+    except BaseException:
+        try:
+            await _cancel_all_workers()
+        except Exception:
+            logger.exception("异常路径回收 worker 失败（忽略）")
+        raise
 
     if do_frames:
         _ensure_step_end("extract_frames")

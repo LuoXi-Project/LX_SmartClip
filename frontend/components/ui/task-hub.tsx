@@ -352,6 +352,8 @@ function KindDot({ kind }: { kind: string }) {
     slice: 'bg-sky-400',
     tts: 'bg-pink-400',
     script_stock_compose: 'bg-cyan-400',
+    workflow: 'bg-violet-400',
+    external_ingest: 'bg-teal-400',
   }
   return <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', color[kind] ?? 'bg-slate-400')} />
 }

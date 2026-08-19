@@ -261,28 +261,38 @@ async def search_platforms(
     return ordered, notes
 
 
-async def _filter_existing(results: list[ExternalSearchResult]) -> list[ExternalSearchResult]:
-    """按 source_url 排除已入库素材（重复采集幂等）。"""
+async def _filter_existing(
+    results: list[ExternalSearchResult],
+) -> tuple[list[ExternalSearchResult], list[str]]:
+    """按 source_url 排除已入库素材（重复采集幂等）。
+
+    返回 (待下载结果, 已入库的 video_id 列表)——已入库的素材对调用方仍有价值
+    （工作流重跑时可继续复用，无需重复下载），因此一并带出。
+    """
     if not results:
-        return []
+        return [], []
     urls = [r.url for r in results]
-    existing: set[str] = set()
+    existing_urls: set[str] = set()
+    existing_ids: list[str] = []
     try:
         db = await get_db_conn()
         try:
             placeholders = ",".join("?" for _ in urls)
             async with db.execute(
-                f"SELECT source_url FROM videos WHERE source_url IN ({placeholders})",
+                f"SELECT id, source_url FROM videos WHERE source_url IN ({placeholders})",
                 urls,
             ) as cur:
                 rows = await cur.fetchall()
-            existing = {str(r["source_url"]) for r in rows if r["source_url"]}
+            for r in rows:
+                if r["source_url"]:
+                    existing_urls.add(str(r["source_url"]))
+                    existing_ids.append(str(r["id"]))
         finally:
             await db.close()
     except Exception:
         logger.exception("查询已入库来源失败（跳过去重）")
-        return results
-    return [r for r in results if r.url not in existing]
+        return results, []
+    return [r for r in results if r.url not in existing_urls], existing_ids
 
 
 # ── 下载入库 ────────────────────────────────────────────────────────────
@@ -350,6 +360,7 @@ async def run_ingest_job(job_id: str, params: IngestParams) -> None:
     downloaded: list[dict] = []
     process_jobs: list[dict] = []
     keywords: list[str] = []
+    existing_video_ids: list[str] = []   # 搜索命中但已入库的素材（复用，不重复下载）
 
     try:
         # ── Step 1: 关键词 ─────────────────────────────────────────────
@@ -404,8 +415,28 @@ async def run_ingest_job(job_id: str, params: IngestParams) -> None:
             results, search_notes = await search_platforms(
                 keywords, params.platforms, limit_per_keyword, cfg
             )
-            results = await _filter_existing(results)
+            results, existing_video_ids = await _filter_existing(results)
             if not results:
+                if existing_video_ids:
+                    # 命中的素材均已入库：直接复用，无需重复下载（工作流重跑幂等）
+                    await reporter.send(
+                        "search",
+                        "done",
+                        f"搜索命中 {len(existing_video_ids)} 条均已入库，直接复用（不重复下载）",
+                        {"reused": len(existing_video_ids)},
+                    )
+                    result = {
+                        "keywords": keywords,
+                        "searched": 0,
+                        "downloaded": [],
+                        "failed": [],
+                        "existing_video_ids": existing_video_ids,
+                        "process_job_ids": [],
+                        "notes": search_notes,
+                    }
+                    await reporter.send("done", "done", f"采集完成：复用已入库素材 {len(existing_video_ids)} 个", {})
+                    await update_job_status(job_id, "done", result=result)
+                    return
                 msg = "搜索完成但无可用结果" + (
                     "（" + "；".join(search_notes[:3]) + "）" if search_notes else ""
                 )
@@ -417,8 +448,9 @@ async def run_ingest_job(job_id: str, params: IngestParams) -> None:
             await reporter.send(
                 "search",
                 "done",
-                f"搜索完成：去重后 {len(results)} 条，本次采集 {len(targets)} 条",
-                {"notes": search_notes, "count": len(targets)},
+                f"搜索完成：去重后 {len(results)} 条，本次采集 {len(targets)} 条"
+                + (f"，另有 {len(existing_video_ids)} 条已入库可复用" if existing_video_ids else ""),
+                {"notes": search_notes, "count": len(targets), "reused": len(existing_video_ids)},
             )
 
         # ── Step 3: 下载入库 ──────────────────────────────────────────
@@ -481,6 +513,7 @@ async def run_ingest_job(job_id: str, params: IngestParams) -> None:
             "searched": len(targets),
             "downloaded": downloaded,
             "failed": [f.to_payload() for f in failures],
+            "existing_video_ids": existing_video_ids,
             "process_job_ids": [p["job_id"] for p in process_jobs if p.get("job_id")],
             "notes": search_notes,
         }

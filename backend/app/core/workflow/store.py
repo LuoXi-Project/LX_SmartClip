@@ -82,13 +82,29 @@ def _def_row_to_payload(row) -> dict:
 
 
 async def list_definitions() -> list[dict]:
+    """定义列表（内置优先，新→旧），附运行统计（run_count / last_run_*，市场页「最近使用」用）。"""
     db = await get_db_conn()
     try:
         cur = await db.execute(
             "SELECT * FROM workflows ORDER BY is_builtin DESC, updated_at DESC"
         )
         rows = await cur.fetchall()
-        return [_def_row_to_payload(r) for r in rows]
+        # 运行统计：按 created_at 倒序扫一遍，首个命中即最近一次运行
+        stats: dict[str, dict] = {}
+        cur = await db.execute(
+            "SELECT workflow_id, id, status, created_at FROM workflow_runs "
+            "ORDER BY created_at DESC"
+        )
+        for r in await cur.fetchall():
+            st = stats.setdefault(str(r["workflow_id"]), {"run_count": 0})
+            st["run_count"] += 1
+            if "last_run_id" not in st:
+                st["last_run_id"] = str(r["id"])
+                st["last_run_status"] = str(r["status"])
+                st["last_run_at"] = str(r["created_at"])
+        return [dict(_def_row_to_payload(r), **stats.get(str(r["id"]), {
+            "run_count": 0, "last_run_id": None, "last_run_status": None, "last_run_at": None,
+        })) for r in rows]
     finally:
         await db.close()
 

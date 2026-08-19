@@ -2173,6 +2173,11 @@ export interface WorkflowDefinition {
   definition: Record<string, unknown>
   created_at?: string
   updated_at?: string
+  /** 运行统计（市场页「最近使用」排序/快捷重跑用） */
+  run_count?: number
+  last_run_id?: string | null
+  last_run_status?: string | null
+  last_run_at?: string | null
 }
 
 export interface WorkflowActionCatalogItem {

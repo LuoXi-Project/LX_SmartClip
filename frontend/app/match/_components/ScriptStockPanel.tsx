@@ -38,6 +38,7 @@ import {
   type ScriptStockPixabayCacheItemApi,
   type ScriptStockUnsplashCacheItemApi,
   type ScriptStockCoverrCacheItemApi,
+  type ScriptStockMixkitCacheItemApi,
   type ScriptStockTimelineMode,
   type BgmMixConfigApi,
   type ScriptStockComposeSegmentApi,
@@ -80,7 +81,8 @@ function bestCachedRelForId(
     | ScriptStockPexelsCacheItemApi[]
     | ScriptStockPixabayCacheItemApi[]
     | ScriptStockUnsplashCacheItemApi[]
-    | ScriptStockCoverrCacheItemApi[],
+    | ScriptStockCoverrCacheItemApi[]
+    | ScriptStockMixkitCacheItemApi[],
   mediaId: string | number,
   mediaType: 'image' | 'video',
 ): string | undefined {
@@ -92,7 +94,8 @@ function bestCachedRelForId(
     if (provider === 'pexels') return (it as ScriptStockPexelsCacheItemApi).pexels_video_id === mediaId
     if (provider === 'pixabay') return (it as ScriptStockPixabayCacheItemApi).pixabay_video_id === mediaId
     if (provider === 'unsplash') return String((it as ScriptStockUnsplashCacheItemApi).unsplash_photo_id) === String(mediaId)
-    return String((it as ScriptStockCoverrCacheItemApi).coverr_video_id) === String(mediaId)
+    if (provider === 'coverr') return String((it as ScriptStockCoverrCacheItemApi).coverr_video_id) === String(mediaId)
+    return String((it as ScriptStockMixkitCacheItemApi).mixkit_video_id) === String(mediaId)
   })
   if (!hits.length) return undefined
   hits.sort((a, b) => b.mtime - a.mtime)
@@ -149,17 +152,20 @@ export function ScriptStockPanel({
   const [pixabayCacheItems, setPixabayCacheItems] = useState<ScriptStockPixabayCacheItemApi[]>([])
   const [unsplashCacheItems, setUnsplashCacheItems] = useState<ScriptStockUnsplashCacheItemApi[]>([])
   const [coverrCacheItems, setCoverrCacheItems] = useState<ScriptStockCoverrCacheItemApi[]>([])
+  const [mixkitCacheItems, setMixkitCacheItems] = useState<ScriptStockMixkitCacheItemApi[]>([])
   const [cacheLoading, setCacheLoading] = useState<Record<ScriptStockOnlineProvider, boolean>>({
     pexels: false,
     pixabay: false,
     unsplash: false,
     coverr: false,
+    mixkit: false,
   })
   const [cacheClearing, setCacheClearing] = useState<Record<ScriptStockOnlineProvider, boolean>>({
     pexels: false,
     pixabay: false,
     unsplash: false,
     coverr: false,
+    mixkit: false,
   })
   const [pexelsPreviewUrl, setPexelsPreviewUrl] = useState<string | null>(null)
   const pexelsPreviewVideoRef = useRef<HTMLVideoElement>(null)
@@ -281,15 +287,19 @@ export function ScriptStockPanel({
       } else if (provider === 'unsplash') {
         const res = await scriptStockApi.unsplashListCache()
         setUnsplashCacheItems(res.items || [])
-      } else {
+      } else if (provider === 'coverr') {
         const res = await scriptStockApi.coverrListCache()
         setCoverrCacheItems(res.items || [])
+      } else {
+        const res = await scriptStockApi.mixkitListCache()
+        setMixkitCacheItems(res.items || [])
       }
     } catch {
       if (provider === 'pexels') setPexelsCacheItems([])
       else if (provider === 'pixabay') setPixabayCacheItems([])
       else if (provider === 'unsplash') setUnsplashCacheItems([])
-      else setCoverrCacheItems([])
+      else if (provider === 'coverr') setCoverrCacheItems([])
+      else setMixkitCacheItems([])
     } finally {
       setCacheLoading((p) => ({ ...p, [provider]: false }))
     }
@@ -301,6 +311,7 @@ export function ScriptStockPanel({
       loadOnlineCache('pixabay'),
       loadOnlineCache('unsplash'),
       loadOnlineCache('coverr'),
+      loadOnlineCache('mixkit'),
     ])
   }, [loadOnlineCache])
 
@@ -332,7 +343,8 @@ export function ScriptStockPanel({
         if (provider === 'pexels') return { ...s, pexelsStoredRelPaths: [] }
         if (provider === 'pixabay') return { ...s, pixabayStoredRelPaths: [] }
         if (provider === 'unsplash') return { ...s, unsplashStoredRelPaths: [] }
-        return { ...s, coverrStoredRelPaths: [] }
+        if (provider === 'coverr') return { ...s, coverrStoredRelPaths: [] }
+        return { ...s, mixkitStoredRelPaths: [] }
       }),
     )
   }
@@ -349,7 +361,10 @@ export function ScriptStockPanel({
         if (provider === 'unsplash') {
           return { ...s, unsplashStoredRelPaths: s.unsplashStoredRelPaths.filter((p) => p !== storedRelPath) }
         }
-        return { ...s, coverrStoredRelPaths: s.coverrStoredRelPaths.filter((p) => p !== storedRelPath) }
+        if (provider === 'coverr') {
+          return { ...s, coverrStoredRelPaths: s.coverrStoredRelPaths.filter((p) => p !== storedRelPath) }
+        }
+        return { ...s, mixkitStoredRelPaths: s.mixkitStoredRelPaths.filter((p) => p !== storedRelPath) }
       }),
     )
   }
@@ -373,13 +388,16 @@ export function ScriptStockPanel({
             ? await scriptStockApi.pixabayClearCache()
             : provider === 'unsplash'
               ? await scriptStockApi.unsplashClearCache()
-              : await scriptStockApi.coverrClearCache()
+              : provider === 'coverr'
+                ? await scriptStockApi.coverrClearCache()
+                : await scriptStockApi.mixkitClearCache()
       const n = Number(res.deleted_files) || 0
       toast.success(n > 0 ? `已清空 ${n} 个 ${label} 缓存文件` : '缓存目录已为空')
       if (provider === 'pexels') setPexelsCacheItems([])
       else if (provider === 'pixabay') setPixabayCacheItems([])
       else if (provider === 'unsplash') setUnsplashCacheItems([])
-      else setCoverrCacheItems([])
+      else if (provider === 'coverr') setCoverrCacheItems([])
+      else setMixkitCacheItems([])
       clearSegPathsForProvider(provider)
       await loadOnlineCache(provider)
     } catch (e) {
@@ -394,7 +412,8 @@ export function ScriptStockPanel({
       if (provider === 'pexels') await scriptStockApi.pexelsDeleteFile({ stored_rel_path: storedRelPath })
       else if (provider === 'pixabay') await scriptStockApi.pixabayDeleteFile({ stored_rel_path: storedRelPath })
       else if (provider === 'unsplash') await scriptStockApi.unsplashDeleteFile({ stored_rel_path: storedRelPath })
-      else await scriptStockApi.coverrDeleteFile({ stored_rel_path: storedRelPath })
+      else if (provider === 'coverr') await scriptStockApi.coverrDeleteFile({ stored_rel_path: storedRelPath })
+      else await scriptStockApi.mixkitDeleteFile({ stored_rel_path: storedRelPath })
       toast.success('已从本机删除该文件')
       if (provider === 'pexels') {
         setPexelsCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
@@ -402,8 +421,10 @@ export function ScriptStockPanel({
         setPixabayCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
       } else if (provider === 'unsplash') {
         setUnsplashCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
-      } else {
+      } else if (provider === 'coverr') {
         setCoverrCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
+      } else {
+        setMixkitCacheItems((prev) => prev.filter((i) => i.stored_rel_path !== storedRelPath))
       }
       removeSegPath(provider, storedRelPath)
     } catch (e) {
@@ -440,7 +461,8 @@ export function ScriptStockPanel({
         if (provider === 'pexels') return { ...s, pexelsStoredRelPaths: next, sourceTab: provider }
         if (provider === 'pixabay') return { ...s, pixabayStoredRelPaths: next, sourceTab: provider }
         if (provider === 'unsplash') return { ...s, unsplashStoredRelPaths: next, sourceTab: provider }
-        return { ...s, coverrStoredRelPaths: next, sourceTab: provider }
+        if (provider === 'coverr') return { ...s, coverrStoredRelPaths: next, sourceTab: provider }
+        return { ...s, mixkitStoredRelPaths: next, sourceTab: provider }
       }),
     )
   }
@@ -560,11 +582,18 @@ export function ScriptStockPanel({
             s.id === segId ? { ...s, searching: false, unsplashResults: res.photos || [] } : s,
           ),
         )
-      } else {
+      } else if (provider === 'coverr') {
         const res = await scriptStockApi.coverrSearch({ query: q, per_page: 12 })
         setSegments((prev) =>
           prev.map((s) =>
             s.id === segId ? { ...s, searching: false, coverrResults: res.videos || [] } : s,
+          ),
+        )
+      } else {
+        const res = await scriptStockApi.mixkitSearch({ query: q, per_page: 12 })
+        setSegments((prev) =>
+          prev.map((s) =>
+            s.id === segId ? { ...s, searching: false, mixkitResults: res.videos || [] } : s,
           ),
         )
       }
@@ -579,6 +608,7 @@ export function ScriptStockPanel({
     provider: ScriptStockOnlineProvider,
     mediaType: 'image' | 'video',
     mediaId: string | number,
+    detailPath?: string,
   ) => {
     const seg = segments.find((s) => s.id === segId)
     const search_query = ((seg?.searchQuery || seg?.text) || '').trim()
@@ -608,9 +638,16 @@ export function ScriptStockPanel({
           search_query: search_query || undefined,
         })
         rel = res.stored_rel_path
-      } else {
+      } else if (provider === 'coverr') {
         const res = await scriptStockApi.coverrDownload({
           coverr_media_id: String(mediaId),
+          search_query: search_query || undefined,
+        })
+        rel = res.stored_rel_path
+      } else {
+        const res = await scriptStockApi.mixkitDownload({
+          mixkit_media_id: String(mediaId),
+          detail_path: detailPath || '',
           search_query: search_query || undefined,
         })
         rel = res.stored_rel_path
@@ -629,7 +666,10 @@ export function ScriptStockPanel({
           if (provider === 'unsplash') {
             return { ...base, unsplashStoredRelPaths: appendIdToOrderedList(s.unsplashStoredRelPaths, rel) }
           }
-          return { ...base, coverrStoredRelPaths: appendIdToOrderedList(s.coverrStoredRelPaths, rel) }
+          if (provider === 'coverr') {
+            return { ...base, coverrStoredRelPaths: appendIdToOrderedList(s.coverrStoredRelPaths, rel) }
+          }
+          return { ...base, mixkitStoredRelPaths: appendIdToOrderedList(s.mixkitStoredRelPaths, rel) }
         }),
       )
       toast.success('已下载并追加到本段顺序（Shift+点击可再叠同一条）')
@@ -679,7 +719,8 @@ export function ScriptStockPanel({
         if (provider === 'pexels') row.pexels_stored_rel_paths = rels
         else if (provider === 'pixabay') row.pixabay_stored_rel_paths = rels
         else if (provider === 'unsplash') row.unsplash_stored_rel_paths = rels
-        else row.coverr_stored_rel_paths = rels
+        else if (provider === 'coverr') row.coverr_stored_rel_paths = rels
+        else row.mixkit_stored_rel_paths = rels
         payload.push(row)
       }
     }
@@ -1015,12 +1056,13 @@ export function ScriptStockPanel({
           </div>
 
           <StockOnlineCachePanel
-            providers={['pexels', 'pixabay', 'unsplash', 'coverr']}
+            providers={['pexels', 'pixabay', 'unsplash', 'coverr', 'mixkit']}
             itemsByProvider={{
               pexels: pexelsCacheItems,
               pixabay: pixabayCacheItems,
               unsplash: unsplashCacheItems,
               coverr: coverrCacheItems,
+              mixkit: mixkitCacheItems,
             }}
             loadingByProvider={cacheLoading}
             clearingByProvider={cacheClearing}
@@ -1172,6 +1214,7 @@ export function ScriptStockPanel({
                           { id: 'pixabay' as const, label: 'Pixabay', active: 'bg-emerald-600 text-white' },
                           { id: 'unsplash' as const, label: 'Unsplash', active: 'bg-amber-600 text-white' },
                           { id: 'coverr' as const, label: 'Coverr', active: 'bg-rose-600 text-white' },
+                          { id: 'mixkit' as const, label: 'Mixkit', active: 'bg-cyan-600 text-white' },
                         ] as const
                       ).map((tab) => (
                     <button
@@ -1236,7 +1279,9 @@ export function ScriptStockPanel({
                         ? pixabayCacheItems
                         : provider === 'unsplash'
                           ? unsplashCacheItems
-                          : coverrCacheItems
+                          : provider === 'coverr'
+                            ? coverrCacheItems
+                            : mixkitCacheItems
                   const dlBtnClass =
                     provider === 'pexels'
                       ? 'bg-sky-700 hover:bg-sky-600'
@@ -1244,7 +1289,9 @@ export function ScriptStockPanel({
                         ? 'bg-emerald-700 hover:bg-emerald-600'
                         : provider === 'unsplash'
                           ? 'bg-amber-700 hover:bg-amber-600'
-                          : 'bg-rose-700 hover:bg-rose-600'
+                          : provider === 'coverr'
+                            ? 'bg-rose-700 hover:bg-rose-600'
+                            : 'bg-cyan-700 hover:bg-cyan-600'
 
                   type HitCard = {
                     key: string
@@ -1252,6 +1299,7 @@ export function ScriptStockPanel({
                     mediaType: 'image' | 'video'
                     image: string
                     title: string
+                    detailPath?: string
                   }
                   const hits: HitCard[] =
                     provider === 'pexels'
@@ -1296,13 +1344,22 @@ export function ScriptStockPanel({
                               image: ph.image,
                               title: ph.description?.slice(0, 24) || '图片',
                             }))
-                          : seg.coverrResults.map((pv) => ({
-                              key: pv.id,
-                              mediaId: pv.id,
-                              mediaType: 'video' as const,
-                              image: pv.image,
-                              title: `${Math.round(pv.duration)}s · 视频`,
-                            }))
+                          : provider === 'coverr'
+                            ? seg.coverrResults.map((pv) => ({
+                                key: pv.id,
+                                mediaId: pv.id,
+                                mediaType: 'video' as const,
+                                image: pv.image,
+                                title: `${Math.round(pv.duration)}s · 视频`,
+                              }))
+                            : seg.mixkitResults.map((pv) => ({
+                                key: pv.id,
+                                mediaId: pv.id,
+                                mediaType: 'video' as const,
+                                image: pv.image,
+                                title: pv.title?.slice(0, 24) || '视频',
+                                detailPath: pv.detail_path,
+                              }))
 
                   return (
                     <div className="space-y-3">
@@ -1377,7 +1434,7 @@ export function ScriptStockPanel({
                                       disabled={isDl}
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        void downloadOnline(seg.id, provider, hit.mediaType, hit.mediaId)
+                                        void downloadOnline(seg.id, provider, hit.mediaType, hit.mediaId, hit.detailPath)
                                       }}
                                       className={`w-full flex items-center justify-center gap-1 py-1.5 rounded text-[11px] text-white disabled:opacity-50 ${dlBtnClass}`}
                                     >

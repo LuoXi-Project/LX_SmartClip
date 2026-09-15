@@ -1470,10 +1470,30 @@ export interface ScriptStockCoverrCacheItemApi {
   duration_sec?: number
 }
 
-export type ScriptStockOnlineProvider = 'pexels' | 'pixabay' | 'unsplash' | 'coverr'
+export interface ScriptStockMixkitVideoApi {
+  id: string
+  title?: string
+  image: string
+  /** 详情页路径（下载时需要回传） */
+  detail_path: string
+}
+
+export interface ScriptStockMixkitCacheItemApi {
+  mixkit_video_id: string
+  media_type?: 'image' | 'video'
+  stored_rel_path: string
+  filename: string
+  size_bytes: number
+  mtime: number
+  search_query?: string
+  preview_image?: string
+  duration_sec?: number
+}
+
+export type ScriptStockOnlineProvider = 'pexels' | 'pixabay' | 'unsplash' | 'coverr' | 'mixkit'
 
 export interface ScriptStockComposeSegmentApi {
-  kind: 'library' | 'pexels' | 'pixabay' | 'unsplash' | 'coverr'
+  kind: 'library' | 'pexels' | 'pixabay' | 'unsplash' | 'coverr' | 'mixkit'
   video_id?: string | null
   /** 本地多段按顺序拼接（仅「仅 TTS」）；非空时优先于 video_id */
   library_video_ids?: string[] | null
@@ -1483,6 +1503,7 @@ export interface ScriptStockComposeSegmentApi {
   pixabay_stored_rel_paths?: string[] | null
   unsplash_stored_rel_paths?: string[] | null
   coverr_stored_rel_paths?: string[] | null
+  mixkit_stored_rel_paths?: string[] | null
   /** 与 library_video_ids 同序；本地素材选用区间（秒），不传则服务端按整文件探测 */
   library_trims?: Array<{ in_sec: number; out_sec: number }> | null
   /** 该段配音文案；tts_only / mix 时使用 */
@@ -1588,6 +1609,28 @@ export const scriptStockApi = {
     apiClient.post<unknown, { ok: boolean }>('/api/script-stock/coverr/delete-file', body),
   coverrClearCache: () =>
     apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/coverr/clear-cache'),
+  mixkitSearch: (params: { query: string; page?: number; per_page?: number }) =>
+    apiClient.get<unknown, {
+      page: number
+      per_page: number
+      total_results: number
+      videos: ScriptStockMixkitVideoApi[]
+    }>('/api/script-stock/mixkit/search', { params }),
+  mixkitDownload: (body: {
+    mixkit_media_id: string
+    detail_path: string
+    search_query?: string
+  }) =>
+    apiClient.post<unknown, { stored_rel_path: string; public_url: string; filename: string }>(
+      '/api/script-stock/mixkit/download',
+      body,
+    ),
+  mixkitListCache: () =>
+    apiClient.get<unknown, { items: ScriptStockMixkitCacheItemApi[] }>('/api/script-stock/mixkit/cache'),
+  mixkitDeleteFile: (body: { stored_rel_path: string }) =>
+    apiClient.post<unknown, { ok: boolean }>('/api/script-stock/mixkit/delete-file', body),
+  mixkitClearCache: () =>
+    apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/mixkit/clear-cache'),
   compose: (body: {
     segments: ScriptStockComposeSegmentApi[]
     project_name?: string

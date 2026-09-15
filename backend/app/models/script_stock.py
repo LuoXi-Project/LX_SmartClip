@@ -104,9 +104,9 @@ class ScriptStockLibraryTrimPart(BaseModel):
 
 
 class ScriptStockComposeSegment(BaseModel):
-    kind: Literal["library", "pexels", "pixabay", "unsplash", "coverr"] = Field(
+    kind: Literal["library", "pexels", "pixabay", "unsplash", "coverr", "mixkit"] = Field(
         ...,
-        description="library=素材库；pexels/pixabay/unsplash/coverr=已下载到 stock_media 对应子目录的文件",
+        description="library=素材库；pexels/pixabay/unsplash/coverr/mixkit=已下载到 stock_media 对应子目录的文件",
     )
     video_id: Optional[str] = Field(None, description="kind=library 时与 library_video_ids 二选一（单段）")
     library_video_ids: Optional[List[str]] = Field(
@@ -136,6 +136,10 @@ class ScriptStockComposeSegment(BaseModel):
     coverr_stored_rel_paths: Optional[List[str]] = Field(
         None,
         description="kind=coverr 时多文件路径；规则同 pexels_stored_rel_paths",
+    )
+    mixkit_stored_rel_paths: Optional[List[str]] = Field(
+        None,
+        description="kind=mixkit 时多文件路径；规则同 pexels_stored_rel_paths",
     )
     text: Optional[str] = Field(
         None,
@@ -429,5 +433,63 @@ class ScriptStockCoverrDeleteResponse(BaseModel):
 
 
 class ScriptStockCoverrClearCacheResponse(BaseModel):
+    ok: bool = True
+    deleted_files: int = 0
+
+
+# --- Mixkit（无官方 API，页面抓取；仅视频） ---
+
+
+class MixkitVideoSummary(BaseModel):
+    id: str
+    title: str = ""
+    image: str = Field("", description="缩略图 URL（assets.mixkit.co）")
+    detail_path: str = Field("", description="详情页路径（下载时需要）")
+
+
+class ScriptStockMixkitSearchResponse(BaseModel):
+    page: int
+    per_page: int
+    total_results: int = Field(0, description="Mixkit 未提供总数，恒为 0")
+    videos: List[MixkitVideoSummary] = Field(default_factory=list)
+
+
+class ScriptStockMixkitDownloadRequest(BaseModel):
+    mixkit_media_id: str = Field(..., description="Mixkit 视频 id（数字字符串）")
+    detail_path: str = Field("", description="详情页路径 /free-stock-video/{slug}/；为空时无法定位下载地址")
+    search_query: str = Field("", description="下载时搜索关键词，写入缓存元数据")
+
+
+class ScriptStockMixkitDownloadResponse(BaseModel):
+    stored_rel_path: str
+    public_url: str
+    filename: str
+
+
+class ScriptStockMixkitCacheItem(BaseModel):
+    mixkit_video_id: str = ""
+    media_type: Literal["image", "video"] = "video"
+    stored_rel_path: str
+    filename: str
+    size_bytes: int = 0
+    mtime: float = 0
+    search_query: str = ""
+    preview_image: str = ""
+    duration_sec: float = 0
+
+
+class ScriptStockMixkitCacheResponse(BaseModel):
+    items: List[ScriptStockMixkitCacheItem]
+
+
+class ScriptStockMixkitDeleteRequest(BaseModel):
+    stored_rel_path: str
+
+
+class ScriptStockMixkitDeleteResponse(BaseModel):
+    ok: bool = True
+
+
+class ScriptStockMixkitClearCacheResponse(BaseModel):
     ok: bool = True
     deleted_files: int = 0

@@ -10,6 +10,8 @@ import type {
   ScriptStockUnsplashPhotoApi,
   ScriptStockCoverrCacheItemApi,
   ScriptStockCoverrVideoApi,
+  ScriptStockMixkitCacheItemApi,
+  ScriptStockMixkitVideoApi,
 } from '@/lib/api'
 
 export type StockSourceTab = 'local' | ScriptStockOnlineProvider
@@ -27,6 +29,7 @@ export type StockSegState = {
   pixabayImageResults: ScriptStockPixabayImageApi[]
   unsplashResults: ScriptStockUnsplashPhotoApi[]
   coverrResults: ScriptStockCoverrVideoApi[]
+  mixkitResults: ScriptStockMixkitVideoApi[]
   searching: boolean
   /** `${provider}:${id}` */
   downloadingKey: string | null
@@ -34,6 +37,7 @@ export type StockSegState = {
   pixabayStoredRelPaths: string[]
   unsplashStoredRelPaths: string[]
   coverrStoredRelPaths: string[]
+  mixkitStoredRelPaths: string[]
 }
 
 export type StockCacheItem =
@@ -41,6 +45,7 @@ export type StockCacheItem =
   | ScriptStockPixabayCacheItemApi
   | ScriptStockUnsplashCacheItemApi
   | ScriptStockCoverrCacheItemApi
+  | ScriptStockMixkitCacheItemApi
 
 export function newStockSeg(text: string): StockSegState {
   return {
@@ -56,12 +61,14 @@ export function newStockSeg(text: string): StockSegState {
     pixabayImageResults: [],
     unsplashResults: [],
     coverrResults: [],
+    mixkitResults: [],
     searching: false,
     downloadingKey: null,
     pexelsStoredRelPaths: [],
     pixabayStoredRelPaths: [],
     unsplashStoredRelPaths: [],
     coverrStoredRelPaths: [],
+    mixkitStoredRelPaths: [],
   }
 }
 
@@ -69,14 +76,16 @@ export function storedRelPathsForProvider(seg: StockSegState, provider: ScriptSt
   if (provider === 'pexels') return seg.pexelsStoredRelPaths
   if (provider === 'pixabay') return seg.pixabayStoredRelPaths
   if (provider === 'unsplash') return seg.unsplashStoredRelPaths
-  return seg.coverrStoredRelPaths
+  if (provider === 'coverr') return seg.coverrStoredRelPaths
+  return seg.mixkitStoredRelPaths
 }
 
 export function onlineProviderLabel(p: ScriptStockOnlineProvider): string {
   if (p === 'pexels') return 'Pexels'
   if (p === 'pixabay') return 'Pixabay'
   if (p === 'unsplash') return 'Unsplash'
-  return 'Coverr'
+  if (p === 'coverr') return 'Coverr'
+  return 'Mixkit'
 }
 
 export function downloadKey(

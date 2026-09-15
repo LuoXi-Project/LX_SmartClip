@@ -27,7 +27,7 @@ const PARAM_HINTS: Record<string, string> = {
   coverr_api_key:
     'Coverr 视频 API Key；用于文案素材成片搜索/下载无版权短视频，文件存放在 stock_media/coverr（见 https://api.coverr.co/docs/videos/ ）',
   stock_media_http_proxy:
-    '可选。留空时 Pexels / Pixabay / Unsplash / Coverr 请求直连外网，不受本机系统代理（HTTP_PROXY）影响；需走代理时再填，如 http://127.0.0.1:7890',
+    '可选。留空时 Pexels / Pixabay / Unsplash / Coverr / Mixkit 请求直连外网，不受本机系统代理（HTTP_PROXY）影响；需走代理时再填，如 http://127.0.0.1:7890',
 }
 
 const KEY_LINKS: Record<string, { label: string; href: string }> = {
@@ -57,7 +57,7 @@ export function StockMediaSection({ config, edits, saving, saved, onSet, onSave,
             在线素材（文案成片）
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            与视频切片无关；配置后可在「智能剪辑 → 文案素材成片」使用 Pexels、Pixabay、Unsplash、Coverr
+            与视频切片无关；配置后可在「智能剪辑 → 文案素材成片」使用 Pexels、Pixabay、Unsplash、Coverr、Mixkit
           </p>
         </div>
         {groupDirty && (
@@ -74,7 +74,8 @@ export function StockMediaSection({ config, edits, saving, saved, onSet, onSave,
 
       <div className="px-6 py-5 space-y-4">
         <p className="text-[11px] text-slate-500 leading-relaxed rounded-lg border border-slate-700/80 bg-slate-950/40 px-3 py-2.5">
-          各平台密钥独立保存；未配置的平台在成片页搜索时会提示到此设置。Pexels / Pixabay 支持视频与图片；图片仅存本地，成片时按段时长静帧。多图默认均分该段时长。HTTP
+          各平台密钥独立保存；未配置的平台在成片页搜索时会提示到此设置。Pexels / Pixabay 支持视频与图片；图片仅存本地，成片时按段时长静帧。多图默认均分该段时长。Mixkit
+          无官方 API、无需密钥，走页面抓取（不稳定时可在下方配置代理）。HTTP
           代理留空即可直连，避免本机全局代理导致 502；仅在无法直连外网时再填写。
         </p>
         {visibleKeys.map((key) => {

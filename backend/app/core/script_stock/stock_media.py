@@ -10,7 +10,7 @@ import httpx
 
 from app.utils.paths import ensure_storage_subpath, to_stored_path
 
-STOCK_PROVIDERS = ("pexels", "pixabay", "unsplash", "coverr")
+STOCK_PROVIDERS = ("pexels", "pixabay", "unsplash", "coverr", "mixkit")
 _META_FILENAME = "stock_cache_meta.json"
 
 StockMediaType = Literal["image", "video"]
@@ -20,6 +20,7 @@ _FN_PATTERNS = {
     "pixabay": re.compile(r"^pixabay_(?:img_)?(\d+)_", re.IGNORECASE),
     "unsplash": re.compile(r"^unsplash_([A-Za-z0-9_-]+)_", re.IGNORECASE),
     "coverr": re.compile(r"^coverr_([A-Za-z0-9_-]+)_", re.IGNORECASE),
+    "mixkit": re.compile(r"^mixkit_(\d+)_", re.IGNORECASE),
 }
 
 _VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv")

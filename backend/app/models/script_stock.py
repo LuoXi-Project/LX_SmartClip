@@ -444,13 +444,15 @@ class MixkitVideoSummary(BaseModel):
     id: str
     title: str = ""
     image: str = Field("", description="缩略图 URL（assets.mixkit.co）")
-    detail_path: str = Field("", description="详情页路径（下载时需要）")
+    detail_path: str = Field("", description="详情页路径（Algolia 不可用时的下载回退）")
+    duration: int = Field(0, description="时长（秒，来自 Algolia 记录）")
 
 
 class ScriptStockMixkitSearchResponse(BaseModel):
     page: int
     per_page: int
-    total_results: int = Field(0, description="Mixkit 未提供总数，恒为 0")
+    total_results: int = Field(0, description="Algolia nbHits")
+    total_pages: int = Field(0, description="Algolia nbPages")
     videos: List[MixkitVideoSummary] = Field(default_factory=list)
 
 

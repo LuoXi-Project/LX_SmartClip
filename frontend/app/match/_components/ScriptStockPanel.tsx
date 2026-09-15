@@ -1357,7 +1357,9 @@ export function ScriptStockPanel({
                                 mediaId: pv.id,
                                 mediaType: 'video' as const,
                                 image: pv.image,
-                                title: pv.title?.slice(0, 24) || '视频',
+                                title: pv.duration
+                                  ? `${Math.round(pv.duration)}s · 视频`
+                                  : pv.title?.slice(0, 24) || '视频',
                                 detailPath: pv.detail_path,
                               }))
 

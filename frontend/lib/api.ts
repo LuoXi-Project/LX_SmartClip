@@ -1474,8 +1474,10 @@ export interface ScriptStockMixkitVideoApi {
   id: string
   title?: string
   image: string
-  /** 详情页路径（下载时需要回传） */
+  /** 详情页路径（下载回退用） */
   detail_path: string
+  /** 时长（秒；Algolia 记录） */
+  duration?: number
 }
 
 export interface ScriptStockMixkitCacheItemApi {

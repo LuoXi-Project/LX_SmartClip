@@ -1,11 +1,16 @@
 """Mixkit 视频搜索与下载（文案成片；仅视频）。
 
-Mixkit（Envato 旗下）没有官方 API，走页面抓取：
-- 搜索页 https://mixkit.co/free-stock-video/search/?q={query}&page={n} 为服务端渲染，
-  卡片含 item id、缩略图、详情页链接（每页 24 条，页码 1 起始）。
-- 详情页 JSON-LD 的 VideoObject 提供 contentUrl（最高画质 mp4 直链，CDN 无需认证）、
-  duration（ISO8601）、name、thumbnailUrl。
-仅需浏览器 UA（站方对无 UA 请求可能拒绝）；HTTP 代理沿用 stock_media_http_proxy。
+Mixkit（Envato 旗下）没有官方 API。其网页搜索由前端直连 Algolia 完成
+（服务端渲染的 HTML 网格是固定的默认列表、不随 ?q= 变化），因此：
+
+- 搜索：直接调用其公开的 Algolia 查询接口（App ID / 搜索 Key / 索引名
+  均内嵌在页面 HTML 的 data-* 属性中，为前端公开密钥），按 query + type:video
+  过滤，命中记录的 overviewData 自带缩略图、时长与 360/720/1080 分级 mp4 直链。
+- 下载：按 itemId 反查 Algolia 取最高可用清晰度直链；Algolia 不可用时回退
+  抓详情页 JSON-LD 的 contentUrl（需 detail_path）。
+- mp4 走 assets.mixkit.co CDN，无需认证；页面请求需浏览器 UA。
+
+algolianet/algolia 各主机在国内连通性不一，按列表轮询。
 """
 from __future__ import annotations
 
@@ -13,7 +18,8 @@ import json
 import logging
 import os
 import re
-from typing import List
+from typing import Any, List
+from urllib.parse import quote
 
 import httpx
 
@@ -42,16 +48,22 @@ logger = logging.getLogger(__name__)
 MIXKIT_SITE = "https://mixkit.co"
 _PROVIDER = "mixkit"
 
+# Algolia 配置（内嵌于 mixkit 页面的公开前端搜索密钥）
+_ALGOLIA_APP_ID = "ZKRSER95J1"
+_ALGOLIA_API_KEY = "9279146abe17592c4cc491f4124dc5ef"
+_ALGOLIA_INDEX = "mixkit_prod_v4"
+_ALGOLIA_HOSTS = (
+    "https://zkrser95j1-dsn.algolia.net",
+    "https://zkrser95j1.algolia.net",
+    "https://zkrser95j1-1.algolianet.com",
+    "https://zkrser95j1-2.algolianet.com",
+    "https://zkrser95j1-3.algolianet.com",
+)
+
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
-
-_CARD_ID_RE = re.compile(r'data-item-grid--video-player-item-id-value="(\d+)"')
-_CARD_THUMB_RE = re.compile(r'<img src="(https://assets\.mixkit\.co/videos/[^"]+)"[^>]*>')
-_CARD_TITLE_RE = re.compile(r'overlay-video-title">\s*([^<]+?)\s*<', re.S)
-_CARD_LINK_RE = re.compile(r'<a href="(/free-stock-video/[^"]+)"[^>]*class="item-grid-video-player__overlay-link"')
-_CARD_LINK_RE2 = re.compile(r'class="item-grid-video-player__overlay-link"[^>]* href="(/free-stock-video/[^"]+)"')
 
 _ISO_DUR_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$", re.IGNORECASE)
 
@@ -60,20 +72,71 @@ def _headers() -> dict[str, str]:
     return {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
 
 
-async def _get_with_retry(
-    client: httpx.AsyncClient, url: str, *, retries: int = 1, **kwargs
-) -> httpx.Response:
-    """mixkit.co 直连偶发超时，连接类错误重试一次。"""
+def _algolia_headers() -> dict[str, str]:
+    return {
+        "X-Algolia-Application-Id": _ALGOLIA_APP_ID,
+        "X-Algolia-API-Key": _ALGOLIA_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+
+async def _algolia_query(
+    params: str, *, http_proxy: str | None = None, timeout: float = 20.0
+) -> dict[str, Any]:
+    """POST /1/indexes/{index}/query；连接错误或 429/5xx 时轮询下一主机。"""
+    body = json.dumps({"params": params})
     last: Exception | None = None
-    for _ in range(retries + 1):
-        try:
-            return await client.get(url, **kwargs)
-        except httpx.ConnectError as e:
-            last = e
-        except httpx.ConnectTimeout as e:
-            last = e
+    async with stock_async_client(timeout=timeout, proxy=http_proxy) as client:
+        for host in _ALGOLIA_HOSTS:
+            try:
+                resp = await client.post(
+                    f"{host}/1/indexes/{_ALGOLIA_INDEX}/query",
+                    content=body,
+                    headers=_algolia_headers(),
+                )
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last = e
+                continue
+            if resp.status_code >= 500 or resp.status_code == 429:
+                last = httpx.HTTPStatusError(
+                    f"algolia host {host} -> {resp.status_code}",
+                    request=resp.request,
+                    response=resp,
+                )
+                continue
+            if resp.status_code != 200:
+                raise httpx.HTTPStatusError("algolia query failed", request=resp.request, response=resp)
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
     assert last is not None
     raise last
+
+
+def _map_hit(hit: dict) -> MixkitVideoSummary:
+    ov = hit.get("overviewData") if isinstance(hit.get("overviewData"), dict) else {}
+    item_id = str(hit.get("itemId") or "")
+    slug = str(ov.get("urlSlug") or "")
+    detail_path = f"/free-stock-video/{slug}-{item_id}/" if slug and item_id else ""
+    try:
+        duration = int(hit.get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    return MixkitVideoSummary(
+        id=item_id,
+        title=str(hit.get("title") or "")[:300],
+        image=str(ov.get("small_thumbnail_url") or ov.get("large_thumbnail_url") or "").strip(),
+        detail_path=detail_path,
+        duration=duration,
+    )
+
+
+def _pick_best_mp4(ov: dict) -> tuple[str, str]:
+    """(url, 清晰度标签)；按 1080→720→360 取 overviewData 中第一个可用直链。"""
+    for label, key in (("1080", "video_1080_url"), ("720", "video_720_url"), ("360", "video_360_url")):
+        url = str(ov.get(key) or "").strip()
+        if url:
+            return url, label
+    return "", ""
 
 
 def _parse_iso_duration(raw: str) -> float:
@@ -84,38 +147,6 @@ def _parse_iso_duration(raw: str) -> float:
     mi = float(m.group(2) or 0)
     s = float(m.group(3) or 0)
     return h * 3600 + mi * 60 + s
-
-
-def _parse_search_html(html: str) -> List[MixkitVideoSummary]:
-    """按卡片起始锚点切块后逐块提取，避免跨卡片串数据。"""
-    anchors = list(_CARD_ID_RE.finditer(html))
-    out: List[MixkitVideoSummary] = []
-    seen: set[str] = set()
-    for i, m in enumerate(anchors):
-        vid = m.group(1)
-        if vid in seen:
-            continue
-        end = anchors[i + 1].start() if i + 1 < len(anchors) else min(len(html), m.end() + 6000)
-        block = html[m.end() : end]
-        thumb_m = _CARD_THUMB_RE.search(block)
-        title_m = _CARD_TITLE_RE.search(block)
-        link_m = _CARD_LINK_RE.search(block) or _CARD_LINK_RE2.search(block)
-        title = (title_m.group(1) if title_m else "").strip()
-        if not title and thumb_m:
-            # alt="Title." 与 src 同在 img 标签内
-            alt_m = re.search(r'alt="([^"]*)"', block[thumb_m.start() : thumb_m.end()])
-            if alt_m:
-                title = alt_m.group(1).rstrip(".").strip()
-        out.append(
-            MixkitVideoSummary(
-                id=vid,
-                title=title[:300],
-                image=(thumb_m.group(1) if thumb_m else "").strip(),
-                detail_path=(link_m.group(1) if link_m else "").strip(),
-            )
-        )
-        seen.add(vid)
-    return out
 
 
 def _video_object_from_ld_json(html: str) -> dict:
@@ -159,25 +190,45 @@ async def search_mixkit(
     *,
     http_proxy: str | None = None,
 ) -> ScriptStockMixkitSearchResponse:
-    """页码 1 起始；Mixkit 每页固定 24 条，per_page 只做截断。
+    """页码 1 起始（内部转 Algolia 0 起始）。"""
+    params = (
+        f"query={quote(query)}"
+        f"&hitsPerPage={max(1, min(24, int(per_page)))}"
+        f"&page={max(0, int(page) - 1)}"
+        "&filters=type:video"
+    )
+    data = await _algolia_query(params, http_proxy=http_proxy)
+    hits = data.get("hits") or []
+    videos = [_map_hit(h) for h in hits if isinstance(h, dict) and h.get("itemId")]
+    return ScriptStockMixkitSearchResponse(
+        page=page,
+        per_page=int(per_page),
+        total_results=int(data.get("nbHits") or 0),
+        total_pages=int(data.get("nbPages") or 0),
+        videos=videos,
+    )
 
-    page=1 时必须省略 page 参数（显式 page=1 会被 301 规范化）；
-    超出最大页时站点 301 回第 1 页，此处不跟随重定向、按空结果处理。
-    """
-    params: dict[str, str | int] = {"q": query}
-    if int(page) > 1:
-        params["page"] = int(page)
-    async with stock_async_client(timeout=30.0, headers=_headers(), proxy=http_proxy, follow_redirects=False) as client:
-        resp = await _get_with_retry(client, f"{MIXKIT_SITE}/free-stock-video/search/", params=params)
-    if resp.status_code != 200:
-        # 超出最大页时站点返回 301；当作空结果
-        if resp.status_code in (301, 302, 303, 307, 308):
-            return ScriptStockMixkitSearchResponse(page=page, per_page=per_page, total_results=0, videos=[])
-        raise httpx.HTTPStatusError("mixkit search failed", request=resp.request, response=resp)
-    videos = _parse_search_html(resp.text)
-    if per_page and per_page > 0:
-        videos = videos[:per_page]
-    return ScriptStockMixkitSearchResponse(page=page, per_page=per_page, total_results=0, videos=videos)
+
+async def _fetch_detail_video(
+    detail_path: str, *, http_proxy: str | None = None
+) -> tuple[str, float, str, str]:
+    """回退路径：抓详情页 JSON-LD，返回 (mp4 url, duration_sec, title, thumb)。"""
+    async with stock_async_client(
+        timeout=45.0, headers=_headers(), proxy=http_proxy, follow_redirects=True
+    ) as client:
+        resp = await client.get(f"{MIXKIT_SITE}{detail_path}")
+        if resp.status_code != 200:
+            raise httpx.HTTPStatusError("mixkit detail fetch failed", request=resp.request, response=resp)
+        video = _video_object_from_ld_json(resp.text)
+        url = str(video.get("contentUrl") or "").strip()
+        if not url:
+            raise ValueError("未从详情页解析到视频直链")
+        return (
+            url,
+            _parse_iso_duration(str(video.get("duration") or "")),
+            str(video.get("name") or "").strip(),
+            str(video.get("thumbnailUrl") or "").strip(),
+        )
 
 
 async def download_mixkit(
@@ -186,37 +237,51 @@ async def download_mixkit(
     http_proxy: str | None = None,
 ) -> ScriptStockMixkitDownloadResponse:
     mid = (req.mixkit_media_id or "").strip()
-    detail_path = (req.detail_path or "").strip()
-    if not mid or not detail_path:
-        raise ValueError("mixkit_media_id 与 detail_path 均不能为空")
-    if not detail_path.startswith("/") or ".." in detail_path:
-        raise ValueError("detail_path 非法")
+    if not mid or not mid.isdigit():
+        raise ValueError("mixkit_media_id 无效（应为数字 id）")
 
-    async with stock_async_client(timeout=45.0, headers=_headers(), proxy=http_proxy, follow_redirects=True) as client:
-        resp = await _get_with_retry(client, f"{MIXKIT_SITE}{detail_path}")
-        if resp.status_code != 200:
-            raise httpx.HTTPStatusError("mixkit detail fetch failed", request=resp.request, response=resp)
-        video = _video_object_from_ld_json(resp.text)
-        url = str(video.get("contentUrl") or "").strip()
-        if not url:
-            raise ValueError("未从详情页解析到视频直链")
-        title = str(video.get("name") or "").strip()
-        thumb = str(video.get("thumbnailUrl") or "").strip()
-        duration = _parse_iso_duration(str(video.get("duration") or ""))
+    url = ""
+    res_label = "0"
+    duration = 0.0
+    title = ""
+    thumb = ""
 
-        res_m = re.search(r"-(\d+)\.mp4$", url)
-        res_label = res_m.group(1) if res_m else "0"
+    # 首选：Algolia 按 itemId 反查（含各清晰度可用性）
+    try:
+        data = await _algolia_query(
+            f"query=&hitsPerPage=1&filters=itemId={mid} AND type:video",
+            http_proxy=http_proxy,
+        )
+        hits = data.get("hits") or []
+        if hits and isinstance(hits[0], dict):
+            hit = hits[0]
+            ov = hit.get("overviewData") if isinstance(hit.get("overviewData"), dict) else {}
+            url, res_label = _pick_best_mp4(ov)
+            duration = float(hit.get("duration") or 0)
+            title = str(hit.get("title") or "").strip()
+            thumb = str(ov.get("small_thumbnail_url") or "").strip()
+    except Exception as e:
+        logger.warning("mixkit algolia lookup failed, fallback to detail page: %s", e)
 
-        dest_dir = stock_download_root(_PROVIDER)
-        safe_id = "".join(c if c.isalnum() else "_" for c in mid)[:32]
-        fname = f"mixkit_{safe_id}_{res_label}.mp4"
-        dest_abs = os.path.join(dest_dir, fname)
+    # 回退：详情页 JSON-LD
+    if not url:
+        detail_path = (req.detail_path or "").strip()
+        if not detail_path.startswith("/") or ".." in detail_path:
+            raise ValueError("Algolia 不可用且未提供有效的 detail_path，无法定位下载地址")
+        url, duration, title, thumb = await _fetch_detail_video(detail_path, http_proxy=http_proxy)
+        m = re.search(r"-(\d+)\.mp4$", url)
+        res_label = m.group(1) if m else "0"
 
+    dest_dir = stock_download_root(_PROVIDER)
+    fname = f"mixkit_{mid}_{res_label}.mp4"
+    dest_abs = os.path.join(dest_dir, fname)
+
+    async with stock_async_client(timeout=600.0, follow_redirects=True, proxy=http_proxy) as client:
         media = await client.get(url, headers={"User-Agent": _UA, "Referer": f"{MIXKIT_SITE}/"})
-        if media.status_code != 200:
-            raise ValueError("下载视频失败")
-        with open(dest_abs, "wb") as f:
-            f.write(media.content)
+    if media.status_code != 200:
+        raise ValueError("下载视频失败")
+    with open(dest_abs, "wb") as f:
+        f.write(media.content)
 
     rel = to_stored_path(dest_abs)
     try:

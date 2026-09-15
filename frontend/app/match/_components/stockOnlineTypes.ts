@@ -8,6 +8,8 @@ import type {
   ScriptStockPixabayVideoApi,
   ScriptStockUnsplashCacheItemApi,
   ScriptStockUnsplashPhotoApi,
+  ScriptStockCoverrCacheItemApi,
+  ScriptStockCoverrVideoApi,
 } from '@/lib/api'
 
 export type StockSourceTab = 'local' | ScriptStockOnlineProvider
@@ -24,18 +26,21 @@ export type StockSegState = {
   pixabayResults: ScriptStockPixabayVideoApi[]
   pixabayImageResults: ScriptStockPixabayImageApi[]
   unsplashResults: ScriptStockUnsplashPhotoApi[]
+  coverrResults: ScriptStockCoverrVideoApi[]
   searching: boolean
   /** `${provider}:${id}` */
   downloadingKey: string | null
   pexelsStoredRelPaths: string[]
   pixabayStoredRelPaths: string[]
   unsplashStoredRelPaths: string[]
+  coverrStoredRelPaths: string[]
 }
 
 export type StockCacheItem =
   | ScriptStockPexelsCacheItemApi
   | ScriptStockPixabayCacheItemApi
   | ScriptStockUnsplashCacheItemApi
+  | ScriptStockCoverrCacheItemApi
 
 export function newStockSeg(text: string): StockSegState {
   return {
@@ -50,24 +55,28 @@ export function newStockSeg(text: string): StockSegState {
     pixabayResults: [],
     pixabayImageResults: [],
     unsplashResults: [],
+    coverrResults: [],
     searching: false,
     downloadingKey: null,
     pexelsStoredRelPaths: [],
     pixabayStoredRelPaths: [],
     unsplashStoredRelPaths: [],
+    coverrStoredRelPaths: [],
   }
 }
 
 export function storedRelPathsForProvider(seg: StockSegState, provider: ScriptStockOnlineProvider): string[] {
   if (provider === 'pexels') return seg.pexelsStoredRelPaths
   if (provider === 'pixabay') return seg.pixabayStoredRelPaths
-  return seg.unsplashStoredRelPaths
+  if (provider === 'unsplash') return seg.unsplashStoredRelPaths
+  return seg.coverrStoredRelPaths
 }
 
 export function onlineProviderLabel(p: ScriptStockOnlineProvider): string {
   if (p === 'pexels') return 'Pexels'
   if (p === 'pixabay') return 'Pixabay'
-  return 'Unsplash'
+  if (p === 'unsplash') return 'Unsplash'
+  return 'Coverr'
 }
 
 export function downloadKey(

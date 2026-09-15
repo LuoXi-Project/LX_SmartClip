@@ -24,14 +24,17 @@ const PARAM_HINTS: Record<string, string> = {
     '在 Pixabay 申请免费 API Key；用于文案素材成片搜索/下载视频，文件存放在 stock_media/pixabay（见 https://pixabay.com/api/docs/ ）',
   unsplash_access_key:
     '在 Unsplash Developers 注册应用获取 Access Key；用于搜索高清图片并自动转为静音短视频，文件存放在 stock_media/unsplash',
+  coverr_api_key:
+    'Coverr 视频 API Key；用于文案素材成片搜索/下载无版权短视频，文件存放在 stock_media/coverr（见 https://api.coverr.co/docs/videos/ ）',
   stock_media_http_proxy:
-    '可选。留空时 Pexels / Pixabay / Unsplash 请求直连外网，不受本机系统代理（HTTP_PROXY）影响；需走代理时再填，如 http://127.0.0.1:7890',
+    '可选。留空时 Pexels / Pixabay / Unsplash / Coverr 请求直连外网，不受本机系统代理（HTTP_PROXY）影响；需走代理时再填，如 http://127.0.0.1:7890',
 }
 
 const KEY_LINKS: Record<string, { label: string; href: string }> = {
   pexels_api_key: { label: 'Pexels API', href: 'https://www.pexels.com/api/' },
   pixabay_api_key: { label: 'Pixabay API', href: 'https://pixabay.com/api/docs/' },
   unsplash_access_key: { label: 'Unsplash Developers', href: 'https://unsplash.com/developers' },
+  coverr_api_key: { label: 'Coverr API', href: 'https://api.coverr.co/docs/videos/' },
 }
 
 export function StockMediaSection({ config, edits, saving, saved, onSet, onSave, onSaveGroup }: Props) {
@@ -54,7 +57,7 @@ export function StockMediaSection({ config, edits, saving, saved, onSet, onSave,
             在线素材（文案成片）
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            与视频切片无关；配置后可在「智能剪辑 → 文案素材成片」使用 Pexels、Pixabay、Unsplash
+            与视频切片无关；配置后可在「智能剪辑 → 文案素材成片」使用 Pexels、Pixabay、Unsplash、Coverr
           </p>
         </div>
         {groupDirty && (

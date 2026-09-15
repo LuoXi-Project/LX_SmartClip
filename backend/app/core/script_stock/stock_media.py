@@ -1,4 +1,4 @@
-"""文案成片：Pexels / Pixabay / Unsplash 本地下载目录与元数据。"""
+"""文案成片：Pexels / Pixabay / Unsplash / Coverr 本地下载目录与元数据。"""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import httpx
 
 from app.utils.paths import ensure_storage_subpath, to_stored_path
 
-STOCK_PROVIDERS = ("pexels", "pixabay", "unsplash")
+STOCK_PROVIDERS = ("pexels", "pixabay", "unsplash", "coverr")
 _META_FILENAME = "stock_cache_meta.json"
 
 StockMediaType = Literal["image", "video"]
@@ -19,6 +19,7 @@ _FN_PATTERNS = {
     "pexels": re.compile(r"^pexels_(?:img_)?(\d+)_", re.IGNORECASE),
     "pixabay": re.compile(r"^pixabay_(?:img_)?(\d+)_", re.IGNORECASE),
     "unsplash": re.compile(r"^unsplash_([A-Za-z0-9_-]+)_", re.IGNORECASE),
+    "coverr": re.compile(r"^coverr_([A-Za-z0-9_-]+)_", re.IGNORECASE),
 }
 
 _VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv")

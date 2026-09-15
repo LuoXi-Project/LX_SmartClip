@@ -104,9 +104,9 @@ class ScriptStockLibraryTrimPart(BaseModel):
 
 
 class ScriptStockComposeSegment(BaseModel):
-    kind: Literal["library", "pexels", "pixabay", "unsplash"] = Field(
+    kind: Literal["library", "pexels", "pixabay", "unsplash", "coverr"] = Field(
         ...,
-        description="library=素材库；pexels/pixabay/unsplash=已下载到 stock_media 对应子目录的文件",
+        description="library=素材库；pexels/pixabay/unsplash/coverr=已下载到 stock_media 对应子目录的文件",
     )
     video_id: Optional[str] = Field(None, description="kind=library 时与 library_video_ids 二选一（单段）")
     library_video_ids: Optional[List[str]] = Field(
@@ -132,6 +132,10 @@ class ScriptStockComposeSegment(BaseModel):
     unsplash_stored_rel_paths: Optional[List[str]] = Field(
         None,
         description="kind=unsplash 时多文件路径（静态图，成片时静帧）；规则同 pexels",
+    )
+    coverr_stored_rel_paths: Optional[List[str]] = Field(
+        None,
+        description="kind=coverr 时多文件路径；规则同 pexels_stored_rel_paths",
     )
     text: Optional[str] = Field(
         None,
@@ -361,5 +365,69 @@ class ScriptStockUnsplashDeleteResponse(BaseModel):
 
 
 class ScriptStockUnsplashClearCacheResponse(BaseModel):
+    ok: bool = True
+    deleted_files: int = 0
+
+
+# --- Coverr（仅视频） ---
+
+
+class CoverrVideoSummary(BaseModel):
+    id: str
+    title: str = ""
+    description: str = ""
+    width: int = 0
+    height: int = 0
+    duration: float = Field(0, description="时长（秒，接口返回字符串此处转为浮点）")
+    image: str = Field("", description="缩略图 URL（thumbnail）")
+    aspect_ratio: str = ""
+    is_vertical: bool = False
+    tags: str = ""
+
+
+class ScriptStockCoverrSearchResponse(BaseModel):
+    page: int
+    per_page: int
+    total_results: int
+    total_pages: int = 0
+    videos: List[CoverrVideoSummary] = Field(default_factory=list)
+
+
+class ScriptStockCoverrDownloadRequest(BaseModel):
+    coverr_media_id: str = Field(..., description="Coverr 视频 id（字符串）")
+    search_query: str = Field("", description="下载时搜索关键词，写入缓存元数据")
+
+
+class ScriptStockCoverrDownloadResponse(BaseModel):
+    stored_rel_path: str
+    public_url: str
+    filename: str
+
+
+class ScriptStockCoverrCacheItem(BaseModel):
+    coverr_video_id: str = ""
+    media_type: Literal["image", "video"] = "video"
+    stored_rel_path: str
+    filename: str
+    size_bytes: int = 0
+    mtime: float = 0
+    search_query: str = ""
+    preview_image: str = ""
+    duration_sec: float = 0
+
+
+class ScriptStockCoverrCacheResponse(BaseModel):
+    items: List[ScriptStockCoverrCacheItem]
+
+
+class ScriptStockCoverrDeleteRequest(BaseModel):
+    stored_rel_path: str
+
+
+class ScriptStockCoverrDeleteResponse(BaseModel):
+    ok: bool = True
+
+
+class ScriptStockCoverrClearCacheResponse(BaseModel):
     ok: bool = True
     deleted_files: int = 0

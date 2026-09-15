@@ -125,11 +125,12 @@ export const VIDEO_KEYS = [
   'jianying_draft_parent_dir',
 ]
 
-/** 文案素材成片：Pexels / Pixabay / Unsplash */
+/** 文案素材成片：Pexels / Pixabay / Unsplash / Coverr */
 export const STOCK_MEDIA_KEYS = [
   'pexels_api_key',
   'pixabay_api_key',
   'unsplash_access_key',
+  'coverr_api_key',
   'stock_media_http_proxy',
 ]
 export const ASR_LANGUAGE_PRESETS: { value: string; label: string }[] = [

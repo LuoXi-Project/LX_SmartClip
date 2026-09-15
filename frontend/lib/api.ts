@@ -1445,10 +1445,35 @@ export interface ScriptStockUnsplashCacheItemApi {
   duration_sec?: number
 }
 
-export type ScriptStockOnlineProvider = 'pexels' | 'pixabay' | 'unsplash'
+export interface ScriptStockCoverrVideoApi {
+  id: string
+  title?: string
+  description?: string
+  width: number
+  height: number
+  duration: number
+  image: string
+  aspect_ratio?: string
+  is_vertical?: boolean
+  tags?: string
+}
+
+export interface ScriptStockCoverrCacheItemApi {
+  coverr_video_id: string
+  media_type?: 'image' | 'video'
+  stored_rel_path: string
+  filename: string
+  size_bytes: number
+  mtime: number
+  search_query?: string
+  preview_image?: string
+  duration_sec?: number
+}
+
+export type ScriptStockOnlineProvider = 'pexels' | 'pixabay' | 'unsplash' | 'coverr'
 
 export interface ScriptStockComposeSegmentApi {
-  kind: 'library' | 'pexels' | 'pixabay' | 'unsplash'
+  kind: 'library' | 'pexels' | 'pixabay' | 'unsplash' | 'coverr'
   video_id?: string | null
   /** 本地多段按顺序拼接（仅「仅 TTS」）；非空时优先于 video_id */
   library_video_ids?: string[] | null
@@ -1457,6 +1482,7 @@ export interface ScriptStockComposeSegmentApi {
   pexels_stored_rel_paths?: string[] | null
   pixabay_stored_rel_paths?: string[] | null
   unsplash_stored_rel_paths?: string[] | null
+  coverr_stored_rel_paths?: string[] | null
   /** 与 library_video_ids 同序；本地素材选用区间（秒），不传则服务端按整文件探测 */
   library_trims?: Array<{ in_sec: number; out_sec: number }> | null
   /** 该段配音文案；tts_only / mix 时使用 */
@@ -1540,6 +1566,28 @@ export const scriptStockApi = {
     apiClient.post<unknown, { ok: boolean }>('/api/script-stock/unsplash/delete-file', body),
   unsplashClearCache: () =>
     apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/unsplash/clear-cache'),
+  coverrSearch: (params: { query: string; page?: number; per_page?: number }) =>
+    apiClient.get<unknown, {
+      page: number
+      per_page: number
+      total_results: number
+      total_pages?: number
+      videos: ScriptStockCoverrVideoApi[]
+    }>('/api/script-stock/coverr/search', { params }),
+  coverrDownload: (body: {
+    coverr_media_id: string
+    search_query?: string
+  }) =>
+    apiClient.post<unknown, { stored_rel_path: string; public_url: string; filename: string }>(
+      '/api/script-stock/coverr/download',
+      body,
+    ),
+  coverrListCache: () =>
+    apiClient.get<unknown, { items: ScriptStockCoverrCacheItemApi[] }>('/api/script-stock/coverr/cache'),
+  coverrDeleteFile: (body: { stored_rel_path: string }) =>
+    apiClient.post<unknown, { ok: boolean }>('/api/script-stock/coverr/delete-file', body),
+  coverrClearCache: () =>
+    apiClient.post<unknown, { ok: boolean; deleted_files: number }>('/api/script-stock/coverr/clear-cache'),
   compose: (body: {
     segments: ScriptStockComposeSegmentApi[]
     project_name?: string

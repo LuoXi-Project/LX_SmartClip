@@ -26,7 +26,8 @@ function storageBrowserVideoUrl(storedRelPath: string): string {
 function cacheItemId(provider: ScriptStockOnlineProvider, it: StockCacheItem): string {
   if (provider === 'pexels') return String((it as { pexels_video_id?: number }).pexels_video_id || '')
   if (provider === 'pixabay') return String((it as { pixabay_video_id?: number }).pixabay_video_id || '')
-  return String((it as { unsplash_photo_id?: string }).unsplash_photo_id || '')
+  if (provider === 'unsplash') return String((it as { unsplash_photo_id?: string }).unsplash_photo_id || '')
+  return String((it as { coverr_video_id?: string }).coverr_video_id || '')
 }
 
 function cacheThumb(provider: ScriptStockOnlineProvider, it: StockCacheItem): string {

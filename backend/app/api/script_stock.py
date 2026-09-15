@@ -31,6 +31,7 @@ from app.core.script_stock.stock_media import (
 )
 from app.core.script_stock import providers_pixabay as pixabay_prov
 from app.core.script_stock import providers_unsplash as unsplash_prov
+from app.core.script_stock import providers_coverr as coverr_prov
 from app.core.script_stock.jianying_export import build_script_stock_jianying_zip_sync
 from app.db.database import DB_PATH
 from app.models.tts import SynthesizeRequest
@@ -66,6 +67,13 @@ from app.models.script_stock import (
     ScriptStockUnsplashDownloadRequest,
     ScriptStockUnsplashDownloadResponse,
     ScriptStockUnsplashSearchResponse,
+    ScriptStockCoverrCacheResponse,
+    ScriptStockCoverrClearCacheResponse,
+    ScriptStockCoverrDeleteRequest,
+    ScriptStockCoverrDeleteResponse,
+    ScriptStockCoverrDownloadRequest,
+    ScriptStockCoverrDownloadResponse,
+    ScriptStockCoverrSearchResponse,
     ScriptStockSplitRequest,
     ScriptStockSplitResponse,
     ScriptStockSuggestQueriesRequest,
@@ -605,6 +613,9 @@ def _online_rels_from_segment(seg: ScriptStockComposeSegment, provider: str) -> 
     elif provider == "unsplash":
         raw = seg.unsplash_stored_rel_paths
         one = None
+    elif provider == "coverr":
+        raw = seg.coverr_stored_rel_paths
+        one = None
     else:
         return []
     rels: List[str] = []
@@ -761,6 +772,77 @@ async def unsplash_clear_cache() -> ScriptStockUnsplashClearCacheResponse:
     return unsplash_prov.clear_unsplash_cache()
 
 
+@router.get("/coverr/search", response_model=ScriptStockCoverrSearchResponse)
+async def coverr_search(query: str, page: int = 1, per_page: int = 12) -> ScriptStockCoverrSearchResponse:
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "query 不能为空")
+    per_page = max(1, min(30, int(per_page)))
+    page = max(1, int(page))
+    async with aiosqlite.connect(DB_PATH) as db:
+        api_key = (await _cfg(db, "coverr_api_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
+    if not api_key:
+        raise HTTPException(
+            400,
+            "未配置 Coverr API Key，请在「设置 → 在线素材（文案成片）」中填写（详见 api.coverr.co/docs/videos/）",
+        )
+    try:
+        return await coverr_prov.search_coverr(api_key, q, page, per_page, http_proxy=http_proxy)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, detail=e.response.text[:500]) from e
+    except httpx.RequestError as e:
+        raise HTTPException(502, detail=f"Coverr 请求失败: {e}") from e
+
+
+@router.post("/coverr/download", response_model=ScriptStockCoverrDownloadResponse)
+async def coverr_download(req: ScriptStockCoverrDownloadRequest) -> ScriptStockCoverrDownloadResponse:
+    async with aiosqlite.connect(DB_PATH) as db:
+        api_key = (await _cfg(db, "coverr_api_key")).strip()
+        http_proxy = await _stock_http_proxy(db)
+    if not api_key:
+        raise HTTPException(400, "未配置 Coverr API Key")
+    try:
+        return await coverr_prov.download_coverr(api_key, req, http_proxy=http_proxy)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, detail=e.response.text[:500]) from e
+    except httpx.RequestError as e:
+        raise HTTPException(502, detail=f"Coverr 请求失败: {e}") from e
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+
+
+@router.get("/coverr/cache", response_model=ScriptStockCoverrCacheResponse)
+async def coverr_cache_list() -> ScriptStockCoverrCacheResponse:
+    return coverr_prov.list_coverr_cache()
+
+
+@router.post("/coverr/delete-file", response_model=ScriptStockCoverrDeleteResponse)
+async def coverr_delete_file(req: ScriptStockCoverrDeleteRequest) -> ScriptStockCoverrDeleteResponse:
+    rel = (req.stored_rel_path or "").strip().replace("\\", "/")
+    if not rel:
+        raise HTTPException(400, "stored_rel_path 不能为空")
+    abs_path = resolve_stored_path(rel)
+    if not abs_path or not os.path.isfile(abs_path):
+        raise HTTPException(404, "文件不存在或已删除")
+    if not is_under_stock_download_dir(abs_path, "coverr"):
+        raise HTTPException(403, "非法路径：仅允许删除 stock_media/coverr 下的文件")
+    try:
+        os.unlink(abs_path)
+    except OSError as e:
+        raise HTTPException(500, detail=str(e)) from e
+    try:
+        coverr_prov.delete_coverr_meta_entry(rel)
+    except Exception as e:
+        logger.warning("coverr meta delete skipped: %s", e)
+    return ScriptStockCoverrDeleteResponse(ok=True)
+
+
+@router.post("/coverr/clear-cache", response_model=ScriptStockCoverrClearCacheResponse)
+async def coverr_clear_cache() -> ScriptStockCoverrClearCacheResponse:
+    return coverr_prov.clear_coverr_cache()
+
+
 def _default_pair_for_path(abs_path: str) -> Tuple[float, float]:
     if is_stock_image_path(abs_path):
         return (0.0, default_image_hold_sec())
@@ -814,7 +896,7 @@ async def _resolve_compose_rows(
                 else:
                     trim_pairs.append(_default_pair_for_path(p))
             out.append((paths, "library", trim_pairs))
-        elif seg.kind in ("pexels", "pixabay", "unsplash"):
+        elif seg.kind in ("pexels", "pixabay", "unsplash", "coverr"):
             provider = seg.kind
             rels = _online_rels_from_segment(seg, provider)
             if not rels:
@@ -853,7 +935,7 @@ async def compose_stock(req: ScriptStockComposeRequest):
                         400,
                         "多段本地素材按顺序拼接仅支持「仅 TTS」模式；使用原声或混合时请每段只选一条素材。",
                     )
-            elif seg.kind in ("pexels", "pixabay", "unsplash"):
+            elif seg.kind in ("pexels", "pixabay", "unsplash", "coverr"):
                 rels = _online_rels_from_segment(seg, seg.kind)
                 if len(rels) > 1:
                     raise HTTPException(
@@ -1046,7 +1128,7 @@ async def export_jianying_draft_stock(req: ScriptStockComposeRequest) -> JianYin
                         400,
                         "多段本地素材按顺序拼接仅支持「仅 TTS」模式；导出剪映草稿时请改为单条或切换为仅 TTS。",
                     )
-            elif seg.kind in ("pexels", "pixabay", "unsplash"):
+            elif seg.kind in ("pexels", "pixabay", "unsplash", "coverr"):
                 if len(_online_rels_from_segment(seg, seg.kind)) > 1:
                     raise HTTPException(
                         400,

@@ -477,6 +477,13 @@ DEFAULT_CONFIG = [
         None,
     ),
     (
+        "coverr_api_key",
+        "d437dab54c41576b5257df65296bed48",
+        "string",
+        "Coverr API Key（文案素材成片，见 https://api.coverr.co/docs/videos/ ）",
+        None,
+    ),
+    (
         "stock_media_http_proxy",
         "",
         "string",

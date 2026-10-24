@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ChevronDown, Download, Loader2, Play, RefreshCw, Square, Settings } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, Loader2, Play, RefreshCw, Square, Settings, Trash2 } from 'lucide-react'
 import { ttsApi, apiClient, type TTSResponse, type VoiceInfo } from '@/lib/api'
 import type { ConfigMap } from '@/app/settings/_components/types'
 import { useTtsStore, type TtsHistoryItem } from '@/lib/store'
 import { VoiceInputControl } from '@/components/ui/voice-input'
+import { useConfirm } from '@/hooks/use-confirm'
+import { useToast } from '@/components/ui/toast-provider'
 
 function buildAudioUrl(f: string) { return `/api/tts/audio/${f}` }
 
@@ -22,7 +24,7 @@ const PROVIDER_LABELS: Record<string,string> = {
 // HistoryItem 类型由 store 统一导出，此处直接使用 TtsHistoryItem
 type HistoryItem = TtsHistoryItem
 
-function HistoryCard({item,playing,onPlay,onStop,onDownload}:{item:HistoryItem;playing:boolean;onPlay:()=>void;onStop:()=>void;onDownload:()=>void}) {
+function HistoryCard({item,playing,onPlay,onStop,onDownload,onDelete}:{item:HistoryItem;playing:boolean;onPlay:()=>void;onStop:()=>void;onDownload:()=>void;onDelete:()=>void}) {
   return (
     <div className={`rounded-xl border px-4 py-3 flex gap-3 items-start transition-all ${playing?'border-violet-500/50 bg-violet-500/5':'border-slate-800 bg-slate-900/40'}`}>
       <div className="flex-1 min-w-0">
@@ -34,6 +36,7 @@ function HistoryCard({item,playing,onPlay,onStop,onDownload}:{item:HistoryItem;p
           ?<button onClick={onStop} className="w-7 h-7 rounded-lg bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 flex items-center justify-center"><Square className="w-3.5 h-3.5"/></button>
           :<button onClick={onPlay} className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 flex items-center justify-center"><Play className="w-3.5 h-3.5"/></button>}
         <button onClick={onDownload} className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 flex items-center justify-center"><Download className="w-3.5 h-3.5"/></button>
+        <button onClick={onDelete} title="删除该条" className="w-7 h-7 rounded-lg bg-slate-800 text-slate-500 hover:bg-red-500/20 hover:text-red-400 flex items-center justify-center transition-colors"><Trash2 className="w-3.5 h-3.5"/></button>
       </div>
     </div>
   )
@@ -52,12 +55,14 @@ export default function TTSPage() {
     setTtsRate: setRate,
     ttsVolume: volume,
     setTtsVolume: setVolume,
+    removeTtsHistory,
     clearTtsHistory,
   } = useTtsStore()
   // ─────────────────────────────────────────────────────────────────────────
 
   const [voices, setVoices] = useState<VoiceInfo[]>([])
   const [voicesLoading, setVoicesLoading] = useState(false)
+  const [voicesError, setVoicesError] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -67,6 +72,8 @@ export default function TTSPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const confirm = useConfirm()
+  const toast = useToast()
 
   useEffect(() => {
     apiClient.get<unknown, ConfigMap>('/api/config')
@@ -85,13 +92,20 @@ export default function TTSPage() {
       .finally(() => setConfigLoading(false))
   }, [])
 
-  useEffect(() => {
+  const loadVoices = () => {
     if (ttsProvider !== 'edge-tts') return
     setVoicesLoading(true)
-    ttsApi.listVoices('zh')
+    setVoicesError('')
+    ttsApi
+      .listVoices('zh')
       .then((data) => setVoices(data || []))
-      .catch(console.error)
+      .catch(() => setVoicesError('语音列表加载失败，请检查后端服务后重试'))
       .finally(() => setVoicesLoading(false))
+  }
+
+  useEffect(() => {
+    loadVoices()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ttsProvider])
 
   useEffect(() => {
@@ -128,11 +142,25 @@ export default function TTSPage() {
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null }
     const audio = new Audio(buildAudioUrl(item.filename))
     audioRef.current = audio; setPlayingId(item.id)
-    audio.play(); audio.onended = () => setPlayingId(null); audio.onerror = () => setPlayingId(null)
+    audio.play(); audio.onended = () => setPlayingId(null)
+    audio.onerror = () => {
+      setPlayingId(null)
+      toast.error('音频加载失败，文件可能已被清理，请重新合成')
+    }
   }
   const stopAudio = () => { audioRef.current?.pause(); audioRef.current = null; setPlayingId(null) }
   const downloadAudio = (item: HistoryItem) => {
     const a = document.createElement('a'); a.href = buildAudioUrl(item.filename); a.download = 'tts_' + item.filename; a.click()
+  }
+
+  const handleClearHistory = async () => {
+    const ok = await confirm({
+      title: '清空合成历史？',
+      description: `将删除全部 ${history.length} 条合成记录，且无法恢复。`,
+      confirmLabel: '清空',
+      variant: 'danger',
+    })
+    if (ok) clearTtsHistory()
   }
 
   const isEdgeTts = ttsProvider === 'edge-tts'
@@ -214,15 +242,26 @@ export default function TTSPage() {
                           <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)} placeholder="搜索语音..."
                             className="w-full bg-slate-800 rounded-lg px-3 py-1.5 text-xs outline-none placeholder-slate-600" />
                         </div>
-                        <div className="max-h-48 overflow-y-auto styled-scrollbar py-1">
-                          {filteredVoices.map((voice) => (
-                            <button key={voice.name} onClick={() => { setSelectedVoice(voice.name); setShowVoiceDropdown(false) }}
-                              className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-800 transition-colors ${voice.name===selectedVoice?'text-indigo-400':'text-slate-300'}`}>
-                              <span className="font-medium">{voice.friendly_name}</span>
-                              <span className="text-slate-600 ml-1.5">{voice.locale} · {voice.gender}</span>
+                        {voicesError ? (
+                          <div className="px-3 py-4 text-center space-y-2">
+                            <p className="text-xs text-red-400">{voicesError}</p>
+                            <button onClick={loadVoices} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-600 text-xs text-slate-200 hover:border-slate-400 transition-colors">
+                              <RefreshCw className="w-3 h-3"/>重试
                             </button>
-                          ))}
-                        </div>
+                          </div>
+                        ) : (
+                          <div className="max-h-48 overflow-y-auto styled-scrollbar py-1">
+                            {filteredVoices.length === 0 ? (
+                              <p className="px-3 py-4 text-center text-xs text-slate-500">{voicesLoading ? '加载中...' : '未找到匹配的语音'}</p>
+                            ) : filteredVoices.map((voice) => (
+                              <button key={voice.name} onClick={() => { setSelectedVoice(voice.name); setShowVoiceDropdown(false) }}
+                                className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-800 transition-colors ${voice.name===selectedVoice?'text-indigo-400':'text-slate-300'}`}>
+                                <span className="font-medium">{voice.friendly_name}</span>
+                                <span className="text-slate-600 ml-1.5">{voice.locale} · {voice.gender}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -279,12 +318,13 @@ export default function TTSPage() {
         {history.length > 0 && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">合成历史</h2>
-              <button onClick={clearTtsHistory} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空历史</button>
+              <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">合成历史 · {history.length} 条</h2>
+              <button onClick={() => void handleClearHistory()} className="text-xs text-slate-600 hover:text-red-400 transition-colors">清空历史</button>
             </div>
             {history.map((item) => (
               <HistoryCard key={item.id} item={item} playing={playingId===item.id}
-                onPlay={() => playAudio(item)} onStop={stopAudio} onDownload={() => downloadAudio(item)} />
+                onPlay={() => playAudio(item)} onStop={stopAudio} onDownload={() => downloadAudio(item)}
+                onDelete={() => removeTtsHistory(item.id)} />
             ))}
           </div>
         )}

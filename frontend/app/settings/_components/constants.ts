@@ -1,5 +1,19 @@
 import type { ProviderPreset } from './types'
 
+/**
+ * 各厂商 API Key 的申请入口（按 provider 预设映射）。
+ * 密钥字段旁展示「获取密钥 →」，让新用户知道去哪拿 Key。
+ */
+export const PROVIDER_KEY_LINKS: Record<string, { label: string; href: string }> = {
+  openai: { label: 'OpenAI API Keys', href: 'https://platform.openai.com/api-keys' },
+  deepseek: { label: 'DeepSeek 开放平台', href: 'https://platform.deepseek.com/api_keys' },
+  iflowai: { label: 'iFlow AI 控制台', href: 'https://apis.iflow.cn/' },
+  siliconflow: { label: 'SiliconFlow 云端', href: 'https://cloud.siliconflow.cn/account/ak' },
+  zhipuai: { label: '智谱 AI 开放平台', href: 'https://open.bigmodel.cn/usercenter/apikeys' },
+  moonshot: { label: 'Moonshot 开放平台', href: 'https://platform.moonshot.cn/console/api-keys' },
+  volcengine: { label: '火山方舟控制台', href: 'https://console.volcengine.com/ark' },
+}
+
 export const VLM_PROVIDERS: ProviderPreset[] = [
   { id: 'openai',      name: 'OpenAI',         logo: '🟢', baseUrl: 'https://api.openai.com/v1',            defaultModel: 'gpt-4o' },
   { id: 'deepseek',    name: 'DeepSeek',        logo: '🔵', baseUrl: 'https://api.deepseek.com/v1',          defaultModel: 'deepseek-chat' },

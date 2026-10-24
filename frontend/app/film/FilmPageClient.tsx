@@ -18,7 +18,7 @@ export default function FilmRedirectPage() {
   return (
     <div className="min-h-[40vh] flex items-center justify-center text-slate-400 text-sm gap-2">
       <Loader2 className="w-4 h-4 animate-spin" />
-      正在打开智能剪辑 · 影视解说…
+      正在打开「影视解说」工作区…
     </div>
   )
 }

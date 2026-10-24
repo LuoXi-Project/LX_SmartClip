@@ -16,12 +16,15 @@ import {
 } from '@/lib/api'
 import { videoStreamUrl, clipStreamUrl, fmt } from '@/app/match/_components/types'
 import { VoiceInputControl } from '@/components/ui/voice-input'
+import { useToast } from '@/components/ui/toast-provider'
+import { RefreshCw } from 'lucide-react'
 
 type ViewMode = 'asset' | 'segment'
 type PlayMode = 'video' | 'clip'
 type DataMode = 'semantic' | 'highlight'
 
 export default function AssetSearchPage() {
+  const toast = useToast()
   const [query, setQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('asset')
   const [playMode, setPlayMode] = useState<PlayMode>('video')
@@ -48,6 +51,9 @@ export default function AssetSearchPage() {
   const [downloadingClipId, setDownloadingClipId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  /** 范围下拉与检索参数 popover 的容器：点击外部 / Esc 时关闭 */
+  const scopeRef = useRef<HTMLDivElement | null>(null)
+  const advRef = useRef<HTMLDivElement | null>(null)
 
   const selectedAsset = useMemo(
     () => results.find((r) => r.asset_id === selectedAssetId) ?? results[0] ?? null,
@@ -225,8 +231,32 @@ export default function AssetSearchPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // 高光浏览模式下点「检索」：明确切换到语义检索，避免结果区被清空且无解释
+    if (dataMode === 'highlight') setDataMode('semantic')
     void runSearch()
   }
+
+  // 下拉 / popover：点击外部或 Esc 关闭
+  useEffect(() => {
+    if (!scopeOpen && !advOpen) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (scopeOpen && scopeRef.current && !scopeRef.current.contains(t)) setScopeOpen(false)
+      if (advOpen && advRef.current && !advRef.current.contains(t)) setAdvOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setScopeOpen(false)
+        setAdvOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [scopeOpen, advOpen])
 
   const seekVideoTo = (t: number) => {
     const el = videoRef.current
@@ -271,8 +301,9 @@ export default function AssetSearchPage() {
       a.click()
       a.remove()
       setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+      toast.success(`已下载：${filename}`)
     } catch (e) {
-      setError(`片段下载失败：${(e as Error).message || e}`)
+      toast.error(`片段下载失败：${(e as Error).message || e}`)
     } finally {
       setDownloadingClipId(null)
     }
@@ -377,7 +408,7 @@ export default function AssetSearchPage() {
             </div>
 
             {/* Scope multi-select */}
-            <div className="relative inline-flex items-center gap-2">
+            <div ref={scopeRef} className="relative inline-flex items-center gap-2">
               <span className="text-slate-500">范围</span>
               <button
                 type="button"
@@ -522,7 +553,7 @@ export default function AssetSearchPage() {
             </button>
 
             {/* 高级检索参数（仅语义检索生效） */}
-            <div className="relative inline-flex items-center">
+            <div ref={advRef} className="relative inline-flex items-center">
               <button
                 type="button"
                 onClick={() => setAdvOpen((v) => !v)}
@@ -725,14 +756,32 @@ export default function AssetSearchPage() {
                 正在检索素材…
               </div>
             ) : error ? (
-              <div className="flex-1 flex items-center justify-center text-sm text-red-400 px-4 text-center">
-                {error}
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+                <p className="text-sm text-red-400">{error}</p>
+                <button
+                  type="button"
+                  onClick={() => (dataMode === 'highlight' ? void loadHighlights() : void runSearch())}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-600 text-xs text-slate-200 hover:border-slate-400 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  重试
+                </button>
               </div>
             ) : !displayAssets.length ? (
               <div className="flex-1 flex flex-col items-center justify-center text-sm text-slate-500 gap-2 px-6 text-center">
                 <Film className="w-10 h-10 text-slate-700" />
                 {dataMode === 'highlight' ? (
-                  <p>正在浏览高光：无需检索即可从已分析结果中展示高光片段。</p>
+                  <>
+                    <p>暂无高光片段：素材完成处理后，会自动从分析结果中提取高光。</p>
+                    <button
+                      type="button"
+                      onClick={() => void loadHighlights()}
+                      className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-600 text-xs text-slate-200 hover:border-slate-400 transition-colors"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      重新加载
+                    </button>
+                  </>
                 ) : (
                   <p>输入描述并点击「检索」，从已处理素材中查找匹配片段。</p>
                 )}

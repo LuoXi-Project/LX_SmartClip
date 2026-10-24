@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
-import { videosApi, type Video, type VideoListParams } from '@/lib/api'
-import { Film, ListChecks, Trash2 } from 'lucide-react'
+import { videosApi, formatFastApiDetail, type Video, type VideoListParams } from '@/lib/api'
+import { Film, ListChecks, Trash2, RefreshCw } from 'lucide-react'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
 import { useJobStream } from '@/hooks/use-job-stream'
@@ -29,6 +29,8 @@ export default function LibraryPage() {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  /** 列表加载失败：与「空库」区分展示，避免误导用户以为素材丢失 */
+  const [loadError, setLoadError] = useState('')
 
   // Upload / drag state
   const [uploading, setUploading] = useState(false)
@@ -84,12 +86,24 @@ export default function LibraryPage() {
       setItems(res.items)
       setTotal(res.total)
       setTotalPages(res.total_pages)
+      setLoadError('')
     } catch (err) {
       console.error('Failed to fetch videos:', err)
+      setLoadError(formatFastApiDetail(err) || '素材列表加载失败，请检查后端服务是否已启动')
     } finally {
       setLoading(false)
     }
   }, [])
+
+  const retryFetchVideos = useCallback(() => {
+    fetchVideos({
+      q: debouncedQuery || undefined,
+      status: statusFilter !== 'all' ? statusFilter : undefined,
+      sort,
+      page,
+      page_size: pageSize,
+    })
+  }, [fetchVideos, debouncedQuery, statusFilter, sort, page, pageSize])
 
   // Re-fetch whenever any param changes
   useEffect(() => {
@@ -518,6 +532,25 @@ export default function LibraryPage() {
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <div className="w-10 h-10 rounded-full border-2 border-slate-700 border-t-cyan-400 animate-spin" />
             <p className="text-slate-500 text-sm">加载中…</p>
+          </div>
+        ) : loadError ? (
+          /* ── 加载失败：区别于空库，提供重试 ── */
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center">
+              <RefreshCw className="w-8 h-8 text-rose-400" />
+            </div>
+            <div className="text-center space-y-1">
+              <p className="text-slate-200">素材列表加载失败</p>
+              <p className="text-slate-500 text-sm break-all">{loadError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={retryFetchVideos}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              重试
+            </button>
           </div>
         ) : total === 0 && !hasFilters ? (
           /* ── True empty state (no videos at all) ── */

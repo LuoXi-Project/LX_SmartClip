@@ -61,7 +61,7 @@ export function ExportSidebar({
 
   const modeLabel: Record<ExportMode, { icon: string; title: string; desc: string; color: string; active: string }> = {
     zip:      { icon: '📦', title: '素材压缩包',     desc: '视频切片 + 音频 ZIP',     color: 'indigo', active: 'border-indigo-500 bg-indigo-500/10 text-indigo-200' },
-    subtitle: { icon: '💬', title: '一键成片',       desc: '配音 + 字幕烧录 MP4',     color: 'cyan',   active: 'border-cyan-500   bg-cyan-500/10   text-cyan-200'   },
+    subtitle: { icon: '💬', title: '成片 MP4',       desc: '配音 + 字幕烧录',         color: 'cyan',   active: 'border-cyan-500   bg-cyan-500/10   text-cyan-200'   },
     original: { icon: '🔇', title: '原声成片',       desc: '保留原声拼接 + 可选字幕 MP4', color: 'slate', active: 'border-slate-500 bg-slate-500/10 text-slate-200' },
     jianying_tts: { icon: '✂️', title: '剪映草稿', desc: '音视频时间轴（不导出 MP4）', color: 'emerald', active: 'border-emerald-500 bg-emerald-500/10 text-emerald-200' },
     jianying_original: { icon: '✂️', title: '剪映草稿(原声)', desc: '原声时间轴（不导出 MP4）', color: 'emerald', active: 'border-emerald-500 bg-emerald-500/10 text-emerald-200' },
@@ -121,7 +121,7 @@ export function ExportSidebar({
         </div>
       )}
 
-      {/* 剪映草稿：与一键成片 / 原声成片互斥 */}
+      {/* 剪映草稿：与成片 MP4 / 原声成片互斥 */}
       {isManualLikeMode(matchMode) &&
         (exportMode === 'jianying_tts' || exportMode === 'jianying_original') && (
           <div className="px-5 py-3 border-b border-slate-800 space-y-1.5">
@@ -130,7 +130,7 @@ export function ExportSidebar({
               <li>不调用 ffmpeg 烧录，生成可导入剪映的草稿（可在设置中配置父目录以跳过 ZIP、直接写入）。</li>
               <li>
                 {exportMode === 'jianying_tts'
-                  ? '需各段配音已就绪；字幕时间轴与「一键成片」同源逻辑。'
+                  ? '需各段配音已就绪；字幕时间轴与「成片 MP4」同源逻辑。'
                   : '按已选素材拼接时间轴；字幕是否进草稿由下方「添加字幕」开关决定。'}
               </li>
               <li>未配置父目录时：下载 ZIP，解压后按包内 bat 修补路径；已配置时：无需解压，直接在目标文件夹生成草稿。</li>

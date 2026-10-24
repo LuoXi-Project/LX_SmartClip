@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import apiClient, { clipsApi, jobsApi, processJobsApi, videosApi, type JobSnapshot, type Video } from '@/lib/api'
+import apiClient, { clipsApi, formatFastApiDetail, jobsApi, processJobsApi, videosApi, type JobSnapshot, type Video } from '@/lib/api'
 import { fetchSSE } from '@/lib/stream'
 import { useTaskStore } from '@/lib/task-store'
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, SkipForward, Play, Film, Search, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Mic, Check, Square } from 'lucide-react'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { VoiceInputControl } from '@/components/ui/voice-input'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 
 const STEPS = [
   { key: 'split',          label: '视频切分',       desc: '按镜头或固定时长切分视频' },
@@ -112,6 +113,9 @@ export default function ProcessPage() {
   const taskStoreUpsert = useTaskStore((s) => s.upsert)
   const taskStorePatch = useTaskStore((s) => s.patch)
   const toast = useToast()
+  const confirm = useConfirm()
+  /** 单视频任务提交中（POST create 到返回前，主按钮显示 spinner）*/
+  const [starting, setStarting] = useState(false)
 
   /** 把 process job 同步到 TaskHub 的 task-store（带视频名 + 停止/删除回调）*/
   const bridgeToTaskHub = (
@@ -481,6 +485,7 @@ export default function ProcessPage() {
     title: string,
   ) => {
     if (!selId) return
+    setStarting(true)
     try {
       const created = await createFn()
       bridgeToTaskHub(created, title)
@@ -500,8 +505,11 @@ export default function ProcessPage() {
         }
         adoptJob(jid, created.video_id || selId)
       }
-    } catch {
+    } catch (e) {
       setRunning(false)
+      toast.error(`任务提交失败：${formatFastApiDetail(e)}`)
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -618,7 +626,7 @@ export default function ProcessPage() {
   }
 
   const handleManualStatusFix = async (status: Video['status']) => {
-    if (!selId || false || statusUpdating) return
+    if (!selId || statusUpdating) return
     setStatusUpdating(true)
     setStatusFixMsg('')
     try {
@@ -651,8 +659,15 @@ export default function ProcessPage() {
   const getEmbedTotalTokens = (m: any) => m?.tokens?.embed?.total_tokens ?? 0
   const getLlmTotalTokens = (m: any) => m?.tokens?.llm?.total_tokens ?? 0
 
-  const handleStop = () => {
+  const handleStop = async () => {
     if (!selJobId) return
+    const ok = await confirm({
+      title: '停止当前处理任务？',
+      description: '将终止进行中的步骤；已完成切片的部分会保留，可稍后在「恢复 / 重跑」中继续。',
+      confirmLabel: '停止任务',
+      variant: 'danger',
+    })
+    if (!ok) return
     void jobsApi.cancel(selJobId).catch(() => {})
     activeJobRef.current = ''
     closeStreamQuietly()
@@ -683,9 +698,6 @@ export default function ProcessPage() {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">选择视频</h2>
-              {false && (
-                <p className="text-[11px] text-amber-500/90 mt-1">处理进行中，无法切换其它视频；请先停止任务后再选择。</p>
-              )}
             </div>
             <div className="flex items-center gap-3 shrink-0">
               {!loading && videos.length > 0 && (
@@ -729,7 +741,6 @@ export default function ProcessPage() {
                   value={search}
                   onTextChange={handleSearch}
                   merge="replace"
-                  disabled={false}
                   className="relative"
                 />
                 {search ? (
@@ -759,7 +770,6 @@ export default function ProcessPage() {
                   return (
                     <button
                       key={v.id}
-                      disabled={false}
                       onClick={() => (multiSelect ? toggleSelectVideo(v.id) : setSelId(v.id))}
                       className={`text-left px-4 py-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed relative ${
                         (multiSelect ? checked : selId === v.id)
@@ -821,27 +831,27 @@ export default function ProcessPage() {
               type="button"
               data-tour="page-process-start"
               onClick={handleStart}
-              disabled={!selId || false}
+              disabled={!selId || starting}
               className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
             >
-              {false ? <><Loader2 className="w-4 h-4 animate-spin" />处理中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
+              {starting ? <><Loader2 className="w-4 h-4 animate-spin" />提交中...</> : <><Play className="w-4 h-4" />开始处理（全流程）</>}
             </button>
             <button
               type="button"
               onClick={() => void handleStartAsrOnly()}
-              disabled={!selId || false}
+              disabled={!selId || starting}
               title="跳过抽帧、视觉描述与向量入库；无现成片段时会先切分再识别。适合口播剪气口。"
               className="flex items-center gap-2 px-5 py-2.5 border border-amber-600/50 bg-amber-500/10 hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed text-amber-100 text-sm font-medium rounded-lg transition-colors"
             >
-              {false ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
+              {starting ? <Loader2 className="w-4 h-4 animate-spin text-amber-300" /> : <Mic className="w-4 h-4 text-amber-300" />}
               口播快轨（仅 ASR）
             </button>
-            {selJobId && running && <button onClick={handleStop} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
+            {selJobId && running && <button onClick={() => void handleStop()} className="px-4 py-2.5 border border-slate-700 hover:border-red-500 hover:text-red-400 text-slate-300 text-sm rounded-lg transition-colors">停止</button>}
             {selVideo && running && (
               <span className="text-sm text-amber-200/90">正在处理：<span className="text-slate-100">{selVideo!.name}</span></span>
             )}
-            {selVideo && !false && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
-            {selVideo && !false && (
+            {selVideo && <span className="text-sm text-slate-500">已选：<span className="text-slate-300">{selVideo.name}</span></span>}
+            {selVideo && (
               <span className="w-full sm:w-auto text-[11px] text-slate-500 leading-relaxed sm:ml-0 basis-full">
                 全流程含抽帧与 VLM，较慢；若只依赖台词剪口播，优先用「口播快轨」。
                 {selVideo.total_clips > 0
@@ -922,57 +932,57 @@ export default function ProcessPage() {
               />
               重跑 ASR 后同步更新向量检索（推荐；取消则 skip embed，语义检索可能仍是旧文本；VLM 重跑默认必带 embed）
             </label>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={!canRecover}
-                onClick={() => void handleRecoverStart('asr_only')}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-amber-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                重跑 ASR + 向量（全片段）
-              </button>
-              <button
-                type="button"
-                disabled={!canRecover}
-                onClick={() => void handleRecoverStart('vlm_only')}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-cyan-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                重跑 VLM + 向量（全片段）
-              </button>
-              <button
-                type="button"
-                disabled={!canRecover}
-                onClick={() => void handleRecoverStart('asr_vlm')}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                重跑 ASR + VLM + 向量（不切分）
-              </button>
-              <button
-                type="button"
-                disabled={!canRecover}
-                onClick={() => void handleRecoverStart('enrich_only')}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-indigo-500/60 disabled:opacity-40 disabled:cursor-not-allowed"
-                title="用最新 LLM 为全部片段重新生成旁白适配摘要/关键词/情绪，并重算这些片段的向量（需配置 LLM Key）"
-              >
-                重跑智能标注 + 向量（全片段）
-              </button>
-              <button
-                type="button"
-                disabled={!canRecover}
-                onClick={() => void handleRecoverStart('embed_only')}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                重跑向量（全片段）
-              </button>
-              <button
-                type="button"
-                disabled={!canRecover}
-                onClick={() => void handleRecoverStart('multivec')}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-violet-500/60 disabled:opacity-40 disabled:cursor-not-allowed"
-                title="把每个片段按 台词/画面/抽象主题 拆成多个子向量分别入库，检索时多路融合，提升「旁白文案 ↔ 画面」的跨层命中率。仅补缺失的子空间，已处理过的片段会秒过，不重复消耗 API。"
-              >
-                继续拆维度向量化（增量）
-              </button>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {([
+                {
+                  label: '重跑 ASR + 向量（全片段）',
+                  hint: '重新识别全部片段的台词文本，并同步更新检索向量',
+                  preset: 'asr_only' as const,
+                  hoverCls: 'hover:border-amber-600/50',
+                },
+                {
+                  label: '重跑 VLM + 向量（全片段）',
+                  hint: '重新生成全部片段的画面描述，并同步更新检索向量',
+                  preset: 'vlm_only' as const,
+                  hoverCls: 'hover:border-cyan-600/50',
+                },
+                {
+                  label: '重跑 ASR + VLM + 向量（不切分）',
+                  hint: '台词与画面描述一起重做，不重新切分视频',
+                  preset: 'asr_vlm' as const,
+                  hoverCls: 'hover:border-indigo-600/50',
+                },
+                {
+                  label: '重跑智能标注 + 向量（全片段）',
+                  hint: '用 LLM 重新生成摘要/关键词/情绪，提升检索命中率（需 LLM Key）',
+                  preset: 'enrich_only' as const,
+                  hoverCls: 'hover:border-indigo-500/60',
+                },
+                {
+                  label: '重跑向量（全片段）',
+                  hint: '只重建检索向量，不重跑识别；更换 Embedding 模型或密钥后使用',
+                  preset: 'embed_only' as const,
+                  hoverCls: 'hover:border-emerald-600/50',
+                },
+                {
+                  label: '多维向量化（增量补齐）',
+                  hint: '按台词/画面/主题拆成多路子向量提升命中率；只补缺失部分，已处理片段秒过',
+                  preset: 'multivec' as const,
+                  hoverCls: 'hover:border-violet-500/60',
+                },
+              ]).map(({ label, hint, preset, hoverCls }) => (
+                <div key={preset} className="min-w-0">
+                  <button
+                    type="button"
+                    disabled={!canRecover}
+                    onClick={() => void handleRecoverStart(preset)}
+                    className={`w-full text-left px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed ${hoverCls}`}
+                  >
+                    {label}
+                  </button>
+                  <p className="mt-1 px-1 text-[11px] leading-4 text-slate-500">{hint}</p>
+                </div>
+              ))}
             </div>
             <div className="pt-2 border-t border-slate-800/80 space-y-2">
               <p className="text-xs text-slate-400">
@@ -981,7 +991,7 @@ export default function ProcessPage() {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={!selId || false || statusUpdating}
+                  disabled={!selId || statusUpdating}
                   onClick={() => void handleManualStatusFix('pending')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -989,7 +999,7 @@ export default function ProcessPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!selId || false || statusUpdating}
+                  disabled={!selId || statusUpdating}
                   onClick={() => void handleManualStatusFix('processing')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-amber-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -997,7 +1007,7 @@ export default function ProcessPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!selId || false || statusUpdating}
+                  disabled={!selId || statusUpdating}
                   onClick={() => void handleManualStatusFix('done')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-emerald-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -1005,7 +1015,7 @@ export default function ProcessPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!selId || false || statusUpdating}
+                  disabled={!selId || statusUpdating}
                   onClick={() => void handleManualStatusFix('error')}
                   className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 text-xs text-slate-200 hover:border-red-600/50 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -1018,9 +1028,9 @@ export default function ProcessPage() {
                 </p>
               )}
             </div>
-            {!canRecover && selId && (
+            {!canRecover && selId && (selVideo?.total_clips ?? 0) <= 0 && (
               <p className="text-[11px] text-amber-500/90">
-                {false ? '当前有任务进行中，请先停止后再试。' : (selVideo?.total_clips ?? 0) <= 0 ? '该视频尚无切片，请先「开始处理」完成切分，或使用已完成切片的素材。' : ''}
+                该视频尚无切片，请先「开始处理」完成切分，或使用已完成切片的素材。
               </p>
             )}
           </section>

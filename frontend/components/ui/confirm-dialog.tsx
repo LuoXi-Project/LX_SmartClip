@@ -52,6 +52,7 @@ export function ConfirmDialog({
       className="fixed inset-0 z-[999] flex items-center justify-center p-4"
       aria-modal="true"
       role="dialog"
+      data-confirm-open=""
     >
       {/* Backdrop */}
       <div

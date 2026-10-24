@@ -10,6 +10,7 @@ import {
   type VideoSummary,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 import { readSSE } from '@/lib/stream'
 import type { NoteLayoutOptions } from '../_lib/types'
 import {
@@ -26,6 +27,7 @@ const defaultNoteOptions = (): NoteLayoutOptions => ({
 
 export function useSummaryPage() {
   const toast = useToast()
+  const confirm = useConfirm()
 
   const [videos, setVideos] = useState<Video[]>([])
   const [videosQuery, setVideosQuery] = useState('')
@@ -52,6 +54,23 @@ export function useSummaryPage() {
   const notePanelRef = useRef<HTMLDivElement | null>(null)
 
   const selectedVideo = useMemo(() => videos.find((v) => v.id === videoId) || null, [videos, videoId])
+
+  /** 切换视频前拦截：有未保存的笔记修改时先确认，避免静默覆盖 */
+  const changeVideo = async (id: string) => {
+    if (id === videoId) return
+    const dirty =
+      !loading && markdown.trim() !== '' && markdown !== (current?.summary_markdown ?? '')
+    if (dirty) {
+      const ok = await confirm({
+        title: '切换视频？',
+        description: '当前笔记有未保存的修改，切换后将丢失。建议先点击「保存修改」。',
+        confirmLabel: '放弃修改并切换',
+        variant: 'danger',
+      })
+      if (!ok) return
+    }
+    setVideoId(id)
+  }
 
   const fetchVideos = async (q: string, page: number) => {
     setLoadingVideos(true)
@@ -288,7 +307,7 @@ export function useSummaryPage() {
     videosTotalPages,
     loadingVideos,
     videoId,
-    setVideoId,
+    setVideoId: changeVideo,
     selectedVideo,
     styleText,
     setStyleText,

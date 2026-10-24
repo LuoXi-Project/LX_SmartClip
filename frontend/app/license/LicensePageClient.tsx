@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { KeyRound, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
 import { licenseApi } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
 
 export default function LicensePage() {
   const toastApi = useToast()
   const [card, setCard] = useState('')
+  const [showCard, setShowCard] = useState(false)
   const [loading, setLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(true)
   const [enforced, setEnforced] = useState(false)
@@ -47,8 +48,11 @@ export default function LicensePage() {
 
   if (statusLoading) {
     return (
-      <div className="max-w-md mx-auto px-6 py-16 flex justify-center text-slate-400">
+      <div className="max-w-md mx-auto px-6 py-16 flex flex-col items-center gap-4 text-slate-400">
         <Loader2 className="h-8 w-8 animate-spin" />
+        <Link href="/" className="text-sm text-sky-400 hover:text-sky-300">
+          返回首页
+        </Link>
       </div>
     )
   }
@@ -83,6 +87,9 @@ export default function LicensePage() {
           ）。未配置时所有业务接口不可用，无法通过删除配置文件绕过。
         </p>
         <p className="text-amber-200/80 text-xs">本地开发同样需要配置卡密服务器地址，未配置时无法激活与使用业务接口。</p>
+        <Link href="/" className="text-sm text-sky-400 hover:text-sky-300">
+          返回首页
+        </Link>
       </div>
     )
   }
@@ -102,14 +109,24 @@ export default function LicensePage() {
       )}
       <div className="space-y-2">
         <label className="text-xs text-slate-500">卡密</label>
-        <input
-          type="password"
-          autoComplete="off"
-          value={card}
-          onChange={(e) => setCard(e.target.value)}
-          className="w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          placeholder="输入卡密"
-        />
+        <div className="relative">
+          <input
+            type={showCard ? 'text' : 'password'}
+            autoComplete="off"
+            value={card}
+            onChange={(e) => setCard(e.target.value)}
+            className="w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-2 pr-10 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            placeholder="输入卡密"
+          />
+          <button
+            type="button"
+            onClick={() => setShowCard((v) => !v)}
+            aria-label={showCard ? '隐藏卡密' : '显示卡密明文'}
+            className="absolute inset-y-0 right-2 flex items-center text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            {showCard ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
       <div className="flex flex-wrap gap-3">
         <button

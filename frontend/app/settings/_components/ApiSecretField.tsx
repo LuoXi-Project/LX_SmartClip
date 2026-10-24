@@ -15,6 +15,8 @@ interface Props {
   saved: boolean
   onSave: () => void
   description?: ReactNode
+  /** 密钥申请入口：按当前厂商预设传入，展示「获取密钥 →」链接 */
+  keyLink?: { label: string; href: string }
 }
 
 export function ApiSecretField({
@@ -27,12 +29,25 @@ export function ApiSecretField({
   saved,
   onSave,
   description,
+  keyLink,
 }: Props) {
   const [showSecret, setShowSecret] = useState(false)
 
   return (
     <div className="space-y-1.5">
-      <label className="text-xs text-slate-400">{label}</label>
+      <div className="flex items-center justify-between">
+        <label className="text-xs text-slate-400">{label}</label>
+        {keyLink && (
+          <a
+            href={keyLink.href}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
+          >
+            获取密钥（{keyLink.label}）↗
+          </a>
+        )}
+      </div>
       <div className="flex gap-2">
         <div className="flex-1 relative">
           <input

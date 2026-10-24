@@ -1,6 +1,6 @@
 'use client'
 
-import { LLM_KEYS, LLM_PROVIDERS } from './constants'
+import { LLM_KEYS, LLM_PROVIDERS, PROVIDER_KEY_LINKS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
 import { Save, Info } from 'lucide-react'
@@ -27,6 +27,13 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
   const groupDirty = LLM_KEYS.some((k) => isDirty(k) && config[k])
 
   const concurrency = Math.max(1, parseInt(v('llm_concurrency') || '1', 10) || 1)
+  // 数字输入清空时的展示兜底：避免 parseFloat('')/parseInt('') 产生 NaN
+  const temperature = Number.parseFloat(v('llm_temperature'))
+  const temperatureLabel = Number.isFinite(temperature) ? temperature.toFixed(1) : '—'
+  const maxTokens = Number.parseInt(v('llm_max_tokens'), 10)
+  const maxTokensLabel = Number.isFinite(maxTokens) ? maxTokens.toLocaleString() : '—'
+  const maxContextTokens = Number.parseInt(v('llm_max_context_tokens'), 10)
+  const maxContextLabel = Number.isFinite(maxContextTokens) ? maxContextTokens.toLocaleString() : '—'
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
@@ -72,6 +79,7 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
             saved={!!saved['llm_api_key']}
             onSave={() => onSave('llm_api_key')}
             description="用于认证 LLM API 请求的密钥"
+            keyLink={PROVIDER_KEY_LINKS[llmProvider]}
           />
         )}
 
@@ -112,10 +120,10 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
               <SaveBtn dirty={isDirty('llm_temperature')} saving={!!saving['llm_temperature']} saved={!!saved['llm_temperature']} onSave={() => onSave('llm_temperature')} />
             </div>
             <p className="text-xs text-slate-500">
-              <span className="text-slate-400">当前温度 <span className="text-indigo-400 font-medium">{parseFloat(v('llm_temperature')).toFixed(1)}</span></span>
-              {parseFloat(v('llm_temperature')) < 0.5 && <span className="text-blue-400 ml-1.5">· 精确模式（适合精排、分类）</span>}
-              {parseFloat(v('llm_temperature')) >= 0.5 && parseFloat(v('llm_temperature')) <= 1.5 && <span className="text-slate-400 ml-1.5">· 平衡模式</span>}
-              {parseFloat(v('llm_temperature')) > 1.5 && <span className="text-amber-400 ml-1.5">· 创意模式（适合文案生成）</span>}
+              <span className="text-slate-400">当前温度 <span className="text-indigo-400 font-medium">{temperatureLabel}</span></span>
+              {Number.isFinite(temperature) && temperature < 0.5 && <span className="text-blue-400 ml-1.5">· 精确模式（适合精排、分类）</span>}
+              {Number.isFinite(temperature) && temperature >= 0.5 && temperature <= 1.5 && <span className="text-slate-400 ml-1.5">· 平衡模式</span>}
+              {Number.isFinite(temperature) && temperature > 1.5 && <span className="text-amber-400 ml-1.5">· 创意模式（适合文案生成）</span>}
             </p>
           </div>
         )}
@@ -134,7 +142,7 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
               <SaveBtn dirty={isDirty('llm_max_tokens')} saving={!!saving['llm_max_tokens']} saved={!!saved['llm_max_tokens']} onSave={() => onSave('llm_max_tokens')} />
             </div>
             <p className="text-xs text-slate-500">
-              当前限制 <span className="text-indigo-400 font-medium">{parseInt(v('llm_max_tokens')).toLocaleString()}</span> tokens · 影响文案生成、字幕时间轴等任务的输出长度
+              当前限制 <span className="text-indigo-400 font-medium">{maxTokensLabel}</span> tokens · 影响文案生成、字幕时间轴等任务的输出长度
             </p>
           </div>
         )}
@@ -153,7 +161,7 @@ export function LlmSection({ config, edits, saving, saved, llmProvider, onSet, o
               <SaveBtn dirty={isDirty('llm_max_context_tokens')} saving={!!saving['llm_max_context_tokens']} saved={!!saved['llm_max_context_tokens']} onSave={() => onSave('llm_max_context_tokens')} />
             </div>
             <p className="text-xs text-slate-500">
-              当前限制 <span className="text-indigo-400 font-medium">{parseInt(v('llm_max_context_tokens')).toLocaleString()}</span> tokens · 文案生成时会根据此值自动截断视频内容
+              当前限制 <span className="text-indigo-400 font-medium">{maxContextLabel}</span> tokens · 文案生成时会根据此值自动截断视频内容
             </p>
           </div>
         )}

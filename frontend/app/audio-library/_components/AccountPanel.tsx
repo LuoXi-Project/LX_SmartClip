@@ -13,6 +13,8 @@ interface AccountPanelProps {
   onLogin: (source: string, account?: string) => void
   onCheck: (source: string, account?: string) => void
   onDelete: (source: string, account: string) => void
+  /** 登录等待中用户点「我已完成登录」：手动解除 busy 并刷新状态 */
+  onDoneLogin?: (source: string) => void
 }
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -29,6 +31,7 @@ export function AccountPanel({
   onLogin,
   onCheck,
   onDelete,
+  onDoneLogin,
 }: AccountPanelProps) {
   const sources = status?.sources ?? []
   const browserReady = status?.browser?.ready ?? false
@@ -146,6 +149,15 @@ export function AccountPanel({
                     )}
                     {busy === 'login' ? '登录中…请在浏览器完成' : '添加账号（扫码登录）'}
                   </button>
+                  {busy === 'login' && onDoneLogin && (
+                    <button
+                      onClick={() => onDoneLogin(src.source)}
+                      className="mt-1.5 w-full rounded-md border border-slate-600 px-3 py-1.5 text-xs text-zinc-300 transition hover:border-emerald-500/60 hover:text-emerald-300"
+                      title="在浏览器完成登录后点击，立即刷新登录状态"
+                    >
+                      我已完成登录
+                    </button>
+                  )}
                 </>
               )}
             </div>

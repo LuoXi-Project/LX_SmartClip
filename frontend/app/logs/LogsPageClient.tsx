@@ -5,6 +5,7 @@ import Link from 'next/link'
 import apiClient from '@/lib/api'
 import { ArrowLeft, Loader2, RefreshCw, Search, Copy, Check } from 'lucide-react'
 import { VoiceInputControl } from '@/components/ui/voice-input'
+import { useToast } from '@/components/ui/toast-provider'
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
 
@@ -34,6 +35,7 @@ function levelPill(level: string) {
 }
 
 export default function LogsPage() {
+  const toast = useToast()
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [limit, setLimit] = useState(300)
@@ -45,6 +47,10 @@ export default function LogsPage() {
   const [error, setError] = useState('')
   const [lastUpdatedAt, setLastUpdatedAt] = useState('')
   const [copied, setCopied] = useState(false)
+  /** 单条日志复制成功反馈（行索引） */
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
+  /** 自动刷新：每 3s 按当前条件重拉，排障时无需反复手点 */
+  const [autoRefresh, setAutoRefresh] = useState(false)
 
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -70,7 +76,7 @@ export default function LogsPage() {
       setLastUpdatedAt(new Date().toLocaleString())
     } catch (e) {
       console.error('Failed to fetch logs:', e)
-      setError('拉取日志失败，请确认后端已启动且版本包含 /api/logs 接口。')
+      setError('拉取日志失败，请确认后端服务已启动后重试。')
     } finally {
       setLoading(false)
     }
@@ -80,6 +86,16 @@ export default function LogsPage() {
     fetchLogs()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQ, limit, level, source])
+
+  // 自动刷新：静默按当前条件重拉（不闪烁 loading）
+  useEffect(() => {
+    if (!autoRefresh) return
+    const timer = setInterval(() => {
+      void fetchLogs()
+    }, 3000)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefresh, debouncedQ, limit, level, source])
 
   const filteredCountText = useMemo(() => {
     const q2 = debouncedQ.trim()
@@ -106,6 +122,17 @@ export default function LogsPage() {
       setTimeout(() => setCopied(false), 1200)
     } catch (e) {
       console.error('Copy failed:', e)
+      toast.error('复制失败，请手动选择文本复制')
+    }
+  }
+
+  const copyOne = async (it: LogItem, idx: number) => {
+    try {
+      await navigator.clipboard.writeText(`${it.ts} [${it.level}] ${it.logger}: ${it.message}`)
+      setCopiedIdx(idx)
+      setTimeout(() => setCopiedIdx((v) => (v === idx ? null : v)), 1200)
+    } catch {
+      toast.error('复制失败，请手动选择文本复制')
     }
   }
 
@@ -118,6 +145,19 @@ export default function LogsPage() {
         <div className="h-4 w-px bg-slate-700" />
         <h1 className="text-lg font-semibold">日志</h1>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAutoRefresh((v) => !v)}
+            className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
+              autoRefresh
+                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300'
+                : 'border-slate-700 bg-slate-900/40 text-slate-300 hover:border-slate-500'
+            }`}
+            title={autoRefresh ? '关闭自动刷新' : '每 3 秒按当前条件自动刷新'}
+          >
+            {autoRefresh ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            自动刷新{autoRefresh ? ' · 3s' : ''}
+          </button>
           <button
             type="button"
             onClick={fetchLogs}
@@ -243,7 +283,18 @@ export default function LogsPage() {
           ) : (
             <div className="divide-y divide-slate-800">
               {items.map((it, idx) => (
-                <div key={`${it.ts}-${idx}`} className="px-5 py-3 hover:bg-slate-900/40 transition-colors">
+                <div
+                  key={`${it.ts}-${idx}`}
+                  className="group relative px-5 py-3 hover:bg-slate-900/40 transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => void copyOne(it, idx)}
+                    title="复制该条日志"
+                    className="absolute right-3 top-2.5 rounded-md border border-slate-700 bg-slate-900/80 p-1 text-slate-500 opacity-0 transition-opacity hover:text-slate-200 focus:opacity-100 group-hover:opacity-100"
+                >
+                    {copiedIdx === idx ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
                   <div className="flex items-start gap-3">
                     <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-semibold ${levelPill(it.level)}`}>
                       {String(it.level || 'INFO').toUpperCase()}

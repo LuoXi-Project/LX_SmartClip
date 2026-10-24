@@ -17,6 +17,8 @@ interface AccountPanelProps {
   onDelete: (platform: string, account: string) => void
   /** 重命名账号；displayName 为空串表示清除自定义名 */
   onRename: (platform: string, account: string, displayName: string) => void
+  /** 登录等待中用户点「我已完成登录」：手动解除 busy 并刷新状态 */
+  onDoneLogin?: (platform: string) => void
 }
 
 /** 风控等级标签。 */
@@ -47,6 +49,7 @@ export function AccountPanel({
   onCheck,
   onDelete,
   onRename,
+  onDoneLogin,
 }: AccountPanelProps) {
   // 每平台"添加账号"输入框的临时状态：platform → 输入的账号名
   const [addingPlatform, setAddingPlatform] = useState<string | null>(null)
@@ -122,6 +125,16 @@ export function AccountPanel({
                   <span className="text-[10px] text-slate-500">
                     {platformAccounts.filter((a) => a.login_status === 'logged_in').length} 个已登录
                   </span>
+                )}
+                {busy === 'login' && onDoneLogin && (
+                  <button
+                    type="button"
+                    onClick={() => onDoneLogin(p.platform)}
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-slate-600 text-slate-300 hover:border-emerald-500/60 hover:text-emerald-300 transition-colors"
+                    title="在浏览器完成扫码后点击，立即刷新登录状态"
+                  >
+                    我已完成登录
+                  </button>
                 )}
                 <span className="ml-auto text-[10px] text-slate-600">
                   {platformAccounts.length > 0 ? `${platformAccounts.length} 个账号` : ''}

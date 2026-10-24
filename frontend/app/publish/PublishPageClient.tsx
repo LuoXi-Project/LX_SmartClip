@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, Clapperboard, Loader2, Rocket } from 'lucide-react'
 import { publishApi, formatFastApiDetail } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { usePublishStore } from '@/lib/store'
 import { RenderGrid } from './_components/RenderGrid'
@@ -15,6 +16,7 @@ import type { PlatformInfo, PublishAccount, PublishStatus, PublishTask, RenderIt
 
 export default function PublishPageClient() {
   const toast = useToast()
+  const confirm = useConfirm()
   const [status, setStatus] = useState<PublishStatus | null>(null)
   const [accounts, setAccounts] = useState<PublishAccount[]>([])
   const [tasks, setTasks] = useState<PublishTask[]>([])
@@ -60,6 +62,26 @@ export default function PublishPageClient() {
     const timer = setInterval(() => loadStatus(true), 3000)
     return () => clearInterval(timer)
   }, [hasRunningTask, busyPlatform, loadStatus])
+
+  // 登录等待中：轮询发现该平台已有任一账号变为已登录时，立即解除 busy（不等 60s 超时）
+  useEffect(() => {
+    const logged = (plat: string) =>
+      accounts.some((a) => a.platform === plat && a.login_status === 'logged_in')
+    const done = Object.entries(busyPlatform).filter(([plat, mode]) => mode === 'login' && logged(plat))
+    if (done.length === 0) return
+    setBusyPlatform((prev) => {
+      const next = { ...prev }
+      for (const [plat] of done) delete next[plat]
+      return next
+    })
+    for (const [plat] of done) toast.success(`${plat} 登录成功`)
+  }, [accounts, busyPlatform, toast])
+
+  /** 用户在浏览器完成扫码后手动解除登录等待（兜底：轮询未及时捕捉时用） */
+  const handleDoneLogin = (platform: string) => {
+    setBusyPlatform((s) => ({ ...s, [platform]: undefined }))
+    void loadStatus(true)
+  }
 
   // 登录
   const handleLogin = async (platform: string, account: string = 'main') => {
@@ -155,6 +177,13 @@ export default function PublishPageClient() {
   }
 
   const handleCancel = async (taskId: string) => {
+    const ok = await confirm({
+      title: '取消该发布任务？',
+      description: '进行中的发布将被终止；已成功发布的部分不会撤回。',
+      confirmLabel: '取消任务',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       await publishApi.cancelTask(taskId)
       toast.info('已取消任务')
@@ -304,6 +333,7 @@ export default function PublishPageClient() {
                 onCheck={handleCheck}
                 onDelete={handleDelete}
                 onRename={handleRename}
+                onDoneLogin={handleDoneLogin}
               />
               <PublishForm
                 platforms={platforms}

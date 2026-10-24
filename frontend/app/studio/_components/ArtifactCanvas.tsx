@@ -1,11 +1,12 @@
 'use client'
 
-import { useMemo, useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useCallback, useState, type Dispatch, type SetStateAction } from 'react'
 import { Layers } from 'lucide-react'
 import type { AutoEditPlanApi } from '@/lib/api'
 import { useAutoEditBgmTracks, useAutoEditClipMetaByPlans } from '@/app/match/_components/autoEditPanelHooks'
 import { patchAgentWorkspace } from '@/lib/agent-api'
 import { useStudioStore } from '@/lib/studio-store'
+import { useToast } from '@/components/ui/toast-provider'
 import { PlanEditWorkspace } from '@/app/match/_components/PlanEditWorkspace'
 import { StudioPlanActions } from './StudioPlanActions'
 import { StudioExportGuide } from './StudioExportGuide'
@@ -26,6 +27,7 @@ function latestVideoExport(exports: Record<string, unknown>[] | undefined) {
 }
 
 export function ArtifactCanvas() {
+  const toast = useToast()
   const {
     sessionId,
     workspace,
@@ -36,6 +38,8 @@ export function ArtifactCanvas() {
   } = useStudioStore()
   const { media } = useStudioMediaConfig()
   const { bgmTracks } = useAutoEditBgmTracks()
+  /** 方案保存中（setPlan 持久化期间在画布顶部提示） */
+  const [planSaving, setPlanSaving] = useState(false)
 
   const exportArtifact: ArtifactRef | null = useMemo(() => {
     if (selectedArtifact?.type === 'export') return selectedArtifact
@@ -72,23 +76,31 @@ export function ArtifactCanvas() {
       if (!sessionId || !workspace || !plan) return
       const next = typeof updater === 'function' ? updater(plan) : updater
       if (!next) return
+      setPlanSaving(true)
       void (async () => {
-        const plans = workspace.plans.map((p) =>
-          p.plan_id === next.plan_id ? next : p
-        )
-        const res = await patchAgentWorkspace(sessionId, {
-          plans,
-          active_plan_id: next.plan_id,
-        })
-        setWorkspace(res.workspace)
-        setSelectedArtifact({
-          type: 'plan',
-          id: next.plan_id,
-          payload: next as unknown as Record<string, unknown>,
-        })
+        try {
+          const plans = workspace.plans.map((p) =>
+            p.plan_id === next.plan_id ? next : p
+          )
+          const res = await patchAgentWorkspace(sessionId, {
+            plans,
+            active_plan_id: next.plan_id,
+          })
+          setWorkspace(res.workspace)
+          setSelectedArtifact({
+            type: 'plan',
+            id: next.plan_id,
+            payload: next as unknown as Record<string, unknown>,
+          })
+          toast.success('方案修改已保存')
+        } catch {
+          toast.error('方案保存失败，请重试；刷新页面前未保存的修改会丢失')
+        } finally {
+          setPlanSaving(false)
+        }
       })()
     },
-    [sessionId, workspace, plan, setWorkspace, setSelectedArtifact]
+    [sessionId, workspace, plan, setWorkspace, setSelectedArtifact, toast]
   )
 
   return (
@@ -99,6 +111,12 @@ export function ArtifactCanvas() {
         {workspace && (
           <span className="text-[10px] text-slate-500">
             阶段 · {workspace.pipeline_phase}
+          </span>
+        )}
+        {planSaving && (
+          <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
+            保存中…
           </span>
         )}
         <StudioPanelHeaderAction panelId="canvas" />

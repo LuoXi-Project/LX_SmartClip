@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Save, Trash2 } from 'lucide-react'
+import { Loader2, Save, Trash2 } from 'lucide-react'
 import type { BgmTrack } from '@/lib/api'
 import { BgmMiniPlayer } from './BgmMiniPlayer'
 
@@ -21,6 +21,8 @@ interface Props {
   onToggleTrackTag: (id: string, currentTags: string[], tag: string) => void
   onSave: (t: BgmTrack) => void
   onDelete: (t: BgmTrack) => void
+  /** 元数据保存中：按钮转 spinner 并防重复提交 */
+  saving?: boolean
 }
 
 export function BgmTrackCard({
@@ -32,6 +34,7 @@ export function BgmTrackCard({
   onToggleTrackTag,
   onSave,
   onDelete,
+  saving,
 }: Props) {
   const t = track
   const selectedTags = editingState?.tags ?? t.tags
@@ -138,15 +141,17 @@ export function BgmTrackCard({
         <button
           type="button"
           onClick={() => onSave(t)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <Save className="w-3.5 h-3.5" />
-          保存
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          {saving ? '保存中' : '保存'}
         </button>
         <button
           type="button"
           onClick={() => onDelete(t)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/60 bg-red-500/10 text-red-200 text-xs hover:bg-red-500/20 transition-colors"
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/60 bg-red-500/10 text-red-200 text-xs hover:bg-red-500/20 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
           <Trash2 className="w-3.5 h-3.5" />
           删除

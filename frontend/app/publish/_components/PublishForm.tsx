@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { Loader2, Send, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 import { usePublishStore, type PublishDraftPerPlatform } from '@/lib/store'
+import { useToast } from '@/components/ui/toast-provider'
 import type { PlatformInfo, PublishAccount, RenderItem } from './types'
 import { getPlatformSpec, countByLang } from './types'
 
@@ -38,6 +39,7 @@ export function PublishForm({
   onSubmit,
   onGenerateCopy,
 }: PublishFormProps) {
+  const toast = useToast()
   const { drafts, selectedTargets, deselectedTargets, setDraft, setSelectedTargets, setDeselectedTargets, publishHeadless, setPublishHeadless } = usePublishStore()
 
   const implemented = platforms.filter((p) => p.implemented)
@@ -82,6 +84,10 @@ export function PublishForm({
     const cleaned = next.filter((k) => validSet.has(k))
     if (cleaned.length !== selectedTargets.length || cleaned.some((k, i) => k !== next[i])) {
       setSelectedTargets(cleaned)
+      // 自动补全发生时告知用户，避免「谁勾的」困惑
+      if (missing.length > 0) {
+        toast.info(`已自动勾选 ${missing.length} 个新登录的账号，可按需调整`)
+      }
     }
     if (cleanedDeselected.length !== deselectedTargets.length) {
       setDeselectedTargets(cleanedDeselected)
@@ -146,6 +152,19 @@ export function PublishForm({
     .map((p) => p.platform)
   // 统计：勾选的总账号数
   const totalSelectedAccounts = selectedTargets.length
+  // 文案超限的平台（标题/描述/标签任一超出平台硬限制）：发布前拦截，避免带着必失败的任务提交
+  const overLimitPlatforms = selectedRender
+    ? platformsWithDraft.filter((p) => {
+        const d = drafts[p] || { title: '', description: '', tags: [] }
+        const spec = getPlatformSpec(p)
+        return (
+          countByLang(d.title, spec.lang) > spec.title_max ||
+          countByLang(d.description, spec.lang) > spec.desc_max ||
+          (d.tags || []).length > spec.tags_max
+        )
+      })
+    : []
+  const overLimitLabels = overLimitPlatforms.map((p) => platforms.find((x) => x.platform === p)?.label || p)
   // 全局可选账号总数（所有已登录账号）
   const allTargetKeys = loggedInPlatforms.flatMap((p) =>
     (loggedInAccountsByPlatform[p.platform] || []).map((a) => `${p.platform}:${a.account}`),
@@ -432,9 +451,15 @@ export function PublishForm({
         </p>
       )}
 
+      {overLimitPlatforms.length > 0 && (
+        <p className="text-[11px] text-red-400 leading-relaxed -mt-2">
+          {overLimitLabels.join('、')} 的文案超出平台字数限制（对应输入框已标红），修改后才能发布。
+        </p>
+      )}
+
       <button
         type="button"
-        disabled={submitting || disabled || totalSelectedAccounts === 0}
+        disabled={submitting || disabled || totalSelectedAccounts === 0 || overLimitPlatforms.length > 0}
         onClick={handlePublish}
         className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
       >
@@ -450,7 +475,9 @@ export function PublishForm({
               ? '请先选择成片'
               : totalSelectedAccounts === 0
                 ? '请勾选要发布的账号'
-                : `一键发布到 ${totalSelectedAccounts} 个账号`}
+                : overLimitPlatforms.length > 0
+                  ? '文案超限，请修改后再发布'
+                  : `一键发布到 ${totalSelectedAccounts} 个账号`}
           </>
         )}
       </button>

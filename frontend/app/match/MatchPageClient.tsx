@@ -54,6 +54,7 @@ import { type AutoPlanStage } from './_components/autoEditTypes'
 import { useMatchStore } from '@/lib/store'
 import { VideoResultDrawer } from '@/app/_components/VideoResultDrawer'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 import { fetchSSE } from '@/lib/stream'
 import { useTaskStore } from '@/lib/task-store'
 import { toastRecommendJianyingParentDir } from '@/lib/jianying-parent-dir-hint'
@@ -208,6 +209,7 @@ export default function MatchPage() {
 
   
   const toast = useToast()
+  const confirm = useConfirm()
   const taskStoreUpsert = useTaskStore((s) => s.upsert)
   const taskStorePatch = useTaskStore((s) => s.patch)
   const taskStoreAppendLog = useTaskStore((s) => s.appendLog)
@@ -361,7 +363,7 @@ export default function MatchPage() {
     setAutoTemplateEnabled(true)
     setMatchMode('auto')
     window.scrollTo({ top: 0, behavior: 'auto' })
-    toast.success('已切换至「一键成片」：请在剪辑诉求中补充主题后生成方案')
+    toast.success('已切换至「自动一键成片」：请在剪辑诉求中补充主题后生成方案')
   }
 
   useEffect(() => {
@@ -605,6 +607,17 @@ export default function MatchPage() {
     } finally {
       setAudioSyncing(false)
     }
+  }
+
+  async function handleClearAllSegments() {
+    const count = useMatchStore.getState().segments.length
+    const ok = await confirm({
+      title: '清空全部段落？',
+      description: `将清空 ${count} 个段落及其已匹配的素材、配音关联，且无法恢复。`,
+      confirmLabel: '清空',
+      variant: 'danger',
+    })
+    if (ok) setMatchSegments([])
   }
 
   async function handleAudioUploadTranscribe(file: File) {
@@ -1044,6 +1057,7 @@ export default function MatchPage() {
           .filter(Boolean) as string[]
         const blob = await exportApi.downloadProject({ clip_ids: clipIds, project_name: projectName, include_audio: true, tts_filenames: zipReadySegs.map((s) => s.ttsFilename ?? '') })
         triggerDownload(blob as unknown as Blob, `${projectName}.zip`)
+        toast.success('工程包已开始下载')
         exportOk = true
       } else if (exportMode === 'subtitle') {
         const subtitleSegs = freshExportSegs()
@@ -1192,7 +1206,10 @@ export default function MatchPage() {
         exportOk = true
       } else if (exportMode === 'original') {
         const exportSegs = useMatchStore.getState().segments.filter((s) => (s.selectedClipIds?.length ?? 0) > 0)
-        if (exportSegs.length === 0) return false
+        if (exportSegs.length === 0) {
+          toast.info('请先为段落勾选素材后再导出')
+          return false
+        }
         const segsInput = exportSegs
           .map((s) => {
             const clip_ids = s.selectedClipIds
@@ -1375,7 +1392,7 @@ export default function MatchPage() {
     if (autoPipeline.status === 'running') return
     const queryText = useMatchStore.getState().globalQuery.trim()
     if (!queryText) {
-      toast.info('请先在「批量拆分文案」粘贴完整文案，再一键全自动成片')
+      toast.info('请先在「批量拆分文案」粘贴完整文案，再一键成片')
       return
     }
     autoPipelineCancelRef.current = false
@@ -1462,9 +1479,9 @@ export default function MatchPage() {
         return
       }
       setAutoPipeline((p) => ({ ...p, status: 'done' }))
-      toast.success('全自动成片完成，文件已自动下载')
+      toast.success('自动一键成片完成，文件已自动下载')
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '全自动成片失败'
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (e as Error).message || '自动一键成片失败'
       setAutoPipeline((p) => ({ ...p, status: 'error', error: msg }))
       toast.error(msg)
     }
@@ -2749,7 +2766,7 @@ export default function MatchPage() {
                 onMatchAll={matchAll}
                 globalMatching={globalMatching}
                 segments={segments}
-                onClearAll={() => setMatchSegments([])}
+                onClearAll={() => void handleClearAllSegments()}
                 onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}
                 onMatchSegment={matchSegment}
                 onTimelineSave={async (next) => {
@@ -2870,7 +2887,7 @@ export default function MatchPage() {
                 onMoveSegment={moveSegment}
                 onSegmentReorder={moveSegmentRel}
                 segments={segments}
-                onClearAll={() => setMatchSegments([])}
+                onClearAll={() => void handleClearAllSegments()}
                 onSegmentTextChange={(segId, text) => patchSeg(segId, { text })}
                 onRemoveSegment={removeSegment}
                 onMatchSegment={matchSegment}

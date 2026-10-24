@@ -12,6 +12,7 @@ import {
   type SongMetaDTO,
 } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { AccountPanel } from './_components/AccountPanel'
 import { SearchPanel } from './_components/SearchPanel'
@@ -30,6 +31,7 @@ function parseSearchSongs(task: AudioTaskResp | null): SongMetaDTO[] {
 
 export default function AudioLibraryPageClient() {
   const toast = useToast()
+  const confirm = useConfirm()
   const [status, setStatus] = useState<AudioLibraryStatusResp | null>(null)
   const [accounts, setAccounts] = useState<AudioAccountResp[]>([])
   const [tasks, setTasks] = useState<AudioTaskResp[]>([])
@@ -95,6 +97,44 @@ export default function AudioLibraryPageClient() {
     }
     // 清空 searchTaskId 打断轮询循环（searchTask 仍保留供结果展示）
   }, [searchTaskId, searchTask, searchSongs.length, toast])
+
+  // 下载任务终态提示：不再只靠任务列表状态徽章，完成/失败都有 toast（幂等）
+  const notifiedDownloadTaskIds = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    for (const t of tasks) {
+      if (t.job_type !== 'download') continue
+      if (!['succeeded', 'partial', 'failed', 'cancelled'].includes(t.status)) continue
+      if (notifiedDownloadTaskIds.current.has(t.id)) continue
+      notifiedDownloadTaskIds.current.add(t.id)
+      if (t.status === 'succeeded') {
+        toast.success('歌曲下载完成，已入库 BGM 音乐库（可在 BGM 页面查看）')
+      } else if (t.status === 'partial') {
+        toast.error('下载部分失败，请在任务日志中查看失败的歌曲')
+      } else if (t.status === 'failed') {
+        toast.error('下载失败，请查看任务日志')
+      }
+    }
+  }, [tasks, toast])
+
+  // 登录等待中：轮询发现该来源已有账号变为已登录时，立即解除 busy（不等 60s 超时）
+  useEffect(() => {
+    const logged = (src: string) =>
+      accounts.some((a) => a.source === src && a.login_status === 'logged_in')
+    const done = Object.entries(busySource).filter(([src, mode]) => mode === 'login' && logged(src))
+    if (done.length === 0) return
+    setBusySource((prev) => {
+      const next = { ...prev }
+      for (const [src] of done) delete next[src]
+      return next
+    })
+    for (const [src] of done) toast.success(`${src} 登录成功`)
+  }, [accounts, busySource, toast])
+
+  /** 用户在浏览器完成登录后手动解除等待（兜底） */
+  const handleDoneLogin = (source: string) => {
+    setBusySource((s) => ({ ...s, [source]: undefined }))
+    void loadStatus(true)
+  }
 
   // 登录（网易云）
   const handleLogin = async (source: string, account = 'main') => {
@@ -178,6 +218,13 @@ export default function AudioLibraryPageClient() {
 
   // 取消任务
   const handleCancelTask = async (taskId: string) => {
+    const ok = await confirm({
+      title: '取消该任务？',
+      description: '进行中的下载/搜索将被终止；已完成的部分会保留。',
+      confirmLabel: '取消任务',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       await audioLibraryApi.cancelTask(taskId)
       toast.info('已取消任务')
@@ -231,6 +278,7 @@ export default function AudioLibraryPageClient() {
               onLogin={handleLogin}
               onCheck={handleCheck}
               onDelete={(source, account) => setPendingDelete({ source, account })}
+              onDoneLogin={handleDoneLogin}
             />
           </section>
 

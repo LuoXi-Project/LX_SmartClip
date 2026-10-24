@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { VLM_PROVIDERS, VLM_KEYS } from './constants'
+import { VLM_PROVIDERS, VLM_KEYS, PROVIDER_KEY_LINKS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
 import { Save, Info, AlertTriangle } from 'lucide-react'
@@ -162,6 +162,7 @@ export function VlmSection({ config, edits, saving, saved, vlmProvider, onSet, o
             saving={!!saving['vlm_api_key']}
             saved={!!saved['vlm_api_key']}
             onSave={() => onSave('vlm_api_key')}
+            keyLink={PROVIDER_KEY_LINKS[vlmProvider]}
           />
         )}
 

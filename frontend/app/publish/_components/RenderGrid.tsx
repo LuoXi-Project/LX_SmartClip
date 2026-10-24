@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import { rendersApi, formatFastApiDetail } from '@/lib/api'
 import { Pagination } from '@/app/library/_components/Pagination'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { useToast } from '@/components/ui/toast-provider'
 import type { RenderItem, RenderSourceOption } from './types'
 import { RenderPreviewModal } from './RenderPreviewModal'
 
@@ -33,6 +34,7 @@ function fmtSize(bytes: number): string {
 }
 
 export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps) {
+  const toast = useToast()
   const [items, setItems] = useState<RenderItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
@@ -164,8 +166,9 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
         setRefreshKey((k) => k + 1)
       }
       onDeleted?.(target.id)
+      toast.success('已删除该成片')
     } catch (e2) {
-      alert(`删除失败：${formatFastApiDetail(e2)}`)
+      toast.error(`删除失败：${formatFastApiDetail(e2)}`)
     }
   }
 
@@ -189,6 +192,11 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
       })
       setSelectedIds(new Set(failed))
       if (failed.length === 0) exitSelectMode()
+      if (failed.length === 0) {
+        toast.success(`已删除 ${okCount} 个成片`)
+      } else {
+        toast.error(`删除完成：成功 ${okCount} 个、失败 ${failed.length} 个；失败项已保留勾选，可重试`)
+      }
       // 删除后刷新当前页；若整页删空则回退
       if (okCount > 0 && items.length - okCount <= 0 && page > 1) {
         setPage(page - 1)
@@ -196,7 +204,7 @@ export function RenderGrid({ selectedId, onSelect, onDeleted }: RenderGridProps)
         setRefreshKey((k) => k + 1)
       }
     } catch (e) {
-      alert(`批量删除失败：${formatFastApiDetail(e)}`)
+      toast.error(`批量删除失败：${formatFastApiDetail(e)}`)
     } finally {
       setBatchDeleting(false)
     }

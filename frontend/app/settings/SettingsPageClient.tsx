@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, Settings2, AlertCircle, ChevronUp } from 'lucide-react'
-import apiClient from '@/lib/api'
+import apiClient, { formatFastApiDetail } from '@/lib/api'
+import { useToast } from '@/components/ui/toast-provider'
 import type { ConfigMap, ProviderPreset } from './_components/types'
 import { VLM_PROVIDERS, LLM_PROVIDERS, EMBEDDING_PROVIDERS, ASR_PROVIDERS } from './_components/constants'
 import { VlmSection } from './_components/VlmSection'
@@ -14,6 +15,7 @@ import { StockMediaSection } from './_components/StockMediaSection'
 import { TtsSection } from './_components/TtsSection'
 import { AsrSection } from './_components/AsrSection'
 export default function SettingsPage() {
+  const toast = useToast()
   const [config, setConfig] = useState<ConfigMap>({})
   const [edits, setEdits] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -122,31 +124,38 @@ export default function SettingsPage() {
 
   const handleSave = async (key: string) => {
     setSaving((p) => ({ ...p, [key]: true }))
-    setError('')
     try {
       await apiClient.patch('/api/config', { key, value: edits[key] })
       setConfig((p) => ({ ...p, [key]: { ...p[key], value: edits[key] } }))
       setSaved((p) => ({ ...p, [key]: true }))
       setTimeout(() => setSaved((p) => ({ ...p, [key]: false })), 2000)
-    } catch { setError(`保存 "${key}" 失败`) }
-    finally { setSaving((p) => ({ ...p, [key]: false })) }
+    } catch (e) {
+      // toast 在任何滚动位置都可见，避免顶部横幅被长页滚动挡住
+      toast.error(`保存「${key}」失败：${formatFastApiDetail(e)}`)
+    } finally { setSaving((p) => ({ ...p, [key]: false })) }
   }
 
   const handleSaveGroup = async (keys: string[]) => {
     const dirty = keys.filter((k) => edits[k] !== config[k]?.value && config[k])
     if (!dirty.length) return
-    setError('')
-    try {
-      await Promise.all(
-        dirty.map((k) =>
-          apiClient.patch('/api/config', { key: k, value: edits[k] }).then(() => {
-            setConfig((p) => ({ ...p, [k]: { ...p[k], value: edits[k] } }))
-            setSaved((p) => ({ ...p, [k]: true }))
-            setTimeout(() => setSaved((p) => ({ ...p, [k]: false })), 2000)
-          })
-        )
+    const results = await Promise.allSettled(
+      dirty.map((k) =>
+        apiClient.patch('/api/config', { key: k, value: edits[k] }).then(() => {
+          setConfig((p) => ({ ...p, [k]: { ...p[k], value: edits[k] } }))
+          setSaved((p) => ({ ...p, [k]: true }))
+          setTimeout(() => setSaved((p) => ({ ...p, [k]: false })), 2000)
+        })
       )
-    } catch { setError('批量保存失败') }
+    )
+    const failed = results.filter((r) => r.status === 'rejected')
+    if (failed.length === 0) {
+      toast.success(`已保存 ${dirty.length} 项配置`)
+    } else if (failed.length === dirty.length) {
+      toast.error(`批量保存失败：${formatFastApiDetail((failed[0] as PromiseRejectedResult).reason)}`)
+    } else {
+      const okCount = dirty.length - failed.length
+      toast.error(`部分保存失败：成功 ${okCount} 项、失败 ${failed.length} 项，失败项的「保存」按钮仍可重试`)
+    }
   }
 
   const applyVlmProvider = (p: ProviderPreset) => {

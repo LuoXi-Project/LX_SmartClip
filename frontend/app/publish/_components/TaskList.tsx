@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
-  Trash2,
   XCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -110,9 +109,9 @@ export function TaskList({ tasks, onCancel }: TaskListProps) {
                     type="button"
                     onClick={() => onCancel(task.id)}
                     className="inline-flex items-center gap-1 text-xs px-1.5 py-1 rounded border border-slate-700 text-slate-400 hover:border-red-500/50 hover:text-red-300 transition-colors"
-                    title="取消任务"
+                    title="取消该发布任务"
                   >
-                    <Trash2 className="w-3 h-3" />
+                    <XCircle className="w-3 h-3" />
                   </button>
                 )}
               </div>

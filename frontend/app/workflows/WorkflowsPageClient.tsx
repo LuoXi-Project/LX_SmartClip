@@ -27,6 +27,7 @@ import {
 import { fetchSSE } from '@/lib/stream'
 import { useTaskStore } from '@/lib/task-store'
 import { useToast } from '@/components/ui/toast-provider'
+import { useConfirm } from '@/hooks/use-confirm'
 import { useWorkflowPrefStore } from '@/lib/workflow-store'
 import { ParamForm } from './_components/ParamForm'
 import { RunHistory } from './_components/RunHistory'
@@ -57,6 +58,7 @@ function fmtRelative(iso?: string | null): string {
 
 export default function WorkflowsPageClient() {
   const toast = useToast()
+  const confirm = useConfirm()
   const upsertTask = useTaskStore((s) => s.upsert)
   const patchTask = useTaskStore((s) => s.patch)
   const prefValues = useWorkflowPrefStore((s) => s.values)
@@ -70,6 +72,7 @@ export default function WorkflowsPageClient() {
   const [starting, setStarting] = useState<string | null>(null)
   const [retrying, setRetrying] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const [paramErrors, setParamErrors] = useState<Record<string, string>>({})
 
   // 市场：搜索 / 分类 / 选中详情
   const [search, setSearch] = useState('')
@@ -78,7 +81,8 @@ export default function WorkflowsPageClient() {
   const [showHistory, setShowHistory] = useState(true)
 
   const abortRef = useRef<AbortController | null>(null)
-  const toastHandleRef = useRef<ReturnType<typeof toast.task> | null>(null)
+  // 按 jobId 管理 task toast 句柄：并发运行多个工作流时互不覆盖
+  const toastHandlesRef = useRef<Map<string, ReturnType<typeof toast.task>>>(new Map())
 
   const refresh = useCallback(async (withRuns = true) => {
     try {
@@ -182,7 +186,9 @@ export default function WorkflowsPageClient() {
               const renderUrl = String(result.render_url || '')
               setActiveRun((prev) => (prev ? { ...prev, status: 'done', renderUrl } : prev))
               patchTask(run.jobId, { status: 'done', percent: 100, result })
-              toastHandleRef.current?.done('工作流已完成' + (renderUrl ? '，可在历史中下载成片' : ''))
+              const handle = toastHandlesRef.current.get(run.jobId)
+              handle?.done('工作流已完成' + (renderUrl ? '，可在历史中下载成片' : ''))
+              toastHandlesRef.current.delete(run.jobId)
               refresh()
             } else if (event === 'failed') {
               const cancelled = !!(m as Record<string, unknown>)?.cancelled
@@ -191,8 +197,10 @@ export default function WorkflowsPageClient() {
                 prev ? { ...prev, status: cancelled ? 'cancelled' : 'error' } : prev,
               )
               patchTask(run.jobId, { status: cancelled ? 'cancelled' : 'error', error: message })
-              if (cancelled) toastHandleRef.current?.done('工作流已取消')
-              else toastHandleRef.current?.fail(message)
+              const handle = toastHandlesRef.current.get(run.jobId)
+              toastHandlesRef.current.delete(run.jobId)
+              if (cancelled) handle?.done('工作流已取消')
+              else handle?.fail(message)
               refresh()
             }
           },
@@ -216,7 +224,8 @@ export default function WorkflowsPageClient() {
           (values[p.name] == null || (typeof values[p.name] === 'string' && !(values[p.name] as string).trim())),
       )
       if (missing.length) {
-        toast.error(`请填写：${missing.map((p) => p.label).join('、')}`)
+        toast.error(`请填写必填参数：${missing.map((p) => p.label).join('、')}`)
+        setParamErrors(Object.fromEntries(missing.map((p) => [p.name, '该项为必填'])))
         setSelected(def)   // 打开详情让用户补参数
         return
       }
@@ -228,7 +237,7 @@ export default function WorkflowsPageClient() {
           inputs[p.name] = v == null ? undefined : v
         }
         const created = await workflowApi.startRun(def.id, inputs)
-        toastHandleRef.current = toast.task(`工作流：${def.name}`)
+        toastHandlesRef.current.set(created.job_id, toast.task(`工作流：${def.name}`))
         const run: ActiveRun = {
           runId: created.run_id,
           jobId: created.job_id,
@@ -260,7 +269,7 @@ export default function WorkflowsPageClient() {
       setStarting(def.id)
       try {
         const created = await workflowApi.retryRun(def.last_run_id)
-        toastHandleRef.current = toast.task(`工作流：${def.name}`)
+        toastHandlesRef.current.set(created.job_id, toast.task(`工作流：${def.name}`))
         const run: ActiveRun = {
           runId: created.run_id,
           jobId: created.job_id,
@@ -305,7 +314,7 @@ export default function WorkflowsPageClient() {
         const original = runs.find((r) => r.id === created.retried_from)
         const def = definitions.find((d) => d.id === original?.workflow_id) || null
         const name = def?.name || original?.workflow_name || '重跑'
-        toastHandleRef.current = toast.task(`工作流：${name}`)
+        toastHandlesRef.current.set(created.job_id, toast.task(`工作流：${name}`))
         const run: ActiveRun = {
           runId: created.run_id,
           jobId: created.job_id,
@@ -332,17 +341,24 @@ export default function WorkflowsPageClient() {
   )
 
   const handleDelete = useCallback(
-    async (id: string) => {
+    async (def: WorkflowDefinition) => {
+      const ok = await confirm({
+        title: '删除该工作流？',
+        description: `「${def.name}」将被永久删除，且不可恢复；其历史运行记录不受影响。`,
+        confirmLabel: '删除',
+        variant: 'danger',
+      })
+      if (!ok) return
       try {
-        await workflowApi.deleteDefinition(id)
+        await workflowApi.deleteDefinition(def.id)
         toast.success('已删除该工作流')
-        if (selected?.id === id) setSelected(null)
+        if (selected?.id === def.id) setSelected(null)
         refresh(false)
       } catch (e) {
         toast.error(formatFastApiDetail(e))
       }
     },
-    [toast, refresh, selected],
+    [confirm, toast, refresh, selected],
   )
 
   // 页面加载时恢复仍在运行的运行记录（刷新/切页回来续看进度）
@@ -431,8 +447,15 @@ export default function WorkflowsPageClient() {
       </div>
 
       {error && (
-        <div className="mb-4 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-          {error}
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          <span className="min-w-0 break-all">{error}</span>
+          <button
+            type="button"
+            onClick={() => refresh()}
+            className="shrink-0 rounded-md border border-rose-500/50 px-2.5 py-1 text-xs text-rose-200 transition-colors hover:bg-rose-500/20"
+          >
+            重试
+          </button>
         </div>
       )}
 
@@ -498,11 +521,21 @@ export default function WorkflowsPageClient() {
         <WorkflowDetailModal
           def={selected}
           values={prefValues[selected.id] || {}}
-          onParam={(name, value) => setPrefParam(selected.id, name, value)}
+          errors={paramErrors}
+          onParam={(name, value) => {
+            setPrefParam(selected.id, name, value)
+            if (paramErrors[name]) {
+              setParamErrors((prev) => {
+                const next = { ...prev }
+                delete next[name]
+                return next
+              })
+            }
+          }}
           onStart={() => handleStart(selected)}
           starting={starting === selected.id}
           onClose={() => setSelected(null)}
-          onDelete={!selected.is_builtin ? () => handleDelete(selected.id) : undefined}
+          onDelete={!selected.is_builtin ? () => handleDelete(selected) : undefined}
         />
       )}
     </main>
@@ -659,6 +692,7 @@ function MarketCard({
 function WorkflowDetailModal({
   def,
   values,
+  errors,
   onParam,
   onStart,
   starting,
@@ -667,14 +701,31 @@ function WorkflowDetailModal({
 }: {
   def: WorkflowDefinition
   values: Record<string, unknown>
+  errors?: Record<string, string>
   onParam: (name: string, value: unknown) => void
   onStart: () => void
   starting: boolean
   onClose: () => void
   onDelete?: () => void
 }) {
+  // Esc 关闭弹层；有更高层的确认弹窗打开时把 Esc 留给它，避免一次 Esc 连关两层
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (document.querySelector('[data-confirm-open]')) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
       <div className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-t-xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:rounded-xl">
         <div className="mb-3 flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -719,7 +770,7 @@ function WorkflowDetailModal({
         </div>
 
         <div className="border-t border-slate-800 pt-4">
-          <ParamForm params={def.params} values={values} onChange={onParam} />
+          <ParamForm params={def.params} values={values} errors={errors} onChange={onParam} />
         </div>
 
         <div className="mt-5 flex items-center justify-between gap-2">

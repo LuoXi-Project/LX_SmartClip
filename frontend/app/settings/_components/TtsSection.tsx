@@ -1,6 +1,6 @@
 'use client'
 
-import { TTS_PROVIDERS, TTS_KEYS } from './constants'
+import { TTS_PROVIDERS, TTS_KEYS, PROVIDER_KEY_LINKS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { ConfigField } from './ConfigField'
 import { SaveBtn } from './SaveBtn'
@@ -92,7 +92,19 @@ export function TtsSection({ config, edits, saving, saved, ttsProvider, onSet, o
         {/* openai */}
         {ttsProvider === 'openai' && (<>
           <Row cfgKey="tts_base_url" label="API 地址" placeholder="https://api.openai.com/v1" />
-          <Row cfgKey="tts_api_key" label="API 密钥" type="password" placeholder="••••••••" />
+          <div className="space-y-1">
+            <Row cfgKey="tts_api_key" label="API 密钥" type="password" placeholder="••••••••" />
+            {PROVIDER_KEY_LINKS[ttsProvider] && (
+              <a
+                href={PROVIDER_KEY_LINKS[ttsProvider].href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
+              >
+                获取密钥（{PROVIDER_KEY_LINKS[ttsProvider].label}）↗
+              </a>
+            )}
+          </div>
           <Row cfgKey="tts_model" label="模型名 (如 tts-1 / tts-1-hd)" placeholder="tts-1" />
           <Row cfgKey="tts_voice" label="语音角色" placeholder="alloy" />
           <SelectRow cfgKey="tts_format" label="音频格式" />

@@ -9,26 +9,40 @@ export function ParamForm({
   params,
   values,
   onChange,
+  errors,
 }: {
   params: WorkflowParamSpec[]
   values: Record<string, unknown>
   onChange: (name: string, value: unknown) => void
+  errors?: Record<string, string>
 }) {
   if (!params.length) {
     return <p className="text-xs text-slate-500">该工作流无需填写参数，可直接运行。</p>
   }
   return (
     <div className="space-y-3">
-      {params.map((spec) => (
+      {params.map((spec) => {
+        const err = errors?.[spec.name]
+        return (
         <div key={spec.name} className="space-y-1">
           <label className="flex items-center gap-1 text-xs font-medium text-slate-300">
             {spec.label}
             {spec.required && <span className="text-rose-400">*</span>}
           </label>
-          <ParamField spec={spec} value={values[spec.name]} onChange={(v) => onChange(spec.name, v)} />
-          {spec.help && <p className="text-[11px] leading-4 text-slate-500">{spec.help}</p>}
+          <ParamField
+            spec={spec}
+            value={values[spec.name]}
+            invalid={!!err}
+            onChange={(v) => onChange(spec.name, v)}
+          />
+          {err ? (
+            <p className="text-[11px] leading-4 text-rose-400">{err}</p>
+          ) : spec.help ? (
+            <p className="text-[11px] leading-4 text-slate-500">{spec.help}</p>
+          ) : null}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -37,13 +51,19 @@ function ParamField({
   spec,
   value,
   onChange,
+  invalid,
 }: {
   spec: WorkflowParamSpec
   value: unknown
   onChange: (value: unknown) => void
+  invalid?: boolean
 }) {
-  const inputCls =
-    'w-full rounded-md border border-slate-700 bg-slate-900/70 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-cyan-500/60 focus:outline-none'
+  const inputCls = clsx(
+    'w-full rounded-md border bg-slate-900/70 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none',
+    invalid
+      ? 'border-rose-500/70 focus:border-rose-500'
+      : 'border-slate-700 focus:border-cyan-500/60',
+  )
 
   if (spec.type === 'textarea') {
     return (

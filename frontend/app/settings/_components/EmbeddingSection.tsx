@@ -1,6 +1,6 @@
 'use client'
 
-import { EMBEDDING_PROVIDERS, EMB_KEYS, MATCH_MODE_OPTIONS } from './constants'
+import { EMBEDDING_PROVIDERS, EMB_KEYS, MATCH_MODE_OPTIONS, PROVIDER_KEY_LINKS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
 import { Save, Info, Sparkles, Type, Brain, Zap } from 'lucide-react'
@@ -94,6 +94,7 @@ export function EmbeddingSection({ config, edits, saving, saved, embProvider, on
             saving={!!saving['embedding_api_key']}
             saved={!!saved['embedding_api_key']}
             onSave={() => onSave('embedding_api_key')}
+            keyLink={PROVIDER_KEY_LINKS[embProvider]}
           />
         )}
         {config.embedding_model && (

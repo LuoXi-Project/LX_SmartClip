@@ -63,7 +63,7 @@ const VOLUME_PRESETS = [
 ]
 
 const EXPORT_MODE_OPTIONS: Array<{ value: ExportMode; icon: string; title: string; desc: string }> = [
-  { value: 'subtitle', icon: '💬', title: '一键成片', desc: '配音 + 字幕烧录 MP4' },
+  { value: 'subtitle', icon: '💬', title: '成片 MP4', desc: '配音 + 字幕烧录' },
   { value: 'original', icon: '🔇', title: '原声成片', desc: '保留原声拼接 MP4' },
   { value: 'jianying_tts', icon: '✂️', title: '剪映草稿', desc: '配音轨时间轴' },
   { value: 'jianying_original', icon: '✂️', title: '剪映草稿(原声)', desc: '原声时间轴' },
@@ -241,7 +241,7 @@ export function AutoPipelinePanel({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Rocket className="w-4 h-4 text-indigo-400" />
-          <p className="text-sm font-semibold text-slate-100">全自动成片</p>
+          <p className="text-sm font-semibold text-slate-100">自动一键成片</p>
           <span className="text-[11px] text-slate-500">文案取上方输入框，点好参数即可一键出片</span>
         </div>
         <span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] text-emerald-300">
@@ -486,7 +486,7 @@ export function AutoPipelinePanel({
           >
             <span className="mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-white/15 text-[10px]">3</span>
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-            {running ? '全自动运行中...' : '一键全自动成片'}
+            {running ? '自动成片运行中...' : '一键成片'}
           </button>
           {running && (
             <button
@@ -538,7 +538,7 @@ export function AutoPipelinePanel({
               </p>
             )}
             {pipeline.status === 'cancelled' && <p className="text-[11px] text-amber-400">已取消：可调整文案/参数后重新一键运行</p>}
-            {pipeline.status === 'done' && <p className="text-[11px] text-emerald-400">全自动成片完成，文件已自动下载；可在下方段落区继续微调后重新导出</p>}
+            {pipeline.status === 'done' && <p className="text-[11px] text-emerald-400">自动一键成片完成，文件已自动下载；可在下方段落区继续微调后重新导出</p>}
             {renderStage && (
               <p className="text-[11px] text-slate-500">正在后台渲染成片（进度见右下角提示与右上角任务中心），完成后自动下载；点「取消渲染」可立即中止</p>
             )}

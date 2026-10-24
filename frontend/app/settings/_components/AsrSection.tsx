@@ -1,6 +1,6 @@
 'use client'
 
-import { ASR_PROVIDERS, ASR_KEYS, ASR_LANGUAGE_PRESETS } from './constants'
+import { ASR_PROVIDERS, ASR_KEYS, ASR_LANGUAGE_PRESETS, PROVIDER_KEY_LINKS } from './constants'
 import { ProviderSelector } from './ProviderSelector'
 import { SaveBtn } from './SaveBtn'
 import { Save, Info } from 'lucide-react'
@@ -105,6 +105,7 @@ export function AsrSection({ config, edits, saving, saved, asrProvider, onSet, o
               saving={!!saving['asr_api_key']}
               saved={!!saved['asr_api_key']}
               onSave={() => onSave('asr_api_key')}
+              keyLink={PROVIDER_KEY_LINKS[asrProvider]}
             />
             <ApiTextField
               label="模型名称"

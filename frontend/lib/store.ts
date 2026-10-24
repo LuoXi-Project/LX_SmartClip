@@ -210,6 +210,7 @@ export interface TtsPageState {
   setTtsSelectedVoice: (v: string) => void
   setTtsRate: (r: string) => void
   setTtsVolume: (v: string) => void
+  removeTtsHistory: (id: string) => void
   clearTtsHistory: () => void
 }
 
@@ -650,6 +651,8 @@ export const useTtsStore = create<TtsPageState>()(
       setTtsSelectedVoice: (ttsSelectedVoice) => set({ ttsSelectedVoice }),
       setTtsRate: (ttsRate) => set({ ttsRate }),
       setTtsVolume: (ttsVolume) => set({ ttsVolume }),
+      removeTtsHistory: (id) =>
+        set((state) => ({ ttsHistory: state.ttsHistory.filter((h) => h.id !== id) })),
       clearTtsHistory: () => set({ ttsHistory: [] }),
     }),
     { name: 'lx-tts-state' }

@@ -61,6 +61,10 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
   const [tracks, setTracks] = useState<BgmTrack[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
+  /** 批量上传进度（第 i/N 个），用于按钮文案 */
+  const [uploadProgress, setUploadProgress] = useState<{ i: number; n: number } | null>(null)
+  /** 正在保存元数据的曲目 id（卡片保存按钮 spinner） */
+  const [savingTrackId, setSavingTrackId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<Record<string, TrackEditState>>({})
   const [searchQuery, setSearchQuery] = useState('')
@@ -108,28 +112,44 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     window.localStorage.setItem(BGM_SORT_STORAGE_KEY, sortBy)
   }, [sortBy])
 
-  const uploadFile = async (file: File) => {
+  const uploadFiles = async (files: File[]) => {
+    if (!files.length) return
     setUploading(true)
     setError('')
-    try {
-      await bgmApi.upload(file, {
-        title: uploadMeta.title || undefined,
-        mood: uploadMeta.mood || undefined,
-        tags: uploadMeta.tags,
-      })
-      await load()
-      setUploadMeta({ title: '', mood: '', tags: [] })
-    } catch {
-      setError('上传 BGM 失败，请重试。')
-    } finally {
-      setUploading(false)
+    setUploadProgress({ i: 0, n: files.length })
+    let ok = 0
+    const failed: string[] = []
+    for (let i = 0; i < files.length; i++) {
+      setUploadProgress({ i: i + 1, n: files.length })
+      try {
+        await bgmApi.upload(files[i], {
+          // 单文件时才套用元数据面板的标题；多文件共用同名标题会难以区分
+          title: files.length === 1 ? uploadMeta.title || undefined : files[i].name.replace(/\.[^.]+$/, ''),
+          mood: uploadMeta.mood || undefined,
+          tags: uploadMeta.tags,
+        })
+        ok++
+      } catch {
+        failed.push(files[i].name)
+      }
     }
+    await load()
+    setUploadMeta({ title: '', mood: '', tags: [] })
+    setUploadProgress(null)
+    if (ok > 0 && failed.length === 0) {
+      toast.success(`已上传 ${ok} 首 BGM`)
+    } else if (ok > 0) {
+      toast.error(`上传完成：成功 ${ok} 首、失败 ${failed.length} 首（${failed.slice(0, 3).join('、')}）`)
+    } else {
+      toast.error('上传 BGM 失败，请重试')
+    }
+    setUploading(false)
   }
 
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    await uploadFile(file)
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    await uploadFiles(files)
     e.target.value = ''
   }
 
@@ -150,9 +170,9 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     if (uploading) return
     e.preventDefault()
     setDragActive(false)
-    const file = e.dataTransfer.files?.[0]
-    if (!file) return
-    await uploadFile(file)
+    const files = Array.from(e.dataTransfer.files || [])
+    if (!files.length) return
+    await uploadFiles(files)
   }
 
   const onFieldChange = (id: string, key: 'title' | 'mood' | 'bpm', value: string) => {
@@ -196,12 +216,15 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
       bpm: typeof edit.bpm === 'number' ? edit.bpm : t.bpm ?? null,
       tags: edit.tags ?? t.tags,
     }
+    setSavingTrackId(t.id)
     try {
       const updated = await bgmApi.update(t.id, payload)
       setTracks((prev) => prev.map((x) => (x.id === t.id ? updated : x)))
       toast.success('保存成功')
     } catch {
-      setError('保存 BGM 元数据失败。')
+      toast.error('保存 BGM 元数据失败，请重试')
+    } finally {
+      setSavingTrackId(null)
     }
   }
 
@@ -217,8 +240,9 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
     try {
       await bgmApi.delete(t.id)
       setTracks((prev) => prev.filter((x) => x.id !== t.id))
+      toast.success('已删除该 BGM')
     } catch {
-      setError('删除 BGM 失败。')
+      toast.error('删除 BGM 失败，请重试')
     }
   }
 
@@ -292,11 +316,18 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
           >
             <UploadCloud className="w-3.5 h-3.5" />
             <span>
-              {uploading ? '上传中...' : dragActive ? '松开以上传音频' : '上传音频（支持拖拽）'}
+              {uploading
+                ? uploadProgress && uploadProgress.n > 1
+                  ? `上传中 ${uploadProgress.i}/${uploadProgress.n}...`
+                  : '上传中...'
+                : dragActive
+                  ? '松开以上传音频'
+                  : '上传音频（支持多选、拖拽）'}
             </span>
             <input
               type="file"
               accept=".mp3,.wav,.m4a,.aac,.flac,.ogg"
+              multiple
               className="absolute inset-0 opacity-0 cursor-pointer"
               disabled={uploading}
               onChange={onFileChange}
@@ -436,6 +467,7 @@ export function BgmSection({ fullPage = false }: BgmSectionProps) {
                 onToggleTrackTag={toggleTrackTag}
                 onSave={onSave}
                 onDelete={onDelete}
+                saving={savingTrackId === t.id}
               />
             ))}
             <div className="flex items-center justify-end gap-2 pt-1">

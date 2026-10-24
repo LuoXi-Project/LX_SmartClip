@@ -792,6 +792,37 @@ export default function MatchPage() {
     }
     setGlobalMatching(true)
     try {
+      const segs = segments.filter((s) => s.text.trim())
+      if (segs.length >= 2) {
+        // 整篇批量匹配：后端统一做画面意图改写 + 跨段去重（前文已选片段降权），
+        // 避免逐段独立匹配导致整片反复出现同一段素材。
+        const isNarrationMode = mode === 'film_commentary' || mode === 'voiceover'
+        try {
+          const data = await apiClient.post<unknown, { items: Array<{ query: string; recommended: MatchClip[]; candidates: MatchClip[] }> }>('/api/match/batch', {
+            segments: segs.map((s) => s.text.trim()),
+            top_k: topK, top_n: topN,
+            video_ids: resolveMatchVideoIds(),
+            ...(isNarrationMode ? { match_mode: 'llm_only' as const } : {}),
+          })
+          const items = data.items ?? []
+          segs.forEach((s, i) => {
+            const it = items[i]
+            if (!it) return
+            const clips = it.recommended?.length ? it.recommended : it.candidates
+            patchSeg(s.id, {
+              clips,
+              chosenIdx: 0,
+              selectedClipIds: clips.length > 0 ? [clips[0].clip_id] : [],
+              matchLoading: false,
+              clipTrimSlots: undefined,
+            })
+          })
+          return
+        } catch (e) {
+          // 批量接口失败（超时/旧后端）时降级为逐段匹配
+          console.warn('整篇匹配失败，降级为逐段匹配', e)
+        }
+      }
       await Promise.all(segments.map((s) => matchSegment(s.id)))
     } finally {
       setGlobalMatching(false)

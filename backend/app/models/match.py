@@ -23,6 +23,21 @@ class MatchRequest(BaseModel):
         None,
         description="向量检索限定的子空间（仅 vector 模式生效）；不传=自动选择所有有数据的子空间。",
     )
+    visual_intent: Optional[bool] = Field(
+        None,
+        description="检索前把文案改写为画面意图（None=跟随全局配置 match_visual_intent，默认开）",
+    )
+    visual_verify: Optional[bool] = Field(
+        None,
+        description="匹配后用 VLM 看候选帧打相关度分并重排（None=跟随全局配置 match_visual_verify，默认关）",
+    )
+    vlm_verify_top_n: Optional[int] = Field(
+        None, ge=1, le=5, description="参与 VLM 画面校验的推荐候选数（默认 3）"
+    )
+    penalize_clip_ids: Optional[List[str]] = Field(
+        None,
+        description="需降权的片段 ID（如整篇文案中前文已选用的片段），用于跨段去重",
+    )
 
 
 class ClipResult(BaseModel):
@@ -41,6 +56,8 @@ class ClipResult(BaseModel):
     preview_url: Optional[str] = None
     score: float
     reason: str
+    vlm_score: Optional[float] = Field(None, description="VLM 画面相关度 0~10（未校验时为空）")
+    vlm_reason: Optional[str] = Field(None, description="VLM 画面相关度理由")
 
 
 class MatchResponse(BaseModel):
@@ -48,6 +65,36 @@ class MatchResponse(BaseModel):
     top_n: int
     recommended: List[ClipResult]
     candidates: List[ClipResult]
+    visual_intent_query: Optional[str] = Field(
+        None, description="实际用于检索的画面意图改写（未启用/失败时为空）"
+    )
+    visual_verify_applied: bool = Field(False, description="本次是否实际执行了 VLM 画面校验")
+
+
+class MatchBatchRequest(BaseModel):
+    """整篇多段文案一次性匹配：跨段共享画面意图改写与已选用片段降权。"""
+
+    segments: List[str] = Field(..., min_length=1, max_length=200, description="旁白分段列表")
+    top_k: Optional[int] = Field(None, ge=1, le=50)
+    top_n: Optional[int] = Field(None, ge=1, le=20)
+    video_ids: Optional[List[str]] = None
+    match_mode: Optional[str] = None
+    refine: Optional[bool] = None
+    subspaces: Optional[List[str]] = None
+    visual_intent: Optional[bool] = None
+    visual_verify: Optional[bool] = None
+    vlm_verify_top_n: Optional[int] = Field(None, ge=1, le=5)
+
+
+class MatchBatchItem(BaseModel):
+    query: str
+    visual_intent_query: Optional[str] = None
+    recommended: List[ClipResult]
+    candidates: List[ClipResult]
+
+
+class MatchBatchResponse(BaseModel):
+    items: List[MatchBatchItem]
 
 
 class MatchPipelineError(Exception):

@@ -73,6 +73,11 @@ class StrategyConstraints(BaseModel):
     respect_user_video_order: bool = False
     max_events_per_clip: int = Field(6, ge=1, le=50)
     tier_budget_ratio: TierBudgetRatio = Field(default_factory=TierBudgetRatio)
+    # 节奏层（P2）：单镜头时长上下限（秒）。None=按 pace 档位默认值（fast 1.2~3.5 / medium 1.8~6 / slow 3~10）。
+    min_shot_sec: Optional[float] = Field(None, ge=0.3, le=30.0)
+    max_shot_sec: Optional[float] = Field(None, ge=1.0, le=60.0)
+    # 多样性（P2）：禁止相邻时间轴条目复用同一素材片段（素材池枯竭时自动放宽）。
+    avoid_adjacent_same_clip: bool = True
 
 
 class StrategyDSL(BaseModel):

@@ -367,6 +367,8 @@ export const videosApi = {
 
 export const matchApi = {
   run: (payload: MatchRequest) => apiClient.post<unknown, MatchResponse>('/api/match', payload),
+  /** 整篇多段文案批量匹配：后端跨段去重（已用片段降权）+ 批量画面意图改写 */
+  batch: (payload: MatchBatchRequest) => apiClient.post<unknown, MatchBatchResponse>('/api/match/batch', payload),
 }
 
 /** ASR 时间轴片段 JSON（存库为字符串，解析后为 list） */
@@ -949,6 +951,36 @@ export interface MatchRequest {
    * 旁白/解说场景前端会自动传 llm_only（跨层语义对齐，命中率更高）。
    */
   match_mode?: MatchMode
+  /** 检索前把文案改写为画面意图；不传则跟随后端全局配置（默认开） */
+  visual_intent?: boolean
+  /** 匹配后用 VLM 看候选帧打相关度分并重排；不传则跟随后端全局配置（默认关） */
+  visual_verify?: boolean
+  /** 参与本次匹配的 VLM 画面校验的推荐候选数（1~5，默认 3） */
+  vlm_verify_top_n?: number
+  /** 需降权的片段 ID（整篇文案中前文已选用），用于跨段去重 */
+  penalize_clip_ids?: string[]
+}
+
+export interface MatchBatchRequest {
+  segments: string[]
+  top_k?: number
+  top_n?: number
+  video_ids?: string[] | null
+  match_mode?: MatchMode
+  visual_intent?: boolean
+  visual_verify?: boolean
+  vlm_verify_top_n?: number
+}
+
+export interface MatchBatchItem {
+  query: string
+  visual_intent_query: string | null
+  recommended: MatchClip[]
+  candidates: MatchClip[]
+}
+
+export interface MatchBatchResponse {
+  items: MatchBatchItem[]
 }
 
 export interface MatchClip {
@@ -964,6 +996,9 @@ export interface MatchClip {
   preview_url: string | null
   score: number
   reason: string
+  /** VLM 画面相关度 0~10（未启用画面校验时为空） */
+  vlm_score?: number | null
+  vlm_reason?: string | null
 }
 
 export interface TTSRequest {

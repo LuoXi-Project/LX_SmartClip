@@ -47,6 +47,42 @@ def _touch_clip_quota(*, clip_id: str, clip_counts: dict[str, int]) -> None:
     clip_counts[clip_id] = clip_counts.get(clip_id, 0) + 1
 
 
+# 节奏档位对应的单镜头时长上下限（秒）：fast 快切 / medium 常速 / slow 长镜
+_PACE_SHOT_BOUNDS = {
+    "fast": (1.2, 3.5),
+    "medium": (1.8, 6.0),
+    "slow": (3.0, 10.0),
+}
+
+# 相邻多样性：最近 N 个已选片段构成“邻接窗口”，窗口内禁止复用同一素材
+_ADJACENCY_WINDOW = 2
+
+
+def _shot_bounds(dsl: StrategyDSL) -> Tuple[float, float]:
+    """解析单镜头时长上下限：显式 constraints 覆盖 > pace 档位默认。"""
+    lo, hi = _PACE_SHOT_BOUNDS.get(getattr(dsl.style, "pace", "medium"), (1.8, 6.0))
+    c = getattr(dsl, "constraints", None)
+    if c is not None:
+        if getattr(c, "min_shot_sec", None) is not None:
+            lo = max(0.5, float(c.min_shot_sec))
+        if getattr(c, "max_shot_sec", None) is not None:
+            hi = float(c.max_shot_sec)
+    if hi < lo:
+        hi = lo
+    return lo, hi
+
+
+def _recently_used(clip_id: str, recent: List[str], *, enabled: bool) -> bool:
+    if not enabled or not clip_id:
+        return False
+    return clip_id in recent[-_ADJACENCY_WINDOW:]
+
+
+def _clamp_shot_duration(dur: float, bounds: Tuple[float, float]) -> float:
+    lo, hi = bounds
+    return max(0.5, max(lo, min(hi, dur)))
+
+
 def _fill_timeline_by_reuse(
     *,
     items: List[TimelineItem],
@@ -140,6 +176,9 @@ def arrange_timeline(
         used_event_ids: Set[str] = set()
         clip_counts: dict[str, int] = {}
         max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
+        avoid_adjacent = bool(getattr(dsl.constraints, "avoid_adjacent_same_clip", True))
+        recent_clips: List[str] = []
+        shot_bounds = _shot_bounds(dsl)
         items: List[TimelineItem] = []
 
         # pool.events 已按 global_rank/score 排序（merge_rank.assign_tiers_and_rank）
@@ -158,13 +197,15 @@ def arrange_timeline(
                     max_events_per_clip=max_events_per_clip,
                 ):
                     continue
+                if _recently_used(clip_id, recent_clips, enabled=avoid_adjacent):
+                    continue
                 text = (e.text or "").strip()
                 if not text:
                     continue
                 pick = e
                 break
 
-            # slot 缺失：兜底取任意最高分未使用事件
+            # slot 缺失：兜底取任意最高分未使用事件（不检查邻接，保底出片）
             if pick is None:
                 for e in pool.events:
                     eid = getattr(e, "event_id", None)
@@ -187,10 +228,12 @@ def arrange_timeline(
                 continue
 
             used_event_ids.add(pick.event_id)
-            _touch_clip_quota(clip_id=str(pick.clip_id), clip_counts=clip_counts)
+            pick_clip_id = str(pick.clip_id)
+            _touch_clip_quota(clip_id=pick_clip_id, clip_counts=clip_counts)
+            recent_clips.append(pick_clip_id)
             text = (pick.text or "").strip()
             dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
-            dur = max(0.5, min(per_slot, dur_est))
+            dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), shot_bounds)
 
             items.append(
                 TimelineItem(
@@ -210,6 +253,9 @@ def arrange_timeline(
     items: List[TimelineItem] = []
     clip_counts: dict[str, int] = {}
     max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
+    adjacency_on = [bool(getattr(dsl.constraints, "avoid_adjacent_same_clip", True))]
+    recent_clips: List[str] = []
+    shot_bounds = _shot_bounds(dsl)
 
     target = float(target_duration_sec or dsl.target_duration_sec or 0.0)
     if target <= 0:
@@ -236,7 +282,11 @@ def arrange_timeline(
                 max_events_per_clip=max_events_per_clip,
             ):
                 continue
-            dur = _estimate_item_duration(text, pace=dsl.style.pace)
+            if _recently_used(clip_id, recent_clips, enabled=adjacency_on[0]):
+                continue
+            dur = _clamp_shot_duration(
+                _estimate_item_duration(text, pace=dsl.style.pace), shot_bounds
+            )
             if used + dur > budget and used > 0:
                 break
             items.append(
@@ -249,6 +299,7 @@ def arrange_timeline(
                 )
             )
             _touch_clip_quota(clip_id=clip_id, clip_counts=clip_counts)
+            recent_clips.append(clip_id)
             used += dur
 
     # pool.events 已按 global_rank/score 排序（merge_rank.assign_tiers_and_rank）
@@ -259,6 +310,13 @@ def arrange_timeline(
     _pick(t1, b1)
     _pick(t2, b2)
     _pick(t3, b3)
+
+    # 素材池被邻接约束耗尽（一个镜头都没选上）：放宽邻接约束保底出片
+    if not items and adjacency_on[0]:
+        adjacency_on[0] = False
+        _pick(t1, b1)
+        _pick(t2, b2)
+        _pick(t3, b3)
 
     items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
     total = sum((it.duration_budget_sec or 0.0) for it in items)
@@ -333,6 +391,9 @@ def arrange_timeline_variants(
             used_event_ids: Set[str] = set()
             clip_counts: dict[str, int] = {}
             max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
+            avoid_adjacent = bool(getattr(dsl.constraints, "avoid_adjacent_same_clip", True))
+            recent_clips: List[str] = []
+            shot_bounds = _shot_bounds(dsl)
             items: List[TimelineItem] = []
 
             for role in roles_sequence:
@@ -355,13 +416,15 @@ def arrange_timeline_variants(
                         max_events_per_clip=max_events_per_clip,
                     ):
                         continue
+                    if _recently_used(clip_id, recent_clips, enabled=avoid_adjacent):
+                        continue
                     text = (e.text or "").strip()
                     if not text:
                         continue
                     pick = e
                     break
 
-                # slot 缺失兜底：取任意未使用高分事件
+                # slot 缺失兜底：取任意未使用高分事件（不检查邻接，保底出片）
                 if pick is None:
                     shuffled_any = _weighted_shuffle(pool.events, rng, diversity=cur_diversity)
                     for e in shuffled_any:
@@ -385,10 +448,12 @@ def arrange_timeline_variants(
                     continue
 
                 used_event_ids.add(pick.event_id)
-                _touch_clip_quota(clip_id=str(pick.clip_id), clip_counts=clip_counts)
+                pick_clip_id = str(pick.clip_id)
+                _touch_clip_quota(clip_id=pick_clip_id, clip_counts=clip_counts)
+                recent_clips.append(pick_clip_id)
                 text = (pick.text or "").strip()
                 dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
-                dur = max(0.5, min(per_slot, dur_est))
+                dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), shot_bounds)
 
                 items.append(
                     TimelineItem(
@@ -423,6 +488,9 @@ def arrange_timeline_variants(
             used_event_ids: Set[str] = set()
             clip_counts: dict[str, int] = {}
             max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
+            avoid_adjacent = bool(getattr(dsl.constraints, "avoid_adjacent_same_clip", True))
+            recent_clips: List[str] = []
+            shot_bounds = _shot_bounds(dsl)
             items: List[TimelineItem] = []
             for role in roles_sequence:
                 role_events = [
@@ -442,6 +510,8 @@ def arrange_timeline_variants(
                         clip_counts=clip_counts,
                         max_events_per_clip=max_events_per_clip,
                     ):
+                        continue
+                    if _recently_used(clip_id, recent_clips, enabled=avoid_adjacent):
                         continue
                     text = (e.text or "").strip()
                     if not text:
@@ -469,10 +539,12 @@ def arrange_timeline_variants(
                 if pick is None:
                     continue
                 used_event_ids.add(pick.event_id)
-                _touch_clip_quota(clip_id=str(pick.clip_id), clip_counts=clip_counts)
+                pick_clip_id = str(pick.clip_id)
+                _touch_clip_quota(clip_id=pick_clip_id, clip_counts=clip_counts)
+                recent_clips.append(pick_clip_id)
                 text = (pick.text or "").strip()
                 dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
-                dur = max(0.5, min(per_slot, dur_est))
+                dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), shot_bounds)
                 items.append(
                     TimelineItem(
                         event_id=pick.event_id,
@@ -511,7 +583,10 @@ def arrange_timeline_variants(
     t2 = [e for e in pool.events if e.tier == 2]
     t3 = [e for e in pool.events if e.tier == 3]
 
-    def _pick(events, budget: float, *, rng: random.Random, used_event_ids: Set[str]) -> List[TimelineItem]:
+    shot_bounds = _shot_bounds(dsl)
+    adjacency_on = [bool(getattr(dsl.constraints, "avoid_adjacent_same_clip", True))]
+
+    def _pick(events, budget: float, *, rng: random.Random, used_event_ids: Set[str], recent_clips: List[str]) -> List[TimelineItem]:
         items: List[TimelineItem] = []
         used = 0.0
         max_events_per_clip = int(getattr(dsl.constraints, "max_events_per_clip", 6) or 6)
@@ -524,7 +599,9 @@ def arrange_timeline_variants(
             text = (getattr(e, "text", "") or "").strip()
             if not text:
                 continue
-            dur = _estimate_item_duration(text, pace=dsl.style.pace)
+            dur = _clamp_shot_duration(
+                _estimate_item_duration(text, pace=dsl.style.pace), shot_bounds
+            )
             if used + dur > budget and used > 0:
                 break
             clip_id = getattr(e, "clip_id", "")
@@ -533,6 +610,8 @@ def arrange_timeline_variants(
                 clip_counts=clip_counts,
                 max_events_per_clip=max_events_per_clip,
             ):
+                continue
+            if _recently_used(str(clip_id), recent_clips, enabled=adjacency_on[0]):
                 continue
             event_id = getattr(e, "event_id", "") or f"e_{rng.randint(1, 10**9)}"
             items.append(
@@ -547,6 +626,7 @@ def arrange_timeline_variants(
             if isinstance(eid, str) and eid:
                 used_event_ids.add(eid)
             _touch_clip_quota(clip_id=str(clip_id), clip_counts=clip_counts)
+            recent_clips.append(str(clip_id))
             used += dur
         return items
 
@@ -564,15 +644,25 @@ def arrange_timeline_variants(
 
         used_event_ids: Set[str] = set()
         clip_counts: dict[str, int] = {}
+        recent_clips: List[str] = []
 
         s1 = _weighted_shuffle(t1, rng)
         s2 = _weighted_shuffle(t2, rng)
         s3 = _weighted_shuffle(t3, rng)
 
         items: List[TimelineItem] = []
-        items.extend(_pick(s1, b1, rng=rng, used_event_ids=used_event_ids))
-        items.extend(_pick(s2, b2, rng=rng, used_event_ids=used_event_ids))
-        items.extend(_pick(s3, b3, rng=rng, used_event_ids=used_event_ids))
+        items.extend(_pick(s1, b1, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
+        items.extend(_pick(s2, b2, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
+        items.extend(_pick(s3, b3, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
+
+        # 素材池被邻接约束耗尽：放宽后重试保底
+        if not items and adjacency_on[0]:
+            adjacency_on[0] = False
+            clip_counts = {}
+            items.extend(_pick(s1, b1, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
+            items.extend(_pick(s2, b2, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
+            items.extend(_pick(s3, b3, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
+            adjacency_on[0] = True
 
         items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
         total = sum((it.duration_budget_sec or 0.0) for it in items)

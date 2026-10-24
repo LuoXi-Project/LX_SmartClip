@@ -18,7 +18,11 @@ _DSL_SCHEMA_HINT = """
   "target_duration_sec": 60,
   "style": {"pace":"fast|medium|slow","tone":"energetic|neutral|calm","structure":["hook","context","highlight","cta"]},
   "preferences": {"prefer_asr": true, "prefer_vlm_when_no_asr": true, "avoid_repetition": true},
-  "constraints": {"respect_user_video_order": false, "max_events_per_clip": 6, "tier_budget_ratio": {"tier1":0.7,"tier2":0.25,"tier3":0.05}}
+  "constraints": {"respect_user_video_order": false, "max_events_per_clip": 6, "tier_budget_ratio": {"tier1":0.7,"tier2":0.25,"tier3":0.05}, "min_shot_sec": null, "max_shot_sec": null, "avoid_adjacent_same_clip": true}
 }
+
+约束说明（不确定就保持示例默认值）：
+- min_shot_sec / max_shot_sec：单镜头时长上下限（秒），null 表示跟随 pace 档位默认（fast 1.2~3.5 / medium 1.8~6 / slow 3~10）。
+- avoid_adjacent_same_clip：相邻镜头是否禁止复用同一素材片段，通常保持 true。
 """
 

@@ -479,6 +479,8 @@ class Matcher:
         min_similarity: float = 0.0,
         refine: Optional[bool] = None,
         subspaces: Optional[List[str]] = None,
+        penalize_clip_ids: Optional[List[str]] = None,
+        penalty_factor: float = 0.55,
     ) -> dict:
         video_ids = [v for v in (video_ids or []) if v]
         scoped_ids = video_ids or None
@@ -537,6 +539,30 @@ class Matcher:
             for i, c in enumerate(candidates):
                 c.setdefault("score", round(1.0 - i * 0.05, 3))
                 c.setdefault("reason", default_reason)
+
+        # 跨段去重降权（P2）：整篇多段匹配时，前文已选用的片段在此处降权，
+        # 使推荐位让给未用过的素材；候选仍保留（不删除），供手动改选。
+        # 降权取「乘系数再扣固定分」：既覆盖 LLM 的 0~10 分制（差距可达数分），
+        # 也覆盖无 LLM 时的位次分（1.0/0.95/0.9 这种小差距序列）。
+        if penalize_clip_ids:
+            penalize_set = {str(x) for x in penalize_clip_ids if x}
+            touched = False
+            for c in candidates:
+                if str(c.get("clip_id", "")) in penalize_set:
+                    try:
+                        old_score = float(c.get("score", 0) or 0)
+                    except (TypeError, ValueError):
+                        old_score = 0.0
+                    c["score"] = round(max(0.0, old_score * penalty_factor - 1.0), 3)
+                    c["reason"] = f"{c.get('reason') or ''}；已降权（前文已选用该片段）".lstrip("；")
+                    touched = True
+            if touched:
+                candidates.sort(
+                    key=lambda c: float(c.get("score", 0) or 0), reverse=True
+                )
+                logger.info(
+                    "[Matcher] 跨段去重降权：%d 个已用片段被降权", len(penalize_set)
+                )
 
         _attach_media_urls(candidates, api_base_url)
 

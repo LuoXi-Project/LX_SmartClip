@@ -48,7 +48,7 @@ const mobileSections = [
   { title: '更多', items: moreItems },
 ]
 
-const guideMobileItem = { href: '#guide', label: '新手指引', description: '四步上手：设置 → 素材库 → 处理 → 智剪' }
+const guideMobileItem = { href: '#guide', label: '新手指引', description: '直接到工作台对话出片，缺什么补什么' }
 
 function isActive(pathname: string, href: string) {
   if (href === '/') return pathname === '/'

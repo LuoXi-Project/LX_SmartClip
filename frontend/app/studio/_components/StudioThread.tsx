@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import { Send, Loader2, Sparkles, RotateCcw, Square } from 'lucide-react'
 import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession } from '@/lib/agent-api'
 import { genId, useStudioStore } from '@/lib/studio-store'
@@ -382,6 +383,11 @@ export function StudioThread() {
             <p className="text-xs text-slate-400 leading-relaxed">
               先说明素材与诉求（口播 / 原声 / 时长），生成方案后再选导出方式。不同方案听感差别很大，生成前建议想清楚。
             </p>
+            <p className="text-[11px] text-slate-500">
+              对话依赖设置中的 LLM 配置；若报错可点下方提示或前往
+              <Link href="/settings" className="mx-1 text-violet-300 hover:text-violet-200 underline underline-offset-2">设置</Link>
+              查看「配置就绪状态」。
+            </p>
             <StudioExportGuide variant="overview" compact />
             <p className="text-[11px] text-slate-500">
               示例：「用选中素材做 60 秒电商口播方案」→ 方案生成后 →「导出成片（配音版）」
@@ -410,8 +416,15 @@ export function StudioThread() {
         <div ref={bottomRef} />
       </div>
       {error ? (
-        <div className="shrink-0 px-4 pb-2 text-xs text-red-400/95 bg-red-500/10 border border-red-500/20 rounded-lg mx-3">
-          {error}
+        <div className="shrink-0 px-4 pb-2 text-xs text-red-400/95 bg-red-500/10 border border-red-500/20 rounded-lg mx-3 py-2 flex items-start justify-between gap-2">
+          <span className="min-w-0 break-words">{error}</span>
+          <Link
+            href="/settings"
+            className="shrink-0 text-red-300 hover:text-red-200 underline underline-offset-2"
+            title="对话依赖 LLM 等配置，到设置页检查配置就绪状态"
+          >
+            去设置检查 →
+          </Link>
         </div>
       ) : null}
       <div className="shrink-0 p-3 border-t border-slate-800" data-tour="page-studio-input">

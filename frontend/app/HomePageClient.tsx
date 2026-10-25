@@ -27,12 +27,12 @@ import './_components/home/home.css'
 const TITLE = '洛曦智剪'
 
 const PIPELINE = [
-  { label: '批量素材入库', icon: Film },
-  { label: '多模式切分', icon: Scissors },
+  { label: '一句话智剪', icon: Sparkles },
+  { label: '素材入库与切分', icon: Scissors },
   { label: '多模态理解', icon: Brain },
-  { label: '三级精准匹配', icon: Target },
+  { label: '智能匹配', icon: Target },
   { label: 'TTS 配音', icon: Mic },
-  { label: '导出工程', icon: Package },
+  { label: '导出与发布', icon: Package },
 ] as const
 
 const FEATURES = [

@@ -31,6 +31,7 @@ import { buildClipTrimsForApi, computeNextTrimSlots } from './_components/clipTr
 import { PreviewModal } from './_components/ClipCard'
 import { ExportSidebar } from './_components/ExportSidebar'
 import { MatchPageHeader } from './_components/MatchPageHeader'
+import { WorkflowStepper, type StepperStep } from './_components/WorkflowStepper'
 import { VideoScopeSelector } from './_components/VideoScopeSelector'
 import { ManualMatchPanel } from './_components/ManualMatchPanel'
 import { AudioMatchPanel, type AudioMatchSource } from './_components/AudioMatchPanel'
@@ -947,6 +948,68 @@ export default function MatchPage() {
   const manualLikeWideLayout = isManualLikeMode(mode) && segments.length > 0
   const autoLikeWideLayout = isAutoLikeMode(mode) && autoPlans.length > 0
   const timelineWideLayout = manualLikeWideLayout || autoLikeWideLayout
+
+  // ── 手动类模式五步向导：状态由数据推导，完成情况实时可见 ──
+  const wfTotal = segments.filter((s) => s.text.trim()).length
+  const wfMatched = segments.filter((s) => s.clips.length > 0).length
+  const wfTts = segments.filter((s) => s.ttsFilename).length
+  const workflowSteps: StepperStep[] = [
+    {
+      key: 'copy',
+      label: '① 文案',
+      status: wfTotal > 0 ? 'done' : 'active',
+      detail: wfTotal > 0 ? `${wfTotal} 段文案` : '粘贴或 AI 生成后拆分',
+      anchorId: 'wf-copy',
+    },
+    {
+      key: 'match',
+      label: '② 匹配素材',
+      status: wfTotal === 0 ? 'locked' : wfMatched >= wfTotal ? 'done' : 'active',
+      detail: wfTotal === 0 ? '待前置完成' : `${wfMatched}/${wfTotal} 段已匹配`,
+      ctaLabel: '匹配全部',
+      ctaLoading: globalMatching,
+      onCta: () => void matchAll(),
+      anchorId: 'wf-match',
+    },
+    {
+      key: 'tts',
+      label: '③ 配音',
+      status: wfMatched === 0 ? 'locked' : wfTts >= wfTotal ? 'done' : 'active',
+      detail: wfMatched === 0 ? '待匹配完成' : `${wfTts}/${wfTotal} 段已配音`,
+      ctaLabel: '全部配音',
+      ctaLoading: globalTtsSynthesising,
+      onCta: () => void synthesiseAllTts(),
+      anchorId: 'wf-copy',
+    },
+    {
+      key: 'srt',
+      label: '④ 字幕',
+      status: wfMatched === 0 ? 'locked' : srtEntries.length > 0 ? 'done' : 'active',
+      detail: srtEntries.length > 0 ? '时间轴已生成' : generatingSrt ? '生成中…' : '导出时也可自动生成',
+      ctaLabel: '生成字幕时间轴',
+      ctaLoading: generatingSrt,
+      onCta: () => void generateSrt(),
+      anchorId: 'wf-subtitle',
+    },
+    {
+      key: 'export',
+      label: '⑤ 导出成片',
+      status: wfMatched === 0 ? 'locked' : 'active',
+      detail: exporting ? '导出中…' : exportError ? '上次导出失败，可重试' : '选格式后导出',
+      ctaLabel: '去导出',
+      onCta: () => document.getElementById('wf-export')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      anchorId: 'wf-export',
+    },
+  ]
+  // 恰好一步 active：取第一个非 done/locked 的步骤，其余降为 todo
+  {
+    const firstOpen = workflowSteps.find((s) => s.status === 'active')
+    if (firstOpen) {
+      for (const s of workflowSteps) {
+        if (s.status === 'active' && s !== firstOpen) s.status = 'todo'
+      }
+    }
+  }
 
   const segmentTimelineWorkspace =
     manualLikeWideLayout ? (
@@ -2152,7 +2215,8 @@ export default function MatchPage() {
   // PLACEHOLDER_JSX
   return (
     <main className="min-h-screen bg-[#0d0f14] text-slate-200">
-      {!isFilmMode && (
+      {/* 右栏导出仅保留给方案驱动模式（其内容为指引文案）；手动类模式改为流程末尾的第五步面板 */}
+      {!isFilmMode && !isManualLikeMode(mode) && (
         <ExportSidebar
           segments={segments} exportMode={exportMode} setExportMode={setExportMode}
           exporting={exporting} exportError={exportError} onExport={handleExport}
@@ -2163,22 +2227,17 @@ export default function MatchPage() {
           matchMode={mode}
         />
       )}
-      <div className={isFilmMode ? '' : 'pr-64'}>
+      <div className={isFilmMode || isManualLikeMode(mode) ? '' : 'pr-64'}>
         <div className={timelineWideLayout ? 'max-w-[min(1600px,100%)] mx-auto px-6 py-10 space-y-8' : 'max-w-3xl mx-auto px-6 py-10 space-y-8'}>
           <MatchPageHeader mode={mode} onModeChange={setMatchMode} onOpenVideoResult={() => setResultOpen(true)} />
-          <div className="rounded-xl border border-violet-500/25 bg-violet-500/5 px-4 py-3 text-sm text-slate-300 flex flex-wrap items-center gap-2">
-            <span>推荐使用对话式</span>
-            <Link href="/studio" className="text-violet-300 hover:text-violet-200 font-medium">
-              智剪工作台
-            </Link>
-            <span className="text-slate-500">完成全流程；本页为经典 Tab 模式。</span>
-          </div>
+          {isManualLikeMode(mode) && <WorkflowStepper steps={workflowSteps} />}
           {doneVideos.length === 0 && mode !== 'script_stock' && mode !== 'film_commentary' && (
             <div className="rounded-xl border border-amber-600/30 bg-amber-500/5 px-5 py-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-amber-400" />
               <p className="text-sm text-slate-300">暂无可匹配素材，请先在<Link href="/process" className="mx-1 text-indigo-400 hover:underline">素材处理</Link>完成。</p>
             </div>
           )}
+          <div id="wf-match" className="scroll-mt-24">
           <VideoScopeSelector
             scopeVideos={scopeVideos}
             filteredScopeVideos={filteredScopeVideos}
@@ -2194,6 +2253,7 @@ export default function MatchPage() {
             singleSelect={isFilmMode}
             requireSelection={mode === 'audio_match'}
           />
+          </div>
 
           {mode === 'replica' ? (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-5">
@@ -2755,6 +2815,7 @@ export default function MatchPage() {
               />
             </>
           ) : mode === 'audio_match' ? (
+            <div id="wf-copy" className="scroll-mt-24">
               <AudioMatchPanel
                 topK={topK}
                 topN={topN}
@@ -2841,8 +2902,9 @@ export default function MatchPage() {
                 timelineWorkspace={segmentTimelineWorkspace}
                 focusedSegId={timelineFocusedSegId}
               />
+            </div>
           ) : (
-            <>
+            <div id="wf-copy" className="scroll-mt-24">
               {replicaTemplateGuide.trim() ? (
                 <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <p className="text-xs text-indigo-200">
@@ -2960,8 +3022,9 @@ export default function MatchPage() {
                 timelineWorkspace={segmentTimelineWorkspace}
                 focusedSegId={timelineFocusedSegId}
               />
-            </>
+            </div>
           )}
+          <div id="wf-subtitle" className="scroll-mt-24">
           <MatchSubtitleWorkspace
             style={subtitleStyle}
             onStyleChange={setSubtitleStyle}
@@ -3062,6 +3125,22 @@ export default function MatchPage() {
               </>
             }
           />
+          </div>
+          {isManualLikeMode(mode) && (
+            <section id="wf-export" className="scroll-mt-24 space-y-2">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">⑤ 导出成片</p>
+              <ExportSidebar
+                segments={segments} exportMode={exportMode} setExportMode={setExportMode}
+                exporting={exporting} exportError={exportError} onExport={handleExport}
+                subtitleEnabled={subtitleEnabled} onToggleSubtitle={setSubtitleEnabled}
+                srtReady={srtEntries.length > 0} generatingSrt={generatingSrt}
+                ttsAlign={manualTtsAlign}
+                onTtsAlignChange={(patch) => setManualTtsAlign({ ...manualTtsAlign, ...patch })}
+                matchMode={mode}
+                variant="inline"
+              />
+            </section>
+          )}
         </div>
       </div>
       {previewClip && <PreviewModal clip={previewClip} onClose={() => setPreviewClip(null)} />}

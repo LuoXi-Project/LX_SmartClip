@@ -20,6 +20,8 @@ export function ExportSidebar({
   onTtsAlignChange,
   /** 方案驱动模式（自动 / 模板 / 口播快剪）：隐藏段落进度与底部导出，成片在主区方案卡片 */
   matchMode = 'manual',
+  /** rail=常驻右侧固定栏（默认，向后兼容）；inline=嵌入流程末尾「导出成片」步骤的面板 */
+  variant = 'rail',
 }: {
   segments: Segment[]
   exportMode: ExportMode
@@ -35,6 +37,7 @@ export function ExportSidebar({
   ttsAlign: TtsVideoAlignConfigApi
   onTtsAlignChange: (patch: Partial<TtsVideoAlignConfigApi>) => void
   matchMode?: MatchWorkspaceMode
+  variant?: 'rail' | 'inline'
 }) {
   const readySegs  = segments.filter((s) => s.clips.length > 0)
   const matchedCount = readySegs.length
@@ -68,7 +71,13 @@ export function ExportSidebar({
   }
 
   return (
-    <div className="fixed right-0 top-0 h-screen w-64 bg-[#0b0d12] border-l border-slate-800 flex flex-col z-40 shadow-2xl">
+    <div
+      className={
+        variant === 'inline'
+          ? 'rounded-2xl border border-slate-800 bg-[#0b0d12] flex flex-col w-full overflow-hidden'
+          : 'fixed right-0 top-0 h-screen w-64 bg-[#0b0d12] border-l border-slate-800 flex flex-col z-40 shadow-2xl'
+      }
+    >
       {/* header */}
       <div className="px-5 pt-6 pb-4 border-b border-slate-800">
         <p className="text-xs font-semibold text-slate-300 uppercase tracking-widest">导出</p>
@@ -167,7 +176,7 @@ export function ExportSidebar({
         </div>
       )}
 
-      <div className="flex-1" />
+      {variant === 'rail' && <div className="flex-1" />}
 
       {/* export button */}
       <div className="px-5 py-5 space-y-3">

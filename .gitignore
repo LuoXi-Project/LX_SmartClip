@@ -46,3 +46,6 @@ start_dev.bat
 .gitignore
 playwright/ms-playwright/
 .zcode/plans/
+
+# ZCode 本地工具状态
+.zcode/

@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>洛曦智剪 · 对话工作台（重设计原型 v1）</title>
+<!--
+  ══════════════════════════════════════════════════════════════════
+  重设计原型 · Assumptions（Junior Designer 模式，先亮假设）
+  ══════════════════════════════════════════════════════════════════
+  1. 设计语言从现有代码库提取，不新造：背景 #0d0f14、边框 slate-800、
+     强调色 cyan-400（ApiSecretField/链接同源）、危险 rose、警示 amber。
+  2. 信息架构重排：对话工作台=首页与主路径；「专业模式」收纳现有 /match
+     参数工作台；素材库/处理/检索/BGM/日志收进「管理」。
+  3. 原型中的数据是真实管线概念的演示值（钩子前置、画面意图、VLM 相关度、
+     生成空镜兜底、节拍对齐、LLM 代理未配置的引导）——非编造装饰数据。
+  4. 视频帧缩略图用带标签的诚实占位块，不画假画面。
+  5. 交互范围：方案卡展开、镜头换片段（点击候选卡）、检查器收起、
+     导航 tab 切换（非工作台页显示去向说明）。
+  ══════════════════════════════════════════════════════════════════
+-->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --bg-elev: #12151d;
+    --bg-card: #151924;
+    --border: #1e293b;
+    --border-soft: #18202e;
+    --text: #e2e8f0;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --accent: #22d3ee;
+    --accent-soft: rgba(34, 211, 238, 0.12);
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+    --ok: #34d399;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+  }
+  #root { height: 100vh; display: flex; flex-direction: column; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #253046; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  .topnav {
+    height: 52px; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: rgba(13, 15, 20, 0.92);
+    display: flex; align-items: center; padding: 0 20px; gap: 24px;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .logo-mark {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent); font-size: 11px; font-weight: 700;
+  }
+  .nav-tabs { display: flex; gap: 4px; height: 100%; }
+  .nav-tab {
+    display: flex; align-items: center; padding: 0 14px; cursor: pointer;
+    color: var(--text-2); font-size: 13.5px; border-bottom: 2px solid transparent;
+    transition: color .15s;
+  }
+  .nav-tab:hover { color: var(--text); }
+  .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .nav-tab .badge-pro {
+    font-size: 10px; color: var(--text-3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0 4px; margin-left: 6px;
+  }
+  .nav-right { margin-left: auto; display: flex; gap: 12px; align-items: center; color: var(--text-3); font-size: 12.5px; }
+
+  .shell { flex: 1; display: flex; min-height: 0; }
+
+  /* ── 左栏：会话 ── */
+  .sidebar {
+    width: 216px; flex-shrink: 0; border-right: 1px solid var(--border-soft);
+    display: flex; flex-direction: column; padding: 12px 10px; gap: 4px;
+  }
+  .btn-new {
+    border: 1px dashed var(--border); border-radius: 8px; padding: 9px 12px;
+    color: var(--text-2); cursor: pointer; font-size: 13px; text-align: center;
+    margin-bottom: 10px; transition: all .15s;
+  }
+  .btn-new:hover { border-color: var(--accent); color: var(--accent); }
+  .side-label { font-size: 11px; color: var(--text-3); padding: 8px 8px 4px; letter-spacing: .08em; }
+  .side-item {
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--text-2);
+    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .side-item:hover { background: var(--bg-card); color: var(--text); }
+  .side-item.active { background: var(--bg-card); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+
+  /* ── 中栏：对话流 ── */
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .chat-scroll { flex: 1; overflow-y: auto; padding: 24px 0; }
+  .chat-inner { max-width: 760px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 20px; }
+
+  .msg { display: flex; gap: 12px; }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;
+  }
+  .avatar.user { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-2); }
+  .avatar.agent { background: var(--accent-soft); border: 1px solid rgba(34,211,238,.4); color: var(--accent); }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-meta { font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+  .bubble-user {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; line-height: 1.7; text-wrap: pretty;
+  }
+  .bubble-user .chip-file {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 8px; margin-top: 8px; color: var(--text-2);
+  }
+  .agent-text { line-height: 1.8; color: var(--text); padding-top: 4px; text-wrap: pretty; }
+  .agent-text .muted { color: var(--text-2); }
+
+  /* ── 处理进度卡 ── */
+  .proc-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .proc-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .proc-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .proc-dot.ok { background: var(--ok); }
+  .proc-dot.warn { background: var(--amber); }
+  .proc-name { color: var(--text-2); width: 92px; flex-shrink: 0; }
+  .proc-bar { flex: 1; height: 4px; background: var(--border-soft); border-radius: 2px; overflow: hidden; }
+  .proc-bar i { display: block; height: 100%; border-radius: 2px; }
+  .proc-val { font-size: 12px; color: var(--text-3); width: 108px; text-align: right; flex-shrink: 0; }
+  .proc-hint {
+    display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-2);
+    background: rgba(245, 158, 11, 0.07); border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 8px; padding: 8px 12px;
+  }
+  .proc-hint a { color: var(--accent); cursor: pointer; text-decoration: none; font-size: 12.5px; flex-shrink: 0; }
+  .proc-hint a:hover { text-decoration: underline; }
+
+  /* ── 方案卡 ── */
+  .plan-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+  }
+  .plan-head {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft); font-size: 13px;
+  }
+  .plan-title { font-weight: 600; }
+  .tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
+    color: var(--text-2); display: inline-flex; align-items: center; gap: 5px;
+  }
+  .tag.hook { border-color: rgba(34,211,238,.45); color: var(--accent); background: var(--accent-soft); }
+  .tag.on::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
+  .plan-dur { margin-left: auto; color: var(--text-3); font-size: 12px; }
+
+  .tl-strip { display: flex; gap: 3px; padding: 12px 16px 4px; }
+  .tl-seg {
+    height: 26px; border-radius: 4px; position: relative; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 10px; color: rgba(226,232,240,.85);
+    transition: filter .15s;
+  }
+  .tl-seg:hover { filter: brightness(1.3); }
+  .tl-seg.hook { background: rgba(34,211,238,.55); }
+  .tl-seg.body { background: #233047; }
+  .tl-seg.cta { background: rgba(245,158,11,.5); }
+  .tl-seg.gen { background: repeating-linear-gradient(45deg, #2b2233, #2b2233 4px, #37294a 4px, #37294a 8px); }
+  .tl-scale { display: flex; justify-content: space-between; padding: 2px 16px 8px; font-size: 10px; color: var(--text-3); }
+
+  .plan-segs { border-top: 1px solid var(--border-soft); }
+  .plan-seg-row {
+    display: flex; align-items: center; gap: 12px; padding: 9px 16px;
+    border-bottom: 1px solid var(--border-soft); font-size: 13px;
+  }
+  .plan-seg-row:last-child { border-bottom: none; }
+  .seg-idx { width: 22px; height: 22px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-2); flex-shrink: 0; }
+  .seg-idx.hook { border-color: rgba(34,211,238,.5); color: var(--accent); }
+  .seg-text { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg-src { color: var(--text-3); font-size: 11.5px; flex-shrink: 0; }
+  .seg-dur { color: var(--text-3); font-size: 11.5px; width: 44px; text-align: right; flex-shrink: 0; }
+  .seg-swap { color: var(--accent); font-size: 12px; cursor: pointer; flex-shrink: 0; opacity: 0; transition: opacity .15s; }
+  .plan-seg-row:hover .seg-swap { opacity: 1; }
+
+  .plan-actions {
+    display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-soft);
+  }
+  .p-btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text-2);
+    border-radius: 8px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; transition: all .15s;
+  }
+  .p-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .p-btn.primary { background: var(--accent); border-color: var(--accent); color: #06222b; font-weight: 600; }
+  .p-btn.primary:hover { background: #67e8f9; }
+
+  /* ── 素材候选卡 ── */
+  .mat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .mat-head { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+  .intent-line { font-size: 12.5px; color: var(--text-2); margin-bottom: 12px; }
+  .intent-line b { color: var(--text); font-weight: 500; }
+  .cand-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .cand {
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden; cursor: pointer;
+    background: var(--bg); transition: border-color .15s; position: relative;
+  }
+  .cand:hover { border-color: var(--accent); }
+  .cand.chosen { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .cand-thumb {
+    height: 64px; background: #1a2233; display: flex; align-items: center; justify-content: center;
+    color: var(--text-3); font-size: 10.5px; letter-spacing: .05em;
+  }
+  .cand.gen .cand-thumb { background: #241d33; color: #a78bfa; }
+  .cand-info { padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; }
+  .cand-score { font-size: 11px; color: var(--text-2); display: flex; justify-content: space-between; }
+  .cand-score b { color: var(--accent); font-weight: 600; }
+  .cand-score .low b { color: var(--text-3); }
+  .cand-src { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cand-flag {
+    position: absolute; top: 6px; left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    background: rgba(13,15,20,.85); color: var(--accent); border: 1px solid rgba(34,211,238,.4);
+  }
+  .cand-flag.gen { color: #a78bfa; border-color: rgba(167,139,250,.4); }
+
+  /* ── 成片卡 ── */
+  .video-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .video-area {
+    height: 190px; background: #0a0c11; display: flex; align-items: center; justify-content: center;
+    border-bottom: 1px solid var(--border-soft); position: relative;
+  }
+  .play-btn {
+    width: 52px; height: 52px; border-radius: 50%; border: 1px solid rgba(34,211,238,.5);
+    background: rgba(13,15,20,.75); color: var(--accent); font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .video-meta { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px 0; }
+  .video-actions { display: flex; gap: 8px; padding: 10px 14px 14px; }
+
+  /* ── 输入区 ── */
+  .composer-wrap { flex-shrink: 0; border-top: 1px solid var(--border-soft); background: var(--bg); padding: 14px 0 18px; }
+  .composer { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+  .quick-chips { display: flex; gap: 8px; margin-bottom: 10px; }
+  .q-chip {
+    font-size: 12px; color: var(--text-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 12px; cursor: pointer; transition: all .15s;
+  }
+  .q-chip:hover { color: var(--accent); border-color: var(--accent); }
+  .composer-box {
+    border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card);
+    display: flex; align-items: flex-end; padding: 10px 12px; gap: 10px;
+  }
+  .composer-box:focus-within { border-color: rgba(34,211,238,.55); }
+  .composer textarea {
+    flex: 1; background: none; border: none; outline: none; resize: none;
+    color: var(--text); font-size: 14px; line-height: 1.6; max-height: 96px; font-family: inherit;
+  }
+  .composer textarea::placeholder { color: var(--text-3); }
+  .icon-btn {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: none; color: var(--text-2); cursor: pointer; font-size: 14px; flex-shrink: 0;
+  }
+  .icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .icon-btn.send { background: var(--accent); border-color: var(--accent); color: #06222b; font-weight: 700; }
+  .composer-note { font-size: 11px; color: var(--text-3); margin-top: 8px; text-align: center; }
+
+  /* ── 右栏：检查器 ── */
+  .inspector {
+    width: 264px; flex-shrink: 0; border-left: 1px solid var(--border-soft);
+    overflow-y: auto; padding: 16px 16px 24px;
+  }
+  .insp-title { font-size: 12px; color: var(--text-3); letter-spacing: .08em; margin-bottom: 14px;
+    display: flex; justify-content: space-between; align-items: center; }
+  .insp-collapse { cursor: pointer; color: var(--text-3); border: none; background: none; font-size: 12px; }
+  .insp-collapse:hover { color: var(--text); }
+  .insp-group { border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--bg-elev); }
+  .insp-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 12.5px; color: var(--text-2); }
+  .insp-row b { color: var(--text); font-weight: 500; }
+  .switch { width: 30px; height: 17px; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; transition: background .15s; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--text-2); transition: all .15s; }
+  .switch.on { background: rgba(34,211,238,.4); }
+  .switch.on::after { left: 15px; background: var(--accent); }
+  .meter { display: flex; gap: 3px; margin-top: 6px; }
+  .meter i { flex: 1; height: 5px; border-radius: 2px; background: var(--border-soft); }
+  .meter i.f { background: var(--accent); }
+  .meter i.f.hookzone { background: var(--amber); }
+
+  .placeholder-view {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-3);
+  }
+  .placeholder-view .big { font-size: 16px; color: var(--text-2); }
+  .placeholder-view .small { font-size: 13px; max-width: 420px; text-align: center; line-height: 1.8; }
+
+  @media (max-width: 1080px) {
+    .sidebar { display: none; }
+    .inspector { display: none; }
+    .cand-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useMemo } = React;
+
+/* ───────────── 数据（真实管线概念的演示值） ───────────── */
+
+const PLAN_SEGMENTS = [
+  { role: 'hook', dur: 2.6, text: '你敢信？提示词也能自己进化', src: '录屏 00:20–00:23（开场重录取精华）', gen: false },
+  { role: 'body', dur: 8.4, text: '介绍一下最近开展的项目「提示词自由化」', src: '录屏 00:20–00:28', gen: false },
+  { role: 'body', dur: 9.2, text: '第一次进入先完成模型供应商配置', src: '录屏 00:30–00:39', gen: false },
+  { role: 'body', dur: 9.0, text: '数据集导入与格式说明', src: '录屏 00:60–00:69', gen: false },
+  { role: 'body', dur: 9.4, text: '提示词优化：贴入自己的或对话完善', src: '录屏 01:40–01:49', gen: false },
+  { role: 'body', dur: 9.8, text: '训练过程对样本循环测试与反思改写', src: '录屏 02:00–02:10', gen: false },
+  { role: 'body', dur: 6.2, text: '（库内无匹配画面）AI 生成：代码滚动与提示词对比的特写空镜', src: 'AI 生成 · Wan2.2', gen: true },
+  { role: 'body', dur: 9.6, text: '全部点评完成后查看整体效果', src: '录屏 04:20–04:30', gen: false },
+  { role: 'cta',   dur: 5.8, text: '反思后进入下一轮测试，好的提示词进提示词库', src: '录屏 05:10–05:16', gen: false },
+];
+
+const CANDIDATES = [
+  { id: 'c1', score: 8.5, kind: 'vlm',  src: '录屏 00:42 供应商配置特写', chosen: true },
+  { id: 'c2', score: 7.2, kind: 'vlm',  src: '录屏 00:38 配置列表滚动', chosen: false },
+  { id: 'c3', score: 4.8, kind: 'text', src: '录屏 02:14 训练日志页', chosen: false },
+  { id: 'c4', score: 5.5, kind: 'gen',  src: 'AI 生成 · 阈值 5.5 兜底', chosen: false },
+];
+
+/* ───────────── 组件 ───────────── */
+
+function TopNav({ tab, setTab }) {
+  const tabs = [
+    { id: 'chat', label: '对话工作台' },
+    { id: 'projects', label: '项目 · 成片' },
+    { id: 'library', label: '素材库' },
+    { id: 'manage', label: '管理' },
+    { id: 'pro', label: '专业模式', pro: true },
+  ];
+  return (
+    <nav className="topnav">
+      <div className="logo"><div className="logo-mark">洛</div>洛曦智剪</div>
+      <div className="nav-tabs">
+        {tabs.map(t => (
+          <div key={t.id}
+               className={'nav-tab' + (tab === t.id ? ' active' : '')}
+               onClick={() => setTab(t.id)}>
+            {t.label}{t.pro && <span className="badge-pro">原 /match</span>}
+          </div>
+        ))}
+      </div>
+      <div className="nav-right">
+        <span>模型代理未连接</span>
+        <span style={{ color: 'var(--amber)' }}>●</span>
+      </div>
+    </nav>
+  );
+}
+
+function Sidebar() {
+  return (
+    <aside className="sidebar">
+      <div className="btn-new">＋ 新对话</div>
+      <div className="side-label">今天</div>
+      <div className="side-item active">录屏 → 项目介绍成片</div>
+      <div className="side-item">Mixkit 素材文案成片</div>
+      <div className="side-label">本周</div>
+      <div className="side-item">产品演示 · 90 秒版</div>
+      <div className="side-item">口播视频快剪 ×3</div>
+    </aside>
+  );
+}
+
+function ProcessCard() {
+  const rows = [
+    { name: '场景切分', ok: true,  pct: 100, val: '45 段' },
+    { name: '抽帧',    ok: true,  pct: 100, val: '1 帧/秒' },
+    { name: '语音识别', ok: true,  pct: 96,  val: '44 / 45 段' },
+    { name: '画面描述', ok: false, pct: 0,   val: '代理未连接' },
+    { name: '向量入库', ok: false, pct: 0,   val: '代理未连接' },
+  ];
+  return (
+    <div className="proc-card">
+      <div className="proc-row" style={{ color: 'var(--text)', fontWeight: 500 }}>
+        <span className="proc-dot ok" /> 素材预处理 · 2026-07-23 21-03-23.mp4（10 分 12 秒）
+      </div>
+      {rows.map(r => (
+        <div className="proc-row" key={r.name}>
+          <span className={'proc-dot ' + (r.ok ? 'ok' : 'warn')} />
+          <span className="proc-name">{r.name}</span>
+          <div className="proc-bar"><i style={{ width: r.pct + '%', background: r.ok ? 'var(--ok)' : 'var(--amber)' }} /></div>
+          <span className="proc-val">{r.val}</span>
+        </div>
+      ))}
+      <div className="proc-hint">
+        <span>画面描述与向量入库被跳过：本地模型代理（127.0.0.1:13000）未连接。本方案已按 ASR 语义链路生成；连接后可解锁画面级匹配与校验。</span>
+        <a onClick={() => {}}>去连接 →</a>
+      </div>
+    </div>
+  );
+}
+
+function PlanCard({ segs, onOpenSwap }) {
+  const [open, setOpen] = useState(true);
+  const [chosen, setChosen] = useState(null); // 正在换片段的镜头 idx
+  const total = segs.reduce((s, x) => s + x.dur, 0);
+  const roleLabel = { hook: '钩子', body: '正文', cta: '收口' };
+
+  return (
+    <div className="plan-card">
+      <div className="plan-head">
+        <span className="plan-title">方案 A · 项目介绍</span>
+        <span className="tag hook">钩子已前置 · 前 2.6s</span>
+        <span className="tag on">相邻去重</span>
+        <span className="tag on">节拍对齐</span>
+        <span className="plan-dur">约 {Math.round(total)} 秒 · {segs.length} 镜</span>
+      </div>
+
+      <div className="tl-strip">
+        {segs.map((s, i) => (
+          <div key={i}
+               className={'tl-seg ' + (s.gen ? 'gen' : s.role)}
+               style={{ flex: s.dur }}
+               title={`${roleLabel[s.role]} · ${s.dur}s · ${s.text}`}
+               onClick={() => setOpen(true)}>{s.gen ? 'AI' : ''}</div>
+        ))}
+      </div>
+      <div className="tl-scale"><span>00:00</span><span>钩子</span><span>正文 · 节奏 medium 1.8–6s/镜</span><span>{String(Math.floor(total / 60)).padStart(2, '0')}:{String(Math.round(total % 60)).padStart(2, '0')}</span></div>
+
+      {open && (
+        <div className="plan-segs">
+          {segs.map((s, i) => (
+            <div className="plan-seg-row" key={i}>
+              <div className={'seg-idx' + (s.role === 'hook' ? ' hook' : '')}>{i + 1}</div>
+              <div className="seg-text">
+                {s.role === 'hook' && <span style={{ color: 'var(--accent)', fontSize: 11, marginRight: 6 }}>钩子</span>}
+                {s.gen && <span style={{ color: '#a78bfa', fontSize: 11, marginRight: 6 }}>AI 生成</span>}
+                {s.text}
+              </div>
+              <span className="seg-src">{s.src}</span>
+              <span className="seg-dur">{s.dur.toFixed(1)}s</span>
+              <span className="seg-swap" onClick={() => setChosen(chosen === i ? null : i)}>换片段</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {chosen !== null && (
+        <div style={{ padding: 14, borderBottom: '1px solid var(--border-soft)' }}>
+          <MaterialSwapCard idx={chosen} onDone={() => setChosen(null)} />
+        </div>
+      )}
+
+      <div className="plan-actions">
+        <button className="p-btn primary">▶ 生成成片</button>
+        <button className="p-btn" onClick={() => setOpen(!open)}>{open ? '收起镜头' : '展开镜头'}</button>
+        <button className="p-btn">换一个方案</button>
+        <button className="p-btn">导出剪映草稿</button>
+      </div>
+    </div>
+  );
+}
+
+function MaterialSwapCard({ idx, onDone }) {
+  const [sel, setSel] = useState(0);
+  return (
+    <div className="mat-card">
+      <div className="mat-head">
+        <span style={{ fontWeight: 600 }}>镜头 {idx + 1} · 换片段</span>
+        <span className="tag">按画面意图检索</span>
+      </div>
+      <div className="intent-line">
+        检索意图：<b>「电脑屏幕上模型供应商配置界面的特写，光标点选下拉框」</b>
+        <span style={{ color: 'var(--text-3)' }}>（由旁白句自动改写）</span>
+      </div>
+      <div className="cand-grid">
+        {CANDIDATES.map((c, i) => (
+          <div key={c.id}
+               className={'cand' + (c.kind === 'gen' ? ' gen' : '') + (sel === i ? ' chosen' : '')}
+               onClick={() => setSel(i)}>
+            {c.kind === 'vlm' && <span className="cand-flag">VLM 8.5</span>}
+            {c.kind === 'gen' && <span className="cand-flag gen">AI 生成</span>}
+            <div className="cand-thumb">{c.kind === 'gen' ? 'WAN 2.2 · 5s' : '帧 00:42'}</div>
+            <div className="cand-info">
+              <div className={'cand-score' + (c.score < 5.5 ? ' low' : '')}>
+                <span>{c.kind === 'vlm' ? '画面相关度' : c.kind === 'gen' ? '兜底生成' : '文本匹配'}</span>
+                <b>{c.score.toFixed(1)}</b>
+              </div>
+              <div className="cand-src">{c.src}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+        <button className="p-btn" onClick={onDone}>取消</button>
+        <button className="p-btn primary" onClick={onDone}>替换为所选片段</button>
+      </div>
+    </div>
+  );
+}
+
+function VideoCard() {
+  return (
+    <div className="video-card">
+      <div className="video-area">
+        <button className="play-btn">▶</button>
+        <span style={{ position: 'absolute', bottom: 10, left: 14, fontSize: 11, color: 'var(--text-3)' }}>
+          demo_project_intro_20261025.mp4 · 1080p
+        </span>
+      </div>
+      <div className="video-meta">
+        <span className="tag on">节拍对齐已生效 · 偏差 0.04s</span>
+        <span className="tag on">字幕已烧录</span>
+        <span className="tag">BGM corporate 126BPM · -20dB</span>
+        <span className="tag">钩子前置</span>
+      </div>
+      <div className="video-actions">
+        <button className="p-btn primary">下载 MP4</button>
+        <button className="p-btn">一键发布</button>
+        <button className="p-btn">导出剪映草稿</button>
+      </div>
+    </div>
+  );
+}
+
+function Inspector() {
+  const [beat, setBeat] = useState(true);
+  const [hook, setHook] = useState(true);
+  return (
+    <aside className="inspector">
+      <div className="insp-title">方案参数 <button className="insp-collapse">收起 »</button></div>
+      <div className="insp-group">
+        <div className="insp-row"><span>目标时长</span><b>90 秒</b></div>
+        <div className="insp-row"><span>节奏档位</span><b>medium · 1.8–6s/镜</b></div>
+        <div className="meter">
+          {PLAN_SEGMENTS.map((s, i) => <i key={i} className={'f' + (s.role === 'hook' ? ' hookzone' : '')} style={{ flex: s.dur }} />)}
+        </div>
+        <div className="insp-row" style={{ fontSize: 11, color: 'var(--text-3)' }}><span>黄=钩子区</span><span>青=正文</span></div>
+      </div>
+      <div className="insp-group">
+        <div className="insp-row"><span>钩子前置（前 3 秒）</span><div className={'switch' + (hook ? ' on' : '')} onClick={() => setHook(!hook)} /></div>
+        <div className="insp-row"><span>相邻镜头去重</span><div className="switch on" /></div>
+        <div className="insp-row"><span>VLM 画面校验</span><span style={{ color: 'var(--amber)', fontSize: 11 }}>需代理</span></div>
+        <div className="insp-row"><span>生成空镜兜底</span><span style={{ color: 'var(--text-3)', fontSize: 11 }}>未配置 Key</span></div>
+      </div>
+      <div className="insp-group">
+        <div className="insp-row"><span>BGM</span><b>corporate · 126BPM</b></div>
+        <div className="insp-row"><span>节拍对齐切点</span><div className={'switch' + (beat ? ' on' : '')} onClick={() => setBeat(!beat)} /></div>
+        <div className="insp-row"><span>人声闪避</span><b>medium</b></div>
+      </div>
+    </aside>
+  );
+}
+
+function ChatView() {
+  return (
+    <div className="shell">
+      <Sidebar />
+      <div className="chat">
+        <div className="chat-scroll">
+          <div className="chat-inner">
+            <div className="msg">
+              <div className="avatar user">你</div>
+              <div className="msg-body">
+                <div className="msg-meta">14:02</div>
+                <div className="bubble-user">
+                  用这段录屏剪一条 90 秒的项目介绍，重点讲「训练循环 + 反思改写」，开头要抓人。
+                  <br /><span className="chip-file">📎 2026-07-23 21-03-23.mp4 · 645MB · 10:12</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="msg">
+              <div className="avatar agent">洛</div>
+              <div className="msg-body">
+                <div className="msg-meta">洛曦 · 刚刚</div>
+                <div style={{ marginBottom: 12 }}><ProcessCard /></div>
+                <div className="agent-text" style={{ marginBottom: 12 }}>
+                  已通读全部转写：<span className="muted">识别出口误重录的废开头（00:10–00:20）与片尾多语言垃圾（05:20–06:10），已剔除。</span>
+                  按你要求以「训练循环」为主线编排，钩子用最强反常识句前置；其中一镜库内无合适画面，用生成空镜兜底。
+                </div>
+                <div style={{ marginBottom: 12 }}><PlanCard segs={PLAN_SEGMENTS} /></div>
+                <VideoCard />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="composer-wrap">
+          <div className="composer">
+            <div className="quick-chips">
+              <span className="q-chip">丢一段文案直接成片</span>
+              <span className="q-chip">只要高光，30 秒版</span>
+              <span className="q-chip">换成轻快的 BGM</span>
+            </div>
+            <div className="composer-box">
+              <button className="icon-btn" title="上传素材">＋</button>
+              <textarea rows="1" placeholder="说出你要的成片：丢文案、丢视频、或直接提要求…"></textarea>
+              <button className="icon-btn send" title="发送">↑</button>
+            </div>
+            <div className="composer-note">Enter 发送 · Shift+Enter 换行 · 洛曦会自动处理素材、匹配画面并成片</div>
+          </div>
+        </div>
+      </div>
+      <Inspector />
+    </div>
+  );
+}
+
+function PlaceholderView({ title, desc }) {
+  return (
+    <div className="shell">
+      <div className="placeholder-view">
+        <div className="big">{title}</div>
+        <div className="small">{desc}</div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [tab, setTab] = useState('chat');
+  const views = {
+    chat: <ChatView />,
+    projects: <PlaceholderView title="项目 · 成片" desc="成片与历史方案的时间线视图（本原型未展开）。每个项目保留方案版本，可回溯任一版的镜头构成与参数。" />,
+    library: <PlaceholderView title="素材库" desc="保留现有素材库页面：上传、预览、处理状态。对话中引用的素材会在这里沉淀为可复用资产。" />,
+    manage: <PlaceholderView title="管理" desc="收纳低频页：素材处理 / 素材检索 / BGM 曲库 / 音频库 / 日志 / 设置 / 卡密。从主导航的一级位置移到这里。" />,
+    pro: <PlaceholderView title="专业模式（原 /match 工作台）" desc="现有的参数级工作台整体保留，入口降级到这里：matchMode、topK/topN、导出策略等高级控制面向专业用户。" />,
+  };
+  return (
+    <React.Fragment>
+      <TopNav tab={tab} setTab={setTab} />
+      {views[tab]}
+    </React.Fragment>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

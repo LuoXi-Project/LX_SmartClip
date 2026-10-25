@@ -765,6 +765,42 @@ export default function MatchPage() {
     return ids.length > 0 ? ids : null
   }
 
+  /**
+   * 整篇批量匹配：后端统一做画面意图改写 + 跨段去重（前文已选片段降权），
+   * 避免逐段独立匹配导致整片反复出现同一段素材。
+   * 成功返回 true 并按结果更新段落；失败返回 false，由调用方降级为逐段匹配。
+   */
+  async function matchSegmentsBatch(segs: Array<{ id: string; text: string }>): Promise<boolean> {
+    if (!segs.length) return true
+    try {
+      const isNarrationMode = mode === 'film_commentary' || mode === 'voiceover'
+      const data = await apiClient.post<unknown, { items: Array<{ query: string; recommended: MatchClip[]; candidates: MatchClip[] }> }>('/api/match/batch', {
+        segments: segs.map((s) => s.text.trim()),
+        top_k: topK, top_n: topN,
+        video_ids: resolveMatchVideoIds(),
+        ...(isNarrationMode ? { match_mode: 'llm_only' as const } : {}),
+      })
+      const items = data.items ?? []
+      segs.forEach((s, i) => {
+        const it = items[i]
+        if (!it) return
+        const clips = it.recommended?.length ? it.recommended : it.candidates
+        patchSeg(s.id, {
+          clips,
+          chosenIdx: 0,
+          selectedClipIds: clips.length > 0 ? [clips[0].clip_id] : [],
+          matchLoading: false,
+          clipTrimSlots: undefined,
+        })
+      })
+      return true
+    } catch (e) {
+      // 批量接口失败（超时/旧后端）时由调用方降级为逐段匹配
+      console.warn('整篇匹配失败', e)
+      return false
+    }
+  }
+
   async function matchSegment(id: string) {
     const seg = useMatchStore.getState().segments.find((s) => s.id === id)
     if (!seg || !seg.text.trim()) return
@@ -805,38 +841,12 @@ export default function MatchPage() {
     }
     setGlobalMatching(true)
     try {
-      const segs = segments.filter((s) => s.text.trim())
-      if (segs.length >= 2) {
-        // 整篇批量匹配：后端统一做画面意图改写 + 跨段去重（前文已选片段降权），
-        // 避免逐段独立匹配导致整片反复出现同一段素材。
-        const isNarrationMode = mode === 'film_commentary' || mode === 'voiceover'
-        try {
-          const data = await apiClient.post<unknown, { items: Array<{ query: string; recommended: MatchClip[]; candidates: MatchClip[] }> }>('/api/match/batch', {
-            segments: segs.map((s) => s.text.trim()),
-            top_k: topK, top_n: topN,
-            video_ids: resolveMatchVideoIds(),
-            ...(isNarrationMode ? { match_mode: 'llm_only' as const } : {}),
-          })
-          const items = data.items ?? []
-          segs.forEach((s, i) => {
-            const it = items[i]
-            if (!it) return
-            const clips = it.recommended?.length ? it.recommended : it.candidates
-            patchSeg(s.id, {
-              clips,
-              chosenIdx: 0,
-              selectedClipIds: clips.length > 0 ? [clips[0].clip_id] : [],
-              matchLoading: false,
-              clipTrimSlots: undefined,
-            })
-          })
-          return
-        } catch (e) {
-          // 批量接口失败（超时/旧后端）时降级为逐段匹配
-          console.warn('整篇匹配失败，降级为逐段匹配', e)
-        }
+      const segs = segments
+        .filter((s) => s.text.trim())
+        .map((s) => ({ id: s.id, text: s.text }))
+      if (!(await matchSegmentsBatch(segs))) {
+        await Promise.all(segments.map((s) => matchSegment(s.id)))
       }
-      await Promise.all(segments.map((s) => matchSegment(s.id)))
     } finally {
       setGlobalMatching(false)
     }
@@ -1414,14 +1424,19 @@ export default function MatchPage() {
       setMatchSegmentCounter(counter + parts.length)
       if (autoPipelineCancelRef.current) return stopAutoPipeline('splitting', '已取消全自动流程')
 
-      // 2. 匹配素材：并发请求，按完成数推进进度
+      // 2. 匹配素材：优先整篇批量匹配（画面意图改写 + 跨段去重），失败降级为逐段并发
       setAutoPipeline((p) => ({ ...p, stage: 'matching', matchTotal: segIds.length, matchDone: 0 }))
-      let matchDone = 0
-      await Promise.all(segIds.map(async (id) => {
-        await matchSegment(id)
-        matchDone += 1
-        setAutoPipeline((p) => ({ ...p, matchDone }))
-      }))
+      const batchMatchOk = await matchSegmentsBatch(segIds.map((id, i) => ({ id, text: parts[i] })))
+      if (batchMatchOk) {
+        setAutoPipeline((p) => ({ ...p, matchDone: segIds.length }))
+      } else {
+        let matchDone = 0
+        await Promise.all(segIds.map(async (id) => {
+          await matchSegment(id)
+          matchDone += 1
+          setAutoPipeline((p) => ({ ...p, matchDone }))
+        }))
+      }
       if (autoPipelineCancelRef.current) return stopAutoPipeline('matching', '已取消全自动流程')
       const matchedCount = useMatchStore.getState().segments.filter((s) => s.clips.length > 0).length
       if (matchedCount === 0) {

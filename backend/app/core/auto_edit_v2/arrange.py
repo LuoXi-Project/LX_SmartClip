@@ -83,6 +83,39 @@ def _clamp_shot_duration(dur: float, bounds: Tuple[float, float]) -> float:
     return max(0.5, max(lo, min(hi, dur)))
 
 
+def _hook_shot_bounds(bounds: Tuple[float, float]) -> Tuple[float, float]:
+    """钩子镜头节奏：在全局区间上收紧到「短促」区间，服务前 3 秒完播。"""
+    lo, hi = bounds
+    h_lo = max(0.9, lo * 0.6)
+    h_hi = max(h_lo, min(hi, 3.0))
+    return h_lo, h_hi
+
+
+def _promote_hook_first(items: List[TimelineItem], pool: MergedEventPool) -> List[TimelineItem]:
+    """把 hook 角色的事件稳定前移到时间轴开头（完播实践：钩子必须最先出现）。
+
+    仅调整顺序、不增删镜头；事件角色缺失或无 hook 时保持原顺序。
+    补齐时长产生的复用条目（event_id 形如 e1#r2_2）按其基础事件判断角色。
+    """
+    if not items:
+        return items
+    role_by_event: dict[str, object] = {}
+    for e in pool.events:
+        eid = getattr(e, "event_id", None)
+        if isinstance(eid, str) and eid:
+            role_by_event[eid] = getattr(e, "role", None)
+
+    def _is_hook(it: TimelineItem) -> bool:
+        base_id = (it.event_id or "").split("#", 1)[0]
+        return role_by_event.get(base_id) == "hook"
+
+    hooks = [it for it in items if _is_hook(it)]
+    if not hooks or len(hooks) == len(items):
+        return items
+    rest = [it for it in items if not _is_hook(it)]
+    return hooks + rest
+
+
 def _fill_timeline_by_reuse(
     *,
     items: List[TimelineItem],
@@ -284,8 +317,11 @@ def arrange_timeline(
                 continue
             if _recently_used(clip_id, recent_clips, enabled=adjacency_on[0]):
                 continue
+            bounds = (
+                _hook_shot_bounds(shot_bounds) if getattr(e, "role", None) == "hook" else shot_bounds
+            )
             dur = _clamp_shot_duration(
-                _estimate_item_duration(text, pace=dsl.style.pace), shot_bounds
+                _estimate_item_duration(text, pace=dsl.style.pace), bounds
             )
             if used + dur > budget and used > 0:
                 break
@@ -317,6 +353,9 @@ def arrange_timeline(
         _pick(t1, b1)
         _pick(t2, b2)
         _pick(t3, b3)
+
+    # 钩子前置：完播实践——前 3 秒必须是最抓人的画面
+    items = _promote_hook_first(items, pool)
 
     items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
     total = sum((it.duration_budget_sec or 0.0) for it in items)
@@ -453,7 +492,8 @@ def arrange_timeline_variants(
                 recent_clips.append(pick_clip_id)
                 text = (pick.text or "").strip()
                 dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
-                dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), shot_bounds)
+                bounds = _hook_shot_bounds(shot_bounds) if getattr(pick, "role", None) == "hook" else shot_bounds
+                dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), bounds)
 
                 items.append(
                     TimelineItem(
@@ -544,7 +584,8 @@ def arrange_timeline_variants(
                 recent_clips.append(pick_clip_id)
                 text = (pick.text or "").strip()
                 dur_est = _estimate_item_duration(text, pace=dsl.style.pace)
-                dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), shot_bounds)
+                bounds = _hook_shot_bounds(shot_bounds) if getattr(pick, "role", None) == "hook" else shot_bounds
+                dur = _clamp_shot_duration(max(0.5, min(per_slot, dur_est)), bounds)
                 items.append(
                     TimelineItem(
                         event_id=pick.event_id,
@@ -599,8 +640,11 @@ def arrange_timeline_variants(
             text = (getattr(e, "text", "") or "").strip()
             if not text:
                 continue
+            bounds = (
+                _hook_shot_bounds(shot_bounds) if getattr(e, "role", None) == "hook" else shot_bounds
+            )
             dur = _clamp_shot_duration(
-                _estimate_item_duration(text, pace=dsl.style.pace), shot_bounds
+                _estimate_item_duration(text, pace=dsl.style.pace), bounds
             )
             if used + dur > budget and used > 0:
                 break
@@ -663,6 +707,9 @@ def arrange_timeline_variants(
             items.extend(_pick(s2, b2, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
             items.extend(_pick(s3, b3, rng=rng, used_event_ids=used_event_ids, recent_clips=recent_clips))
             adjacency_on[0] = True
+
+        # 钩子前置：完播实践——前 3 秒必须是最抓人的画面
+        items = _promote_hook_first(items, pool)
 
         items = _fill_timeline_by_reuse(items=items, target_duration=target, mode=mode)
         total = sum((it.duration_budget_sec or 0.0) for it in items)

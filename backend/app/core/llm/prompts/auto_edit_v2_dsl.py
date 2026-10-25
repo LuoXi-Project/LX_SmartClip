@@ -7,6 +7,9 @@ _DSL_SYS_PROMPT = """你是一位专业的视频剪辑策略规划师。
 - 只输出 JSON，不要解释文字，不要 Markdown。
 - 输出必须能被 Pydantic StrategyDSL 校验通过。
 - 字段尽量短且受控：不要发散到剪辑方案/Plan，不要输出 clip_id。
+- style.structure 必须以 "hook" 开头（短视频前 3 秒决定完播）：
+  hook 指冲突、悬念、反常识、结果前置等强钩子；正文用 context/highlight，
+  结尾可用 cta；60 秒内的短视频建议 hook → highlight → cta。
 """
 
 _DSL_SCHEMA_HINT = """

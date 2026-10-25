@@ -142,6 +142,53 @@ def test_variants_keep_adjacent_diversity():
             assert clip_ids[i] != clip_ids[i - 1], f"方案内相邻镜头复用同一素材: {clip_ids}"
 
 
+# ---------------- 钩子结构（hook first） ----------------
+
+
+def test_arrange_promotes_hook_first():
+    # tier1 全是 highlight 且分数更高，hook 事件分数较低：编排后首镜头仍应为钩子
+    events = [
+        ClipEvent(event_id="e1", clip_id="A", text="高信息密度的正文第一句", role="highlight", scores={"local_score": 0.95}),
+        ClipEvent(event_id="e2", clip_id="B", text="高信息密度的正文第二句", role="highlight", scores={"local_score": 0.9}),
+        ClipEvent(event_id="e3", clip_id="C", text="你绝对想不到结局竟然是这样", role="hook", scores={"local_score": 0.6}),
+        ClipEvent(event_id="e4", clip_id="D", text="补充背景的正文内容", role="context", scores={"local_score": 0.5}),
+    ]
+    pool = assign_tiers_and_rank(merge_batches([ClipEventsBatch(batch_id="b1", events=events)]))
+    dsl = StrategyDSL(goal="g", target_duration_sec=30, style={"pace": "medium"})
+    tl = arrange_timeline(pool=pool, dsl=dsl, mode="original", target_duration_sec=30)
+    assert tl.items, "时间轴不应为空"
+    first = tl.items[0].event_id.split("#", 1)[0]
+    assert first == "e3", f"首镜头应为钩子事件 e3，实际 {first}"
+
+
+def test_hook_shot_uses_shorter_bounds():
+    events = [
+        ClipEvent(event_id="e1", clip_id="A", text="你绝对想不到结果竟然是这样反转", role="hook", scores={"local_score": 0.9}),
+        ClipEvent(event_id="e2", clip_id="B", text="正文内容第二句比较长一些", role="highlight", scores={"local_score": 0.8}),
+        ClipEvent(event_id="e3", clip_id="C", text="正文内容第三句也很长", role="context", scores={"local_score": 0.7}),
+    ]
+    pool = assign_tiers_and_rank(merge_batches([ClipEventsBatch(batch_id="b1", events=events)]))
+    dsl = StrategyDSL(goal="g", target_duration_sec=30, style={"pace": "medium"})
+    tl = arrange_timeline(pool=pool, dsl=dsl, mode="original", target_duration_sec=30)
+    hook_item = next(it for it in tl.items if (it.event_id or "").split("#", 1)[0] == "e1")
+    # medium 全局区间 1.8~6 → 钩子收紧为 1.08~3.0（短促快切）
+    assert 0.9 <= float(hook_item.duration_budget_sec) <= 3.0, (
+        f"钩子镜头时长 {hook_item.duration_budget_sec} 未落在短促区间"
+    )
+
+
+def test_no_hook_keeps_original_order():
+    events = [
+        ClipEvent(event_id="e1", clip_id="A", text="正文第一句内容", role="highlight", scores={"local_score": 0.9}),
+        ClipEvent(event_id="e2", clip_id="B", text="正文第二句内容", role="context", scores={"local_score": 0.8}),
+    ]
+    pool = assign_tiers_and_rank(merge_batches([ClipEventsBatch(batch_id="b1", events=events)]))
+    dsl = StrategyDSL(goal="g", target_duration_sec=20, style={"pace": "medium"})
+    tl = arrange_timeline(pool=pool, dsl=dsl, mode="original", target_duration_sec=20)
+    ids = [(it.event_id or "").split("#", 1)[0] for it in tl.items]
+    assert ids[0] == "e1", "无钩子事件时保持评分顺序"
+
+
 # ---------------- /api/match/batch 集成（无 LLM/VLM 配置的纯文本链路） ----------------
 
 

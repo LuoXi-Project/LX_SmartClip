@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PARAM_TYPES = ("text", "textarea", "number", "select", "multiselect", "switch")
+PARAM_TYPES = ("text", "textarea", "number", "select", "multiselect", "switch", "video_ids")
 
 _WORKFLOW_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _STEP_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -417,4 +417,13 @@ def _coerce_param(spec: ParamSpec, value: Any) -> tuple[Any, str | None]:
         if bad:
             return None, f"参数「{spec.label}」包含不可选值: {', '.join(bad)}"
         return vals, None
+    if spec.type == "video_ids":
+        # 与 multiselect 同源：接受 ID 数组，或逗号/空白分隔的 ID 串（LLM 生成定义 / 重跑输入常见）
+        if isinstance(value, str):
+            value = [v for v in re.split(r"[,，\s]+", value) if v.strip()]
+        if not isinstance(value, list) or not value:
+            return None, f"参数「{spec.label}」需要至少选择一个素材"
+        if not all(isinstance(v, (str, int)) for v in value):
+            return None, f"参数「{spec.label}」需要素材 ID 数组"
+        return [str(v) for v in value if str(v).strip()], None
     return str(value), None

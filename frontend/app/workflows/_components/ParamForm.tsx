@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import { CheckSquare, Square } from 'lucide-react'
 import type { WorkflowParamSpec } from '@/lib/api'
+import { VideoIdsPicker } from './VideoIdsPicker'
 
 /** 按 ParamSpec 声明自动渲染的参数表单（text/textarea/number/select/multiselect/switch） */
 export function ParamForm({
@@ -65,6 +66,9 @@ function ParamField({
       : 'border-slate-700 focus:border-cyan-500/60',
   )
 
+  if (spec.type === 'video_ids') {
+    return <VideoIdsPicker value={value} onChange={(v) => onChange(v)} />
+  }
   if (spec.type === 'textarea') {
     return (
       <textarea

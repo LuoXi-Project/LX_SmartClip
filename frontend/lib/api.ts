@@ -2278,7 +2278,8 @@ export const externalSearchApi = {
 export interface WorkflowParamSpec {
   name: string
   label: string
-  type: 'text' | 'textarea' | 'number' | 'select' | 'multiselect' | 'switch'
+  /** video_ids：素材库多选选择器（选视频 ID 数组，未预处理的运行时自动排队） */
+  type: 'text' | 'textarea' | 'number' | 'select' | 'multiselect' | 'switch' | 'video_ids'
   required?: boolean
   default?: unknown
   options?: Array<{ value: string; label: string }>

@@ -4,19 +4,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   CheckCircle2,
-  ChevronRight,
+  Clapperboard,
   Clock3,
+  CloudDownload,
   History,
   Loader2,
   Play,
   Search,
+  Settings2,
   Sparkles,
   Square,
   Store,
   Trash2,
+  WandSparkles,
   Workflow as WorkflowIcon,
   X,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   formatFastApiDetail,
@@ -54,6 +58,47 @@ function fmtRelative(iso?: string | null): string {
   const h = Math.floor(min / 60)
   if (h < 24) return `${h} 小时前`
   return `${Math.floor(h / 24)} 天前`
+}
+
+/** 分类视觉（图标 + 配色），未收录分类回退通用样式 */
+const CATEGORY_META: Record<string, { icon: LucideIcon; chipCls: string; ringCls: string }> = {
+  内容生产: {
+    icon: Clapperboard,
+    chipCls: 'border-violet-500/40 bg-violet-500/10 text-violet-300',
+    ringCls: 'hover:border-violet-500/50',
+  },
+  智能成片: {
+    icon: WandSparkles,
+    chipCls: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300',
+    ringCls: 'hover:border-indigo-500/50',
+  },
+  素材采集: {
+    icon: CloudDownload,
+    chipCls: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300',
+    ringCls: 'hover:border-cyan-500/50',
+  },
+  通用: {
+    icon: WorkflowIcon,
+    chipCls: 'border-slate-600 bg-slate-800/60 text-slate-300',
+    ringCls: 'hover:border-slate-500',
+  },
+}
+
+function categoryMeta(category: string) {
+  return CATEGORY_META[category] || CATEGORY_META['通用']
+}
+
+/** 必填参数是否已全部有值（决定卡片 CTA 是直接运行还是进配置） */
+function canQuickStart(def: WorkflowDefinition, values: Record<string, unknown>): boolean {
+  return def.params
+    .filter((p) => p.required)
+    .every((p) => {
+      const v = values[p.name]
+      if (v == null) return false
+      if (typeof v === 'string') return v.trim().length > 0
+      if (Array.isArray(v)) return v.length > 0
+      return true
+    })
 }
 
 export default function WorkflowsPageClient() {
@@ -221,7 +266,9 @@ export default function WorkflowsPageClient() {
       const missing = def.params.filter(
         (p) =>
           p.required &&
-          (values[p.name] == null || (typeof values[p.name] === 'string' && !(values[p.name] as string).trim())),
+          (values[p.name] == null ||
+            (Array.isArray(values[p.name]) && (values[p.name] as unknown[]).length === 0) ||
+            (typeof values[p.name] === 'string' && !(values[p.name] as string).trim())),
       )
       if (missing.length) {
         toast.error(`请填写必填参数：${missing.map((p) => p.label).join('、')}`)
@@ -391,36 +438,45 @@ export default function WorkflowsPageClient() {
     )
   }
 
+  const builtinCount = definitions.filter((d) => d.is_builtin).length
+
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
-      {/* 页头 + 搜索 */}
-      <div className="mb-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-100">
-              <WorkflowIcon size={20} className="text-violet-400" />
-              工作流
-              <span className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-normal text-violet-300">
-                后台自动执行
-              </span>
-            </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              从市场选择工作流一键运行；全程后台执行，可在任务中心查看子任务进度。
-            </p>
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      {/* 页头 */}
+      <div className="mb-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-violet-500/30 bg-gradient-to-br from-violet-500/25 to-indigo-500/10">
+              <WorkflowIcon size={22} className="text-violet-300" />
+            </div>
+            <div>
+              <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-100">
+                工作流
+                <span className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-normal text-violet-300">
+                  后台自动执行
+                </span>
+              </h1>
+              <p className="mt-1 text-sm text-slate-400">
+                选一个工作流，填好参数一键出片；全程后台执行，可离开页面，任务中心看进度。
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowHistory((v) => !v)}
-              className="flex items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100"
-            >
-              <History size={12} /> 运行历史
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowHistory((v) => !v)}
+            className={clsx(
+              'flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+              showHistory
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100',
+            )}
+          >
+            <History size={12} /> 运行历史
+          </button>
         </div>
 
         {/* 搜索 + 分类筛选 */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
@@ -460,11 +516,18 @@ export default function WorkflowsPageClient() {
       )}
 
       {/* 运行中面板 */}
-      {activeRun && <ActiveRunPanel run={activeRun} elapsed={elapsed} onCancel={handleCancel} />}
+      {activeRun && (
+        <ActiveRunPanel
+          run={activeRun}
+          elapsed={elapsed}
+          stepTitles={stepTitleMap(definitions, activeRun.workflowId)}
+          onCancel={handleCancel}
+        />
+      )}
 
       {/* 最近使用 */}
       {recentDefs.length > 0 && (
-        <section className="mb-7">
+        <section className="mb-8">
           <h2 className="mb-3 flex items-center gap-1.5 text-sm font-medium text-slate-200">
             <Clock3 size={14} className="text-amber-400" />
             最近使用
@@ -474,7 +537,7 @@ export default function WorkflowsPageClient() {
               <RecentCard
                 key={def.id}
                 def={def}
-                busy={starting === def.id || activeRun?.status === 'running'}
+                busy={starting === def.id}
                 onOpen={() => setSelected(def)}
                 onQuickRerun={() => handleQuickRerun(def)}
               />
@@ -484,22 +547,43 @@ export default function WorkflowsPageClient() {
       )}
 
       {/* 工作流市场 */}
-      <section className="mb-7">
+      <section className="mb-8">
         <h2 className="mb-3 flex items-center gap-1.5 text-sm font-medium text-slate-200">
           <Store size={14} className="text-cyan-400" />
           工作流市场
           <span className="text-xs font-normal text-slate-500">
-            {marketDefs.length}/{definitions.length}
+            共 {definitions.length} 个 · 内置 {builtinCount}
           </span>
         </h2>
         {marketDefs.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-800 p-6 text-center text-sm text-slate-500">
-            没有匹配的工作流{search ? `（搜索「${search}」无结果）` : ''}
+          <div className="rounded-lg border border-dashed border-slate-800 p-8 text-center">
+            <p className="text-sm text-slate-500">
+              没有匹配的工作流{search ? `（搜索「${search}」无结果）` : ''}
+            </p>
+            {(search || category) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('')
+                  setCategory('')
+                }}
+                className="mt-2 text-xs text-cyan-300 transition-colors hover:text-cyan-200"
+              >
+                清除筛选条件
+              </button>
+            )}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {marketDefs.map((def) => (
-              <MarketCard key={def.id} def={def} onOpen={() => setSelected(def)} />
+              <MarketCard
+                key={def.id}
+                def={def}
+                quickStartable={canQuickStart(def, prefValues[def.id] || {})}
+                busy={starting === def.id}
+                onOpen={() => setSelected(def)}
+                onStart={() => handleStart(def)}
+              />
             ))}
           </div>
         )}
@@ -540,6 +624,16 @@ export default function WorkflowsPageClient() {
       )}
     </main>
   )
+}
+
+/** 步骤名 → 显示标题映射（运行面板用；找不到定义时回退步骤名） */
+function stepTitleMap(
+  definitions: WorkflowDefinition[],
+  workflowId: string,
+): Record<string, string> {
+  const def = definitions.find((d) => d.id === workflowId)
+  if (!def) return {}
+  return Object.fromEntries(def.steps.map((s) => [s.name, s.title]))
 }
 
 // ── 分类筛选 chip ─────────────────────────────────────────────────────────
@@ -593,41 +687,41 @@ function RecentCard({
   onOpen: () => void
   onQuickRerun: () => void
 }) {
+  const meta = categoryMeta(def.category)
+  const CatIcon = meta.icon
   return (
-    <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 transition-colors hover:border-amber-500/40">
-      <div className="flex items-start justify-between gap-2">
-        <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-slate-100">{def.name}</span>
-            <span className="shrink-0 rounded border border-slate-700 px-1 py-px text-[10px] text-slate-400">
-              {def.category}
-            </span>
-          </div>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            {fmtRelative(def.last_run_at)}运行 ·{' '}
-            <span className={RUN_STATUS_CLS[def.last_run_status || ''] || 'text-slate-500'}>
-              {def.last_run_status === 'done'
-                ? '成功'
-                : def.last_run_status === 'error'
-                  ? '失败'
-                  : def.last_run_status === 'cancelled'
-                    ? '已取消'
-                    : def.last_run_status || ''}
-            </span>
-            {' · '}累计 {def.run_count || 0} 次
-          </p>
-        </button>
-        <button
-          type="button"
-          onClick={onQuickRerun}
-          disabled={busy || !def.last_run_id}
-          title="用上次参数一键重跑"
-          className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-200 transition-colors hover:bg-amber-500/20 disabled:opacity-40"
-        >
-          {busy ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-          再跑
-        </button>
-      </div>
+    <div className="group flex items-center gap-2.5 rounded-lg border border-amber-500/25 bg-gradient-to-r from-amber-500/[0.07] to-transparent p-3 transition-colors hover:border-amber-500/40">
+      <span className={clsx('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border', meta.chipCls)}>
+        <CatIcon size={15} />
+      </span>
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm font-medium text-slate-100">{def.name}</span>
+        </div>
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          {fmtRelative(def.last_run_at)}运行 ·{' '}
+          <span className={RUN_STATUS_CLS[def.last_run_status || ''] || 'text-slate-500'}>
+            {def.last_run_status === 'done'
+              ? '成功'
+              : def.last_run_status === 'error'
+                ? '失败'
+                : def.last_run_status === 'cancelled'
+                  ? '已取消'
+                  : def.last_run_status || ''}
+          </span>
+          {' · '}累计 {def.run_count || 0} 次
+        </p>
+      </button>
+      <button
+        type="button"
+        onClick={onQuickRerun}
+        disabled={busy || !def.last_run_id}
+        title="用上次参数一键重跑"
+        className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-200 transition-colors hover:bg-amber-500/20 disabled:opacity-40"
+      >
+        {busy ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+        再跑
+      </button>
     </div>
   )
 }
@@ -636,53 +730,96 @@ function RecentCard({
 
 function MarketCard({
   def,
+  quickStartable,
+  busy,
   onOpen,
+  onStart,
 }: {
   def: WorkflowDefinition
+  quickStartable: boolean
+  busy: boolean
   onOpen: () => void
+  onStart: () => void
 }) {
+  const meta = categoryMeta(def.category)
+  const CatIcon = meta.icon
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4 transition-colors hover:border-cyan-500/40">
-      <button type="button" onClick={onOpen} className="w-full text-left">
-        <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-          <span className="text-sm font-medium text-slate-100">{def.name}</span>
-          {def.is_builtin ? (
-            <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[10px] text-violet-300">
-              内置
-            </span>
-          ) : (
-            <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-1 py-px text-[10px] text-cyan-300">
-              工作流
-            </span>
-          )}
-          <span className="rounded border border-slate-700 px-1 py-px text-[10px] text-slate-400">
-            {def.category}
+    <div
+      className={clsx(
+        'flex flex-col rounded-xl border bg-slate-900/50 p-4 transition-all',
+        def.is_builtin
+          ? 'border-violet-500/20 hover:border-violet-500/50 hover:shadow-lg hover:shadow-violet-500/5'
+          : clsx('border-slate-800', meta.ringCls),
+      )}
+    >
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <div className="flex items-start gap-2.5">
+          <span className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', meta.chipCls)}>
+            <CatIcon size={16} />
           </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="truncate text-sm font-medium text-slate-100">{def.name}</span>
+              {def.is_builtin ? (
+                <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[10px] text-violet-300">
+                  <Sparkles size={8} />
+                  内置
+                </span>
+              ) : (
+                <span className="shrink-0 rounded border border-cyan-500/40 bg-cyan-500/10 px-1 py-px text-[10px] text-cyan-300">
+                  自定义
+                </span>
+              )}
+            </div>
+            <span className="mt-0.5 block text-[10px] text-slate-500">{def.category}</span>
+          </div>
         </div>
         {def.description && (
-          <p className="line-clamp-2 text-xs leading-5 text-slate-400">{def.description}</p>
+          <p className="mt-2.5 line-clamp-2 text-xs leading-5 text-slate-400">{def.description}</p>
         )}
-        {/* 步骤链 */}
-        <div className="mt-2.5 flex flex-wrap items-center gap-1">
+        {/* 步骤链（编号） */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-1 gap-y-1">
           {def.steps.map((s, i) => (
             <span key={s.name} className="flex items-center gap-1">
-              {i > 0 && <ChevronRight size={11} className="text-slate-600" />}
-              <span className="rounded-md border border-slate-700 bg-slate-900/60 px-1.5 py-0.5 text-[11px] text-slate-300">
+              {i > 0 && <span className="mx-0.5 h-px w-2 bg-slate-700" />}
+              <span className="flex items-center gap-1 rounded-md border border-slate-700/80 bg-slate-950/60 px-1.5 py-0.5 text-[11px] text-slate-300">
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-800 text-[9px] font-medium text-slate-400">
+                  {i + 1}
+                </span>
                 {s.title}
               </span>
             </span>
           ))}
         </div>
-        <div className="mt-2.5 flex items-center gap-3 text-[11px] text-slate-500">
-          {def.last_run_at ? (
-            <span>
-              最近使用 {fmtRelative(def.last_run_at)} · 累计 {def.run_count} 次
-            </span>
-          ) : (
-            <span>尚未使用</span>
-          )}
-        </div>
       </button>
+      {/* 底部：统计 + 快捷运行 */}
+      <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-slate-800/80 pt-3">
+        <span className="min-w-0 truncate text-[11px] text-slate-500">
+          {def.last_run_at
+            ? `最近 ${fmtRelative(def.last_run_at)} · 累计 ${def.run_count} 次`
+            : '尚未使用'}
+        </span>
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={busy}
+          className={clsx(
+            'flex shrink-0 items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50',
+            quickStartable
+              ? 'border-violet-500/50 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25'
+              : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 hover:text-slate-100',
+          )}
+        >
+          {busy ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : quickStartable ? (
+            <Play size={12} />
+          ) : (
+            <Settings2 size={12} />
+          )}
+          {quickStartable ? '一键运行' : '配置参数'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -719,6 +856,9 @@ function WorkflowDetailModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const meta = categoryMeta(def.category)
+  const CatIcon = meta.icon
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6"
@@ -726,66 +866,82 @@ function WorkflowDetailModal({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-t-xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:rounded-xl">
-        <div className="mb-3 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <h3 className="text-base font-semibold text-slate-100">{def.name}</h3>
-              {def.is_builtin && (
-                <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[10px] text-violet-300">
-                  <Sparkles size={9} className="mr-0.5 inline" />
-                  内置
-                </span>
-              )}
-              <span className="rounded border border-slate-700 px-1 py-px text-[10px] text-slate-400">
-                {def.category}
+      <div className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-t-xl border border-slate-700 bg-slate-900 shadow-2xl sm:rounded-xl">
+        {/* 头部 */}
+        <div className="sticky top-0 z-10 border-b border-slate-800 bg-slate-900/95 px-5 py-3.5 backdrop-blur">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <span className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', meta.chipCls)}>
+                <CatIcon size={16} />
               </span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <h3 className="text-base font-semibold text-slate-100">{def.name}</h3>
+                  {def.is_builtin && (
+                    <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[10px] text-violet-300">
+                      内置
+                    </span>
+                  )}
+                  <span className="rounded border border-slate-700 px-1 py-px text-[10px] text-slate-400">
+                    {def.category}
+                  </span>
+                </div>
+                {def.description && (
+                  <p className="mt-1 text-xs leading-5 text-slate-400">{def.description}</p>
+                )}
+              </div>
             </div>
-            {def.description && (
-              <p className="mt-1.5 text-xs leading-5 text-slate-400">{def.description}</p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {onDelete && (
-              <IconBtn title="删除该工作流" onClick={onDelete} danger>
-                <Trash2 size={13} />
+            <div className="flex shrink-0 items-center gap-1">
+              {onDelete && (
+                <IconBtn title="删除该工作流" onClick={onDelete} danger>
+                  <Trash2 size={13} />
+                </IconBtn>
+              )}
+              <IconBtn title="关闭" onClick={onClose}>
+                <X size={14} />
               </IconBtn>
-            )}
-            <IconBtn title="关闭" onClick={onClose}>
-              <X size={14} />
-            </IconBtn>
+            </div>
           </div>
         </div>
 
-        {/* 步骤链 */}
-        <div className="mb-4 flex flex-wrap items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/50 p-2.5">
-          {def.steps.map((s, i) => (
-            <span key={s.name} className="flex items-center gap-1">
-              {i > 0 && <ChevronRight size={11} className="text-slate-600" />}
-              <span className="rounded-md border border-slate-700 bg-slate-900/60 px-1.5 py-0.5 text-[11px] text-slate-300">
-                {s.title}
-              </span>
-            </span>
-          ))}
-        </div>
+        <div className="px-5 py-4">
+          {/* 步骤时间线 */}
+          <div className="mb-4 rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+            <ol>
+              {def.steps.map((s, i) => (
+                <li key={s.name} className="flex gap-2.5">
+                  <div className="flex flex-col items-center">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-[10px] font-medium text-slate-400">
+                      {i + 1}
+                    </span>
+                    {i < def.steps.length - 1 && <span className="w-px flex-1 bg-slate-800" />}
+                  </div>
+                  <div className={clsx('min-w-0 pb-2.5', i === def.steps.length - 1 && 'pb-0')}>
+                    <p className="text-xs font-medium text-slate-200">{s.title}</p>
+                    <p className="mt-0.5 font-mono text-[10px] text-slate-600">{s.action}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
 
-        <div className="border-t border-slate-800 pt-4">
+          {/* 参数表单 */}
           <ParamForm params={def.params} values={values} errors={errors} onChange={onParam} />
-        </div>
 
-        <div className="mt-5 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-slate-500">
-            {def.last_run_at ? `最近使用 ${fmtRelative(def.last_run_at)} · 累计 ${def.run_count} 次` : '尚未使用过'}
-          </span>
-          <button
-            type="button"
-            onClick={onStart}
-            disabled={starting}
-            className="flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/15 px-4 py-2 text-sm font-medium text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:opacity-50"
-          >
-            {starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            一键运行
-          </button>
+          <div className="mt-5 flex items-center justify-between gap-2 border-t border-slate-800 pt-4">
+            <span className="text-[11px] text-slate-500">
+              {def.last_run_at ? `最近使用 ${fmtRelative(def.last_run_at)} · 累计 ${def.run_count} 次` : '尚未使用过'}
+            </span>
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={starting}
+              className="flex items-center gap-1.5 rounded-md border border-violet-500/50 bg-gradient-to-r from-violet-500/25 to-indigo-500/20 px-5 py-2 text-sm font-medium text-violet-100 transition-colors hover:from-violet-500/35 hover:to-indigo-500/30 disabled:opacity-50"
+            >
+              {starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              一键运行
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -820,23 +976,49 @@ function IconBtn({
   )
 }
 
+// ── 运行中面板（步骤进度条）───────────────────────────────────────────────
+
+const STEP_STATUS_META: Record<string, { dotCls: string; textCls: string }> = {
+  done: { dotCls: 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300', textCls: 'text-emerald-200' },
+  running: { dotCls: 'border-cyan-400/70 bg-cyan-500/15 text-cyan-200', textCls: 'text-cyan-100' },
+  error: { dotCls: 'border-rose-500/60 bg-rose-500/15 text-rose-300', textCls: 'text-rose-200' },
+  skip: { dotCls: 'border-slate-700 bg-slate-900 text-slate-600', textCls: 'text-slate-600' },
+  pending: { dotCls: 'border-slate-700 bg-slate-900 text-slate-500', textCls: 'text-slate-500' },
+}
+
 function ActiveRunPanel({
   run,
   elapsed,
+  stepTitles,
   onCancel,
 }: {
   run: ActiveRun
   elapsed: number
+  stepTitles: Record<string, string>
   onCancel: (runId: string) => void
 }) {
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0')
   const ss = String(elapsed % 60).padStart(2, '0')
+  const steps = Object.entries(run.stepStates)
   const runningMessage = Object.values(run.stepStates).find((s) => s.status === 'running')?.message
+  const doneCount = steps.filter(([, s]) => s.status === 'done').length
 
   return (
-    <div className="mb-6 rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-cyan-100">
+    <div
+      className={clsx(
+        'mb-7 rounded-xl border p-4',
+        run.status === 'running'
+          ? 'border-cyan-500/30 bg-cyan-500/[0.04]'
+          : run.status === 'done'
+            ? 'border-emerald-500/30 bg-emerald-500/[0.04]'
+            : run.status === 'cancelled'
+              ? 'border-amber-500/30 bg-amber-500/[0.04]'
+              : 'border-rose-500/30 bg-rose-500/[0.04]',
+      )}
+    >
+      {/* 头部 */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
           {run.status === 'running' ? (
             <Loader2 size={15} className="animate-spin text-cyan-400" />
           ) : run.status === 'done' ? (
@@ -848,9 +1030,9 @@ function ActiveRunPanel({
           <span className="font-mono text-xs text-slate-400">
             {mm}:{ss}
           </span>
-          {run.status === 'running' && (
+          {run.status === 'running' && steps.length > 0 && (
             <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-1.5 py-px text-[11px] text-cyan-300">
-              后台运行中，可离开本页
+              {doneCount}/{steps.length} 步 · 后台运行中，可离开本页
             </span>
           )}
         </div>
@@ -878,37 +1060,55 @@ function ActiveRunPanel({
         </div>
       </div>
 
-      {/* 步骤状态 */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {Object.entries(run.stepStates).map(([name, s]) => (
-          <span
-            key={name}
-            title={s.message}
-            className={clsx(
-              'flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]',
-              s.status === 'done'
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300'
-                : s.status === 'running'
-                  ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
-                  : s.status === 'error'
-                    ? 'border-rose-500/50 bg-rose-500/10 text-rose-300'
-                    : s.status === 'skip'
-                      ? 'border-slate-700 text-slate-500'
-                      : 'border-slate-700 text-slate-500',
-            )}
-          >
-            {s.status === 'done' ? (
-              <CheckCircle2 size={10} />
-            ) : s.status === 'running' ? (
-              <Loader2 size={10} className="animate-spin" />
-            ) : s.status === 'error' ? (
-              <XCircle size={10} />
-            ) : null}
-            {name}
-          </span>
-        ))}
-      </div>
-      {runningMessage && <p className="mt-2 truncate text-xs text-slate-400">{runningMessage}</p>}
+      {/* 步骤进度 */}
+      {steps.length > 0 && (
+        <div className="flex items-start overflow-x-auto pb-1">
+          {steps.map(([name, s], i) => {
+            const meta = STEP_STATUS_META[s.status] || STEP_STATUS_META.pending
+            return (
+              <div key={name} className="flex min-w-0 flex-1 items-start last:flex-none">
+                <div className="flex min-w-[72px] flex-col items-center gap-1">
+                  <span
+                    title={s.message || undefined}
+                    className={clsx(
+                      'flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-medium',
+                      meta.dotCls,
+                    )}
+                  >
+                    {s.status === 'done' ? (
+                      <CheckCircle2 size={12} />
+                    ) : s.status === 'running' ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : s.status === 'error' ? (
+                      <XCircle size={12} />
+                    ) : s.status === 'skip' ? (
+                      <span className="text-[9px]">跳过</span>
+                    ) : (
+                      i + 1
+                    )}
+                  </span>
+                  <span className={clsx('max-w-[96px] truncate text-center text-[10px]', meta.textCls)}>
+                    {stepTitles[name] || name}
+                  </span>
+                </div>
+                {i < steps.length - 1 && (
+                  <span
+                    className={clsx(
+                      'mt-3 h-px flex-1',
+                      s.status === 'done' ? 'bg-emerald-500/40' : 'bg-slate-800',
+                    )}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {runningMessage && (
+        <p className="mt-3 truncate rounded-md bg-slate-950/60 px-2.5 py-1.5 text-xs text-slate-400">
+          {runningMessage}
+        </p>
+      )}
     </div>
   )
 }

@@ -6,8 +6,9 @@ import os
 import re
 import subprocess
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
+from app.core.bgm.beat_align import align_bgm_offset
 from app.models.auto_edit import Plan
 from app.utils.bin_paths import ffmpeg_bin
 from app.utils.ffprobe_utils import has_audio_stream, probe_duration
@@ -25,6 +26,43 @@ _WRITABLE_BACKEND_ROOT = str(get_writable_backend_root())
 _BGM_LIBRARY_DIR = ensure_storage_subpath("bgm")
 _BGM_MANIFEST_PATH = os.path.join(_BGM_LIBRARY_DIR, "bgm_manifest.json")
 _BGM_EXTENSIONS = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
+
+# 节拍分析缓存：同一曲目在时间轴混音中会被多段复用，避免重复 librosa 分析
+_BEAT_OFFSET_CACHE: Dict[Tuple[str, int], Optional[float]] = {}
+
+
+def _cfg_flag(key: str, default: bool) -> bool:
+    """同步读全局配置开关（config 表）；读不到时返回默认值。"""
+    try:
+        import sqlite3
+
+        from app.db.database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        try:
+            row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return default
+        return str(row[0] or "").strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        return default
+
+
+def _resolve_beat_align_flag(beat_align: Optional[bool]) -> bool:
+    if beat_align is not None:
+        return bool(beat_align)
+    return _cfg_flag("bgm_beat_align", False)
+
+
+def _cached_align_offset(bgm_path: str, cut_times: Sequence[float]) -> Optional[float]:
+    """带缓存的对齐求解：同一曲目+切点数直接复用结果。"""
+    cuts = tuple(round(float(t), 2) for t in cut_times)
+    key = (bgm_path, hash(cuts))
+    if key not in _BEAT_OFFSET_CACHE:
+        _BEAT_OFFSET_CACHE[key] = align_bgm_offset(bgm_path, list(cuts))
+    return _BEAT_OFFSET_CACHE[key]
 
 
 def _run_ffmpeg(args: List[str], desc: str = "") -> None:
@@ -317,6 +355,8 @@ def _mix_bgm_for_video(
     fade_in_sec: float,
     fade_out_sec: float,
     ducking: str = "off",
+    cut_times: Optional[Sequence[float]] = None,
+    beat_align: Optional[bool] = None,
 ) -> str:
     video_dur = probe_duration(video_path)
     if video_dur <= 0:
@@ -326,12 +366,23 @@ def _mix_bgm_for_video(
     fade_out = max(0.0, float(fade_out_sec or 0.0))
     fade_out_start = max(0.0, video_dur - fade_out)
 
+    # 节拍对齐：求 BGM 起播偏移，使节拍栅格贴合镜头切点（视频时长不动，无失步风险）
+    phase_prefix = ""
+    if _resolve_beat_align_flag(beat_align) and cut_times:
+        try:
+            offset = _cached_align_offset(bgm_path, cut_times)
+            if offset and offset > 0.01:
+                phase_prefix = f"atrim=start={offset:.3f},asetpts=PTS-STARTPTS,"
+                logger.info("BGM 节拍对齐：从曲目 %.3fs 处起播", offset)
+        except Exception as e:
+            logger.warning("BGM 节拍对齐失败，按原混音继续: %s", e)
+
     out_dir = os.path.dirname(os.path.abspath(video_path))
     out_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_bgm_{uuid.uuid4().hex[:6]}.mp4"
     out_path = os.path.join(out_dir, out_filename)
 
-    # BGM 音轨处理：音量 + 淡入 + 淡出（按总时长）
-    bgm_filter_parts = [f"volume={float(volume_db):.2f}dB"]
+    # BGM 音轨处理：相位偏移 + 音量 + 淡入 + 淡出（按总时长）
+    bgm_filter_parts = [f"{phase_prefix}volume={float(volume_db):.2f}dB"]
     if fade_in > 0:
         bgm_filter_parts.append(f"afade=t=in:st=0:d={fade_in:.3f}")
     if fade_out > 0:
@@ -410,10 +461,15 @@ def _mix_bgm_timeline_for_video(
     timeline_items: List[dict],
     fade_in_sec: float,
     fade_out_sec: float,
+    video_cut_times: Optional[Sequence[float]] = None,
+    beat_align: Optional[bool] = None,
 ) -> str:
     out_dir = os.path.dirname(os.path.abspath(video_path))
     out_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_bgm_{uuid.uuid4().hex[:6]}.mp4"
     out_path = os.path.join(out_dir, out_filename)
+
+    do_align = _resolve_beat_align_flag(beat_align)
+    all_cuts = list(video_cut_times or [])
 
     filter_parts: List[str] = []
     input_args: List[str] = ["-i", video_path]
@@ -431,8 +487,23 @@ def _mix_bgm_timeline_for_video(
         fade_out_start = max(0.0, dur - fo)
         delay_ms = int(round(start_sec * 1000))
         label = f"bgm{idx}"
+
+        # 节拍对齐：用该段窗口内的镜头切点求本段 BGM 的起播偏移
+        phase_prefix = ""
+        if do_align:
+            window_cuts = [c for c in all_cuts if start_sec <= c < end_sec]
+            if not window_cuts:
+                window_cuts = [start_sec] if start_sec > 0 else []
+            if window_cuts:
+                try:
+                    offset = _cached_align_offset(bgm_path, window_cuts)
+                    if offset and offset > 0.01:
+                        phase_prefix = f"atrim=start={offset:.3f},asetpts=PTS-STARTPTS,"
+                except Exception as e:
+                    logger.warning("BGM 时间轴段 %d 节拍对齐失败，按原样混音: %s", idx, e)
+
         f = (
-            f"[{idx}:a]aloop=loop=-1:size=2000000000,atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+            f"[{idx}:a]{phase_prefix}aloop=loop=-1:size=2000000000,atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
             f"volume={vol:.2f}dB"
         )
         if fi > 0:
@@ -471,7 +542,13 @@ def _mix_bgm_timeline_for_video(
     return out_path
 
 
-def apply_bgm_config_postprocess(filename: str, url: str, bgm_cfg: Optional[dict]) -> Tuple[str, str]:
+def apply_bgm_config_postprocess(
+    filename: str,
+    url: str,
+    bgm_cfg: Optional[dict],
+    cut_times: Optional[Sequence[float]] = None,
+    beat_align: Optional[bool] = None,
+) -> Tuple[str, str]:
     if not bgm_cfg or not bool(bgm_cfg.get("enabled")):
         return filename, url
     burn_dir = resolve_burned_videos_dir_from_public_url(url) if (url or "").strip() else ensure_storage_subpath("burned_videos")
@@ -536,12 +613,16 @@ def apply_bgm_config_postprocess(filename: str, url: str, bgm_cfg: Optional[dict
 
     if not timeline_items:
         return filename, url
+    # 无外部切点时，用时间轴段边界作为切点（镜头/换曲边界即天然切点）
+    effective_cuts = list(cut_times) if cut_times else [it["start_sec"] for it in timeline_items if it.get("start_sec")]
     try:
         mixed_path = _mix_bgm_timeline_for_video(
             src_video_path,
             timeline_items,
             fade_in_sec=float(bgm_cfg.get("fade_in_sec") or 0.8),
             fade_out_sec=float(bgm_cfg.get("fade_out_sec") or 1.0),
+            video_cut_times=effective_cuts,
+            beat_align=beat_align,
         )
     except Exception as e:
         logger.error("BGM 时间轴混音失败，回退原成片: %s", e)
@@ -561,11 +642,18 @@ def apply_bgm_postprocess_if_needed(
     if not bgm or not bgm.enabled:
         logger.info("BGM 混音跳过：plan.bgm 未启用")
         return filename, url
+    # 镜头切点：正片段的起始时刻（节拍对齐的目标，仅平移 BGM 相位，不动视频）
+    cut_times = [
+        float(s.start_time_sec)
+        for s in plan.segments
+        if not s.exclude_from_output and s.start_time_sec is not None and float(s.start_time_sec) > 0.0
+    ]
     logger.info(
-        "BGM 混音开始：source=%s track_id=%s track_ids=%s",
+        "BGM 混音开始：source=%s track_id=%s track_ids=%s cuts=%d",
         bgm.source,
         bgm.track_id,
         getattr(bgm, "track_ids", None),
+        len(cut_times),
     )
     # 与 subtitle 导出流程统一复用，同时兼容单曲旧字段。
     cfg = {
@@ -579,7 +667,7 @@ def apply_bgm_postprocess_if_needed(
         "fade_out_sec": bgm.fade_out_sec,
         "timeline_segments": getattr(bgm, "timeline_segments", None),
     }
-    new_filename, new_url = apply_bgm_config_postprocess(filename, url, cfg)
+    new_filename, new_url = apply_bgm_config_postprocess(filename, url, cfg, cut_times=cut_times)
     if new_filename != filename or new_url != url:
         return new_filename, new_url
 
@@ -608,6 +696,7 @@ def apply_bgm_postprocess_if_needed(
             fade_in_sec=bgm.fade_in_sec,
             fade_out_sec=bgm.fade_out_sec,
             ducking=ducking,
+            cut_times=cut_times,
         )
     except Exception as e:
         logger.error("BGM 混音失败，已回退原成片: %s", e)

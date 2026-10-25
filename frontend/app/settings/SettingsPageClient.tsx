@@ -73,14 +73,43 @@ export default function SettingsPage() {
   }, [])
 
   const sections = useMemo(() => ([
-    { id: 'vlm', label: 'VLM 视觉模型' },
-    { id: 'llm', label: 'LLM 文本模型' },
-    { id: 'embedding', label: '向量检索' },
-    { id: 'asr', label: '语音识别' },
-    { id: 'video', label: '视频处理' },
-    { id: 'stock-media', label: '在线素材' },
-    { id: 'tts', label: 'TTS 配音' },
+    { id: 'llm', label: 'LLM 文本模型', group: 'models' },
+    { id: 'vlm', label: 'VLM 视觉模型', group: 'models' },
+    { id: 'embedding', label: '向量检索', group: 'models' },
+    { id: 'asr', label: '语音识别', group: 'models' },
+    { id: 'tts', label: 'TTS 配音', group: 'models' },
+    { id: 'video', label: '视频处理', group: 'media' },
+    { id: 'stock-media', label: '在线素材', group: 'media' },
   ]), [])
+
+  /** 各服务配置就绪状态：ok=已配置 / local=本地或内置免配置 / missing=待配置 */
+  const serviceStatuses = useMemo(() => {
+    const val = (k: string) => (config[k]?.value ?? '').trim()
+    const has = (k: string) => val(k).length > 0
+    return [
+      { id: 'llm', name: 'LLM 文本', state: has('llm_api_key') ? ('ok' as const) : ('missing' as const), label: has('llm_api_key') ? '已配置' : '待配置 Key' },
+      { id: 'vlm', name: 'VLM 视觉', state: has('vlm_api_key') ? ('ok' as const) : ('missing' as const), label: has('vlm_api_key') ? '已配置' : '待配置 Key' },
+      { id: 'embedding', name: '向量检索', state: has('embedding_api_key') ? ('ok' as const) : ('missing' as const), label: has('embedding_api_key') ? '已配置' : '待配置 Key' },
+      {
+        id: 'asr',
+        name: '语音识别',
+        state: val('asr_provider') === 'whisper' ? ('local' as const) : has('asr_api_key') ? ('ok' as const) : ('missing' as const),
+        label: val('asr_provider') === 'whisper' ? '本地 Whisper' : has('asr_api_key') ? '已配置' : '待配置 Key',
+      },
+      {
+        id: 'tts',
+        name: 'TTS 配音',
+        state: val('tts_provider') === 'edge-tts' ? ('local' as const) : has('tts_api_key') ? ('ok' as const) : ('missing' as const),
+        label: val('tts_provider') === 'edge-tts' ? '内置免费' : has('tts_api_key') ? '已配置' : '待配置 Key',
+      },
+    ]
+  }, [config])
+
+  const statusById = useMemo(() => {
+    const m: Record<string, { state: string }> = {}
+    serviceStatuses.forEach((s) => { m[s.id] = { state: s.state } })
+    return m
+  }, [serviceStatuses])
 
   useEffect(() => {
     if (loading) return
@@ -210,6 +239,39 @@ export default function SettingsPage() {
           </h1>
         </div>
 
+        {/* 配置就绪状态总览：缺什么一眼可见，点击直达对应配置节 */}
+        {!loading && !error && (
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">配置就绪状态</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {serviceStatuses.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => jumpTo(s.id)}
+                  className={`flex flex-col gap-1 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                    s.state === 'missing'
+                      ? 'border-amber-500/35 bg-amber-500/5 hover:border-amber-500/60'
+                      : 'border-slate-800 bg-slate-900/50 hover:border-slate-600'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        s.state === 'ok' ? 'bg-emerald-400' : s.state === 'local' ? 'bg-cyan-400' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span className="text-xs text-slate-200 font-medium">{s.name}</span>
+                  </span>
+                  <span className={`text-[11px] ${s.state === 'missing' ? 'text-amber-300/90' : 'text-slate-500'}`}>
+                    {s.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-8 items-start">
           {/* Nav */}
           <aside className="lg:sticky lg:top-6 space-y-3">
@@ -236,30 +298,39 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* desktop nav */}
+            {/* desktop nav：按「模型与语音 / 处理与素材」分组，导航项带配置状态点 */}
             <div className="hidden lg:block rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
               <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/70">
                 <p className="text-xs font-medium text-slate-400">快速导航</p>
               </div>
               <div className="p-2">
-                {sections.map((s) => {
-                  const active = activeSection === s.id
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => jumpTo(s.id)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                        active
-                          ? 'bg-indigo-500/10 text-indigo-200'
-                          : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
-                      }`}
-                    >
-                      <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${active ? 'bg-indigo-400' : 'bg-slate-700'}`} />
-                      {s.label}
-                    </button>
-                  )
-                })}
+                {([['models', '模型与语音'], ['media', '处理与素材']] as const).map(([groupKey, groupLabel]) => (
+                  <div key={groupKey} className="mb-1 last:mb-0">
+                    <p className="px-3 pt-2 pb-1 text-[10px] text-slate-600 uppercase tracking-wider">{groupLabel}</p>
+                    {sections.filter((s) => s.group === groupKey).map((s) => {
+                      const active = activeSection === s.id
+                      const st = statusById[s.id]?.state
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => jumpTo(s.id)}
+                          className={`w-full flex items-center text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                            active
+                              ? 'bg-indigo-500/10 text-indigo-200'
+                              : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                          }`}
+                        >
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${active ? 'bg-indigo-400' : 'bg-slate-700'}`} />
+                          <span className="flex-1">{s.label}</span>
+                          {st === 'ok' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" title="已配置" />}
+                          {st === 'local' && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" title="本地/内置，免配置" />}
+                          {st === 'missing' && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="待配置 Key" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ))}
                 <div className="mt-2 pt-2 border-t border-slate-800">
                   <button
                     type="button"
@@ -291,11 +362,11 @@ export default function SettingsPage() {
 
             {!loading && (
               <>
-                <div id="vlm" className="scroll-mt-28">
-                  <VlmSection {...sharedProps} vlmProvider={vlmProvider} onApplyProvider={applyVlmProvider} />
-                </div>
                 <div id="llm" data-tour="page-settings-llm" className="scroll-mt-28">
                   <LlmSection {...sharedProps} llmProvider={llmProvider} onApplyProvider={applyLlmProvider} />
+                </div>
+                <div id="vlm" className="scroll-mt-28">
+                  <VlmSection {...sharedProps} vlmProvider={vlmProvider} onApplyProvider={applyVlmProvider} />
                 </div>
                 <div id="embedding" className="scroll-mt-28">
                   <EmbeddingSection {...sharedProps} embProvider={embProvider} onApplyProvider={applyEmbProvider} />
@@ -303,13 +374,13 @@ export default function SettingsPage() {
                 <div id="asr" className="scroll-mt-28">
                   <AsrSection {...sharedProps} asrProvider={asrProvider} onApplyProvider={applyAsrProvider} />
                 </div>
+                <div id="tts" className="scroll-mt-28">
+                  <TtsSection {...sharedProps} ttsProvider={ttsProvider} onApplyProvider={applyTtsProvider} />
+                </div>
                 <div id="video" className="scroll-mt-28">
                   <VideoSection {...sharedProps} />
                 </div>
                 <StockMediaSection {...sharedProps} />
-                <div id="tts" className="scroll-mt-28">
-                  <TtsSection {...sharedProps} ttsProvider={ttsProvider} onApplyProvider={applyTtsProvider} />
-                </div>
               </>
             )}
           </div>

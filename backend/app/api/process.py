@@ -154,7 +154,14 @@ async def _process_queue_worker():
                 ps._pending_cancelled.discard(job_id)
                 logger.info("队列跳过已取消的 process job: %s", job_id)
             else:
-                await _run_task(**job_info)
+                # 注册进 _job_tasks 再执行：否则运行中的任务会被
+                # reconcile_orphan_task 误判为孤儿（_task_has_live_worker 恒为
+                # False）而在一次状态查询后被错误标记为 cancelled。
+                task_id = job_info.get("task_id") if isinstance(job_info, dict) else None
+                t = asyncio.create_task(_run_task(**job_info))
+                if task_id:
+                    _job_tasks[task_id] = t
+                await t
         except Exception:
             logger.exception("队列任务异常")
         finally:

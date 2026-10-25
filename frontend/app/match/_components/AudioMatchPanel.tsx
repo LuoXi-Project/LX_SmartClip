@@ -147,6 +147,8 @@ export function AudioMatchPanel({
     setTimelineOpen(true)
   }
 
+  const matchedCount = segments.filter((s) => s.clips.length > 0).length
+
   const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (f) onUploadTranscribe(f)
@@ -192,30 +194,40 @@ export function AudioMatchPanel({
         )}
       </section>
 
-      <div className="flex flex-wrap items-center gap-4">
-        <label className="text-xs text-slate-500 flex items-center gap-2">
-          初筛
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={topK}
-            onChange={(e) => onTopKChange(Number(e.target.value))}
-            className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200"
-          />
-        </label>
-        <label className="text-xs text-slate-500 flex items-center gap-2">
-          推荐
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={topN}
-            onChange={(e) => onTopNChange(Number(e.target.value))}
-            className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200"
-          />
-        </label>
-      </div>
+      {/* 检索参数：低频调参项，默认折叠 */}
+      <details className="rounded-xl border border-slate-800 bg-slate-900/40">
+        <summary className="cursor-pointer list-none px-4 py-2.5 flex items-center justify-between gap-3 select-none">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">检索参数（高级）</span>
+          <span className="text-[11px] text-slate-500">初筛 {topK} · 推荐 {topN} ▾</span>
+        </summary>
+        <div className="px-4 pb-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="text-xs text-slate-500 flex items-center gap-2">
+              初筛
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={topK}
+                onChange={(e) => onTopKChange(Number(e.target.value))}
+                className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200"
+              />
+            </label>
+            <label className="text-xs text-slate-500 flex items-center gap-2">
+              推荐
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={topN}
+                onChange={(e) => onTopNChange(Number(e.target.value))}
+                className="w-14 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-center text-slate-200"
+              />
+            </label>
+            <span className="text-[11px] text-slate-600">初筛=每段召回的候选数；推荐=每段展示的片段数</span>
+          </div>
+        </div>
+      </details>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">① 上传配音并识别</p>
@@ -265,40 +277,7 @@ export function AudioMatchPanel({
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">手动 BGM</p>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={manualBgmEnabled}
-            onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
-            className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
-          />
-          <span className="text-sm text-slate-200">导出时混入 BGM（与手动匹配一致）</span>
-        </label>
-        {manualBgmEnabled && (
-          <BgmCustomConfigPanel
-            title="手动 BGM 自定义"
-            enabled
-            onEnabledChange={() => {}}
-            bgmTracks={bgmTracks}
-            bgmListError={bgmListError}
-            selectedTrackIds={selectedManualBgmTrackIds}
-            onToggleTrack={onToggleManualBgmTrack}
-            volumeByTrackId={manualBgmVolumeByTrackId}
-            onTrackVolumeChange={onManualBgmTrackVolumeChange}
-            timelineSegments={manualBgmTimelineSegments}
-            onAddTimelineSegment={onAddManualBgmTimelineSegment}
-            onRemoveTimelineSegment={onRemoveManualBgmTimelineSegment}
-            onUpdateTimelineSegment={onUpdateManualBgmTimelineSegment}
-          />
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-          <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />
-          ② 文案段落（可编辑 / 拆分）
-        </p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">② 文案校对与拆段</p>
         <textarea
           value={globalQuery}
           onChange={(e) => onGlobalQueryChange(e.target.value)}
@@ -318,42 +297,26 @@ export function AudioMatchPanel({
             拆分为段落
           </button>
           {segments.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={onMatchAll}
-                disabled={globalMatching || syncingAudio || selectedVideoIds.length === 0}
-                title={selectedVideoIds.length === 0 ? '请先在上方限定视频范围' : undefined}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
-              >
-                {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                {globalMatching ? '全部匹配中…' : '全部匹配素材'}
-              </button>
-              <button
-                type="button"
-                onClick={onSyncAllAudioSlices}
-                disabled={syncingAudio || globalMatching || !audioSource}
-                className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
-              >
-                {syncingAudio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {syncingAudio ? '原声切片中…' : '同步全部原声'}
-              </button>
-            </>
+            <span className="text-[11px] text-slate-600">拆分后请在下方逐段匹配素材</span>
           )}
         </div>
       </section>
 
-      {timelineWorkspace}
-
-      {segments.length > 0 && (
-        <section className="space-y-4">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-              ③ 段落详情 · {segments.length} 段
-              <span className="ml-2 font-normal normal-case text-slate-600 hidden sm:inline">
-                素材选择与文案；成片预览请用上方时间轴，底音频对齐请用「底音频时间轴」
-              </span>
+      {/* ③ 段落与素材：批量操作与列表合一（与手动模式同构） */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />
+              段落与素材
             </p>
+            {segments.length > 0 && (
+              <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                {segments.length} 段 · {matchedCount} 已匹配
+              </span>
+            )}
+          </div>
+          {segments.length > 0 && (
             <div className="flex items-center gap-3">
               {canOpenTimeline ? (
                 <button
@@ -369,44 +332,121 @@ export function AudioMatchPanel({
                 清空全部
               </button>
             </div>
-          </div>
-          {segments.map((seg, i) => (
-            <div
-              key={seg.id}
-              id={`seg-card-${seg.id}`}
-              className={[
-                'scroll-mt-24 rounded-2xl transition-shadow duration-200',
-                focusedSegId === seg.id
-                  ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
-                  : '',
-              ].join(' ')}
+          )}
+        </div>
+        {segments.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={onMatchAll}
+              disabled={globalMatching || syncingAudio || selectedVideoIds.length === 0}
+              title={selectedVideoIds.length === 0 ? '请先在上方限定视频范围' : undefined}
+              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
             >
-              <SegmentRow
-                seg={seg}
-                index={i}
-                segmentCount={segments.length}
-                audioMatchMode
-                onTextChange={(text) => onSegmentTextChange(seg.id, text)}
-                onMatch={() => onMatchSegment(seg.id)}
-                onToggleSelect={(clipId, e) => onToggleClipSelected(seg.id, clipId, e)}
-                onTts={() => {}}
-                onSyncAudio={() => onSyncSegmentAudio(seg.id)}
-                syncingAudio={syncingAudio}
-                onPlayAudio={() => onPlayAudio(seg.id)}
-                onStopAudio={onStopAudio}
-                onSeekAudio={onSeekAudio ? (t) => onSeekAudio(seg.id, t) : undefined}
-                playingAudio={playingSegId === seg.id}
-                audioCurrentTime={playingSegId === seg.id ? audioCurrentTime : 0}
-                audioDuration={playingSegId === seg.id ? audioDuration : 0}
-                onPreview={onPreview}
-                onToggleExpand={() => onToggleExpand(seg.id)}
-                onOpenClipInOut={onOpenClipInOut ? () => onOpenClipInOut(seg.id) : undefined}
-                onOpenAudioTimeline={() => openTimeline(seg.id)}
-              />
-            </div>
-          ))}
-        </section>
-      )}
+              {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              {globalMatching ? '全部匹配中…' : '全部匹配素材'}
+            </button>
+            <button
+              type="button"
+              onClick={onSyncAllAudioSlices}
+              disabled={syncingAudio || globalMatching || !audioSource}
+              className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
+            >
+              {syncingAudio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {syncingAudio ? '原声切片中…' : '同步全部原声'}
+            </button>
+          </div>
+        )}
+        {segments.length === 0 ? (
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            上传配音识别并拆段后，在此逐段匹配素材；成片以原配音为底，无需 TTS。
+          </p>
+        ) : (
+          <p className="text-[11px] text-slate-600 hidden sm:block">
+            素材选择与文案；成片预览请用下方时间轴，底音频对齐请用「底音频时间轴」。
+          </p>
+        )}
+        {segments.length > 0 && (
+          <div className="space-y-4 pt-1">
+            {segments.map((seg, i) => (
+              <div
+                key={seg.id}
+                id={`seg-card-${seg.id}`}
+                className={[
+                  'scroll-mt-24 rounded-2xl transition-shadow duration-200',
+                  focusedSegId === seg.id
+                    ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
+                    : '',
+                ].join(' ')}
+              >
+                <SegmentRow
+                  seg={seg}
+                  index={i}
+                  segmentCount={segments.length}
+                  audioMatchMode
+                  onTextChange={(text) => onSegmentTextChange(seg.id, text)}
+                  onMatch={() => onMatchSegment(seg.id)}
+                  onToggleSelect={(clipId, e) => onToggleClipSelected(seg.id, clipId, e)}
+                  onTts={() => {}}
+                  onSyncAudio={() => onSyncSegmentAudio(seg.id)}
+                  syncingAudio={syncingAudio}
+                  onPlayAudio={() => onPlayAudio(seg.id)}
+                  onStopAudio={onStopAudio}
+                  onSeekAudio={onSeekAudio ? (t) => onSeekAudio(seg.id, t) : undefined}
+                  playingAudio={playingSegId === seg.id}
+                  audioCurrentTime={playingSegId === seg.id ? audioCurrentTime : 0}
+                  audioDuration={playingSegId === seg.id ? audioDuration : 0}
+                  onPreview={onPreview}
+                  onToggleExpand={() => onToggleExpand(seg.id)}
+                  onOpenClipInOut={onOpenClipInOut ? () => onOpenClipInOut(seg.id) : undefined}
+                  onOpenAudioTimeline={() => openTimeline(seg.id)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      {timelineWorkspace}
+      {/* 成片 BGM：导出期参数，默认折叠（与手动模式一致） */}
+      <details className="group rounded-2xl border border-slate-800 bg-slate-900/40">
+        <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 select-none">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+            成片 BGM{manualBgmEnabled && <span className="ml-2 text-emerald-400 normal-case font-normal">已启用 · {selectedManualBgmTrackIds.length} 首</span>}
+          </span>
+          <span className="text-[11px] text-slate-500 group-open:hidden">
+            {manualBgmEnabled ? '调整曲目与分段 ▾' : '导出时混入背景音乐（可选）▾'}
+          </span>
+          <span className="text-[11px] text-slate-500 hidden group-open:inline">收起 ▴</span>
+        </summary>
+        <div className="px-4 pb-4 space-y-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={manualBgmEnabled}
+              onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
+              className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+            />
+            <span className="text-sm text-slate-200">导出时混入 BGM（与手动匹配一致）</span>
+          </label>
+          {manualBgmEnabled && (
+            <BgmCustomConfigPanel
+              title="手动 BGM 自定义"
+              enabled
+              onEnabledChange={() => {}}
+              bgmTracks={bgmTracks}
+              bgmListError={bgmListError}
+              selectedTrackIds={selectedManualBgmTrackIds}
+              onToggleTrack={onToggleManualBgmTrack}
+              volumeByTrackId={manualBgmVolumeByTrackId}
+              onTrackVolumeChange={onManualBgmTrackVolumeChange}
+              timelineSegments={manualBgmTimelineSegments}
+              onAddTimelineSegment={onAddManualBgmTimelineSegment}
+              onRemoveTimelineSegment={onRemoveManualBgmTimelineSegment}
+              onUpdateTimelineSegment={onUpdateManualBgmTimelineSegment}
+            />
+          )}
+        </div>
+      </details>
 
       {audioSource && (
         <AudioMatchTimelineModal

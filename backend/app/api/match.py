@@ -16,7 +16,7 @@ from app.models.match import (
 )
 
 from app.core.blocking_pool import run_heavy
-from app.core.matcher import Matcher, resolve_match_mode
+from app.core.matcher import Matcher, resolve_match_mode, _attach_media_urls
 from app.core.auto_edit.visual_intent import (
     expand_visual_intent_sync,
     expand_visual_intents_sync,
@@ -182,6 +182,16 @@ def _load_match_runtime(
             "api_key": vlm_api_key,
             "model": vlm_model,
         },
+        # 生成式兜底（文生视频）：SiliconFlow 风格 提交-轮询-下载 协议
+        "generate_cfg": {
+            "base_url": _read_cfg(conn, "video_gen_base_url", "https://api.siliconflow.cn"),
+            "api_key": _read_cfg(conn, "video_gen_api_key", ""),
+            "model": _read_cfg(conn, "video_gen_model", "Wan-AI/Wan2.2-T2V-A14B"),
+        },
+        "gen_min_score": float(_read_cfg(conn, "match_generate_min_score", "5.5") or 5.5),
+        "gen_duration_sec": float(_read_cfg(conn, "video_gen_duration_sec", "5") or 5),
+        "gen_timeout_sec": float(_read_cfg(conn, "video_gen_timeout_sec", "600") or 600),
+        "gen_max_per_batch": int(_read_cfg(conn, "match_generate_max_per_batch", "3") or 3),
     }
 
 
@@ -245,6 +255,67 @@ def _maybe_vlm_verify(rt: dict, narration: str, result: dict, verify_top_n: Opti
     return True
 
 
+def _maybe_generate_fallback(
+    rt: dict,
+    conn: sqlite3.Connection,
+    req_flag: Optional[bool],
+    result: dict,
+    prompt: str,
+    budget: Optional[list],
+) -> bool:
+    """素材库无强匹配时用文生视频生成空镜补位，置顶推荐并入库。
+
+    - 触发条件：开关开启（请求覆盖 > 全局配置）+ 已配 video_gen_api_key
+      + 预算未耗尽 + 推荐为空或最佳分低于 match_generate_min_score；
+    - 生成失败静默回退普通推荐；budget 为 [剩余次数] 单元素列表（单次匹配传 None）。
+    """
+    use_gen = (
+        req_flag if req_flag is not None else _cfg_bool(conn, "match_generate_fallback", False)
+    )
+    if not use_gen or not rt["generate_cfg"].get("api_key"):
+        return False
+    if budget is not None and budget[0] <= 0:
+        return False
+
+    recommended = result.get("recommended") or []
+    best = 0.0
+    if recommended:
+        try:
+            best = float(recommended[0].get("score", 0) or 0)
+        except (TypeError, ValueError):
+            best = 0.0
+    if recommended and best >= rt["gen_min_score"]:
+        return False
+
+    stage_log("检索", "素材库无强匹配，AI 生成空镜兜底…", status="running")
+    from app.core.material.video_gen import generate_broll_sync
+
+    try:
+        clip = generate_broll_sync(
+            conn,
+            rt["generate_cfg"],
+            (prompt or "").strip(),
+            duration_sec=rt["gen_duration_sec"],
+            timeout_sec=rt["gen_timeout_sec"],
+        )
+    except Exception as e:
+        logger.warning("[Match] 空镜生成异常，回退普通推荐: %s", e)
+        clip = None
+    if not clip:
+        return False
+
+    gen = dict(clip)
+    gen["score"] = round(max(float(rt["gen_min_score"]), 0.01), 3)  # 置顶推荐
+    gen["reason"] = f"AI 生成空镜（素材库最佳匹配 {best:.1f} 分，低于阈值 {rt['gen_min_score']}）"
+    gen["is_generated"] = True
+    _attach_media_urls([gen], "")
+    result["recommended"] = [gen] + list(recommended)
+    result["candidates"] = list(result.get("candidates") or []) + [dict(gen)]
+    if budget is not None:
+        budget[0] -= 1
+    return True
+
+
 def _run_matcher(
     rt: dict,
     conn: sqlite3.Connection,
@@ -303,6 +374,10 @@ def _match_clips_sync(req: MatchRequest, api_base_url: str) -> MatchResponse:
             if use_verify
             else False
         )
+        # 生成兜底：素材库无强匹配时用文生视频补空镜（单次匹配无预算上限）
+        _maybe_generate_fallback(
+            rt, conn, req.generate_fallback, result, (q_intent or req.query), None
+        )
 
         return MatchResponse(
             query=req.query,
@@ -358,6 +433,7 @@ def _match_batch_sync(req: MatchBatchRequest, api_base_url: str) -> MatchBatchRe
 
         used_clip_ids: List[str] = []
         verify_budget = _BATCH_VLM_BUDGET
+        gen_budget = [max(0, int(rt["gen_max_per_batch"]))]
         items: List[MatchBatchItem] = []
 
         for i, seg in enumerate(segments):
@@ -374,6 +450,11 @@ def _match_batch_sync(req: MatchBatchRequest, api_base_url: str) -> MatchBatchRe
             if use_verify and verify_budget > 0:
                 if _maybe_vlm_verify(rt, seg, result, req.vlm_verify_top_n):
                     verify_budget -= 1
+
+            # 生成兜底：带预算上限，长文案不会失控烧钱
+            _maybe_generate_fallback(
+                rt, conn, req.generate_fallback, result, (q_intent or seg), gen_budget
+            )
 
             recommended = result.get("recommended") or []
             if recommended:

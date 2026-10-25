@@ -34,6 +34,10 @@ class MatchRequest(BaseModel):
     vlm_verify_top_n: Optional[int] = Field(
         None, ge=1, le=5, description="参与 VLM 画面校验的推荐候选数（默认 3）"
     )
+    generate_fallback: Optional[bool] = Field(
+        None,
+        description="素材库无强匹配时用文生视频生成空镜补位（None=跟随全局配置 match_generate_fallback，默认关；需配置 video_gen_api_key）",
+    )
     penalize_clip_ids: Optional[List[str]] = Field(
         None,
         description="需降权的片段 ID（如整篇文案中前文已选用的片段），用于跨段去重",
@@ -58,6 +62,7 @@ class ClipResult(BaseModel):
     reason: str
     vlm_score: Optional[float] = Field(None, description="VLM 画面相关度 0~10（未校验时为空）")
     vlm_reason: Optional[str] = Field(None, description="VLM 画面相关度理由")
+    is_generated: Optional[bool] = Field(None, description="是否为 AI 生成空镜（生成兜底产物）")
 
 
 class MatchResponse(BaseModel):
@@ -84,6 +89,7 @@ class MatchBatchRequest(BaseModel):
     visual_intent: Optional[bool] = None
     visual_verify: Optional[bool] = None
     vlm_verify_top_n: Optional[int] = Field(None, ge=1, le=5)
+    generate_fallback: Optional[bool] = None
 
 
 class MatchBatchItem(BaseModel):

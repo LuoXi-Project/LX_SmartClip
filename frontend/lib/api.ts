@@ -957,6 +957,8 @@ export interface MatchRequest {
   visual_verify?: boolean
   /** 参与本次匹配的 VLM 画面校验的推荐候选数（1~5，默认 3） */
   vlm_verify_top_n?: number
+  /** 素材库无强匹配时用文生视频生成空镜补位；不传则跟随后端全局配置（默认关） */
+  generate_fallback?: boolean
   /** 需降权的片段 ID（整篇文案中前文已选用），用于跨段去重 */
   penalize_clip_ids?: string[]
 }
@@ -970,6 +972,7 @@ export interface MatchBatchRequest {
   visual_intent?: boolean
   visual_verify?: boolean
   vlm_verify_top_n?: number
+  generate_fallback?: boolean
 }
 
 export interface MatchBatchItem {
@@ -999,6 +1002,8 @@ export interface MatchClip {
   /** VLM 画面相关度 0~10（未启用画面校验时为空） */
   vlm_score?: number | null
   vlm_reason?: string | null
+  /** 是否为 AI 生成空镜（生成兜底产物） */
+  is_generated?: boolean | null
 }
 
 export interface TTSRequest {

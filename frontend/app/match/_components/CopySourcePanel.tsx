@@ -37,7 +37,7 @@ export function CopySourcePanel({
           <FileText className="w-4 h-4 text-slate-500" />
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">文案</p>
           <span className="text-[11px] text-slate-600 normal-case font-normal">
-            按空行自动拆段；下方「自动一键成片」与「手动逐段模式」共用
+            按空行自动拆段；文案供下方段落匹配与自动流水线共用
           </span>
         </div>
         <div className="flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-900/70 p-1">

@@ -148,6 +148,9 @@ export function ManualMatchPanel({
     return () => document.removeEventListener('dragover', onDragOver)
   }, [draggingId])
 
+  const matchedCount = segments.filter((s) => s.clips.length > 0).length
+  const ttsCount = segments.filter((s) => s.ttsFilename).length
+
   return (
     <>
       {/* ① 工作区级文案输入源：手动输入 / AI 生成双 Tab，全自动与手动模式共用 */}
@@ -158,24 +161,40 @@ export function ManualMatchPanel({
         onAiApply={onAiApply}
         replicaTemplateGuide={replicaTemplateGuide}
       />
-      {autoPipelineSlot}
-      {/* 手动逐段模式：文案取上方输入框，这里只做拆分与批量操作 */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-          <div className="flex items-center gap-2">
+      {/* 自动流水线：与逐段精修是两条并行路径，折叠收纳避免干扰主流程 */}
+      {autoPipelineSlot && (
+        <details className="group rounded-2xl border border-slate-800 bg-slate-900/40">
+          <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 select-none">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+              自动流水线（可选）
+            </span>
+            <span className="text-[11px] text-slate-500 group-open:hidden">
+              不想逐段操作？展开直接一键成片 ▾
+            </span>
+            <span className="text-[11px] text-slate-500 hidden group-open:inline">收起 ▴</span>
+          </summary>
+          <div className="px-4 pb-4">{autoPipelineSlot}</div>
+        </details>
+      )}
+      {/* ②③ 段落与素材：批量操作与列表合一，操作就在它作用的列表旁 */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
               <SplitSquareHorizontal className="w-4 h-4 text-slate-500" />
-              手动逐段模式
+              段落与素材
             </p>
-            <span className="text-[11px] text-slate-600 normal-case font-normal">想逐段挑选素材、精修出入点时使用；文案取上方输入框</span>
+            {segments.length > 0 && (
+              <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                {segments.length} 段 · {matchedCount} 已匹配 · {ttsCount} 已配音
+              </span>
+            )}
           </div>
-          <button
-            onClick={onAddSegment}
-            className="px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-400 flex items-center gap-1.5 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            手动添加段落
-          </button>
+          {segments.length > 0 && (
+            <button onClick={onClearAll} className="text-xs text-slate-600 hover:text-red-400 transition-colors">
+              清空全部
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
@@ -194,7 +213,7 @@ export function ManualMatchPanel({
                 className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm flex items-center gap-2 transition-colors"
               >
                 {globalMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                {globalMatching ? '全部匹配中...' : '全部匹配'}
+                {globalMatching ? '全部匹配中...' : '匹配全部'}
               </button>
               <button
                 type="button"
@@ -207,128 +226,145 @@ export function ManualMatchPanel({
               </button>
             </>
           )}
+          <button
+            onClick={onAddSegment}
+            className="px-3 py-2 rounded-xl border border-slate-700 bg-slate-800/40 hover:border-slate-500 text-xs text-slate-400 flex items-center gap-1.5 transition-colors ml-auto"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            手动添加段落
+          </button>
         </div>
-      </section>
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">手动 BGM</p>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={manualBgmEnabled}
-            onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
-            className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
-          />
-          <span className="text-sm text-slate-200">导出时混入 BGM（支持多选循环、分段配置）</span>
-        </label>
-        {manualBgmEnabled && (
-          <BgmCustomConfigPanel
-            title="手动 BGM 自定义"
-            enabled
-            onEnabledChange={() => {}}
-            bgmTracks={bgmTracks}
-            bgmListError={bgmListError}
-            selectedTrackIds={selectedManualBgmTrackIds}
-            onToggleTrack={onToggleManualBgmTrack}
-            volumeByTrackId={manualBgmVolumeByTrackId}
-            onTrackVolumeChange={onManualBgmTrackVolumeChange}
-            timelineSegments={manualBgmTimelineSegments}
-            onAddTimelineSegment={onAddManualBgmTimelineSegment}
-            onRemoveTimelineSegment={onRemoveManualBgmTimelineSegment}
-            onUpdateTimelineSegment={onUpdateManualBgmTimelineSegment}
-          />
+        {segments.length === 0 && (
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            先在上方文案框粘贴脚本，点「拆分为段落」开始；也可手动添加空段落逐段填写。
+          </p>
+        )}
+        {segments.length > 0 && (
+          <p className="text-[11px] text-slate-600 hidden sm:block">
+            逐段检索与勾选素材；拖动卡片可调整顺序；成片预览与裁剪用下方时间轴。
+          </p>
+        )}
+        {segments.length > 0 && (
+          <div className="space-y-4 pt-1">
+            {segments.map((seg, i) => (
+              <div
+                key={seg.id}
+                id={`seg-card-${seg.id}`}
+                className={[
+                  'rounded-2xl transition-[opacity,box-shadow] duration-200 scroll-mt-24',
+                  draggingId === seg.id ? 'opacity-45' : '',
+                  draggingId && draggingId !== seg.id && dropTargetId === seg.id
+                    ? 'ring-2 ring-indigo-400/90 shadow-[0_0_0_1px_rgba(129,140,248,0.35),0_8px_28px_-6px_rgba(99,102,241,0.45)]'
+                    : '',
+                  flashId === seg.id
+                    ? 'ring-2 ring-emerald-400 shadow-[0_0_24px_-4px_rgba(52,211,153,0.55)]'
+                    : '',
+                  focusedSegId === seg.id
+                    ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
+                    : '',
+                ].join(' ')}
+                onDragOver={(e) => {
+                  if (!draggingId || draggingId === seg.id) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  setDropTargetId(seg.id)
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTargetId(null)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const fromId = e.dataTransfer.getData(dragMime) || e.dataTransfer.getData('text/plain')
+                  setDropTargetId(null)
+                  setDraggingId(null)
+                  if (!fromId || fromId === seg.id) return
+                  onMoveSegment(fromId, seg.id)
+                  flashRow(fromId)
+                }}
+              >
+                <SegmentRow
+                  seg={seg}
+                  index={i}
+                  segmentCount={segments.length}
+                  onReorder={(action) => {
+                    onSegmentReorder(seg.id, action)
+                    flashRow(seg.id)
+                  }}
+                  onTextChange={(text) => onSegmentTextChange(seg.id, text)}
+                  onRemove={() => onRemoveSegment(seg.id)}
+                  onMatch={() => onMatchSegment(seg.id)}
+                  onToggleSelect={(clipId, e) => onToggleClipSelected(seg.id, clipId, e)}
+                  onTts={() => onSynthesiseTts(seg.id)}
+                  onPlayAudio={() => onPlayAudio(seg.id)}
+                  onStopAudio={onStopAudio}
+                  onSeekAudio={onSeekAudio ? (t) => onSeekAudio(seg.id, t) : undefined}
+                  playingAudio={playingSegId === seg.id}
+                  audioCurrentTime={playingSegId === seg.id ? audioCurrentTime : 0}
+                  audioDuration={playingSegId === seg.id ? audioDuration : 0}
+                  onPreview={onPreview}
+                  onToggleExpand={() => onToggleExpand(seg.id)}
+                  onOpenClipInOut={onOpenClipInOut ? () => onOpenClipInOut(seg.id) : undefined}
+                  dragHandleProps={{
+                    draggable: true,
+                    onDragStart: (e) => {
+                      e.dataTransfer.setData(dragMime, seg.id)
+                      e.dataTransfer.setData('text/plain', seg.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                      setDraggingId(seg.id)
+                      setDropTargetId(null)
+                    },
+                    onDragEnd: () => {
+                      setDraggingId(null)
+                      setDropTargetId(null)
+                    },
+                  }}
+                />
+              </div>
+            ))}
+          </div>
         )}
       </section>
       {timelineWorkspace}
-      {segments.length > 0 && (
-        <section className="space-y-4">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-              段落详情 · {segments.length} 段
-              <span className="ml-2 font-normal normal-case text-slate-600 hidden sm:inline">
-                素材检索与文案编辑；成片预览与裁剪请用上方时间轴
-              </span>
-            </p>
-            <button onClick={onClearAll} className="text-xs text-slate-600 hover:text-red-400 transition-colors">
-              清空全部
-            </button>
-          </div>
-          {segments.map((seg, i) => (
-            <div
-              key={seg.id}
-              id={`seg-card-${seg.id}`}
-              className={[
-                'rounded-2xl transition-[opacity,box-shadow] duration-200 scroll-mt-24',
-                draggingId === seg.id ? 'opacity-45' : '',
-                draggingId && draggingId !== seg.id && dropTargetId === seg.id
-                  ? 'ring-2 ring-indigo-400/90 shadow-[0_0_0_1px_rgba(129,140,248,0.35),0_8px_28px_-6px_rgba(99,102,241,0.45)]'
-                  : '',
-                flashId === seg.id
-                  ? 'ring-2 ring-emerald-400 shadow-[0_0_24px_-4px_rgba(52,211,153,0.55)]'
-                  : '',
-                focusedSegId === seg.id
-                  ? 'ring-2 ring-indigo-400/80 shadow-[0_0_20px_-6px_rgba(99,102,241,0.45)]'
-                  : '',
-              ].join(' ')}
-              onDragOver={(e) => {
-                if (!draggingId || draggingId === seg.id) return
-                e.preventDefault()
-                e.dataTransfer.dropEffect = 'move'
-                setDropTargetId(seg.id)
-              }}
-              onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTargetId(null)
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                const fromId = e.dataTransfer.getData(dragMime) || e.dataTransfer.getData('text/plain')
-                setDropTargetId(null)
-                setDraggingId(null)
-                if (!fromId || fromId === seg.id) return
-                onMoveSegment(fromId, seg.id)
-                flashRow(fromId)
-              }}
-            >
-              <SegmentRow
-                seg={seg}
-                index={i}
-                segmentCount={segments.length}
-                onReorder={(action) => {
-                  onSegmentReorder(seg.id, action)
-                  flashRow(seg.id)
-                }}
-                onTextChange={(text) => onSegmentTextChange(seg.id, text)}
-                onRemove={() => onRemoveSegment(seg.id)}
-                onMatch={() => onMatchSegment(seg.id)}
-                onToggleSelect={(clipId, e) => onToggleClipSelected(seg.id, clipId, e)}
-                onTts={() => onSynthesiseTts(seg.id)}
-                onPlayAudio={() => onPlayAudio(seg.id)}
-                onStopAudio={onStopAudio}
-                onSeekAudio={onSeekAudio ? (t) => onSeekAudio(seg.id, t) : undefined}
-                playingAudio={playingSegId === seg.id}
-                audioCurrentTime={playingSegId === seg.id ? audioCurrentTime : 0}
-                audioDuration={playingSegId === seg.id ? audioDuration : 0}
-                onPreview={onPreview}
-                onToggleExpand={() => onToggleExpand(seg.id)}
-                onOpenClipInOut={onOpenClipInOut ? () => onOpenClipInOut(seg.id) : undefined}
-                dragHandleProps={{
-                  draggable: true,
-                  onDragStart: (e) => {
-                    e.dataTransfer.setData(dragMime, seg.id)
-                    e.dataTransfer.setData('text/plain', seg.id)
-                    e.dataTransfer.effectAllowed = 'move'
-                    setDraggingId(seg.id)
-                    setDropTargetId(null)
-                  },
-                  onDragEnd: () => {
-                    setDraggingId(null)
-                    setDropTargetId(null)
-                  },
-                }}
-              />
-            </div>
-          ))}
-        </section>
-      )}
+      {/* 成片 BGM：导出期参数，默认折叠 */}
+      <details className="group rounded-2xl border border-slate-800 bg-slate-900/40">
+        <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 select-none">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+            成片 BGM{manualBgmEnabled && <span className="ml-2 text-emerald-400 normal-case font-normal">已启用 · {selectedManualBgmTrackIds.length} 首</span>}
+          </span>
+          <span className="text-[11px] text-slate-500 group-open:hidden">
+            {manualBgmEnabled ? '调整曲目与分段 ▾' : '导出时混入背景音乐（可选）▾'}
+          </span>
+          <span className="text-[11px] text-slate-500 hidden group-open:inline">收起 ▴</span>
+        </summary>
+        <div className="px-4 pb-4 space-y-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={manualBgmEnabled}
+              onChange={(e) => onManualBgmEnabledChange(e.target.checked)}
+              className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+            />
+            <span className="text-sm text-slate-200">导出时混入 BGM（支持多选循环、分段配置）</span>
+          </label>
+          {manualBgmEnabled && (
+            <BgmCustomConfigPanel
+              title="手动 BGM 自定义"
+              enabled
+              onEnabledChange={() => {}}
+              bgmTracks={bgmTracks}
+              bgmListError={bgmListError}
+              selectedTrackIds={selectedManualBgmTrackIds}
+              onToggleTrack={onToggleManualBgmTrack}
+              volumeByTrackId={manualBgmVolumeByTrackId}
+              onTrackVolumeChange={onManualBgmTrackVolumeChange}
+              timelineSegments={manualBgmTimelineSegments}
+              onAddTimelineSegment={onAddManualBgmTimelineSegment}
+              onRemoveTimelineSegment={onRemoveManualBgmTimelineSegment}
+              onUpdateTimelineSegment={onUpdateManualBgmTimelineSegment}
+            />
+          )}
+        </div>
+      </details>
     </>
   )
 }

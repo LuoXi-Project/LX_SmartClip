@@ -14,7 +14,7 @@ import {
 } from '@/lib/onboarding-tour'
 
 const editItems: NavDropdownItem[] = [
-  { href: '/match', label: '经典模式', description: '文案素材三级匹配' },
+  { href: '/match', label: '经典模式', description: '分组工作台：文案 / 配音 / 素材多路径成片' },
   { href: '/summary', label: '视频总结', description: '长视频 AI 摘要' },
 ]
 
@@ -24,9 +24,17 @@ const audioItems: NavDropdownItem[] = [
   { href: '/audio-library', label: '音频库', description: '音乐账号与爬取' },
 ]
 
+/** 素材侧工具链：入库后的加工与检索，从一级导航收编为分组 */
+const materialItems: NavDropdownItem[] = [
+  { href: '/process', label: '素材处理', description: '切分与多模态分析' },
+  { href: '/search', label: '素材检索', description: '语义搜索片段' },
+  { href: '/workflows', label: '工作流', description: '一键自动化流水线' },
+]
+
 const moreItems: NavDropdownItem[] = [
   { href: '/about', label: '关于与支持' },
   { href: '/logs', label: '日志' },
+  { href: '/license', label: '卡密' },
 ]
 
 const mobileSections = [
@@ -34,13 +42,17 @@ const mobileSections = [
     title: '常用',
     items: [
       { href: '/studio', label: '智剪工作台', tour: TOUR_ANCHORS.navStudio },
-      { href: '/workflows', label: '工作流', description: '一键自动化流水线' },
       { href: '/library', label: '素材库', description: '上传、管理、预览', tour: TOUR_ANCHORS.navLibrary },
-      { href: '/process', label: '素材处理', description: '切分与多模态分析', tour: TOUR_ANCHORS.navProcess },
-      { href: '/search', label: '素材检索', description: '语义搜索片段' },
       { href: '/publish', label: '一键发布', description: '多平台视频分发' },
       { href: '/settings', label: '设置', tour: TOUR_ANCHORS.navSettings },
-      { href: '/license', label: '卡密' },
+    ],
+  },
+  {
+    title: '素材工具',
+    items: [
+      { href: '/process', label: '素材处理', description: '切分与多模态分析', tour: TOUR_ANCHORS.navProcess },
+      { href: '/search', label: '素材检索', description: '语义搜索片段' },
+      { href: '/workflows', label: '工作流', description: '一键自动化流水线' },
     ],
   },
   { title: '剪辑', items: editItems },
@@ -113,28 +125,16 @@ export default function TopNav() {
           智剪工作台
         </Link>
         <Link
-          href="/workflows"
-          className={navLinkClass(isActive(pathname, '/workflows'), true)}
-        >
-          工作流
-        </Link>
-        <Link
           href="/library"
           {...tourAnchorProps(TOUR_ANCHORS.navLibrary)}
           className={navLinkClass(isActive(pathname, '/library'))}
         >
           素材库
         </Link>
-        <Link
-          href="/process"
-          {...tourAnchorProps(TOUR_ANCHORS.navProcess)}
-          className={navLinkClass(isActive(pathname, '/process'))}
-        >
-          素材处理
-        </Link>
-        <Link href="/search" className={navLinkClass(isActive(pathname, '/search'))}>
-          素材检索
-        </Link>
+        {/* 素材工具链（处理/检索/工作流）收编为分组；navProcess 锚点挂在分组按钮上，指引时高亮此处 */}
+        <div {...tourAnchorProps(TOUR_ANCHORS.navProcess)}>
+          <NavDropdown label="素材工具" items={materialItems} active={groupActive(pathname, materialItems)} />
+        </div>
         <NavDropdown label="剪辑" items={editItems} active={groupActive(pathname, editItems)} />
         <NavDropdown label="音频" items={audioItems} active={groupActive(pathname, audioItems)} />
         <Link
@@ -165,9 +165,6 @@ export default function TopNav() {
             className={navLinkClass(isActive(pathname, '/settings'))}
           >
             设置
-          </Link>
-          <Link href="/license" className={navLinkClass(isActive(pathname, '/license'))}>
-            卡密
           </Link>
           <NavDropdown
             label="更多"

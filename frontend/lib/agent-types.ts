@@ -40,6 +40,15 @@ export interface StudioMediaConfigApi {
   }
 }
 
+/** 执行权限档位：ask=每次询问（默认） / auto=自动审核 / full=完全访问 */
+export type AgentPermissionMode = 'ask' | 'auto' | 'full'
+
+export interface AgentPermissions {
+  mode: AgentPermissionMode
+  /** 本会话内已授权、不再逐次确认的工具名 */
+  session_granted?: string[]
+}
+
 export interface WorkspaceState {
   session_id: string
   title: string
@@ -56,6 +65,7 @@ export interface WorkspaceState {
   user_preferences: Record<string, unknown>
   checkpoints: Record<string, unknown>[]
   last_exports: Record<string, unknown>[]
+  permissions?: AgentPermissions
 }
 
 export interface ArtifactRef {

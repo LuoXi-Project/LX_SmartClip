@@ -129,6 +129,8 @@ export type ChatStreamBody = {
   message: string
   resume_call_id?: string
   confirm_approved?: boolean
+  /** 确认执行且勾选「本会话不再询问」时为 true：后端把工具写入 permissions.session_granted */
+  grant_session?: boolean
 }
 
 export async function streamAgentChat(

@@ -486,6 +486,17 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
             yield _sse("message_delta", {"content": "已取消该操作。"})
             yield _sse("done", {})
             return
+        if req.grant_session:
+            perms = ctx.workspace.permissions
+            tool_name = str(pending["tool_name"])
+            if tool_name not in perms.session_granted:
+                patch = {
+                    "permissions": {
+                        "session_granted": [*perms.session_granted, tool_name]
+                    }
+                }
+                ctx.workspace = await session_store.patch_workspace(session_id, patch)
+                yield _sse("workspace_patch", {"patch": patch})
         async for chunk in _run_confirmed_tool(
             session_id=session_id,
             tool_name=pending["tool_name"],

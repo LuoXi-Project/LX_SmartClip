@@ -2,10 +2,11 @@
 
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { Send, Loader2, Sparkles, RotateCcw, Square } from 'lucide-react'
-import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession } from '@/lib/agent-api'
+import clsx from 'clsx'
+import { Send, Loader2, Sparkles, RotateCcw, Square, ShieldAlert, Zap, Unlock } from 'lucide-react'
+import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession, patchAgentWorkspace } from '@/lib/agent-api'
 import { genId, useStudioStore } from '@/lib/studio-store'
-import type { ArtifactRef, PlanStepState, StudioMessage } from '@/lib/agent-types'
+import type { ArtifactRef, PlanStepState, StudioMessage, AgentPermissionMode } from '@/lib/agent-types'
 import { ExportResultPanel } from './ExportResultPanel'
 import { StudioExportGuide } from './StudioExportGuide'
 import {
@@ -27,11 +28,17 @@ function mergeWorkspacePatch(
   if (!ws) return ws
   const jobs = { ...(ws.jobs || {}), ...((patch.jobs as object) || {}) }
   const prefs = { ...(ws.user_preferences || {}), ...((patch.user_preferences as object) || {}) }
+  const permissions = {
+    mode: 'ask' as AgentPermissionMode,
+    ...(ws.permissions || {}),
+    ...((patch.permissions as object) || {}),
+  }
   return {
     ...ws,
     ...patch,
     jobs,
     user_preferences: prefs,
+    permissions,
     selected_video_ids: (patch.selected_video_ids as string[]) ?? ws.selected_video_ids,
     plans: (patch.plans as typeof ws.plans) ?? ws.plans,
     pipeline_phase: (patch.pipeline_phase as typeof ws.pipeline_phase) ?? ws.pipeline_phase,
@@ -40,6 +47,67 @@ function mergeWorkspacePatch(
         ? (patch.active_plan_id as string | null)
         : ws.active_plan_id,
   }
+}
+
+// ── 执行权限三档（对齐 AI IDE 的 approval mode）────────────────────────────
+
+const PERMISSION_MODES: {
+  id: AgentPermissionMode
+  label: string
+  icon: typeof Zap
+  hint: string
+}[] = [
+  { id: 'ask', label: '每次询问', icon: ShieldAlert, hint: '长任务 / 成片 / 导出每次确认后再执行（默认）' },
+  { id: 'auto', label: '自动审核', icon: Zap, hint: '长任务与成片自动执行；外部 MCP 工具仍需确认' },
+  { id: 'full', label: '完全访问', icon: Unlock, hint: '全部自动执行不再询问（不可逆操作除外）' },
+]
+
+function PermissionModeSwitch({
+  mode,
+  grantedCount,
+  disabled,
+  onSelect,
+}: {
+  mode: AgentPermissionMode
+  grantedCount: number
+  disabled?: boolean
+  onSelect: (mode: AgentPermissionMode) => void
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="inline-flex rounded-lg border border-slate-700 bg-slate-900/80 p-0.5">
+        {PERMISSION_MODES.map((m) => {
+          const Icon = m.icon
+          const active = mode === m.id
+          return (
+            <button
+              key={m.id}
+              type="button"
+              disabled={disabled}
+              title={m.hint}
+              onClick={() => onSelect(m.id)}
+              className={clsx(
+                'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors disabled:opacity-40',
+                active
+                  ? m.id === 'ask'
+                    ? 'bg-amber-500/20 text-amber-200'
+                    : m.id === 'auto'
+                      ? 'bg-cyan-500/20 text-cyan-200'
+                      : 'bg-rose-500/20 text-rose-200'
+                  : 'text-slate-500 hover:text-slate-200',
+              )}
+            >
+              <Icon size={11} />
+              {m.label}
+            </button>
+          )
+        })}
+      </div>
+      {grantedCount > 0 && mode === 'ask' && (
+        <span className="text-[10px] text-slate-500">本会话已免确认 {grantedCount} 个工具</span>
+      )}
+    </div>
+  )
 }
 
 export function StudioThread() {
@@ -85,7 +153,12 @@ export function StudioThread() {
   )
 
   const handleStream = useCallback(
-    async (body: { message: string; resume_call_id?: string; confirm_approved?: boolean }) => {
+    async (body: {
+      message: string
+      resume_call_id?: string
+      confirm_approved?: boolean
+      grant_session?: boolean
+    }) => {
       if (!sessionId) return
       setStreaming(true)
       setError(null)
@@ -321,30 +394,64 @@ export function StudioThread() {
     await handleStream({ message: text })
   }
 
-  const approveConfirm = async () => {
+  const approveConfirm = async (grantSession: boolean) => {
     if (!pendingConfirm || !sessionId) return
-    const ok = await confirm({
-      title: '确认执行',
-      description: pendingConfirm.preview || `将执行 ${pendingConfirm.tool}`,
-      confirmLabel: '执行',
-      cancelLabel: '取消',
-    })
-    if (!ok) {
-      setPendingConfirm(null)
-      await handleStream({
-        message: '用户取消了操作',
-        resume_call_id: pendingConfirm.callId,
-        confirm_approved: false,
-      })
-      return
-    }
     const callId = pendingConfirm.callId
+    const toolName = pendingConfirm.tool
     setPendingConfirm(null)
+    if (grantSession) {
+      toast.success(`本会话内「${toolName}」不再逐次确认`)
+    }
     await handleStream({
       message: '继续执行已确认的操作',
       resume_call_id: callId,
       confirm_approved: true,
+      grant_session: grantSession,
     })
+  }
+
+  const rejectConfirm = async () => {
+    if (!pendingConfirm || !sessionId) return
+    const callId = pendingConfirm.callId
+    setPendingConfirm(null)
+    await handleStream({
+      message: '用户取消了操作',
+      resume_call_id: callId,
+      confirm_approved: false,
+    })
+  }
+
+  const permissionMode: AgentPermissionMode = workspace?.permissions?.mode ?? 'ask'
+  const grantedToolCount = workspace?.permissions?.session_granted?.length ?? 0
+  const [switchingPerm, setSwitchingPerm] = useState(false)
+
+  const handlePermissionSelect = async (next: AgentPermissionMode) => {
+    if (!sessionId || switchingPerm || next === permissionMode) return
+    if (next === 'full') {
+      const ok = await confirm({
+        title: '切换到「完全访问」？',
+        description:
+          'Agent 执行长任务、渲染成片、导出与外部工具时将不再逐次询问，直接自动执行（仅不可逆操作仍会确认）。',
+        confirmLabel: '开启完全访问',
+        variant: 'danger',
+      })
+      if (!ok) return
+    }
+    setSwitchingPerm(true)
+    try {
+      const res = await patchAgentWorkspace(sessionId, {
+        permissions: {
+          mode: next,
+          session_granted: workspace?.permissions?.session_granted ?? [],
+        },
+      })
+      setWorkspace(res.workspace)
+      toast.success(`执行权限：${PERMISSION_MODES.find((m) => m.id === next)?.label ?? next}`)
+    } catch {
+      toast.error('权限档位切换失败，请重试')
+    } finally {
+      setSwitchingPerm(false)
+    }
   }
 
   const rollbackToMessage = async (messageId: string, preview: string) => {
@@ -373,6 +480,21 @@ export function StudioThread() {
           <span className="flex items-center gap-1.5 text-[10px] text-violet-300">
             <Loader2 className="w-3 h-3 animate-spin" />
             Agent 执行中…
+          </span>
+        ) : null}
+        {permissionMode === 'full' ? (
+          <span
+            title="Agent 执行不再逐次询问，仅不可逆操作除外"
+            className="rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300"
+          >
+            完全访问
+          </span>
+        ) : permissionMode === 'auto' ? (
+          <span
+            title="长任务与成片自动执行，外部工具仍需确认"
+            className="rounded border border-cyan-500/40 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300"
+          >
+            自动审核
           </span>
         ) : null}
         <StudioPanelHeaderAction panelId="thread" />
@@ -407,6 +529,7 @@ export function StudioThread() {
               streaming && m.type === 'assistant' && idx === messages.length - 1
             }
             onApproveConfirm={approveConfirm}
+            onRejectConfirm={rejectConfirm}
             onRollbackToMessage={rollbackToMessage}
           />
         ))}
@@ -428,6 +551,14 @@ export function StudioThread() {
         </div>
       ) : null}
       <div className="shrink-0 p-3 border-t border-slate-800" data-tour="page-studio-input">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <PermissionModeSwitch
+            mode={permissionMode}
+            grantedCount={grantedToolCount}
+            disabled={streaming || switchingPerm}
+            onSelect={(m) => void handlePermissionSelect(m)}
+          />
+        </div>
         <div className="flex gap-2 items-end">
           <textarea
             value={input}
@@ -474,13 +605,15 @@ function MessageRow({
   pendingConfirm,
   isLastAssistant,
   onApproveConfirm,
+  onRejectConfirm,
   onRollbackToMessage,
 }: {
   msg: StudioMessage
   streaming: boolean
   pendingConfirm: ReturnType<typeof useStudioStore.getState>['pendingConfirm']
   isLastAssistant?: boolean
-  onApproveConfirm: () => void
+  onApproveConfirm: (grantSession: boolean) => void
+  onRejectConfirm: () => void
   onRollbackToMessage: (messageId: string, preview: string) => void
 }) {
   if (msg.type === 'user') {
@@ -529,13 +662,30 @@ function MessageRow({
         <p className="text-amber-100 font-medium">需要你的确认</p>
         <p className="text-amber-200/90 text-xs leading-relaxed">{msg.preview}</p>
         {isActive ? (
-          <button
-            type="button"
-            onClick={onApproveConfirm}
-            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-semibold"
-          >
-            确认执行 · {msg.tool}
-          </button>
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <button
+              type="button"
+              onClick={onRejectConfirm}
+              className="px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:text-slate-100 text-xs transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => onApproveConfirm(false)}
+              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-semibold"
+            >
+              执行 · {msg.tool}
+            </button>
+            <button
+              type="button"
+              onClick={() => onApproveConfirm(true)}
+              title="授权后本会话内该工具不再逐次确认"
+              className="px-3 py-1.5 rounded-lg border border-amber-500/60 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20 text-xs transition-colors"
+            >
+              本会话不再询问
+            </button>
+          </div>
         ) : (
           <p className="text-[10px] text-slate-500">已处理或已过期</p>
         )}

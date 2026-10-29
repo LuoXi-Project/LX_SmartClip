@@ -9,6 +9,15 @@ ToolRisk = Literal["L0", "L1", "L2", "L3"]
 ArtifactType = Literal["plan", "match_results", "process_job", "export", "video"]
 AgentRoute = Literal["plan", "execute", "ask", "clarify"]
 
+# 执行权限档位：ask=每次询问（默认） / auto=自动审核 / full=完全访问
+AgentPermissionMode = Literal["ask", "auto", "full"]
+
+
+class AgentPermissions(BaseModel):
+    mode: AgentPermissionMode = "ask"
+    """本会话内已授权、不再逐次确认的工具名（L3 除外）"""
+    session_granted: list[str] = Field(default_factory=list)
+
 
 class WorkspaceState(BaseModel):
     session_id: str
@@ -28,6 +37,7 @@ class WorkspaceState(BaseModel):
     user_preferences: dict[str, Any] = Field(default_factory=dict)
     checkpoints: list[dict[str, Any]] = Field(default_factory=list)
     last_exports: list[dict[str, Any]] = Field(default_factory=list)
+    permissions: AgentPermissions = Field(default_factory=AgentPermissions)
 
 
 class CreateSessionRequest(BaseModel):
@@ -39,6 +49,8 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     resume_call_id: Optional[str] = None
     confirm_approved: Optional[bool] = None
+    """确认执行时勾选「本会话不再询问」：把该工具写入 permissions.session_granted"""
+    grant_session: bool = False
 
 
 class ConfirmRequest(BaseModel):

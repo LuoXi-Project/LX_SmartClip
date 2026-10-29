@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.agent import session_store, skills
+from app.agent import mcp_manager, session_store, skills
 from app.agent.orchestrator import run_chat_turn
 from app.models.agent import (
     ChatRequest,
@@ -194,3 +194,62 @@ async def delete_skill(slug: str):
     if not ok:
         raise HTTPException(status_code=404, detail=f"技能 {slug} 不存在")
     return {"ok": True}
+
+
+# ── Agent MCP 服务 ─────────────────────────────────────────────────────────
+
+
+@router.get("/mcp/servers")
+async def list_mcp_servers():
+    return {"items": await mcp_manager.list_servers()}
+
+
+class McpServerRequest(BaseModel):
+    id: str | None = None
+    name: str = ""
+    transport: str = "stdio"
+    command: str = ""
+    args: list[str] = []
+    env: dict[str, str] = {}
+    url: str = ""
+    headers: dict[str, str] = {}
+    enabled: bool = True
+    trusted: bool = False
+    timeout_sec: int = 60
+
+
+@router.post("/mcp/servers")
+async def upsert_mcp_server(req: McpServerRequest):
+    try:
+        saved = await mcp_manager.upsert_server(req.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "server": saved}
+
+
+@router.patch("/mcp/servers/{server_id}")
+async def patch_mcp_server(server_id: str, patch: dict[str, Any]):
+    servers = await mcp_manager.list_servers()
+    current = next((s for s in servers if s["id"] == server_id), None)
+    if not current:
+        raise HTTPException(status_code=404, detail=f"MCP 服务 {server_id} 不存在")
+    merged = {**current, **{k: v for k, v in patch.items() if k in current}}
+    try:
+        saved = await mcp_manager.upsert_server(merged)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "server": saved}
+
+
+@router.delete("/mcp/servers/{server_id}")
+async def delete_mcp_server(server_id: str):
+    ok = await mcp_manager.delete_server(server_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"MCP 服务 {server_id} 不存在")
+    return {"ok": True}
+
+
+@router.post("/mcp/servers/test")
+async def test_mcp_server(req: McpServerRequest):
+    """测试连接：从零建立连接并列出工具（不写配置）。"""
+    return await mcp_manager.test_server(req.model_dump())

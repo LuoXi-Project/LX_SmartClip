@@ -85,6 +85,13 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         shutdown_blocking_pool()
+        # 关闭 MCP 持久连接（stdio 子进程等）
+        try:
+            from app.agent.mcp_manager import shutdown as mcp_shutdown
+
+            await mcp_shutdown()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="LX SmartClip API", version="0.1.0", lifespan=lifespan)

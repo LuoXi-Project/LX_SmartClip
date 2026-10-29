@@ -13,6 +13,7 @@ import {
   ReasoningBlock,
   StudioExecutionTrace,
   ToolCallBlock,
+  parseMcpTool,
 } from './StudioExecutionTrace'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useToast } from '@/components/ui/toast-provider'
@@ -657,9 +658,21 @@ function MessageRow({
   }
   if (msg.type === 'confirm') {
     const isActive = pendingConfirm?.callId === msg.callId && !streaming
+    const mcp = parseMcpTool(msg.tool)
+    const toolLabel = mcp ? mcp.tool : msg.tool
     return (
       <div className="text-sm border border-amber-500/50 bg-amber-500/15 rounded-lg p-3 mr-4 space-y-2">
-        <p className="text-amber-100 font-medium">需要你的确认</p>
+        <p className="text-amber-100 font-medium">
+          需要你的确认
+          {mcp && (
+            <span
+              title={`外部 MCP 服务：${mcp.serverId}`}
+              className="ml-2 rounded border border-cyan-500/50 bg-cyan-500/15 px-1 py-px align-middle font-mono text-[10px] font-normal text-cyan-200"
+            >
+              MCP·{mcp.serverId}
+            </span>
+          )}
+        </p>
         <p className="text-amber-200/90 text-xs leading-relaxed">{msg.preview}</p>
         {isActive ? (
           <div className="flex flex-wrap items-center gap-2 pt-0.5">
@@ -675,7 +688,7 @@ function MessageRow({
               onClick={() => onApproveConfirm(false)}
               className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-semibold"
             >
-              执行 · {msg.tool}
+              执行 · {toolLabel}
             </button>
             <button
               type="button"

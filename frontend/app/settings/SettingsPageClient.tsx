@@ -15,6 +15,7 @@ import { StockMediaSection } from './_components/StockMediaSection'
 import { TtsSection } from './_components/TtsSection'
 import { AsrSection } from './_components/AsrSection'
 import { AgentSkillsSection } from './_components/AgentSkillsSection'
+import { AgentMcpSection } from './_components/AgentMcpSection'
 export default function SettingsPage() {
   const toast = useToast()
   const [config, setConfig] = useState<ConfigMap>({})
@@ -80,6 +81,7 @@ export default function SettingsPage() {
     { id: 'asr', label: '语音识别', group: 'models' },
     { id: 'tts', label: 'TTS 配音', group: 'models' },
     { id: 'agent-skills', label: 'Agent 技能', group: 'agent' },
+    { id: 'agent-mcp', label: 'MCP 外部工具', group: 'agent' },
     { id: 'video', label: '视频处理', group: 'media' },
     { id: 'stock-media', label: '在线素材', group: 'media' },
   ]), [])
@@ -381,6 +383,9 @@ export default function SettingsPage() {
                 </div>
                 <div id="agent-skills" className="scroll-mt-28">
                   <AgentSkillsSection />
+                </div>
+                <div id="agent-mcp" className="scroll-mt-28">
+                  <AgentMcpSection />
                 </div>
                 <div id="video" className="scroll-mt-28">
                   <VideoSection {...sharedProps} />

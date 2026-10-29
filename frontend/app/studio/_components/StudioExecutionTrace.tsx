@@ -157,6 +157,16 @@ export function ReasoningBlock({
   )
 }
 
+/** mcp__<server>__<tool> → { serverId, tool }；非 MCP 工具返回 null */
+export function parseMcpTool(
+  name: string,
+): { serverId: string; tool: string } | null {
+  if (!name.startsWith('mcp__')) return null
+  const parts = name.split('__', 3)
+  if (parts.length !== 3) return null
+  return { serverId: parts[1], tool: parts[2] }
+}
+
 export function ToolCallBlock({
   msg,
 }: {
@@ -168,6 +178,7 @@ export function ToolCallBlock({
       : msg.status === 'done'
         ? 'text-emerald-300 border-emerald-500/25 bg-emerald-500/5'
         : 'text-red-300 border-red-500/25 bg-red-500/5'
+  const mcp = parseMcpTool(msg.name)
 
   return (
     <div className={`mr-4 rounded-lg border px-2.5 py-2 text-xs font-mono ${statusColor}`}>
@@ -179,7 +190,15 @@ export function ToolCallBlock({
         ) : (
           <XCircle className="w-3.5 h-3.5 shrink-0" />
         )}
-        <span className="font-semibold">{msg.name}</span>
+        <span className="font-semibold">{mcp ? mcp.tool : msg.name}</span>
+        {mcp && (
+          <span
+            title={`外部 MCP 服务：${mcp.serverId}`}
+            className="rounded border border-cyan-500/40 bg-cyan-500/10 px-1 py-px text-[9px] not-italic text-cyan-300"
+          >
+            MCP·{mcp.serverId}
+          </span>
+        )}
         {msg.round ? <span className="text-[10px] opacity-60">R{msg.round}</span> : null}
         <span className="text-[10px] opacity-70 ml-auto">{msg.status}</span>
       </div>

@@ -169,8 +169,7 @@ export const agentSkillsApi = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     return data.items || []
-  },
-  content: async (slug: string): Promise<string> => {
+  },  content: async (slug: string): Promise<string> => {
     const res = await fetch(`${base()}/api/agent/skills/${slug}/content`)
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }))
@@ -209,4 +208,70 @@ export const agentSkillsApi = {
       throw new Error(err.detail || `HTTP ${res.status}`)
     }
   },
+}
+
+// ── Agent MCP 服务 ─────────────────────────────────────────────────────────
+
+export interface McpServerConfig {
+  id: string
+  name: string
+  transport: 'stdio' | 'http'
+  command: string
+  args: string[]
+  env: Record<string, string>
+  url: string
+  headers: Record<string, string>
+  enabled: boolean
+  trusted: boolean
+  timeout_sec: number
+}
+
+export interface McpTestResult {
+  ok: boolean
+  tool_count?: number
+  tools?: { name: string; description: string }[]
+  error?: string
+}
+
+async function mcpJson<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export const agentMcpApi = {
+  list: async (): Promise<McpServerConfig[]> => {
+    const res = await fetch(`${base()}/api/agent/mcp/servers`)
+    return (await mcpJson<{ items: McpServerConfig[] }>(res)).items || []
+  },
+  upsert: async (server: Partial<McpServerConfig> & { id?: string }) =>
+    mcpJson<{ ok: boolean; server: McpServerConfig }>(
+      await fetch(`${base()}/api/agent/mcp/servers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(server),
+      }),
+    ),
+  patch: async (id: string, patch: Record<string, unknown>) =>
+    mcpJson<{ ok: boolean; server: McpServerConfig }>(
+      await fetch(`${base()}/api/agent/mcp/servers/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }),
+    ),
+  remove: async (id: string) =>
+    mcpJson<{ ok: boolean }>(
+      await fetch(`${base()}/api/agent/mcp/servers/${id}`, { method: 'DELETE' }),
+    ),
+  test: async (server: Partial<McpServerConfig>) =>
+    mcpJson<McpTestResult>(
+      await fetch(`${base()}/api/agent/mcp/servers/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(server),
+      }),
+    ),
 }

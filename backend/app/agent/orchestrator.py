@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import aiosqlite
 
-from app.agent import session_store, skills
+from app.agent import mcp_manager, session_store, skills
 from app.agent.context_builder import build_workspace_summary
 from app.agent.export_intent import ExportIntent, detect_export_intent
 from app.agent.plan_runner import run_plan_steps
@@ -228,6 +228,16 @@ def _confirm_preview(tool_name: str, args: dict[str, Any], ctx: AgentContext) ->
         return f"将方案「{title}」导出为剪映草稿（ZIP 或写入剪映目录）。"
     if tool_name == "start_process_job":
         return "将开始处理选中素材（抽帧/ASR/向量等），耗时较长。"
+    # MCP 外部工具：mcp__<server>__<tool>，给出可读来源
+    if tool_name.startswith("mcp__"):
+        parts = tool_name.split("__", 2)
+        remote = parts[2] if len(parts) == 3 else tool_name
+        spec = REGISTRY.get(tool_name)
+        server_label = ""
+        if spec and spec.description.startswith("[MCP·"):
+            server_label = spec.description[len("[MCP·"):].split("]", 1)[0]
+        origin = f"来自外部服务「{server_label}」" if server_label else "来自外部 MCP 服务"
+        return f"将执行外部工具 {remote}（{origin}，不可预知副作用，请确认来源可信）。"
     return f"将执行 {tool_name}"
 
 
@@ -438,6 +448,12 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
     await _maybe_autotitle(session_id, req.message, ws)
 
     ctx = AgentContext(session_id=session_id, workspace=ws)
+    # MCP 外部工具桥接（失败只跳过外部工具，不影响内置工具）
+    try:
+        await mcp_manager.sync_registry()
+        ctx.external_trusted = await mcp_manager.trusted_tool_names_async()
+    except Exception:
+        logger.exception("MCP 工具同步失败（跳过外部工具）")
     summary = await build_workspace_summary(ws)
 
     preflight = await run_intent_preflight(

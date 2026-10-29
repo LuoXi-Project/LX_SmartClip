@@ -21,6 +21,8 @@ def register_all_tools() -> None:
     register_auto_edit_tools()
     register_production_tools()
     from app.agent.tools.media_tools import register_media_tools
+    from app.agent.tools.skill_tools import register_skill_tools
 
     register_media_tools()
+    register_skill_tools()
     _tools_registered = True

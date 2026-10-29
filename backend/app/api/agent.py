@@ -4,8 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from app.agent import session_store
+from app.agent import session_store, skills
 from app.agent.orchestrator import run_chat_turn
 from app.models.agent import (
     ChatRequest,
@@ -134,3 +135,62 @@ async def confirm_tool(session_id: str, req: ConfirmRequest):
             "input": pending["input_json"],
         },
     }
+
+
+# ── Agent 技能包 ──────────────────────────────────────────────────────────
+
+
+@router.get("/skills")
+async def list_skills():
+    return {"items": await skills.list_skills()}
+
+
+@router.get("/skills/{slug}/content")
+async def get_skill_content(slug: str):
+    content = skills.load_skill_content(slug)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"技能 {slug} 不存在")
+    return {"slug": slug, "content": content}
+
+
+class SkillCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    body: str
+    slug: str | None = None
+
+
+@router.post("/skills")
+async def create_skill(req: SkillCreateRequest):
+    try:
+        created = await skills.create_skill(
+            name=req.name, description=req.description, body=req.body, slug=req.slug
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **created}
+
+
+@router.patch("/skills/{slug}")
+async def toggle_skill(slug: str, patch: dict[str, Any]):
+    enabled = patch.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="需要布尔字段 enabled")
+    ok = await skills.set_skill_enabled(slug, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"技能 {slug} 不存在")
+    return {"ok": True, "slug": slug, "enabled": enabled}
+
+
+@router.delete("/skills/{slug}")
+async def delete_skill(slug: str):
+    info = await skills.list_skills()
+    builtin = {s["slug"] for s in info if s["source"] == "builtin"}
+    if slug in builtin and not any(
+        s["slug"] == slug and s["source"] == "user" for s in info
+    ):
+        raise HTTPException(status_code=400, detail="内置技能不可删除，可停用")
+    ok = await skills.delete_skill(slug)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"技能 {slug} 不存在")
+    return {"ok": True}

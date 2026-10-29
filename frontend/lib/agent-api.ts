@@ -150,3 +150,63 @@ export async function streamAgentChat(
   })
   await readSSE(res, handlers, handlers.signal)
 }
+
+// ── Agent 技能包 ──────────────────────────────────────────────────────────
+
+export interface AgentSkillItem {
+  slug: string
+  name: string
+  description: string
+  source: 'builtin' | 'user'
+  body_chars: number
+  has_references: boolean
+  enabled: boolean
+}
+
+export const agentSkillsApi = {
+  list: async (): Promise<AgentSkillItem[]> => {
+    const res = await fetch(`${base()}/api/agent/skills`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.items || []
+  },
+  content: async (slug: string): Promise<string> => {
+    const res = await fetch(`${base()}/api/agent/skills/${slug}/content`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    return data.content || ''
+  },
+  create: async (body: { name: string; description?: string; body: string; slug?: string }) => {
+    const res = await fetch(`${base()}/api/agent/skills`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return res.json() as Promise<{ ok: boolean; slug: string; name: string }>
+  },
+  setEnabled: async (slug: string, enabled: boolean) => {
+    const res = await fetch(`${base()}/api/agent/skills/${slug}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+  },
+  remove: async (slug: string) => {
+    const res = await fetch(`${base()}/api/agent/skills/${slug}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+  },
+}

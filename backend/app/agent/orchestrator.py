@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import aiosqlite
 
-from app.agent import session_store
+from app.agent import session_store, skills
 from app.agent.context_builder import build_workspace_summary
 from app.agent.export_intent import ExportIntent, detect_export_intent
 from app.agent.plan_runner import run_plan_steps
@@ -564,8 +564,15 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
         timeout=float(cfg.get("timeout") or 600),
     )
 
+    # 技能清单（渐进式披露第一步：仅 name+description，全文走 load_skill）
+    try:
+        skill_catalog = await skills.build_skill_catalog_prompt()
+    except Exception:
+        logger.exception("构建技能清单失败（跳过注入）")
+        skill_catalog = ""
+
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": EXECUTOR_SYSTEM},
+        {"role": "system", "content": EXECUTOR_SYSTEM + skill_catalog},
         {
             "role": "user",
             "content": (

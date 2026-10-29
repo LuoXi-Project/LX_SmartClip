@@ -14,6 +14,7 @@ import { VideoSection } from './_components/VideoSection'
 import { StockMediaSection } from './_components/StockMediaSection'
 import { TtsSection } from './_components/TtsSection'
 import { AsrSection } from './_components/AsrSection'
+import { AgentSkillsSection } from './_components/AgentSkillsSection'
 export default function SettingsPage() {
   const toast = useToast()
   const [config, setConfig] = useState<ConfigMap>({})
@@ -78,6 +79,7 @@ export default function SettingsPage() {
     { id: 'embedding', label: '向量检索', group: 'models' },
     { id: 'asr', label: '语音识别', group: 'models' },
     { id: 'tts', label: 'TTS 配音', group: 'models' },
+    { id: 'agent-skills', label: 'Agent 技能', group: 'agent' },
     { id: 'video', label: '视频处理', group: 'media' },
     { id: 'stock-media', label: '在线素材', group: 'media' },
   ]), [])
@@ -304,7 +306,7 @@ export default function SettingsPage() {
                 <p className="text-xs font-medium text-slate-400">快速导航</p>
               </div>
               <div className="p-2">
-                {([['models', '模型与语音'], ['media', '处理与素材']] as const).map(([groupKey, groupLabel]) => (
+                {([['models', '模型与语音'], ['agent', '智能体'], ['media', '处理与素材']] as const).map(([groupKey, groupLabel]) => (
                   <div key={groupKey} className="mb-1 last:mb-0">
                     <p className="px-3 pt-2 pb-1 text-[10px] text-slate-600 uppercase tracking-wider">{groupLabel}</p>
                     {sections.filter((s) => s.group === groupKey).map((s) => {
@@ -376,6 +378,9 @@ export default function SettingsPage() {
                 </div>
                 <div id="tts" className="scroll-mt-28">
                   <TtsSection {...sharedProps} ttsProvider={ttsProvider} onApplyProvider={applyTtsProvider} />
+                </div>
+                <div id="agent-skills" className="scroll-mt-28">
+                  <AgentSkillsSection />
                 </div>
                 <div id="video" className="scroll-mt-28">
                   <VideoSection {...sharedProps} />

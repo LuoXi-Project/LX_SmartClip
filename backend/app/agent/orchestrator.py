@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import aiosqlite
 
-from app.agent import mcp_manager, session_store, skills
+from app.agent import mcp_manager, prefs, session_store, skills
 from app.agent.context_builder import build_workspace_summary
 from app.agent.export_intent import ExportIntent, detect_export_intent
 from app.agent.plan_runner import run_plan_steps
@@ -27,34 +27,42 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 8
 
-
-def _emit_content_chunks(content: str) -> list[tuple[str, dict[str, Any]]]:
-    """将助手文本拆成 reasoning（思考：）与 message 事件。"""
-    if not content:
-        return []
-    events: list[tuple[str, dict[str, Any]]] = []
-    for line in content.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("思考：") or stripped.startswith("思考:"):
-            events.append(("reasoning_delta", {"content": stripped + "\n"}))
-        else:
-            events.append(("message_delta", {"content": line + "\n"}))
-    if events and events[-1][0] == "message_delta":
-        last = events[-1][1]["content"]
-        events[-1] = ("message_delta", {"content": last.rstrip("\n")})
-    return events
+# 思维链关闭时追加的输出约束（模型不听话仍输出「思考：」时，流式层会静默丢弃）
+COT_OFF_INSTRUCTION = (
+    "\n\n## 输出要求（思考模式已关闭）\n"
+    "- 不要输出任何「思考：」开头的思考过程文本；直接调用工具并以简洁结果回复用户。"
+)
 
 
-def _emit_stream_delta(delta: str, *, in_reasoning: list[bool]) -> list[tuple[str, dict[str, Any]]]:
-    """流式 token：检测「思考：」后走 reasoning 通道。"""
+def build_executor_system(skill_catalog: str, cot_enabled: bool) -> str:
+    system = EXECUTOR_SYSTEM + (skill_catalog or "")
+    if not cot_enabled:
+        system += COT_OFF_INSTRUCTION
+    return system
+
+
+def _emit_stream_delta(
+    delta: str,
+    *,
+    in_reasoning: list[bool],
+    cot_enabled: bool = True,
+) -> list[tuple[str, dict[str, Any]]]:
+    """流式 token：检测「思考：」后走 reasoning 通道；思维链关闭时丢弃思考段。"""
     if not delta:
         return []
+    if cot_enabled:
+        if not in_reasoning[0] and ("思考：" in delta or "思考:" in delta):
+            in_reasoning[0] = True
+        if in_reasoning[0] and "\n\n" in delta:
+            in_reasoning[0] = False
+        kind = "reasoning_delta" if in_reasoning[0] else "message_delta"
+        return [(kind, {"content": delta})]
+    # 思维链关闭：思考段静默丢弃（提示词已要求模型不输出思考过程）
     if not in_reasoning[0] and ("思考：" in delta or "思考:" in delta):
         in_reasoning[0] = True
     if in_reasoning[0] and "\n\n" in delta:
         in_reasoning[0] = False
-    kind = "reasoning_delta" if in_reasoning[0] else "message_delta"
-    return [(kind, {"content": delta})]
+    return [] if in_reasoning[0] else [("message_delta", {"content": delta})]
 
 
 async def _stream_executor_completion(
@@ -65,10 +73,13 @@ async def _stream_executor_completion(
     tools: list[dict[str, Any]],
     temperature: float,
     max_tokens: int,
+    cot_enabled: bool = True,
 ) -> AsyncIterator[tuple[str, dict[str, Any] | tuple[str, Any, str, list[Any]]]]:
     """
     流式调用 Executor LLM。
     产出 SSE 事件；最后一项为 ('_result', content, finish_reason, tool_calls)。
+    思维链开启时额外捕获 delta.reasoning_content（qwen3/deepseek 等思考模型的
+    原生思考流）；关闭时思考内容静默丢弃。
     """
     in_reasoning = [False]
     content_parts: list[str] = []
@@ -93,9 +104,16 @@ async def _stream_executor_completion(
         delta = choice.delta
         if not delta:
             continue
+        native_reasoning = (
+            getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+        )
+        if native_reasoning and cot_enabled:
+            yield ("reasoning_delta", {"content": str(native_reasoning)})
         if delta.content:
             content_parts.append(delta.content)
-            for evt, payload in _emit_stream_delta(delta.content, in_reasoning=in_reasoning):
+            for evt, payload in _emit_stream_delta(
+                delta.content, in_reasoning=in_reasoning, cot_enabled=cot_enabled
+            ):
                 yield (evt, payload)
         if delta.tool_calls:
             for tc in delta.tool_calls:
@@ -586,9 +604,15 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
     except Exception:
         logger.exception("构建技能清单失败（跳过注入）")
         skill_catalog = ""
+    # 思维链开关（全局偏好，默认开启）
+    try:
+        cot_enabled = await prefs.load_cot_enabled()
+    except Exception:
+        logger.exception("读取思维链开关失败（按开启处理）")
+        cot_enabled = True
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": EXECUTOR_SYSTEM + skill_catalog},
+        {"role": "system", "content": build_executor_system(skill_catalog, cot_enabled)},
         {
             "role": "user",
             "content": (
@@ -616,6 +640,7 @@ async def run_chat_turn(session_id: str, req: ChatRequest) -> AsyncIterator[byte
                     tools=tools,
                     temperature=float(cfg.get("temperature", 0.5)),
                     max_tokens=int(cfg.get("max_tokens", 4096)),
+                    cot_enabled=cot_enabled,
                 ):
                     if item[0] == "_result":
                         _, content, finish_reason, tool_calls = item  # type: ignore[misc]

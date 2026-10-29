@@ -210,6 +210,33 @@ export const agentSkillsApi = {
   },
 }
 
+// ── Agent 行为偏好 ─────────────────────────────────────────────────────────
+
+export interface AgentPrefs {
+  /** 思维链开关：开启时 Agent 输出思考过程（思考：… / 模型原生 reasoning） */
+  cot_enabled: boolean
+}
+
+export const agentPrefsApi = {
+  get: async (): Promise<AgentPrefs> => {
+    const res = await fetch(`${base()}/api/agent/prefs`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json() as Promise<AgentPrefs>
+  },
+  update: async (patch: { cot_enabled?: boolean }): Promise<AgentPrefs> => {
+    const res = await fetch(`${base()}/api/agent/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return res.json() as Promise<AgentPrefs>
+  },
+}
+
 // ── Agent MCP 服务 ─────────────────────────────────────────────────────────
 
 export interface McpServerConfig {

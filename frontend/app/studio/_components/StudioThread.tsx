@@ -3,8 +3,24 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
-import { Send, Loader2, Sparkles, RotateCcw, Square, ShieldAlert, Zap, Unlock } from 'lucide-react'
-import { rollbackAgentSessionToMessage, streamAgentChat, getAgentSession, patchAgentWorkspace } from '@/lib/agent-api'
+import {
+  Send,
+  Loader2,
+  Sparkles,
+  RotateCcw,
+  Square,
+  ShieldAlert,
+  Zap,
+  Unlock,
+  Brain,
+} from 'lucide-react'
+import {
+  agentPrefsApi,
+  rollbackAgentSessionToMessage,
+  streamAgentChat,
+  getAgentSession,
+  patchAgentWorkspace,
+} from '@/lib/agent-api'
 import { genId, useStudioStore } from '@/lib/studio-store'
 import type { ArtifactRef, PlanStepState, StudioMessage, AgentPermissionMode } from '@/lib/agent-types'
 import { ExportResultPanel } from './ExportResultPanel'
@@ -425,6 +441,36 @@ export function StudioThread() {
   const permissionMode: AgentPermissionMode = workspace?.permissions?.mode ?? 'ask'
   const grantedToolCount = workspace?.permissions?.session_granted?.length ?? 0
   const [switchingPerm, setSwitchingPerm] = useState(false)
+  // 思维链开关（全局偏好，默认开启）
+  const [cotEnabled, setCotEnabled] = useState(true)
+  const [cotLoading, setCotLoading] = useState(true)
+  useEffect(() => {
+    let alive = true
+    agentPrefsApi
+      .get()
+      .then((p) => {
+        if (alive) setCotEnabled(p.cot_enabled)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (alive) setCotLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const toggleCot = async () => {
+    const next = !cotEnabled
+    setCotEnabled(next)   // 乐观更新
+    try {
+      const p = await agentPrefsApi.update({ cot_enabled: next })
+      setCotEnabled(p.cot_enabled)
+    } catch {
+      setCotEnabled(!next)
+      toast.error('思维链开关保存失败，请重试')
+    }
+  }
 
   const handlePermissionSelect = async (next: AgentPermissionMode) => {
     if (!sessionId || switchingPerm || next === permissionMode) return
@@ -552,13 +598,45 @@ export function StudioThread() {
         </div>
       ) : null}
       <div className="shrink-0 p-3 border-t border-slate-800" data-tour="page-studio-input">
-        <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <PermissionModeSwitch
             mode={permissionMode}
             grantedCount={grantedToolCount}
             disabled={streaming || switchingPerm}
             onSelect={(m) => void handlePermissionSelect(m)}
           />
+          <button
+            type="button"
+            onClick={() => void toggleCot()}
+            disabled={cotLoading}
+            title={
+              cotEnabled
+                ? '思维链已开启：Agent 执行前先展示思考过程；点击关闭（更快，直接执行）'
+                : '思维链已关闭：Agent 直接执行；点击开启以展示思考过程'
+            }
+            className={clsx(
+              'inline-flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors disabled:opacity-50',
+              cotEnabled
+                ? 'border-violet-500/50 bg-violet-500/15 text-violet-200'
+                : 'border-slate-700 text-slate-500 hover:text-slate-300',
+            )}
+          >
+            <Brain size={12} />
+            思维链
+            <span
+              className={clsx(
+                'relative ml-0.5 h-3.5 w-6 rounded-full transition-colors',
+                cotEnabled ? 'bg-violet-500/70' : 'bg-slate-700',
+              )}
+            >
+              <span
+                className={clsx(
+                  'absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all',
+                  cotEnabled ? 'left-[13px]' : 'left-0.5',
+                )}
+              />
+            </span>
+          </button>
         </div>
         <div className="flex gap-2 items-end">
           <textarea

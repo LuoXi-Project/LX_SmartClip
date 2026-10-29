@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.agent import mcp_manager, session_store, skills
+from app.agent import mcp_manager, prefs, session_store, skills
 from app.agent.orchestrator import run_chat_turn
 from app.models.agent import (
     ChatRequest,
@@ -253,3 +253,22 @@ async def delete_mcp_server(server_id: str):
 async def test_mcp_server(req: McpServerRequest):
     """测试连接：从零建立连接并列出工具（不写配置）。"""
     return await mcp_manager.test_server(req.model_dump())
+
+
+# ── Agent 行为偏好 ─────────────────────────────────────────────────────────
+
+
+@router.get("/prefs")
+async def get_agent_prefs():
+    return {"cot_enabled": await prefs.load_cot_enabled()}
+
+
+class AgentPrefsUpdate(BaseModel):
+    cot_enabled: bool | None = None
+
+
+@router.patch("/prefs")
+async def update_agent_prefs(req: AgentPrefsUpdate):
+    if req.cot_enabled is not None:
+        await prefs.save_cot_enabled(req.cot_enabled)
+    return {"ok": True, "cot_enabled": await prefs.load_cot_enabled()}

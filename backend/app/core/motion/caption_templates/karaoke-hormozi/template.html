@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8"/>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+<style>
+  /* 卡拉OK逐词点亮（Hormozi 风）：透明背景——本模板作为叠加层渲染为带 alpha 的 WebM */
+  html, body { margin: 0; width: __WIDTH__px; height: __HEIGHT__px; overflow: hidden; background: transparent; }
+  #stage { position: relative; width: 100%; height: 100%; }
+  .grp {
+    position: absolute; left: 0; width: 100%;
+    display: flex; justify-content: center; align-items: center;
+    padding: 0 6%; box-sizing: border-box;
+    text-align: center; line-height: 1.25;
+    font-family: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-weight: 900; font-size: __FONT_SIZE__px;
+    color: var(--cap-color, #ffffff);
+    visibility: hidden;
+    text-shadow: 0 0 2px rgba(0,0,0,.9), 2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000, 0 6px 18px rgba(0,0,0,.55);
+  }
+  .grp .w { display: inline-block; white-space: pre; will-change: transform, color; }
+  .grp .w.on { color: var(--cap-hl, #ffd60a); transform: scale(1.06); }
+  .pos-bottom .grp { top: 62%; }
+  .pos-center .grp { top: 34%; }
+</style>
+</head>
+<body>
+<div id="stage" class="pos-__POSITION__" data-composition-id="captions" data-start="0" data-duration="__DURATION__" data-width="__WIDTH__" data-height="__HEIGHT__"></div>
+<script>
+const DATA = window.__CAPTION_DATA__;
+const P = Object.assign({ color: "#ffffff", highlight: "#ffd60a", position: "bottom" }, DATA.params || {});
+const stage = document.getElementById("stage");
+stage.style.setProperty("--cap-color", P.color);
+stage.style.setProperty("--cap-hl", P.highlight);
+
+const tl = gsap.timeline({ paused: true });
+DATA.groups.forEach((g, gi) => {
+  const el = document.createElement("div");
+  el.className = "grp";
+  el.id = "g" + gi;
+  const wordEls = [];
+  g.words.forEach((w, wi) => {
+    const s = document.createElement("span");
+    s.className = "w";
+    s.textContent = w.t + (wi < g.words.length - 1 ? " " : "");
+    el.appendChild(s);
+    wordEls.push(s);
+  });
+  stage.appendChild(el);
+  // 入场：整组轻微上浮进入 + 逐词点亮（点亮时长=词活跃期；词间留白不灭）
+  tl.set(el, { visibility: "visible", y: 26, opacity: 0 }, g.start);
+  tl.to(el, { y: 0, opacity: 1, duration: Math.min(0.22, (g.end - g.start) / 4), ease: "power2.out" }, g.start);
+  g.words.forEach((w, wi) => {
+    const dur = Math.max(0.05, w.e - w.s);
+    tl.to(wordEls[wi], { color: P.highlight, scale: 1.06, duration: Math.min(0.08, dur / 2), ease: "power2.out" }, w.s);
+    // 组结束前保持点亮（Hormozi 风格：点过的不灭）；最后一词结束即整组退场
+  });
+  tl.to(el, { opacity: 0, y: -18, duration: 0.14, ease: "power1.in" }, Math.max(g.start, g.end - 0.14));
+  tl.set(el, { visibility: "hidden" }, g.end);
+});
+// 补齐时间轴长度到合成时长（空场段落保持可 seek）
+tl.set({}, {}, DATA.duration);
+window.__timelines["captions"] = tl;
+tl.seek(0);
+</script>
+</body>
+</html>

@@ -1478,6 +1478,7 @@ async def _run_realize_postprocess(
     filename: str,
     url: str,
     profile,
+    srt_content: str = "",
 ) -> tuple[str, str]:
     final_filename, final_url = await run_heavy(
         apply_mix_overlay_if_needed,
@@ -1506,6 +1507,18 @@ async def _run_realize_postprocess(
         final_filename,
         final_url,
     )
+    # 动效字幕（HyperFrames）：字幕层透明 WebM 渲染后 ffmpeg 叠加（ASS 已在渲染时跳过）
+    caps = getattr(profile, "captions", None)
+    if caps is not None and getattr(caps, "engine", "ass") == "hyperframes" and (srt_content or "").strip():
+        from app.core.motion.caption_render import apply_hyperframes_captions
+
+        final_filename, final_url = await apply_hyperframes_captions(
+            final_filename,
+            final_url,
+            srt_content=srt_content,
+            style_slug=getattr(caps, "style", "karaoke-hormozi") or "karaoke-hormozi",
+            params=dict(getattr(caps, "params", {}) or {}),
+        )
     return final_filename, final_url
 
 
@@ -1530,6 +1543,13 @@ async def _launch_realize_job(req: AutoEditRealizeRequest) -> str:
     async def _run():
         reporter = JobReporter(job_id)
         try:
+            # 动效字幕引擎：ASS 跳过，SRT 交给后处理链的 HyperFrames 叠加
+            hf_captions = (
+                getattr(profile, "captions", None) is not None
+                and getattr(profile.captions, "engine", "ass") == "hyperframes"
+                and bool(req.include_subtitle)
+            )
+            hf_srt = ""
             if use_tts_branch:
                 from app.api.subtitle import generate_srt as generate_srt_route
                 fine_grain = _resolve_fine_grain_split(tts_align=align_cfg, plan=plan)
@@ -1537,22 +1557,29 @@ async def _launch_realize_job(req: AutoEditRealizeRequest) -> str:
                 if req.include_subtitle:
                     srt_req = GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=True, split_narration_by_sentence=fine_grain)
                     srt_res = await generate_srt_route(srt_req)
-                    burn_req = BurnSubtitleRequest(segments=seg_inputs, srt_content=srt_res.srt_content, style=style, project_name=project_name, tts_align=align_cfg, require_tts_audio=True, production_profile=profile)
+                    burn_srt = "" if hf_captions else srt_res.srt_content
+                    hf_srt = srt_res.srt_content if hf_captions else ""
+                    burn_req = BurnSubtitleRequest(segments=seg_inputs, srt_content=burn_srt, style=style, project_name=project_name, tts_align=align_cfg, require_tts_audio=True, production_profile=profile)
                     burn_res = await execute_burn_subtitle(burn_req)
                 else:
                     burn_req = BurnSubtitleRequest(segments=seg_inputs, srt_content="", style=style, project_name=project_name, tts_align=align_cfg, require_tts_audio=True, production_profile=profile)
                     burn_res = await execute_burn_subtitle(burn_req)
                 final_filename, final_url = burn_res["filename"], burn_res["url"]
                 await reporter.send("postprocess", "running", "正在后期处理...")
-                final_filename, final_url = await _run_realize_postprocess(plan, final_filename, final_url, profile)
+                final_filename, final_url = await _run_realize_postprocess(plan, final_filename, final_url, profile, srt_content=hf_srt)
             else:
                 await reporter.send("render", "running", "正在导出原声成片...")
-                export_req = ExportOriginalRequest(segments=seg_inputs, style=style, project_name=project_name, include_subtitle=req.include_subtitle, normalize_audio=True, production_profile=profile)
+                if hf_captions:
+                    # 原声分支的动效字幕：按原声时间生成 SRT，导出时跳过 ASS
+                    from app.api.subtitle import generate_srt as generate_srt_route
+                    srt_res = await generate_srt_route(GenerateSRTRequest(segments=seg_inputs, style=style, use_tts_timing=False))
+                    hf_srt = srt_res.srt_content
+                export_req = ExportOriginalRequest(segments=seg_inputs, style=style, project_name=project_name, include_subtitle=req.include_subtitle and not hf_captions, normalize_audio=True, production_profile=profile)
                 res = await execute_export_original(export_req)
                 final_filename = res.get("filename") or ""
                 final_url = res.get("url") or ""
                 await reporter.send("postprocess", "running", "正在后期处理...")
-                final_filename, final_url = await _run_realize_postprocess(plan, final_filename, final_url, profile)
+                final_filename, final_url = await _run_realize_postprocess(plan, final_filename, final_url, profile, srt_content=hf_srt)
             result = {"mode": "voiceover" if use_tts_branch else "original", "filename": final_filename, "url": final_url}
             # 记录成片到 renders 表（异步，不阻塞返回）
             _vid = getattr(getattr(plan, "video_id", None), "__str__", lambda: None)()

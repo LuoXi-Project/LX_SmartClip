@@ -39,6 +39,13 @@ class SubtitleMotionPolicy(BaseModel):
     fade_ms: int = Field(150, ge=50, le=600)
 
 
+class CaptionPolicy(BaseModel):
+    """字幕引擎：ass=传统硬字幕（默认）；hyperframes=动效字幕（逐词卡拉OK等，core/motion/caption_templates）。"""
+    engine: Literal["ass", "hyperframes"] = "ass"
+    style: str = "karaoke-hormozi"      # hyperframes 模板 slug
+    params: dict = Field(default_factory=dict)   # 模板参数覆盖（颜色/字号/位置等）
+
+
 class ProductionProfile(BaseModel):
     """会话/方案级制作风格；Agent preset 与用户 Inspector 自选共用。"""
 
@@ -47,6 +54,7 @@ class ProductionProfile(BaseModel):
     audio: AudioMasterPolicy = Field(default_factory=AudioMasterPolicy)
     bgm: BgmProductionPolicy = Field(default_factory=BgmProductionPolicy)
     subtitle_motion: SubtitleMotionPolicy = Field(default_factory=SubtitleMotionPolicy)
+    captions: CaptionPolicy = Field(default_factory=CaptionPolicy)
     locks: List[str] = Field(default_factory=list, description="锁定字段路径，Agent 不得覆盖")
 
     def merge(self, other: "ProductionProfile", *, respect_locks: bool = True) -> "ProductionProfile":
@@ -58,7 +66,7 @@ class ProductionProfile(BaseModel):
         data = other.model_dump(exclude_unset=True, exclude_none=True)
         if "preset_id" in data and (not respect_locks or "preset_id" not in locks):
             base.preset_id = data["preset_id"]
-        for block in ("transition", "audio", "bgm", "subtitle_motion"):
+        for block in ("transition", "audio", "bgm", "subtitle_motion", "captions"):
             if block not in data:
                 continue
             if respect_locks and block in locks:
@@ -82,6 +90,8 @@ class ProductionProfile(BaseModel):
             self.audio.ducking, self.audio.ducking
         )
         motion = self.subtitle_motion.template
+        if self.captions.engine == "hyperframes":
+            motion = f"动效({self.captions.style})"
         beat = self.bgm.beat_align
         ln = self.audio.loudnorm
         return (
@@ -98,6 +108,7 @@ class ProductionProfilePatch(BaseModel):
     audio: Optional[AudioMasterPolicy] = None
     bgm: Optional[BgmProductionPolicy] = None
     subtitle_motion: Optional[SubtitleMotionPolicy] = None
+    captions: Optional[CaptionPolicy] = None
     locks: Optional[List[str]] = None
 
     def to_profile(self) -> ProductionProfile:
@@ -112,6 +123,8 @@ class ProductionProfilePatch(BaseModel):
             d["bgm"] = self.bgm
         if self.subtitle_motion is not None:
             d["subtitle_motion"] = self.subtitle_motion
+        if self.captions is not None:
+            d["captions"] = self.captions
         if self.locks is not None:
             d["locks"] = self.locks
         return ProductionProfile(**d)

@@ -1,10 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Info, Lock, Mic, Music2, Sliders, Subtitles } from 'lucide-react'
+import { Info, Loader2, Lock, Mic, Music2, Sliders, Sparkles, Subtitles } from 'lucide-react'
 import Link from 'next/link'
 import { patchAgentWorkspace } from '@/lib/agent-api'
-import { bgmApi, type BgmTrack } from '@/lib/api'
+import { bgmApi, motionApi, type BgmTrack, type CaptionStyleItem } from '@/lib/api'
 import { BgmTrackPicker } from '@/components/ui/bgm-track-picker'
 import { SubtitlePanel } from '@/app/match/_components/SubtitlePanel'
 import { useStudioStore } from '@/lib/studio-store'
@@ -61,6 +61,9 @@ export function InspectorPanel() {
   const { media, patchMedia } = useStudioMediaConfig()
   const [bgmTracks, setBgmTracks] = useState<BgmTrack[]>([])
   const [bgmListError, setBgmListError] = useState('')
+  const [captionStyles, setCaptionStyles] = useState<CaptionStyleItem[]>([])
+  const [captionPreviewUrl, setCaptionPreviewUrl] = useState('')
+  const [captionPreviewLoading, setCaptionPreviewLoading] = useState(false)
 
   const profile = readProductionProfile(workspace?.user_preferences)
   const activePlan = useMemo(() => {
@@ -75,6 +78,61 @@ export function InspectorPanel() {
   const audioSummary = activePlan ? getPlanAudioSummary(activePlan) : null
 
   const preset = profile.preset_id || 'auto'
+  const captions = profile.captions || { engine: 'ass' as const, style: 'karaoke-hormozi' }
+
+  useEffect(() => {
+    let cancelled = false
+    motionApi
+      .captionStyles()
+      .then((items) => {
+        if (!cancelled) setCaptionStyles(items)
+      })
+      .catch(() => {
+        /* 动效运行时未就绪时静默：选择器留空 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const patchCaptions = useCallback(
+    async (next: NonNullable<ProductionProfileApi['captions']>) => {
+      if (!sessionId || !workspace) return
+      const merged: ProductionProfileApi = { ...profile, captions: { ...captions, ...next } }
+      await patchAgentWorkspace(sessionId, {
+        user_preferences: {
+          ...workspace.user_preferences,
+          production_profile: merged,
+        },
+      })
+      useStudioStore.setState((s) =>
+        s.workspace
+          ? {
+              workspace: {
+                ...s.workspace,
+                user_preferences: {
+                  ...s.workspace.user_preferences,
+                  production_profile: merged,
+                },
+              },
+            }
+          : {},
+      )
+    },
+    [sessionId, workspace, profile, captions],
+  )
+
+  const loadCaptionPreview = useCallback(async (style: string) => {
+    setCaptionPreviewLoading(true)
+    try {
+      const res = await motionApi.captionPreview({ style })
+      setCaptionPreviewUrl(res.preview_url)
+    } catch {
+      setCaptionPreviewUrl('')
+    } finally {
+      setCaptionPreviewLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -266,6 +324,87 @@ export function InspectorPanel() {
               }
               timingSource="tts"
             />
+
+            {/* 字幕引擎：ASS 硬字幕 / HyperFrames 动效字幕（逐词卡拉OK等） */}
+            <div className="pt-2 border-t border-slate-800 space-y-2">
+              <h3 className="text-slate-500 uppercase tracking-wider text-[10px]">字幕引擎</h3>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void patchCaptions({ engine: 'ass' })}
+                  className={`flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors ${
+                    captions.engine !== 'hyperframes'
+                      ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-200'
+                      : 'border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  传统硬字幕
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void patchCaptions({ engine: 'hyperframes' })
+                    if (!captionPreviewUrl) void loadCaptionPreview(captions.style || 'karaoke-hormozi')
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-1 rounded-lg border px-2 py-1.5 text-xs transition-colors ${
+                    captions.engine === 'hyperframes'
+                      ? 'border-fuchsia-500/60 bg-fuchsia-500/10 text-fuchsia-200'
+                      : 'border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  动效字幕
+                </button>
+              </div>
+              {captions.engine === 'hyperframes' && (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-slate-500">
+                    逐词卡拉OK/打字机等动效字幕（HyperFrames 渲染，比 ASS 慢约 1~3 分钟）
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    {captionStyles.map((s) => (
+                      <button
+                        key={s.slug}
+                        type="button"
+                        onClick={() => {
+                          void patchCaptions({ style: s.slug })
+                          void loadCaptionPreview(s.slug)
+                        }}
+                        className={`text-left rounded-lg px-3 py-2 border transition-colors ${
+                          (captions.style || 'karaoke-hormozi') === s.slug
+                            ? 'border-fuchsia-500/60 bg-fuchsia-500/10 text-fuchsia-200'
+                            : 'border-slate-800 bg-slate-900/40 hover:border-slate-700 text-slate-300'
+                        }`}
+                      >
+                        <div className="font-medium text-sm">{s.title}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {s.description || s.preview || s.slug}
+                        </div>
+                      </button>
+                    ))}
+                    {captionStyles.length === 0 && (
+                      <p className="text-[10px] text-slate-600">
+                        模板列表不可用（动效运行时未就绪，请检查 Node 环境）
+                      </p>
+                    )}
+                  </div>
+                  {captionPreviewLoading ? (
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 py-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> 生成预览…
+                    </div>
+                  ) : captionPreviewUrl ? (
+                    <div className="rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+                      <iframe
+                        src={captionPreviewUrl}
+                        title="字幕动效预览"
+                        className="w-full aspect-[9/16] max-h-80 bg-black"
+                        sandbox="allow-scripts allow-same-origin"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
           </section>
         )}
 

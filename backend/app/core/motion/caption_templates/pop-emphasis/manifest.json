@@ -1,0 +1,16 @@
+{
+  "slug": "pop-emphasis",
+  "title": "关键词弹出强调",
+  "description": "整组上滑入场，关键词（长词/数字/感叹句）放大弹跳变色强调",
+  "params": {
+    "color": "#ffffff",
+    "highlight": "#ff4d6d",
+    "position": "bottom"
+  },
+  "param_schema": {
+    "color": { "type": "string", "label": "文字颜色" },
+    "highlight": { "type": "string", "label": "强调色" },
+    "position": { "type": "string", "enum": ["bottom", "center"], "label": "位置" }
+  },
+  "preview": "知识科普/观点类；强调词自动选取（Python 侧标记 em）"
+}

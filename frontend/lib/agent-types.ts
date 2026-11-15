@@ -21,6 +21,11 @@ export interface ProductionProfileApi {
   audio?: { loudnorm?: string; ducking?: string }
   bgm?: { beat_align?: string }
   subtitle_motion?: { template?: string; fade_ms?: number }
+  captions?: {
+    engine?: 'ass' | 'hyperframes'
+    style?: string
+    params?: Record<string, unknown>
+  }
   locks?: string[]
 }
 

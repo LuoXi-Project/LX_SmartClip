@@ -28,6 +28,7 @@ const projectDir = arg("--project");
 const outputPath = arg("--output");
 const fps = Number(arg("--fps", "30"));
 const quality = arg("--quality", "standard");
+const format = arg("--format", "mp4");
 
 if (!projectDir || !outputPath) {
   emit({ t: "error", error: "需要 --project 与 --output 参数" });
@@ -50,6 +51,9 @@ const config = {
   fps,
   quality,
 };
+if (format && format !== "mp4") {
+  config.format = format;
+}
 if (process.env.HF_CHROME_PATH) {
   config.producerConfig = { chromePath: process.env.HF_CHROME_PATH };
 }

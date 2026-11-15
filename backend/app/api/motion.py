@@ -19,6 +19,52 @@ router = APIRouter(prefix="/api/motion", tags=["motion"])
 _RUNTIME_SCRIPT_TAG = '<script src="/api/motion/runtime.js"></script>'
 
 
+# ── 字幕动效模板 ────────────────────────────────────────────────────────────
+
+
+class CaptionPreviewRequest(BaseModel):
+    style: str = "karaoke-hormozi"
+    params: dict | None = None
+    width: int = 1080
+    height: int = 1920
+    entries: list[dict] | None = None
+
+
+@router.get("/caption-styles")
+async def caption_styles():
+    """动效字幕模板清单（供 Inspector 选择器与 Agent 使用）。"""
+    from app.core.motion.caption_render import list_caption_styles
+
+    return {"items": list_caption_styles()}
+
+
+@router.post("/caption-preview")
+async def caption_preview(req: CaptionPreviewRequest):
+    """用样例数据生成字幕合成预览页（iframe 可直接播放，不渲染）。"""
+    from app.core.motion import renderer as renderer_mod
+    from app.core.motion.caption_render import build_caption_composition
+
+    if not runtime.runtime_status()["ready"]:
+        raise HTTPException(status_code=409, detail="动效运行时不就绪，无法预览")
+    try:
+        html = build_caption_composition(
+            req.entries or [
+                {"start": 0.3, "end": 2.6, "text": "这条视频一定要看到最后"},
+                {"start": 2.8, "end": 5.4, "text": "第三点99%的人都不知道"},
+            ],
+            duration=6.0,
+            width=req.width or 1080,
+            height=req.height or 1920,
+            style_slug=req.style,
+            params=req.params,
+        )
+    except renderer_mod.MotionRenderError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    comp_id = renderer_mod.new_composition_id()
+    renderer_mod.save_composition(comp_id, html)
+    return {"ok": True, "preview_url": f"/api/motion/compositions/{comp_id}/preview"}
+
+
 # ── 运行时 ──────────────────────────────────────────────────────────────────
 
 

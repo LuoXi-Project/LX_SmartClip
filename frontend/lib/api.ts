@@ -205,6 +205,38 @@ export const jobsApi = {
   streamUrl: (jobId: string) => `/api/jobs/${jobId}/stream`,
 }
 
+// ── 动效（HyperFrames）──────────────────────────────────────────────────────
+
+export interface CaptionStyleItem {
+  slug: string
+  title: string
+  description?: string
+  preview?: string
+  params?: Record<string, unknown>
+  param_schema?: Record<string, Record<string, unknown>>
+}
+
+export const motionApi = {
+  runtimeStatus: () =>
+    apiClient.get<unknown, { ready: boolean; missing: string[] }>('/api/motion/runtime/status'),
+  captionStyles: async (): Promise<CaptionStyleItem[]> => {
+    const res = await apiClient.get<unknown, { items: CaptionStyleItem[] }>(
+      '/api/motion/caption-styles',
+    )
+    return res.items || []
+  },
+  captionPreview: (body: {
+    style: string
+    params?: Record<string, unknown>
+    width?: number
+    height?: number
+  }) =>
+    apiClient.post<unknown, { ok: boolean; preview_url: string }>(
+      '/api/motion/caption-preview',
+      body,
+    ),
+}
+
 export interface VideoListParams {
   q?: string
   status?: string

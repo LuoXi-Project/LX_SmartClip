@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8"/>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+<style>
+  /* 底部字幕条：半透明黑条 + 白字 + 词进度下划线推进（综艺/纪录片风） */
+  html, body { margin: 0; width: __WIDTH__px; height: __HEIGHT__px; overflow: hidden; background: transparent; }
+  #stage { position: relative; width: 100%; height: 100%; }
+  .grp {
+    position: absolute; left: 0; bottom: 6%; width: 100%;
+    display: flex; flex-direction: column; align-items: center; gap: 0.35em;
+    padding: 0 5%; box-sizing: border-box;
+    visibility: hidden;
+  }
+  .bar {
+    max-width: 92%;
+    background: rgba(6, 10, 20, var(--cap-bg, 0.62));
+    border-radius: 0.32em;
+    padding: 0.42em 0.9em;
+    text-align: center; line-height: 1.4;
+    font-family: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-weight: 700; font-size: __FONT_SIZE__px;
+    color: var(--cap-color, #f5f7fa);
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  .bar .w { display: inline; white-space: pre; }
+  .track {
+    width: 92%; max-width: 92%; height: 0.22em; border-radius: 1em;
+    background: rgba(255,255,255,0.18); overflow: hidden;
+  }
+  .fill {
+    height: 100%; width: 0%;
+    background: var(--cap-hl, #4cc9f0); border-radius: 1em;
+  }
+</style>
+</head>
+<body>
+<div id="stage" data-composition-id="captions" data-start="0" data-duration="__DURATION__" data-width="__WIDTH__" data-height="__HEIGHT__"></div>
+<script>
+const DATA = window.__CAPTION_DATA__;
+const P = Object.assign({ color: "#f5f7fa", highlight: "#4cc9f0", bg: 0.62 }, DATA.params || {});
+const stage = document.getElementById("stage");
+stage.style.setProperty("--cap-color", P.color);
+stage.style.setProperty("--cap-hl", P.highlight);
+stage.style.setProperty("--cap-bg", P.bg);
+
+const tl = gsap.timeline({ paused: true });
+DATA.groups.forEach((g, gi) => {
+  const wrap = document.createElement("div");
+  wrap.className = "grp";
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  const text = g.words.map((w, wi) => w.t + (wi < g.words.length - 1 ? " " : "")).join("");
+  bar.textContent = text;
+  const track = document.createElement("div");
+  track.className = "track";
+  const fill = document.createElement("div");
+  fill.className = "fill";
+  track.appendChild(fill);
+  wrap.appendChild(bar);
+  wrap.appendChild(track);
+  stage.appendChild(wrap);
+
+  tl.set(wrap, { visibility: "visible", opacity: 0, y: 18 }, g.start);
+  tl.to(wrap, { opacity: 1, y: 0, duration: 0.18, ease: "power2.out" }, g.start);
+  // 进度条：按组时长推进到 100%
+  tl.fromTo(fill, { width: "0%" }, { width: "100%", duration: g.end - g.start, ease: "none" }, g.start);
+  tl.to(wrap, { opacity: 0, duration: 0.14, ease: "power1.in" }, Math.max(g.start, g.end - 0.14));
+  tl.set(wrap, { visibility: "hidden" }, g.end);
+});
+tl.set({}, {}, DATA.duration);
+window.__timelines["captions"] = tl;
+tl.seek(0);
+</script>
+</body>
+</html>

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _COMP_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{6,64}$")
 DEFAULT_FPS = 30
 _ALLOWED_QUALITY = ("draft", "standard", "high")
+_ALLOWED_FORMAT = ("mp4", "webm", "mov", "gif")
 
 
 class MotionRenderError(RuntimeError):
@@ -81,22 +82,29 @@ async def run_render_bridge(
     *,
     fps: int = DEFAULT_FPS,
     quality: str = "standard",
+    output_format: str = "mp4",
     on_event: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> dict[str, Any]:
-    """执行渲染桥，逐行回传事件；返回 done 事件。"""
+    """执行渲染桥，逐行回传事件；返回 done 事件。output_format=webm 时输出带 alpha 的 VP9（叠加层用）。"""
     runtime.ensure_ready()
     if quality not in _ALLOWED_QUALITY:
         raise MotionRenderError(f"quality 只支持 {_ALLOWED_QUALITY}")
+    if output_format not in _ALLOWED_FORMAT:
+        raise MotionRenderError(f"format 只支持 {_ALLOWED_FORMAT}")
     env = _bridge_env()
     node = runtime.node_bin()
     bridge = runtime.render_bridge_path()
-    proc = await asyncio.create_subprocess_exec(
+    cmd = [
         node, str(bridge),
         "--project", str(project_dir),
         "--output", str(output_path),
         "--fps", str(int(fps)),
         "--quality", quality,
+        "--format", output_format,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

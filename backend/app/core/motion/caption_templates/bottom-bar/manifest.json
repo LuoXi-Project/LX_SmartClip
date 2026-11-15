@@ -1,0 +1,16 @@
+{
+  "slug": "bottom-bar",
+  "title": "底部字幕条",
+  "description": "半透明黑条白字 + 组进度条推进（综艺/纪录片风），最稳的通用样式",
+  "params": {
+    "color": "#f5f7fa",
+    "highlight": "#4cc9f0",
+    "bg": 0.62
+  },
+  "param_schema": {
+    "color": { "type": "string", "label": "文字颜色" },
+    "highlight": { "type": "string", "label": "进度条颜色" },
+    "bg": { "type": "number", "label": "条背景不透明度(0-1)" }
+  },
+  "preview": "影视解说/访谈/纪录片"
+}

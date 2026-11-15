@@ -1,0 +1,16 @@
+{
+  "slug": "typewriter",
+  "title": "打字机逐字",
+  "description": "逐字敲出 + 方块光标闪烁（科技感/教程风）",
+  "params": {
+    "color": "#e8f4ff",
+    "cursor": "#37e5ff",
+    "position": "bottom"
+  },
+  "param_schema": {
+    "color": { "type": "string", "label": "文字颜色" },
+    "cursor": { "type": "string", "label": "光标颜色" },
+    "position": { "type": "string", "enum": ["bottom", "center"], "label": "位置" }
+  },
+  "preview": "科技数码/教程口播"
+}

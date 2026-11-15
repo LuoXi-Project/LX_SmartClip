@@ -1,0 +1,16 @@
+{
+  "slug": "karaoke-hormozi",
+  "title": "卡拉OK逐词点亮",
+  "description": "大字居中/下三档，逐词点亮高亮色并轻微放大（Hormozi 风口播标配），点过不灭",
+  "params": {
+    "color": "#ffffff",
+    "highlight": "#ffd60a",
+    "position": "bottom"
+  },
+  "param_schema": {
+    "color": { "type": "string", "label": "文字颜色" },
+    "highlight": { "type": "string", "label": "高亮颜色" },
+    "position": { "type": "string", "enum": ["bottom", "center"], "label": "位置" }
+  },
+  "preview": "口播/带货首选；中文逐字点亮、英文逐词点亮"
+}

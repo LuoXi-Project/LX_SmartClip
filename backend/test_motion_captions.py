@@ -82,3 +82,58 @@ def test_production_profile_captions_policy():
     locked = ProductionProfile(locks=["captions"])
     kept = locked.merge(patched)
     assert kept.captions.engine == "ass"
+
+
+# ── 烧录链内挂引擎（闭环①）──────────────────────────────────────────────────
+
+
+def _req_with_profile(profile):
+    """构造带 production_profile 的最小 BurnSubtitleRequest替身。"""
+    class _Req:
+        production_profile = profile
+
+    return _Req()
+
+
+def test_hf_captions_cfg_parsing():
+    from app.api.subtitle import _hf_captions_cfg
+
+    # 默认 profile → ass 引擎不启用
+    enabled, style, params = _hf_captions_cfg(_req_with_profile(ProductionProfile()))
+    assert enabled is False and style == "" and params == {}
+    # hyperframes + 参数
+    profile = ProductionProfilePatch(
+        captions={"engine": "hyperframes", "style": "pop-emphasis", "params": {"highlight": "#ff0000"}}
+    ).to_profile()
+    enabled, style, params = _hf_captions_cfg(_req_with_profile(profile))
+    assert enabled is True and style == "pop-emphasis" and params == {"highlight": "#ff0000"}
+    # 无 profile 字段的对象
+    enabled, _, _ = _hf_captions_cfg(object())
+    assert enabled is False
+
+
+@pytest.mark.asyncio
+async def test_apply_hf_captions_if_needed_disabled_short_circuit():
+    """engine=ass（默认）时直接透传，不触碰文件系统。"""
+    from app.api.subtitle import _apply_hf_captions_if_needed
+
+    fn, url = await _apply_hf_captions_if_needed(
+        "a.mp4", "http://x/a.mp4",
+        [{"start": 0, "end": 1, "text": "x"}],
+        req=_req_with_profile(ProductionProfile()),
+    )
+    assert (fn, url) == ("a.mp4", "http://x/a.mp4")
+
+
+@pytest.mark.asyncio
+async def test_apply_hf_captions_if_needed_missing_video_fallback():
+    """engine=hyperframes 但成片不存在 → 回退原样（不抛错）。"""
+    from app.api.subtitle import _apply_hf_captions_if_needed
+
+    profile = ProductionProfilePatch(captions={"engine": "hyperframes"}).to_profile()
+    fn, url = await _apply_hf_captions_if_needed(
+        "missing_file.mp4", "",
+        [{"start": 0, "end": 1, "text": "x"}],
+        req=_req_with_profile(profile),
+    )
+    assert fn == "missing_file.mp4"

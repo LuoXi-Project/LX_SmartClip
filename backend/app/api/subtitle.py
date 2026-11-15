@@ -361,6 +361,37 @@ async def generate_srt(req: GenerateSRTRequest):
 # ---------------------------------------------------------------------------
 
 
+def _hf_captions_cfg(req) -> tuple[bool, str, dict]:
+    """读取请求的 production_profile.captions：动效字幕引擎是否启用及样式参数。"""
+    profile = getattr(req, "production_profile", None)
+    caps = getattr(profile, "captions", None) if profile is not None else None
+    if caps is None or getattr(caps, "engine", "ass") != "hyperframes":
+        return False, "", {}
+    style = str(getattr(caps, "style", "") or "karaoke-hormozi")
+    params = dict(getattr(caps, "params", None) or {})
+    return True, style, params
+
+
+async def _apply_hf_captions_if_needed(
+    filename: str, url: str, srt_entries: list, *, req
+) -> tuple[str, str]:
+    """成片叠动效字幕（engine=hyperframes 且有条目时）；失败回退原片。"""
+    enabled, style, params = _hf_captions_cfg(req)
+    if not enabled or not srt_entries:
+        return filename, url
+    from app.core.motion.caption_render import apply_hyperframes_captions
+
+    return await apply_hyperframes_captions(
+        filename,
+        url,
+        srt_content=build_srt(
+            [{"start": e["start"], "end": e["end"], "text": e["text"]} for e in srt_entries]
+        ),
+        style_slug=style,
+        params=params,
+    )
+
+
 async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
     """合并视频 + 替换 TTS 音轨 + 硬烧字幕；重 CPU/ffmpeg 走专用线程池。"""
     if not req.segments:
@@ -487,13 +518,19 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
 
     logger.info("烧录: %d 段, %d 条字幕", len(burn_segments), len(srt_entries))
 
+    # 动效字幕引擎（hyperframes）：跳过 ASS 硬烧，成片后在后处理叠动效字幕层
+    hf_enabled, _, _ = _hf_captions_cfg(req)
+    burn_srt_entries = [] if hf_enabled else srt_entries
+    if hf_enabled and srt_entries:
+        logger.info("字幕引擎=hyperframes：跳过 ASS 硬烧，成片后叠加动效字幕层")
+
     # 生成唯一的项目名，避免文件覆盖
     unique_project_name = f"{req.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
     _, saved_path = await run_heavy(
         burn_to_mp4,
         segments=burn_segments,
-        srt_entries=srt_entries,
+        srt_entries=burn_srt_entries,
         clip_map=clip_map,
         style=req.style,
         project_name=unique_project_name,
@@ -529,6 +566,10 @@ async def execute_burn_subtitle(req: BurnSubtitleRequest) -> dict:
         )
         result["filename"] = mixed_filename
         result["url"] = mixed_url
+    # 动效字幕引擎：叠 HyperFrames 字幕层（ASS 已跳过）
+    result["filename"], result["url"] = await _apply_hf_captions_if_needed(
+        result["filename"], result["url"], srt_entries, req=req
+    )
     # 记录成片到 renders 表（异步，不阻塞返回）
     asyncio.create_task(_record_burned_render(result["url"], "burn"))
     return result
@@ -606,6 +647,12 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     max_chars = req.style.max_chars_per_line if req.style else 20
     srt_entries = rule_timeline_equal_units(req.segments, seg_durs, max_chars=max_chars) if req.include_subtitle else []
 
+    # 动效字幕引擎（hyperframes）：跳过 ASS 硬烧，成片后叠动效字幕层
+    hf_enabled, _, _ = _hf_captions_cfg(req)
+    burn_srt_entries = [] if hf_enabled else srt_entries
+    if hf_enabled and srt_entries:
+        logger.info("原声导出：字幕引擎=hyperframes，跳过 ASS 硬烧改走动效字幕叠加")
+
     # 显式忽略 tts_filename，确保 burn_to_mp4 走“保留原声/拼接”的分支。
     segments_for_burn: List[SubtitleSegmentInput] = []
     for seg in req.segments:
@@ -628,7 +675,7 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
     _, saved_path = await run_heavy(
         burn_to_mp4,
         segments=segments_for_burn,
-        srt_entries=srt_entries,
+        srt_entries=burn_srt_entries,
         clip_map=clip_map,
         style=req.style,
         project_name=unique_project_name,
@@ -663,6 +710,10 @@ async def execute_export_original(req: ExportOriginalRequest) -> dict:
         )
         result["filename"] = mixed_filename
         result["url"] = mixed_url
+    # 动效字幕引擎：叠 HyperFrames 字幕层（ASS 已跳过）
+    result["filename"], result["url"] = await _apply_hf_captions_if_needed(
+        result["filename"], result["url"], srt_entries, req=req
+    )
     # 记录成片到 renders 表（异步，不阻塞返回）
     asyncio.create_task(_record_burned_render(result["url"], "export_original"))
     return result

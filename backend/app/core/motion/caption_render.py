@@ -190,7 +190,8 @@ def composite_overlay_ffmpeg(video_path: str, overlay_webm: str, out_path: str) 
         [
             "-i", video_path,
             "-i", overlay_webm,
-            "-filter_complex", "[0:v][1:v]overlay=0:0:format=auto",
+            # eof_action=pass：叠加层比底片略短（帧数取整）时不再重复末帧
+            "-filter_complex", "[0:v][1:v]overlay=0:0:format=auto:eof_action=pass",
             "-c:v", "libx264", "-crf", "18", "-preset", "medium",
             "-c:a", "copy",
             "-movflags", "+faststart",

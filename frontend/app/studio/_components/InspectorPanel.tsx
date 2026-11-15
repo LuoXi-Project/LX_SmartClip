@@ -388,6 +388,15 @@ export function InspectorPanel() {
                       </p>
                     )}
                   </div>
+                  <CaptionParamsPanel
+                    styleSlug={captions.style || 'karaoke-hormozi'}
+                    styles={captionStyles}
+                    params={captions.params || {}}
+                    onChange={(next) => {
+                      void patchCaptions({ params: next })
+                      void loadCaptionPreview(captions.style || 'karaoke-hormozi')
+                    }}
+                  />
                   {captionPreviewLoading ? (
                     <div className="flex items-center gap-1.5 text-[11px] text-slate-500 py-2">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" /> 生成预览…
@@ -519,6 +528,93 @@ export function InspectorPanel() {
           </section>
         )}
       </div>
+    </div>
+  )
+}
+
+/** 动效字幕模板参数面板：按 manifest 的 param_schema 渲染（颜色/数值/枚举）。 */
+function CaptionParamsPanel({
+  styleSlug,
+  styles,
+  params,
+  onChange,
+}: {
+  styleSlug: string
+  styles: CaptionStyleItem[]
+  params: Record<string, unknown>
+  onChange: (next: Record<string, unknown>) => void
+}) {
+  const style = styles.find((s) => s.slug === styleSlug)
+  if (!style?.param_schema || Object.keys(style.param_schema).length === 0) return null
+
+  const defaults = (style.params || {}) as Record<string, unknown>
+  const current = { ...defaults, ...params }
+
+  const setParam = (key: string, value: unknown) => {
+    onChange({ ...current, [key]: value })
+  }
+
+  const colorRe = /^(#|rgb)/
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2">
+      <p className="text-[10px] text-slate-500">样式参数（实时反映到预览）</p>
+      {Object.entries(style.param_schema).map(([key, schema]) => {
+        const label = String((schema as Record<string, unknown>).label || key)
+        const enumVals = (schema as Record<string, unknown>).enum as string[] | undefined
+        const value = current[key]
+        if (enumVals?.length) {
+          return (
+            <div key={key} className="flex items-center justify-between gap-2">
+              <span className="text-xs text-slate-400">{label}</span>
+              <select
+                value={String(value ?? '')}
+                onChange={(e) => setParam(key, e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:outline-none"
+              >
+                {enumVals.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
+        }
+        if (typeof value === 'string' && colorRe.test(value)) {
+          return (
+            <div key={key} className="flex items-center justify-between gap-2">
+              <span className="text-xs text-slate-400">{label}</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="color"
+                  value={value}
+                  onChange={(e) => setParam(key, e.target.value)}
+                  className="h-6 w-8 cursor-pointer rounded border border-slate-700 bg-transparent"
+                />
+                <span className="font-mono text-[10px] text-slate-500">{value}</span>
+              </div>
+            </div>
+          )
+        }
+        if (typeof value === 'number') {
+          return (
+            <div key={key} className="flex items-center justify-between gap-2">
+              <span className="text-xs text-slate-400">{label}</span>
+              <input
+                type="number"
+                value={value}
+                step={0.05}
+                min={0}
+                max={1}
+                onChange={(e) => setParam(key, Number(e.target.value))}
+                className="w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:outline-none"
+              />
+            </div>
+          )
+        }
+        return null
+      })}
     </div>
   )
 }

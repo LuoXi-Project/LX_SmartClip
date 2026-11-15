@@ -216,9 +216,20 @@ export interface CaptionStyleItem {
   param_schema?: Record<string, Record<string, unknown>>
 }
 
+export interface MotionRuntimeStatus {
+  ready: boolean
+  missing: string[]
+  node: { ok: boolean; path: string | null }
+  node_modules: { ok: boolean; dir: string | null; source: 'bundled' | 'workspace' | null }
+  chromium: { ok: boolean; path: string | null }
+  ffmpeg: { ok: boolean; path: string | null }
+  producer_version: string
+}
+
 export const motionApi = {
-  runtimeStatus: () =>
-    apiClient.get<unknown, { ready: boolean; missing: string[] }>('/api/motion/runtime/status'),
+  runtimeStatus: () => apiClient.get<unknown, MotionRuntimeStatus>('/api/motion/runtime/status'),
+  bootstrap: () =>
+    apiClient.post<unknown, { ok: boolean; job_id: string }>('/api/motion/runtime/bootstrap'),
   captionStyles: async (): Promise<CaptionStyleItem[]> => {
     const res = await apiClient.get<unknown, { items: CaptionStyleItem[] }>(
       '/api/motion/caption-styles',

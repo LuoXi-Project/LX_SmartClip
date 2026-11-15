@@ -74,6 +74,12 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[警告] Playwright Chromium 准备失败，发布功能将仅依赖用户本地 Chrome/Edge（无包内兜底）"
 }
 
+Write-Host "[准备] 动效渲染运行时 Node + HyperFrames 依赖（失败仅警告，动效功能不可用不影响其余）..."
+& (Join-Path $PSScriptRoot "prepare_motion_runtime.ps1")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[警告] 动效渲染运行时准备失败，动效合成/动效字幕功能将在包内不可用（运行时 status 会提示）"
+}
+
 if ($Backend -eq "pyarmor") {
     Write-Host "[5/5] PyArmor 加密 + PyInstaller 构建后端并导出 dist/..."
     & (Join-Path $PSScriptRoot "build_backend_pyarmor_pyinstaller.ps1")

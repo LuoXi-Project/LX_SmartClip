@@ -90,6 +90,9 @@ $StorageDir = Join-Path $BackendDir "storage"
 $DataDir = Join-Path $BackendDir "data"
 $FfmpegBinDir = Join-Path $Root "ffmpeg\bin"
 $PlaywrightBrowsersDir = Join-Path $Root "playwright\ms-playwright"
+# 动效渲染运行时（由 prepare_motion_runtime.ps1 准备）
+$MotionNodeExe = Join-Path $Root "node\node.exe"
+$MotionRuntimeDir = Join-Path $Root "motion-runtime\node_modules"
 
 Write-Host "[backend] 去除 Python 源文件 UTF-8 BOM（避免编译/AST 解析失败）..."
 $StripBom = Join-Path $PSScriptRoot "strip_utf8_bom.py"
@@ -143,6 +146,17 @@ try {
         $Args += "--include-data-dir=$PlaywrightBrowsersDir=ms-playwright"
     } else {
         Write-Host "[backend] 警告: 未找到 $PlaywrightBrowsersDir ，发布功能将仅依赖用户本地 Chrome/Edge"
+    }
+    # 动效渲染运行时（node.exe → bin/node.exe；HyperFrames 依赖 → motion-runtime/node_modules）
+    if ((Test-Path $MotionNodeExe) -and (Test-Path $MotionRuntimeDir)) {
+        Write-Host "[backend] 打入动效运行时: node.exe + $MotionRuntimeDir -> motion-runtime/node_modules"
+        $Args += "--include-data-file=$MotionNodeExe=bin/node.exe"
+        $Args += "--include-data-dir=$MotionRuntimeDir=motion-runtime/node_modules"
+        # 渲染桥脚本（frozen 后 .py 源不存在，render.mjs/package.json 需按数据文件打入）
+        $BridgeDir = Join-Path $BackendDir "app\core\motion\bridge"
+        $Args += "--include-data-dir=$BridgeDir=app/core/motion/bridge"
+    } else {
+        Write-Host "[backend] 警告: 未找到动效运行时（node.exe / motion-runtime），动效合成与动效字幕功能不可用；可运行 scripts/prepare_motion_runtime.ps1 后重打包"
     }
     $Args += $Entry
 

@@ -60,6 +60,9 @@ $LogoIco = Join-Path $Root "frontend\logo.ico"
 $FfmpegBinDir = Join-Path $Root "ffmpeg\bin"
 # 仓库根目录 playwright\ms-playwright（含 chromium-<rev>，由 prepare_playwright.ps1 准备）
 $PlaywrightBrowsersDir = Join-Path $Root "playwright\ms-playwright"
+# 动效渲染运行时（由 prepare_motion_runtime.ps1 准备）：node.exe + HyperFrames 依赖
+$MotionNodeExe = Join-Path $Root "node\node.exe"
+$MotionRuntimeDir = Join-Path $Root "motion-runtime\node_modules"
 
 $SecretPy = Join-Path $BackendDir "secret.py"
 $ConfigJson = Join-Path $BackendDir "config.json"
@@ -180,6 +183,18 @@ try {
             $AddData += @("--add-data", "$PlaywrightBrowsersDir;ms-playwright")
         } else {
             Write-Host "`[backend`] 警告: 未找到 $PlaywrightBrowsersDir ，发布功能将仅依赖用户本地 Chrome/Edge（无包内兜底）"
+        }
+
+        # 动效渲染运行时（Node.exe → _internal/bin/node.exe；HyperFrames 依赖 → _internal/motion-runtime/node_modules）
+        if ((Test-Path $MotionNodeExe) -and (Test-Path $MotionRuntimeDir)) {
+            Write-Host "`[backend`] 打入动效运行时: node.exe + $MotionRuntimeDir -> _internal/motion-runtime/node_modules"
+            $AddData += @("--add-data", "$MotionNodeExe;bin")
+            $AddData += @("--add-data", "$MotionRuntimeDir;motion-runtime/node_modules")
+            # 渲染桥脚本（frozen 后 .py 源不存在，render.mjs/package.json 需按数据文件打入）
+            $BridgeDir = Join-Path $BackendDir "app\core\motion\bridge"
+            $AddData += @("--add-data", "$BridgeDir;app/core/motion/bridge")
+        } else {
+            Write-Host "`[backend`] 警告: 未找到动效运行时（node.exe / motion-runtime），动效合成与动效字幕功能不可用；可运行 scripts/prepare_motion_runtime.ps1 后重打包"
         }
 
         # MoviePy 依赖 imageio；frozen 环境下若缺少 imageio 的 dist-info，会报

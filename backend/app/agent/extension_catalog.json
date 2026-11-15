@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "updated": "2026-11-15",
+  "note": "随代码维护的精选扩展目录（Agent 可 search_extension_registry 检索后引导安装）。路径/命令可能随上游漂移，安装失败时以工具返回的错误为准。",
+  "mcp_servers": [
+    {
+      "id": "fetch",
+      "name": "Fetch 网页抓取",
+      "description": "把网页 URL 抓取并转为 markdown 给 Agent 使用（GET/POST）",
+      "tags": ["web", "抓取", "资料"],
+      "install": { "transport": "stdio", "command": "uvx", "args": ["mcp-server-fetch"] },
+      "notes": "需要本机装有 uv/uvx"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "仓库/Issue/PR 查询与操作（查竞品账号、拉素材仓库清单等）",
+      "tags": ["github", "开发"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] },
+      "env_hint": { "GITHUB_PERSONAL_ACCESS_TOKEN": "需要用户提供的 token" },
+      "notes": "需要 Node.js；私有仓库操作需要 token"
+    },
+    {
+      "id": "filesystem",
+      "name": "文件系统访问",
+      "description": "在指定目录内读写文件（导入本地素材清单/批量整理文档）",
+      "tags": ["文件", "本地"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+      "notes": "args 最后一个参数是允许访问的目录，安装时可让用户指定"
+    },
+    {
+      "id": "memory",
+      "name": "Memory 知识图谱记忆",
+      "description": "跨会话实体/关系记忆（记用户偏好、账号矩阵、常用药剂）",
+      "tags": ["记忆", "知识图谱"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"] }
+    },
+    {
+      "id": "sequential-thinking",
+      "name": "Sequential Thinking",
+      "description": "结构化多步思考辅助（复杂方案拆解时使用）",
+      "tags": ["思考", "推理"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright 浏览器自动化",
+      "description": "浏览器打开/点击/截图/提取（对标 AI IDE 的 browser 工具）",
+      "tags": ["浏览器", "自动化", "抓取"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@playwright/mcp@latest"] },
+      "notes": "首次使用需 npx playwright install chromium"
+    },
+    {
+      "id": "sqlite",
+      "name": "SQLite 查询",
+      "description": "对本项目 smartclip.db 或任意 SQLite 库做只读/读写查询",
+      "tags": ["数据库", "查询"],
+      "install": { "transport": "stdio", "command": "uvx", "args": ["mcp-server-sqlite", "--db-path", "./data/smartclip.db"] },
+      "notes": "db-path 安装时按需指定"
+    },
+    {
+      "id": "git",
+      "name": "Git 操作",
+      "description": "对本地 git 仓库做 status/diff/log 等操作",
+      "tags": ["git", "开发"],
+      "install": { "transport": "stdio", "command": "uvx", "args": ["mcp-server-git", "--repository", "."] }
+    },
+    {
+      "id": "puppeteer",
+      "name": "Puppeteer 浏览器自动化",
+      "description": "Playwright 的备选浏览器自动化（无头 Chrome）",
+      "tags": ["浏览器", "自动化"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-puppeteer"] }
+    },
+    {
+      "id": "everything",
+      "name": "Everything 测试服务",
+      "description": "官方参考测试 server（验证 MCP 桥接链路是否正常）",
+      "tags": ["测试", "调试"],
+      "install": { "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-everything"] }
+    }
+  ],
+  "skills": [
+    {
+      "slug": "docx",
+      "name": "Word 文档处理",
+      "description": "创建/读取/编辑 .docx（脚本化文档、拆条文案导出）",
+      "tags": ["文档", "office"],
+      "install": { "source_type": "github", "repo": "anthropics/skills", "path": "document-skills/docx" }
+    },
+    {
+      "slug": "xlsx",
+      "name": "Excel 表格处理",
+      "description": "创建/读取/编辑 .xlsx（数据表、素材清单台账）",
+      "tags": ["表格", "office"],
+      "install": { "source_type": "github", "repo": "anthropics/skills", "path": "document-skills/xlsx" }
+    },
+    {
+      "slug": "pdf",
+      "name": "PDF 处理",
+      "description": "生成/合并/拆分/提取 PDF（交付物打包）",
+      "tags": ["文档", "pdf"],
+      "install": { "source_type": "github", "repo": "anthropics/skills", "path": "document-skills/pdf" }
+    }
+  ]
+}

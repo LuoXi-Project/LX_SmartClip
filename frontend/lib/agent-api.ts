@@ -208,6 +208,33 @@ export const agentSkillsApi = {
       throw new Error(err.detail || `HTTP ${res.status}`)
     }
   },
+  import: async (body: {
+    source_type: 'url' | 'github' | 'local'
+    url?: string
+    repo?: string
+    path?: string
+    local_path?: string
+    slug?: string
+    enable?: boolean
+  }) => {
+    const res = await fetch(`${base()}/api/agent/skills/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return res.json() as Promise<{
+      ok: boolean
+      slug: string
+      name: string
+      enabled: boolean
+      source_kind: 'remote' | 'local'
+      origin: string
+    }>
+  },
 }
 
 // ── Agent 行为偏好 ─────────────────────────────────────────────────────────

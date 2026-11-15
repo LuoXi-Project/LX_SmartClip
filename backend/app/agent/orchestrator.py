@@ -246,6 +246,34 @@ def _confirm_preview(tool_name: str, args: dict[str, Any], ctx: AgentContext) ->
         return f"将方案「{title}」导出为剪映草稿（ZIP 或写入剪映目录）。"
     if tool_name == "start_process_job":
         return "将开始处理选中素材（抽帧/ASR/向量等），耗时较长。"
+    # 自扩展：安装/卸载技能与 MCP 服务
+    if tool_name == "install_skill":
+        st = str(args.get("source_type") or "")
+        if st == "url":
+            origin = f"URL {args.get('url')}"
+        elif st == "github":
+            origin = f"GitHub {args.get('repo')}/{args.get('path')}"
+        else:
+            origin = f"本地路径 {args.get('local_path')}"
+        warn = (
+            "远端来源将默认安装为停用态，需审阅后启用"
+            if st in ("url", "github")
+            else "本地来源将直接启用"
+        )
+        return f"将从{origin}安装技能（{warn}）。技能内容会进入后续对话的提示词，请确认来源可信。"
+    if tool_name == "uninstall_skill":
+        return f"将卸载技能 {args.get('slug')}（同名内置技能会回退到内置版本）。"
+    if tool_name == "install_mcp_server":
+        transport = str(args.get("transport") or "stdio")
+        if transport == "stdio":
+            argv = " ".join([str(args.get("command") or "")] + [str(a) for a in (args.get("args") or [])])
+            return (
+                f"将接入 MCP 服务 {args.get('id')} 并在本机执行命令：\n{argv}\n"
+                "⚠ 本机命令执行有任意代码风险，且其工具会进入后续对话，请确认命令来源可信后再执行。"
+            )
+        return f"将连接外部 MCP 服务 {args.get('url')} 并接入其工具（外部服务，请确认来源可信）。"
+    if tool_name == "remove_mcp_server":
+        return f"将移除 MCP 服务 {args.get('server_id')} 及其全部桥接工具。"
     # MCP 外部工具：mcp__<server>__<tool>，给出可读来源
     if tool_name.startswith("mcp__"):
         parts = tool_name.split("__", 2)

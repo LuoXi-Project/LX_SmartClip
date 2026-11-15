@@ -196,6 +196,34 @@ async def delete_skill(slug: str):
     return {"ok": True}
 
 
+class SkillImportRequest(BaseModel):
+    """从 URL / GitHub / 本地路径导入技能（与 agent install_skill 工具共用底层）。"""
+    source_type: str
+    url: str = ""
+    repo: str = ""
+    path: str = ""
+    local_path: str = ""
+    slug: str | None = None
+    enable: bool | None = None
+
+
+@router.post("/skills/import")
+async def import_skill(req: SkillImportRequest):
+    try:
+        info = await skills.install_skill_from_source(
+            source_type=req.source_type,
+            url=req.url,
+            repo=req.repo,
+            path=req.path,
+            local_path=req.local_path,
+            slug=req.slug,
+            enable=req.enable,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **info}
+
+
 # ── Agent MCP 服务 ─────────────────────────────────────────────────────────
 
 

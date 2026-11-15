@@ -297,6 +297,48 @@ export function AgentMcpSection() {
   )
 }
 
+/** 解析粘贴的 MCP JSON：单条配置 / 配置数组 / Claude·Cursor 的 {mcpServers:{…}} 格式。 */
+function parseMcpJson(text: string): Partial<McpServerConfig> & { env?: Record<string, string> } {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error('不是合法 JSON')
+  }
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const obj = data as Record<string, unknown>
+    // Claude Desktop / Cursor 格式：{ "mcpServers": { "<id>": { command… | url… } } }
+    if (obj.mcpServers && typeof obj.mcpServers === 'object') {
+      const map = obj.mcpServers as Record<string, Record<string, unknown>>
+      const firstKey = Object.keys(map)[0]
+      if (!firstKey) throw new Error('mcpServers 为空')
+      const entry = map[firstKey]
+      return {
+        id: firstKey,
+        name: String(entry.name || firstKey),
+        transport: entry.url ? 'http' : 'stdio',
+        command: String(entry.command || ''),
+        args: Array.isArray(entry.args) ? entry.args.map(String) : [],
+        env: (entry.env as Record<string, string>) || undefined,
+        url: String(entry.url || ''),
+        headers: (entry.headers as Record<string, string>) || undefined,
+      }
+    }
+    if (Array.isArray(obj)) throw new Error('意外的数组')
+    return {
+      id: obj.id ? String(obj.id) : undefined,
+      name: obj.name ? String(obj.name) : undefined,
+      transport: obj.url ? 'http' : 'stdio',
+      command: String(obj.command || ''),
+      args: Array.isArray(obj.args) ? obj.args.map(String) : [],
+      env: (obj.env as Record<string, string>) || undefined,
+      url: String(obj.url || ''),
+      headers: (obj.headers as Record<string, string>) || undefined,
+    }
+  }
+  throw new Error('需要对象或 {mcpServers:{…}} 格式')
+}
+
 function McpServerForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const toast = useToast()
   const [transport, setTransport] = useState<'stdio' | 'http'>('stdio')
@@ -305,6 +347,10 @@ function McpServerForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
   const [command, setCommand] = useState('')
   const [argsText, setArgsText] = useState('')
   const [url, setUrl] = useState('')
+  const [env, setEnv] = useState<Record<string, string>>({})
+  const [headers, setHeaders] = useState<Record<string, string>>({})
+  const [showJson, setShowJson] = useState(false)
+  const [jsonText, setJsonText] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const inputCls =
@@ -316,10 +362,30 @@ function McpServerForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
     transport,
     command: command.trim(),
     args: argsText.trim() ? argsText.trim().split(/\s+/) : [],
+    env,
     url: url.trim(),
+    headers,
     enabled: true,
     trusted: false,
   })
+
+  const applyJson = () => {
+    try {
+      const parsed = parseMcpJson(jsonText)
+      if (parsed.transport) setTransport(parsed.transport)
+      if (parsed.id) setId(parsed.id)
+      if (parsed.name) setName(parsed.name)
+      if (parsed.command) setCommand(parsed.command)
+      if (parsed.args?.length) setArgsText(parsed.args.join(' '))
+      if (parsed.url) setUrl(parsed.url)
+      if (parsed.env && Object.keys(parsed.env).length) setEnv(parsed.env)
+      if (parsed.headers && Object.keys(parsed.headers).length) setHeaders(parsed.headers)
+      toast.success('已解析 JSON 并填入表单，请检查后「先测试」再添加')
+      setShowJson(false)
+    } catch (e) {
+      toast.error(`JSON 解析失败：${(e as Error).message}`)
+    }
+  }
 
   const submit = async () => {
     setSubmitting(true)
@@ -352,7 +418,35 @@ function McpServerForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
 
   return (
     <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/[0.04] p-4 space-y-3">
-      <p className="text-sm font-medium text-slate-100">添加 MCP 服务</p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-slate-100">添加 MCP 服务</p>
+        <button
+          type="button"
+          onClick={() => setShowJson((v) => !v)}
+          className="text-[11px] text-cyan-300 hover:text-cyan-200 transition-colors"
+        >
+          {showJson ? '收起 JSON 导入' : '从 JSON 导入'}
+        </button>
+      </div>
+      {showJson && (
+        <div className="space-y-1.5">
+          <textarea
+            className={clsx(inputCls, 'min-h-[90px] resize-y font-mono text-xs')}
+            value={jsonText}
+            onChange={(e) => setJsonText(e.target.value)}
+            placeholder={
+              '{\n  "mcpServers": {\n    "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] }\n  }\n}'
+            }
+          />
+          <button
+            type="button"
+            onClick={applyJson}
+            className="px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 text-xs transition-colors"
+          >
+            解析并填入
+          </button>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
           <label className="text-xs text-slate-400">标识 id（小写，3~32 位）</label>
@@ -425,9 +519,14 @@ function McpServerForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
           />
         </div>
       )}
+      {(Object.keys(env).length > 0 || Object.keys(headers).length > 0) && (
+        <p className="text-[11px] text-slate-500">
+          已携带 {Object.keys(env).length} 个环境变量、{Object.keys(headers).length} 个鉴权头（来自 JSON 导入，随配置保存）
+        </p>
+      )}
       <p className="text-[11px] leading-4 text-slate-500">
         工具将以 mcp__&lt;id&gt;__&lt;工具名&gt; 提供给 Agent，默认执行前需确认（权限「每次询问」档）；
-        高级配置（环境变量 / 鉴权头 / 超时）可之后经 API 调整。
+        也可在工作台对话中直接让 Agent 代为接入（安装前同样会弹确认卡）。
       </p>
       <div className="flex items-center justify-end gap-2">
         <button

@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import {
   BookOpen,
   ChevronDown,
+  Download,
   Loader2,
   Plus,
   RefreshCw,
@@ -29,6 +30,7 @@ export function AgentSkillsSection() {
   const [contents, setContents] = useState<Record<string, string>>({})
   const [toggling, setToggling] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [showImport, setShowImport] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -116,7 +118,21 @@ export function AgentSkillsSection() {
           </button>
           <button
             type="button"
-            onClick={() => setShowCreate((v) => !v)}
+            onClick={() => {
+              setShowImport((v) => !v)
+              setShowCreate(false)
+            }}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-500 text-xs font-medium transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            导入
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowCreate((v) => !v)
+              setShowImport(false)
+            }}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -238,6 +254,16 @@ export function AgentSkillsSection() {
             onCancel={() => setShowCreate(false)}
           />
         )}
+
+        {showImport && (
+          <ImportSkillForm
+            onDone={() => {
+              setShowImport(false)
+              load()
+            }}
+            onCancel={() => setShowImport(false)}
+          />
+        )}
       </div>
     </section>
   )
@@ -343,6 +369,157 @@ function CreateSkillForm({
         >
           {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
           创建并启用
+        </button>
+      </div>
+    </div>
+  )
+}
+
+type ImportSource = 'url' | 'github' | 'local'
+
+function ImportSkillForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const toast = useToast()
+  const [source, setSource] = useState<ImportSource>('url')
+  const [url, setUrl] = useState('')
+  const [repo, setRepo] = useState('')
+  const [path, setPath] = useState('')
+  const [localPath, setLocalPath] = useState('')
+  const [slug, setSlug] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const inputCls =
+    'w-full rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500/60 focus:outline-none'
+  const tabCls = (active: boolean) =>
+    clsx(
+      'px-2.5 py-1 rounded-md text-[11px] transition-colors',
+      active ? 'bg-slate-700 text-slate-100' : 'text-slate-500 hover:text-slate-300',
+    )
+
+  const submit = async () => {
+    if (source === 'url' && !url.trim()) return toast.error('请填写 SKILL.md 直链')
+    if (source === 'github' && (!repo.trim() || !path.trim()))
+      return toast.error('请填写仓库（owner/name）与技能目录')
+    if (source === 'local' && !localPath.trim()) return toast.error('请填写本机技能目录路径')
+    setSubmitting(true)
+    try {
+      const info = await agentSkillsApi.import({
+        source_type: source,
+        url: url.trim(),
+        repo: repo.trim(),
+        path: path.trim(),
+        local_path: localPath.trim(),
+        slug: slug.trim() || undefined,
+      })
+      toast.success(
+        info.enabled
+          ? `技能「${info.name}」已导入并启用`
+          : `技能「${info.name}」已导入（远端来源默认停用，审阅内容后请手动启用）`,
+      )
+      onDone()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/[0.04] p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-slate-100">导入技能</p>
+        <div className="flex items-center gap-1 rounded-lg bg-slate-800/70 p-0.5">
+          <button type="button" className={tabCls(source === 'url')} onClick={() => setSource('url')}>
+            URL 直链
+          </button>
+          <button
+            type="button"
+            className={tabCls(source === 'github')}
+            onClick={() => setSource('github')}
+          >
+            GitHub 仓库
+          </button>
+          <button
+            type="button"
+            className={tabCls(source === 'local')}
+            onClick={() => setSource('local')}
+          >
+            本地路径
+          </button>
+        </div>
+      </div>
+      <p className="text-[11px] leading-4 text-slate-500">
+        从外部安装 SKILL.md（需含 name/description frontmatter）。远端来源默认导入为停用态，
+        请展开审阅全文后再启用——技能内容会进入 Agent 后续对话的提示词。
+      </p>
+      {source === 'url' && (
+        <div className="space-y-1">
+          <label className="text-xs text-slate-400">SKILL.md 直链</label>
+          <input
+            className={inputCls}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://raw.githubusercontent.com/…/SKILL.md"
+          />
+        </div>
+      )}
+      {source === 'github' && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">仓库（owner/name）</label>
+            <input
+              className={inputCls}
+              value={repo}
+              onChange={(e) => setRepo(e.target.value)}
+              placeholder="anthropics/skills"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">技能目录</label>
+            <input
+              className={inputCls}
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="document-skills/docx"
+            />
+          </div>
+        </div>
+      )}
+      {source === 'local' && (
+        <div className="space-y-1">
+          <label className="text-xs text-slate-400">本机技能目录（含 SKILL.md）</label>
+          <input
+            className={inputCls}
+            value={localPath}
+            onChange={(e) => setLocalPath(e.target.value)}
+            placeholder="F:/skills/my-skill"
+          />
+        </div>
+      )}
+      <div className="space-y-1">
+        <label className="text-xs text-slate-400">标识 slug（可选）</label>
+        <input
+          className={inputCls}
+          value={slug}
+          onChange={(e) => setSlug(e.target.value)}
+          placeholder="留空按来源自动生成"
+        />
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-slate-100 text-xs transition-colors"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={submitting}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium disabled:opacity-50 transition-colors"
+        >
+          {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          导入
         </button>
       </div>
     </div>

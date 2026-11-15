@@ -1,0 +1,10 @@
+{
+  "name": "lx-smartclip-motion-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LX SmartClip 动效渲染工作区依赖（由 backend bootstrap 到 <data>/motion；打包版随包分发同清单预装产物）",
+  "dependencies": {
+    "@hyperframes/producer": "0.9.52"
+  }
+}

@@ -246,6 +246,11 @@ def _confirm_preview(tool_name: str, args: dict[str, Any], ctx: AgentContext) ->
         return f"将方案「{title}」导出为剪映草稿（ZIP 或写入剪映目录）。"
     if tool_name == "start_process_job":
         return "将开始处理选中素材（抽帧/ASR/向量等），耗时较长。"
+    if tool_name == "render_composition":
+        return (
+            f"将把 HTML 动效合成渲染成 MP4（{args.get('quality') or 'standard'} 画质、"
+            f"{args.get('fps') or 30} fps），Chromium 逐帧捕获，预计耗时数分钟。"
+        )
     # 自扩展：安装/卸载技能与 MCP 服务
     if tool_name == "install_skill":
         st = str(args.get("source_type") or "")

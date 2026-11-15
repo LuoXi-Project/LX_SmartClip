@@ -25,6 +25,7 @@ import { genId, useStudioStore } from '@/lib/studio-store'
 import type { ArtifactRef, PlanStepState, StudioMessage, AgentPermissionMode } from '@/lib/agent-types'
 import { ExportResultPanel } from './ExportResultPanel'
 import { StudioExportGuide } from './StudioExportGuide'
+import { MotionArtifact, isMotionArtifact } from './MotionArtifact'
 import {
   ReasoningBlock,
   StudioExecutionTrace,
@@ -788,6 +789,13 @@ function MessageRow({
       return (
         <div className="mr-2">
           <ExportResultPanel artifact={msg.artifact} compact />
+        </div>
+      )
+    }
+    if (isMotionArtifact(msg.artifact.payload)) {
+      return (
+        <div className="mr-2">
+          <MotionArtifact artifact={msg.artifact} />
         </div>
       )
     }

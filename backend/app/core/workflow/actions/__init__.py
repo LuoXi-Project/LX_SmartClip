@@ -34,7 +34,7 @@ class ActionSpec:
 ACTIONS: dict[str, ActionSpec] = {}
 
 # 动作实现子模块（导入即注册）
-_ACTION_MODULES = ("ingest", "process", "auto_edit_actions", "match_render")
+_ACTION_MODULES = ("ingest", "process", "auto_edit_actions", "match_render", "motion_actions")
 
 _loaded = False
 

@@ -16,6 +16,7 @@ import { useStudioMediaConfig } from './useStudioMediaConfig'
 import { bgmTrackLabel } from '@/lib/studio-media-config'
 import type { ArtifactRef } from '@/lib/agent-types'
 import { StudioPanelHeaderAction } from './StudioPanelHeaderAction'
+import { MotionArtifact, isMotionArtifact } from './MotionArtifact'
 
 function latestVideoExport(exports: Record<string, unknown>[] | undefined) {
   if (!exports?.length) return null
@@ -122,6 +123,10 @@ export function ArtifactCanvas() {
         <StudioPanelHeaderAction panelId="canvas" />
       </div>
       <div className="flex-1 overflow-auto styled-scrollbar min-h-0 p-4 space-y-4">
+        {isMotionArtifact(selectedArtifact?.payload) && selectedArtifact ? (
+          <MotionArtifact artifact={selectedArtifact} />
+        ) : null}
+
         {exportArtifact ? <ExportResultPanel artifact={exportArtifact} /> : null}
 
         {plan ? (

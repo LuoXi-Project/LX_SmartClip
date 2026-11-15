@@ -23,8 +23,10 @@ def register_all_tools() -> None:
     from app.agent.tools.media_tools import register_media_tools
     from app.agent.tools.skill_tools import register_skill_tools
     from app.agent.tools.extension_tools import register_extension_tools
+    from app.agent.tools.motion_tools import register_motion_tools
 
     register_media_tools()
     register_skill_tools()
     register_extension_tools()
+    register_motion_tools()
     _tools_registered = True

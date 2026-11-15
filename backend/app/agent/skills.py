@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 SKILL_SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 ENABLED_CONFIG_KEY = "agent_skills_enabled"
-BODY_CHAR_LIMIT = 4000
-REFERENCES_CHAR_LIMIT = 2000
+BODY_CHAR_LIMIT = 6000
+REFERENCES_CHAR_LIMIT = 4000
 
 _BUILTIN_DIR = Path(__file__).parent / "skills_builtin"
 

@@ -39,6 +39,7 @@ from app.api.summary import router as summary_router
 from app.api.script_stock import router as script_stock_router
 from app.api.film_commentary import router as film_commentary_router
 from app.api.agent import router as agent_router
+from app.api.motion import router as motion_router
 from app.api.license import router as license_router
 from app.api.logs import router as logs_router
 from app.api.ui import router as ui_router
@@ -139,6 +140,7 @@ app.include_router(audio_library_router)
 app.include_router(renders_router)
 app.include_router(external_search_router)
 app.include_router(workflow_router)
+app.include_router(motion_router)
 
 
 # 挂载 storage 目录，供前端直接下载烧录视频等静态文件

@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.core.license import ensure_license_valid, is_license_enforced
 from .process_db import (
     ProgressReporter,
     create_task,
@@ -211,7 +210,7 @@ async def enqueue_process_job(
     """创建 process_task + async_job 并放入串行预处理队列。
 
     HTTP 入口（create_process_job）与外部关键词采集任务（external_search.ingest）
-    共用；license 校验只留在 HTTP 层。
+    共用。
     """
     task_payload = await create_task(video_id)
     task_id = task_payload["id"]
@@ -269,8 +268,6 @@ async def create_process_job(
     video = await get_video(video_id)
     if not video:
         raise HTTPException(status_code=404, detail=f"视频 '{video_id}' 不存在")
-    if is_license_enforced() and not await ensure_license_valid():
-        raise HTTPException(status_code=403, detail="LICENSE_REQUIRED")
     skip_steps, clip_ids_filter = await validate_process_job_options(video_id, body)
     video_name = (video.get("name") if isinstance(video, dict) else None) or ""
     result = await enqueue_process_job(
@@ -359,10 +356,6 @@ async def process_video_ws(video_id: str, ws: WebSocket):
     video = await get_video(video_id)
     if not video:
         await ws.send_json({"step": "error", "status": "error", "message": "视频不存在", "detail": {}})
-        await ws.close()
-        return
-    if is_license_enforced() and not await ensure_license_valid():
-        await ws.send_json({"step": "error", "status": "error", "message": "LICENSE_REQUIRED", "detail": {}})
         await ws.close()
         return
     try:

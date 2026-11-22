@@ -64,9 +64,6 @@ $PlaywrightBrowsersDir = Join-Path $Root "playwright\ms-playwright"
 $MotionNodeExe = Join-Path $Root "node\node.exe"
 $MotionRuntimeDir = Join-Path $Root "motion-runtime\node_modules"
 
-$SecretPy = Join-Path $BackendDir "secret.py"
-$ConfigJson = Join-Path $BackendDir "config.json"
-
 $VenvPythonCandidates = @(
     (Join-Path $Root "venv\\Scripts\\python.exe"),
     (Join-Path $BackendDir "venv\\Scripts\\python.exe")
@@ -152,8 +149,7 @@ try {
         "-r",
         "-O", $ObfDir,
         "start_backend.py",
-        "app",
-        "secret.py"
+        "app"
     )
     & $Py @PyarmorArgs
     if ($LASTEXITCODE -ne 0) { throw "PyArmor 加密失败" }
@@ -169,7 +165,6 @@ try {
         # storage/data 不打入包内：运行时由 app.utils.paths 在 exe 旁（或可写根）创建
         $AddData = @()
         if (Test-Path $FrontendStatic) { $AddData += @("--add-data", "$FrontendStatic;app/static/frontend") }
-        if (Test-Path $ConfigJson) { $AddData += @("--add-data", "$ConfigJson;config.json") }
         if (Test-Path $FfmpegBinDir) {
             Write-Host "`[backend`] 打入 FFmpeg 目录: $FfmpegBinDir -> _internal/bin"
             $AddData += @("--add-data", "$FfmpegBinDir;bin")
@@ -262,7 +257,6 @@ try {
             "app.main"
             "uvicorn.main"
             "uvicorn.__main__"
-            "secret"
             "yt_dlp"
             "pyJianYingDraft"
             "pyJianYingDraft.time_util"
@@ -318,11 +312,6 @@ $ProducedExe = Join-Path $BackendOutDir ($PyinstallerName + ".exe")
 $TargetExe = Join-Path $BackendOutDir ($AppName + ".exe")
 if (Test-Path $ProducedExe) {
     Move-Item -Path $ProducedExe -Destination $TargetExe -Force
-}
-
-# 将 config.json 放到可执行文件同级目录，便于读写/修改（运行时 secret.get_config 会优先读取此处）
-if (Test-Path $ConfigJson) {
-    Copy-Item -Path $ConfigJson -Destination (Join-Path $BackendOutDir "config.json") -Force
 }
 
 # 生成启动脚本：固定 LX_SMARTCLIP_HOME，并设置内置 FFmpeg 环境变量

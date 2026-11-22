@@ -7,7 +7,6 @@ from app.agent.tool_registry import AgentContext, ToolSpec, register
 from app.api.process import _run_task
 from app.api.process_db import create_task, get_task, get_video, reconcile_orphan_task
 from app.api.process_shared import _job_tasks
-from app.core.license import ensure_license_valid, is_license_enforced
 from app.models.agent import ArtifactRef, ToolResult
 
 
@@ -19,9 +18,6 @@ async def _start_process_job(ctx: AgentContext, args: dict[str, Any]) -> ToolRes
             video_id = video_ids[0]
         else:
             return ToolResult(ok=False, summary="", error="请提供 video_id 或先在 workspace 选中单个视频")
-
-    if is_license_enforced() and not await ensure_license_valid():
-        return ToolResult(ok=False, summary="", error="需要有效卡密授权")
 
     video = await get_video(video_id)
     if not video:

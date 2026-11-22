@@ -44,7 +44,7 @@
 | Agent 形态 | Router + Planner + Executor（同模型不同 system prompt） | 与影视解说「编剧层+执行层」一致 |
 | 业务复用 | Tool 薄封装现有 `app/api` + `app/core` | 避免双轨维护 |
 | 状态中心 | `Workspace` 持久化于 SQLite，非仅 chat messages | 支持恢复、撤销、手改同步 |
-| 部署 | 本地单用户，LLM 读 `config` 表 | 与现有 License/设置一致 |
+| 部署 | 本地单用户，LLM 读 `config` 表 | 与现有系统设置一致 |
 
 ---
 

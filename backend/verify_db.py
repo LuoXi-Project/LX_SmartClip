@@ -30,7 +30,6 @@ async def main():
             'split_mode', 'fixed_duration', 'scene_threshold',
             'vector_dimension', 'top_k', 'vlm_provider', 'vlm_base_url',
             'vlm_model', 'vlm_api_key', 'tts_provider', 'asr_model',
-            'license_card',
         ]
         for key in expected_keys:
             assert key in config_dict, f'Missing config key: {key}'

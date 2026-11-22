@@ -40,7 +40,6 @@ from app.api.script_stock import router as script_stock_router
 from app.api.film_commentary import router as film_commentary_router
 from app.api.agent import router as agent_router
 from app.api.motion import router as motion_router
-from app.api.license import router as license_router
 from app.api.logs import router as logs_router
 from app.api.ui import router as ui_router
 from app.api.publish import router as publish_router
@@ -48,7 +47,6 @@ from app.api.audio_library import router as audio_library_router
 from app.api.renders import router as renders_router
 from app.api.external_search import router as external_search_router
 from app.api.workflow import router as workflow_router
-from app.middleware.license_middleware import LicenseMiddleware
 
 
 setup_logging(level=logging.INFO)
@@ -97,7 +95,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LX SmartClip API", version="0.1.0", lifespan=lifespan)
 
-app.add_middleware(LicenseMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -108,7 +105,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(license_router)
 app.include_router(ui_router)
 app.include_router(config_router)
 app.include_router(videos_router)
@@ -213,7 +209,7 @@ if _frontend_dist_path:
 
 @app.exception_handler(StarletteHTTPException)
 async def spa_fallback_on_404(request, exc: StarletteHTTPException):
-    # 前端路由（如 /license）在静态导出时可能不存在同名文件路径，
+    # 前端路由在静态导出时可能不存在同名文件路径，
     # 对非 API 的 404 做兜底返回 index.html，避免刷新/直达路由 404。
     if exc.status_code == 404 and request.method == "GET":
         path = request.url.path

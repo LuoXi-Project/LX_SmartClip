@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
-_CONFIG_EXCLUDE_KEYS = frozenset({"license_card", "ui_onboarding_v1"})
+_CONFIG_EXCLUDE_KEYS = frozenset({"ui_onboarding_v1"})
 
 
 @router.get("")
@@ -54,7 +54,7 @@ async def update_config(body: ConfigUpdate):
         if body.key in _CONFIG_EXCLUDE_KEYS:
             raise HTTPException(
                 status_code=403,
-                detail="该配置项请使用 /api/license 接口管理",
+                detail="该配置项属于内部配置，不可直接修改",
             )
         val = body.value
         if body.key == "jianying_draft_parent_dir":

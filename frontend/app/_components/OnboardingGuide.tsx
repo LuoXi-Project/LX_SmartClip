@@ -158,7 +158,6 @@ export function OnboardingGuide() {
     return () => window.removeEventListener(ONBOARDING_REOPEN_EVENT, handler)
   }, [openWizard])
 
-  if (pathname?.startsWith('/license')) return null
   if (!hydrated && !open) return null
   if (!open || !step) return null
 

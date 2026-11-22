@@ -41,9 +41,8 @@
 - [x] 自动剪辑 v2：`/api/auto-edit/*`（计划、流式会话、实现导出等）
 - [x] BGM 曲库：`/api/bgm/*`
 - [x] 复刻模板（Replica）：`/api/replica/*`
-- [x] 卡密与授权中间件：`/api/license/*`、`LicenseMiddleware`
 - [x] 运行日志查询：`GET /api/logs`
-- [x] 前端页面：`/search`、`/bgm`、`/license`、`/logs`、`/about`
+- [x] 前端页面：`/search`、`/bgm`、`/logs`、`/about`
 - [x] 发布态：可挂载 `backend/app/static/frontend`（Next 静态导出）+ SPA 404 兜底
 
 ## ⏳ Phase 12（收尾与质量）

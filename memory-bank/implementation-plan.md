@@ -14,7 +14,7 @@
 ## Phase 1：数据库基础层 ✅
 
 - SQLite、`videos` / `clips` / `config` 及后续迁移表（`replica_templates`、`process_tasks`）  
-- `GET/PATCH /api/config`（敏感项走 license）  
+- `GET/PATCH /api/config`  
 
 ## Phase 2：视频上传与管理 ✅
 
@@ -78,7 +78,6 @@
 | 自动剪辑 | ✅ | `api/auto_edit.py`、`core/auto_edit*` |
 | BGM 曲库 | ✅ | `api/bgm.py`、`core/bgm` |
 | 复刻模板 Replica | ✅ | `api/replica.py`、`replica_templates` |
-| 卡密与中间件 | ✅ | `api/license.py`、`middleware/license_middleware.py` |
 | 处理任务表与 jobs API | ✅ | `process_tasks`、`/api/process-jobs` |
 | 静态前端一体化部署 | ✅ | `main.py` 挂载 `static/frontend`、SPA fallback |
 

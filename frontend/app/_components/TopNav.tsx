@@ -34,7 +34,6 @@ const materialItems: NavDropdownItem[] = [
 const moreItems: NavDropdownItem[] = [
   { href: '/about', label: '关于与支持' },
   { href: '/logs', label: '日志' },
-  { href: '/license', label: '卡密' },
 ]
 
 const mobileSections = [

@@ -16,7 +16,6 @@
 |------|-----------|------|
 | `/health` | `main.py` | 健康检查 |
 | `/api/config` | `config.py` | 配置读写；`POST /models` 代理模型列表 |
-| `/api/license` | `license.py` | 卡密状态、激活、解绑 |
 | `/api/videos` | `videos.py` | 上传、列表、流/缩略图、URL 导入、重编码、高光等 |
 | `/api/videos` | `clips.py` | 切分、抽帧、音频、片段 CRUD/流 |
 | `/api/videos` | `asr.py` / `vlm.py` / `embed.py` | 分步 ASR / VLM / 嵌入 |
@@ -44,7 +43,7 @@
 |----|------|
 | `videos` | 视频元数据与状态 |
 | `clips` | 片段与 ASR/VLM 等字段 |
-| `config` | 全局配置（`license_card` 等对前端配置接口隐藏） |
+| `config` | 全局配置（`ui_onboarding_v1` 等对前端配置接口隐藏） |
 | `replica_templates` | 复刻模板草稿与确认态 |
 | `process_tasks` | 处理任务状态与进度 JSON |
 
@@ -65,10 +64,9 @@
 | `/bgm` | `bgm/page.tsx` |
 | `/settings` | `settings/page.tsx` |
 | `/logs` | `logs/page.tsx` |
-| `/license` | `license/page.tsx` |
 | `/about` | `about/page.tsx` |
 
-全局布局与导航：`layout.tsx`（含 `LicenseGate`、`AIChatPanel`）。
+全局布局与导航：`layout.tsx`（含 `AIChatPanel`）。
 
 ---
 

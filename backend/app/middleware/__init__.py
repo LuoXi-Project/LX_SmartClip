@@ -1,3 +1,3 @@
-from app.middleware.license_middleware import LicenseMiddleware
+"""中间件模块。"""
 
-__all__ = ["LicenseMiddleware"]
+__all__ = []

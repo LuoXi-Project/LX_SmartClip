@@ -603,8 +603,6 @@ DEFAULT_CONFIG = [
     ("vlm_context_length", "65536", "number", "VLM 上下文长度 (tokens)", None),
     ("vlm_max_images_per_batch", "10", "number", "VLM 单次最大图片数量", None),
     ("vlm_concurrency", "3", "number", "VLM 并发数量", None),
-    # 卡密（仅通过 /api/license 读写，不在 /api/config 中暴露）
-    ("license_card", "", "string", "卡密", None),
     # 新手指引（/api/ui/onboarding 读写，不在设置页展示）
     ("ui_onboarding_v1", "", "string", "新手指引状态（内部）", None),
 ]

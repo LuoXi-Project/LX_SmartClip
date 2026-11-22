@@ -23,7 +23,7 @@ LX_SmartClip/
 ```
 backend/
 ├── app/
-│   ├── main.py              # FastAPI 入口：路由、CORS、License 中间件、storage 挂载、静态前端、404 兜底
+│   ├── main.py              # FastAPI 入口：路由、CORS、storage 挂载、静态前端、404 兜底
 │   ├── api/                 # 路由层（仅 HTTP/WS 编排）
 │   ├── core/                # 业务与 AI 实现
 │   ├── db/                  # SQLite 连接、init_db、migrate_db
@@ -38,8 +38,8 @@ backend/
 ### `app/main.py`（要点）
 
 1. `lifespan`：`init_db()`、`init_blocking_pool()` / 关闭时 `shutdown_blocking_pool()`。  
-2. 中间件：`LicenseMiddleware`、`CORSMiddleware`（当前 `allow_origins` 偏宽松，生产可按需收紧）。  
-3. 挂载路由（节选）：`config`、`videos`、`clips`、`asr`、`vlm`、`embed`、`process` + `process-jobs`、`match`、`search`、`tts`、`export`、`chat`、`copy_gen`、`subtitle`、`auto_edit`、`bgm`、`replica`、`license`、`logs`。  
+2. 中间件：`CORSMiddleware`（当前 `allow_origins` 偏宽松，生产可按需收紧）。  
+3. 挂载路由（节选）：`config`、`videos`、`clips`、`asr`、`vlm`、`embed`、`process` + `process-jobs`、`match`、`search`、`tts`、`export`、`chat`、`copy_gen`、`subtitle`、`auto_edit`、`bgm`、`replica`、`logs`。  
 4. 静态资源：`/storage` → `backend/storage`；若存在 `app/static/frontend/index.html`，则挂载整站前端并配合 SPA fallback。
 
 ### `app/api/` — 路由模块一览
@@ -47,7 +47,6 @@ backend/
 | 文件 | 前缀 / 说明 |
 |------|-------------|
 | `config.py` | `/api/config` |
-| `license.py` | `/api/license` |
 | `videos.py` | `/api/videos` |
 | `clips.py` | `/api/videos`（片段、切分、流） |
 | `asr.py` / `vlm.py` / `embed.py` | `/api/videos`（分步处理） |
@@ -98,7 +97,6 @@ backend/
 | `subtitle/` | 字幕时间线、SRT、烧录 |
 | `auto_edit/`、`auto_edit_v2/` | 自动剪辑规划与 DSL |
 | `bgm/` | BGM 选择与混音相关逻辑 |
-| `license.py` | 授权校验 |
 | `blocking_pool.py` | 阻塞任务线程池 |
 | `metrics/` | 如 token 统计等 |
 
@@ -106,7 +104,7 @@ backend/
 
 ## frontend/
 
-- `app/`：页面与布局（`layout.tsx` 内全局导航、`LicenseGate`、`AIChatPanel`）。  
+- `app/`：页面与布局（`layout.tsx` 内全局导航、`AIChatPanel`）。  
 - `lib/api.ts`：前后端契约（优先于此处对齐类型）。  
 - `lib/store.ts`：Zustand 持久化状态。  
 - `lib/runtime-config.ts`：API Base URL 等运行时策略。

@@ -5,7 +5,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.license import ensure_license_valid, is_license_enforced
 from app.jobs import create_job, launch_job
 from app.models.external_search import (
     DouyinLoginStatusResponse,
@@ -19,11 +18,6 @@ from app.models.external_search import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/external-search", tags=["external-search"])
-
-
-async def _ensure_license() -> None:
-    if is_license_enforced() and not await ensure_license_valid():
-        raise HTTPException(status_code=403, detail="LICENSE_REQUIRED")
 
 
 @router.get("/douyin/login-status", response_model=DouyinLoginStatusResponse)
@@ -49,7 +43,6 @@ async def douyin_login_status():
 @router.post("/douyin/login", response_model=ExternalSearchIngestResponse)
 async def douyin_login():
     """打开可见浏览器供用户在抖音主站扫码登录（后台任务，SSE 跟踪进度）。"""
-    await _ensure_license()
     from app.core.external_search.douyin import login_douyin_search
 
     job = await create_job(
@@ -91,7 +84,6 @@ async def douyin_login():
 @router.post("/search-preview", response_model=ExternalSearchPreviewResponse)
 async def search_preview(req: ExternalSearchPreviewRequest):
     """只搜索不下载：返回各平台结果卡片（供前端勾选后走 ingest selected 模式）。"""
-    await _ensure_license()
     from app.core.external_search.ingest import read_ingest_config, search_platforms
 
     keywords = list(req.keywords)
@@ -126,7 +118,6 @@ async def search_preview(req: ExternalSearchPreviewRequest):
 @router.post("/ingest", response_model=ExternalSearchIngestResponse)
 async def start_ingest(req: ExternalSearchIngestRequest):
     """创建自动采集后台任务（搜索→下载→入库→自动进预处理队列）。"""
-    await _ensure_license()
     from app.core.external_search.ingest import IngestParams, run_ingest_job
 
     if req.selected_items:

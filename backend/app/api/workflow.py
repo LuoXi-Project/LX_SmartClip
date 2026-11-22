@@ -12,7 +12,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.license import ensure_license_valid, is_license_enforced
 from app.core.workflow.actions import catalog as actions_catalog, ensure_actions_loaded
 from app.core.workflow.engine import run_workflow_job
 from app.core.workflow.schema import (
@@ -42,11 +41,6 @@ from app.models.workflow import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
-
-
-async def _ensure_license() -> None:
-    if is_license_enforced() and not await ensure_license_valid():
-        raise HTTPException(status_code=403, detail="LICENSE_REQUIRED")
 
 
 def _validate_payload_or_422(data: dict) -> WorkflowDef:
@@ -82,7 +76,6 @@ async def validate_workflow_definition(req: WorkflowValidateRequest):
 @router.post("/definitions")
 async def save_workflow_definition(req: WorkflowDefinitionRequest):
     """新建/更新自定义工作流（内置定义不可改，可复制为自定义后编辑）。"""
-    await _ensure_license()
     ensure_actions_loaded()
     data = dict(req.definition)
     data.pop("is_builtin", None)   # 不允许通过 API 声明内置
@@ -101,7 +94,6 @@ async def save_workflow_definition(req: WorkflowDefinitionRequest):
 @router.post("/definitions/{workflow_id}/duplicate")
 async def duplicate_workflow_definition(workflow_id: str):
     """复制定义（内置 → 自定义副本；自定义也可复制）。"""
-    await _ensure_license()
     src = await get_definition(workflow_id)
     if not src:
         raise HTTPException(status_code=404, detail=f"工作流 '{workflow_id}' 不存在")
@@ -126,7 +118,6 @@ async def duplicate_workflow_definition(workflow_id: str):
 @router.delete("/definitions/{workflow_id}")
 async def delete_workflow_definition(workflow_id: str):
     """删除自定义工作流（内置不可删）。"""
-    await _ensure_license()
     existing = await get_definition(workflow_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"工作流 '{workflow_id}' 不存在")
@@ -173,7 +164,6 @@ async def _start_run(workflow_id: str, inputs_raw: dict) -> dict:
 @router.post("/{workflow_id}/runs")
 async def start_workflow_run(workflow_id: str, req: WorkflowRunRequest):
     """一键运行：校验输入 → 建运行记录 + 后台 job → 返回 SSE 地址。"""
-    await _ensure_license()
     return await _start_run(workflow_id, req.inputs)
 
 
@@ -229,7 +219,6 @@ async def cancel_workflow_run(run_id: str):
 @router.post("/runs/{run_id}/retry")
 async def retry_workflow_run(run_id: str):
     """同参数重跑：以当前定义 + 原输入新建一次运行。"""
-    await _ensure_license()
     run = await get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"运行记录 '{run_id}' 不存在")

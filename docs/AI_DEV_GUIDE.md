@@ -16,7 +16,7 @@
 ### 前端（`frontend/`）
 
 - 页面入口：
-  - `app/layout.tsx`：全局布局、导航、`LicenseGate`、`AIChatPanel`。
+  - `app/layout.tsx`：全局布局、导航、`AIChatPanel`。
   - `app/page.tsx`：首页与基础健康检查入口。
   - `app/library/page.tsx`：素材库（上传、列表、删除等）。
   - `app/process/page.tsx`：素材处理流程可视化（WebSocket / 任务进度）。
@@ -27,7 +27,6 @@
   - `app/bgm/page.tsx`：BGM 曲库。
   - `app/settings/page.tsx`：系统配置管理。
   - `app/logs/page.tsx`：运行日志查看。
-  - `app/license/page.tsx`：卡密 / 授权。
   - `app/about/page.tsx`：关于与支持。
 - 核心基础层：
   - `lib/api.ts`：前后端契约中心（REST + WS + SSE + 类型定义）。
@@ -49,7 +48,7 @@
   - `subtitle.py`、`tts.py`、`bgm.py`、`export.py`：字幕、TTS、BGM、工程导出。
   - `agent.py`：Agent Studio 会话、SSE 对话、Workspace。
   - `chat.py`、`copy_gen.py`：对话与文案生成（chat 将逐步由 agent 替代）。
-  - `replica.py`、`license.py`、`logs.py`：复刻模板、卡密、日志。
+  - `replica.py`、`logs.py`：复刻模板、日志。
   - `config.py`：配置与 `POST /models` 代理。
 - 核心能力层（`app/core/`）：
   - `splitter.py`：视频切分、抽帧、音频提取。

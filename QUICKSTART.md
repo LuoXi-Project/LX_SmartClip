@@ -80,7 +80,6 @@ curl http://127.0.0.1:8000/api/videos
 | `/bgm` | BGM 音乐库 |
 | `/settings` | 系统设置 |
 | `/logs` | 运行日志 |
-| `/license` | 卡密 / 授权 |
 | `/about` | 关于与支持 |
 
 ---
@@ -127,9 +126,6 @@ A: 数据库 `backend/data/smartclip.db`；上传与中间产物多在 `backend/
 
 **Q: CORS 报错？**  
 A: 当前后端对开发较宽松（见 `main.py` 中 `CORSMiddleware`）。若仍有问题，核对浏览器访问的前端源与 API 地址是否一致。
-
-**Q: 卡密 / LICENSE_REQUIRED？**  
-A: 部分接口受 `LicenseMiddleware` 约束，需在 `/license` 页或 `/api/license` 完成激活（具体策略见 `backend/app/core/license.py`）。
 
 ---
 

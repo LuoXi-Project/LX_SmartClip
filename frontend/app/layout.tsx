@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import './globals.css'
-import { LicenseGate } from './_components/LicenseGate'
 import { ToastProvider } from '@/components/ui/toast-provider'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 import { TaskHub } from '@/components/ui/task-hub'
@@ -41,7 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ConfirmProvider>
             <TaskHub />
             <div className="pt-12 flex-1">
-              <LicenseGate>{children}</LicenseGate>
+              {children}
               <OnboardingGuide />
             </div>
             <footer className="border-t border-slate-800 bg-[#0d0f14]">

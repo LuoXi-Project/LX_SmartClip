@@ -12,22 +12,6 @@ export const apiClient = axios.create({
   },
 })
 
-export interface LicenseStatus {
-  enforced: boolean
-  /** 后端是否存在可连的卡密服务器配置（config.json） */
-  has_server_config: boolean
-  has_stored_card: boolean
-  valid: boolean
-}
-
-export const licenseApi = {
-  status: () => apiClient.get<unknown, LicenseStatus>('/api/license/status'),
-  activate: (card: string) =>
-    apiClient.post<unknown, { ok: boolean; message: string }>('/api/license/activate', { card }),
-  unbind: (card: string) =>
-    apiClient.post<unknown, { ok: boolean; message: string }>('/api/license/unbind', { card }),
-}
-
 // 请求拦截器
 apiClient.interceptors.request.use(
   (config) => {

@@ -28,10 +28,9 @@
 
 ### 系统与运维
 
-- 全局配置 `GET/PATCH /api/config`（卡密等敏感项走 `/api/license`）
+- 全局配置 `GET/PATCH /api/config`
 - `POST /api/config/models`：代理拉取模型列表（避免浏览器 CORS）
 - 运行日志：`GET /api/logs`
-- 授权：`/api/license` + `LicenseMiddleware`
 
 ### 前端页面（App Router）
 
@@ -46,10 +45,9 @@
 | `/bgm` | BGM 音乐库 |
 | `/settings` | 系统设置 |
 | `/logs` | 日志 |
-| `/license` | 卡密 |
 | `/about` | 关于与支持 |
 
-全局：`LicenseGate`、底部栏、`AIChatPanel`（见 `frontend/app/layout.tsx`）。
+全局：底部栏、`AIChatPanel`（见 `frontend/app/layout.tsx`）。
 
 ---
 
